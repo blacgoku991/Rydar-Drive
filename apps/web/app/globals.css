@@ -1,0 +1,420 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* ==========================================================================
+   Rydar Drive — design system « Night Radar »
+   Sombre, premium, technologique. Accent unique : lime radar.
+   ========================================================================== */
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* Encre (fonds) */
+  --color-ink-950: #040506;
+  --color-ink-900: #07080b;
+  --color-ink-850: #0a0c10;
+  --color-ink-800: #0e1116;
+  --color-ink-700: #13161d;
+  --color-ink-600: #1a1e27;
+  --color-ink-500: #252a35;
+  --color-ink-400: #394050;
+
+  /* Texte */
+  --color-fg: #f4f5f7;
+  --color-fg-muted: #9aa3b2;
+  --color-fg-subtle: #5f6777;
+
+  /* Lignes */
+  --color-line: rgb(255 255 255 / 0.07);
+  --color-line-strong: rgb(255 255 255 / 0.12);
+
+  /* Marque */
+  --color-brand: #c8f03c;
+  --color-brand-strong: #dcff5a;
+  --color-brand-fg: #0b0d04;
+
+  /* Signaux (statuts) */
+  --color-amber: #ffb020;
+  --color-blue: #4c9dff;
+  --color-violet: #a78bfa;
+  --color-cyan: #22d3ee;
+  --color-green: #3ddc97;
+  --color-red: #ff4d5e;
+
+  /* Sémantique (compatibilité composants type shadcn) */
+  --color-background: var(--color-ink-900);
+  --color-foreground: var(--color-fg);
+  --color-card: var(--color-ink-800);
+  --color-popover: var(--color-ink-700);
+  --color-primary: var(--color-brand);
+  --color-primary-foreground: var(--color-brand-fg);
+  --color-secondary: var(--color-ink-600);
+  --color-muted: var(--color-ink-700);
+  --color-muted-foreground: var(--color-fg-muted);
+  --color-accent: var(--color-ink-600);
+  --color-destructive: var(--color-red);
+  --color-border: var(--color-line);
+  --color-input: var(--color-line-strong);
+  --color-ring: var(--color-brand);
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+
+  --shadow-float: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 60px -24px rgb(0 0 0 / 0.9), 0 0 0 1px rgb(255 255 255 / 0.06);
+  --shadow-glow: 0 0 0 1px rgb(200 240 60 / 0.45), 0 12px 40px -12px rgb(200 240 60 / 0.55);
+
+  --animate-radar: radar-sweep 4s linear infinite;
+  --animate-ping-ring: ping-ring 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  --animate-breathe: breathe 2.6s ease-in-out infinite;
+  --animate-shimmer: shimmer 2.2s linear infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-flash: flash 1.4s ease-out both;
+
+  @keyframes radar-sweep {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes ping-ring {
+    0% {
+      transform: scale(0.25);
+      opacity: 0.9;
+    }
+    80%,
+    100% {
+      transform: scale(1);
+      opacity: 0;
+    }
+  }
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(0.85);
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: -200% 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes flash {
+    0% {
+      background-color: rgb(200 240 60 / 0.16);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html,
+  body {
+    background: var(--color-ink-900);
+    color: var(--color-fg);
+  }
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "cv11";
+  }
+  * {
+    border-color: var(--color-line);
+  }
+  ::selection {
+    background: rgb(200 240 60 / 0.3);
+    color: #fff;
+  }
+  :focus-visible {
+    outline: 2px solid rgb(200 240 60 / 0.7);
+    outline-offset: 2px;
+  }
+  /* Barres de défilement discrètes */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.12) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.1);
+    border-radius: 99px;
+  }
+  input[type="number"]::-webkit-inner-spin-button {
+    opacity: 0.4;
+  }
+  input:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 40px var(--color-ink-800) inset;
+    -webkit-text-fill-color: var(--color-fg);
+  }
+}
+
+@utility surface {
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.018), transparent 40%), var(--color-ink-800);
+    border: 1px solid var(--color-line);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.035) inset;
+  }
+
+@utility glass {
+    background: rgb(10 12 16 / 0.74);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    border: 1px solid rgb(255 255 255 / 0.075);
+    box-shadow: var(--shadow-float);
+  }
+
+@utility hairline-top {
+    position: relative;
+  }
+
+@utility grid-bg {
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.028) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+
+@utility text-gradient {
+    background: linear-gradient(180deg, #ffffff 20%, #9aa3b2 110%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+@utility text-brand-gradient {
+    background: linear-gradient(100deg, #eaff9a 0%, #c8f03c 45%, #7ddf64 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+@utility num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+@utility skeleton {
+    background: linear-gradient(90deg, rgb(255 255 255 / 0.04), rgb(255 255 255 / 0.09), rgb(255 255 255 / 0.04));
+    background-size: 200% 100%;
+    animation: var(--animate-shimmer);
+  }
+
+@utility kbd {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1;
+    padding: 3px 5px;
+    border-radius: 5px;
+    border: 1px solid var(--color-line-strong);
+    background: rgb(255 255 255 / 0.04);
+    color: var(--color-fg-muted);
+  }
+
+@layer components {
+  .hairline-top::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgb(200 240 60 / 0.5), transparent);
+  }
+  .grain::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
+
+/* ==========================================================================
+   Carte (MapLibre) — marqueurs HTML
+   ========================================================================== */
+.maplibregl-map {
+  font-family: var(--font-sans);
+}
+.maplibregl-ctrl-attrib {
+  background: rgb(7 8 11 / 0.6) !important;
+  color: var(--color-fg-subtle) !important;
+  font-size: 10px !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--color-fg-subtle) !important;
+}
+.maplibregl-ctrl-group {
+  background: rgb(14 17 22 / 0.9) !important;
+  border: 1px solid var(--color-line) !important;
+  box-shadow: none !important;
+}
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--color-line) !important;
+}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1) brightness(0.8);
+}
+
+.rd-driver {
+  --c: var(--color-fg-subtle);
+  position: relative;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+.rd-driver:hover,
+.rd-driver[data-selected="true"] {
+  transform: scale(1.15);
+  z-index: 5;
+}
+.rd-driver__halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--c) 45%, transparent) 0%, transparent 70%);
+  opacity: 0.55;
+}
+.rd-driver[data-pulse="true"] .rd-driver__halo {
+  animation: var(--animate-breathe);
+}
+.rd-driver__cone {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+.rd-driver__cone::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: -24px;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-bottom: 18px solid color-mix(in srgb, var(--c) 35%, transparent);
+  filter: blur(1.5px);
+}
+.rd-driver__dot {
+  position: absolute;
+  inset: 8px;
+  border-radius: 999px;
+  background: #0b0d11;
+  border: 2px solid var(--c);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent), 0 6px 14px rgb(0 0 0 / 0.6);
+  display: grid;
+  place-items: center;
+}
+.rd-driver__dot::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--c);
+  box-shadow: 0 0 8px var(--c);
+}
+.rd-driver__label {
+  position: absolute;
+  left: 50%;
+  top: -22px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #fff;
+  background: rgb(10 12 16 / 0.85);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.rd-driver:hover .rd-driver__label,
+.rd-driver[data-selected="true"] .rd-driver__label,
+.rd-map[data-labels="true"] .rd-driver__label {
+  opacity: 1;
+}
+
+.rd-pin {
+  --c: var(--color-brand);
+  position: relative;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+}
+.rd-pin__core {
+  position: absolute;
+  inset: 5px;
+  border-radius: 999px;
+  background: var(--c);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 25%, transparent), 0 0 22px color-mix(in srgb, var(--c) 70%, transparent);
+}
+.rd-pin__core::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 999px;
+  background: #07080b;
+}
+.rd-pin__ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 150px;
+  height: 150px;
+  margin: -75px 0 0 -75px;
+  border-radius: 999px;
+  border: 1.5px solid var(--c);
+  pointer-events: none;
+  animation: var(--animate-ping-ring);
+}
+.rd-pin__ring:nth-child(2) {
+  animation-delay: 0.8s;
+}
+.rd-pin__ring:nth-child(3) {
+  animation-delay: 1.6s;
+}
+.rd-pin[data-searching="false"] .rd-pin__ring {
+  display: none;
+}
+.rd-flag {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: #fff;
+  border: 3px solid #07080b;
+  box-shadow: 0 0 0 1.5px #fff, 0 4px 12px rgb(0 0 0 / 0.6);
+  transform: rotate(45deg);
+}

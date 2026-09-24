@@ -37,8 +37,8 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - Tests DB : `pnpm test:db` (crée DB `rydar_test`, applique `scripts/sql/local-supabase-stubs.sql` + migrations).
 
 ## Avancement (cocher au fil de l'eau)
-- [ ] M0 scaffold monorepo
-- [ ] M1 DB : schéma, RLS, dispatch, accept, stats, realtime, seed + tests (RLS 403, course concurrente)
+- [x] M0 scaffold monorepo
+- [x] M1 DB : 9 migrations + seed + 32 tests verts (`pnpm test:db`)
 - [ ] M2 shared
 - [ ] M3 web socle (design system, auth, layouts)
 - [ ] M4 super admin
@@ -50,4 +50,8 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [ ] M10 docs + captures + vérif finale
 
 ## Notes / prochaines étapes
-- (vide)
+- Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
+- Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
+- RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_register_device, driver_home, driver_offers.
+- RPC dashboard : cancel_ride, assign_ride, redispatch_ride, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
+- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping() ; LISTEN rydar_notifications.

@@ -22,3 +22,6 @@ apps/driver/web-build/
 supabase/.temp/
 supabase/.branches/
 scratch/
+.local-stack/
+apps/web/public/dev-map/
+apps/web/public/vendor/
