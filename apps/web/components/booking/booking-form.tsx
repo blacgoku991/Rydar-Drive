@@ -1,11 +1,11 @@
 "use client";
 import {
-  estimatePrice, estimateRoute, formatDistance, formatDuration, formatPrice, VEHICLE_CATEGORY_META,
-  type PricingRule, type VehicleCategory,
+  decodePolyline, formatDistance, formatDuration, formatPrice, VEHICLE_CATEGORY_META, type PricingRule, type VehicleCategory,
 } from "@rydar/shared";
 import { CalendarClock, Check, Minus, Plane, Plus, ShieldCheck, Zap } from "lucide-react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { submitBooking } from "@/app/book/[slug]/actions";
+import { RoutePreview } from "@/components/map/route-preview";
 import { AddressInput, type PlaceValue } from "@/components/rides/address-input";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
@@ -38,12 +38,41 @@ export function BookingForm({ slug, categories, pricing, showPrice, phone }: { s
   const [pending, start] = useTransition();
 
   const pickupAt = when === "now" ? new Date() : new Date(`${date}T${time}`);
-  const route = useMemo(
-    () => (pickup.lat != null && dropoff.lat != null ? estimateRoute({ lat: pickup.lat, lng: pickup.lng! }, { lat: dropoff.lat, lng: dropoff.lng! }) : null),
-    [pickup.lat, pickup.lng, dropoff.lat, dropoff.lng],
-  );
-  const rule = pricing.find((p) => p.vehicle_category === category);
-  const estimate = route && rule && showPrice ? estimatePrice(rule, route.distanceM, route.durationS, pickupAt) : null;
+  const [quote, setQuote] = useState<{ distanceM: number; durationS: number; polyline: string; priceCents: number | null; fixedFare: string | null } | null>(null);
+  const ready = pickup.lat != null && pickup.lng != null && dropoff.lat != null && dropoff.lng != null;
+
+  // Devis réel : itinéraire routier + prix indicatif (forfait / grille) calculés par le serveur
+  useEffect(() => {
+    if (!ready) {
+      setQuote(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => {
+      fetch(`/api/book/${slug}/quote`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          pickup: { lat: pickup.lat, lng: pickup.lng, address: pickup.address },
+          dropoff: { lat: dropoff.lat, lng: dropoff.lng, address: dropoff.address },
+          category,
+          pickupAt: Number.isNaN(pickupAt.getTime()) ? undefined : pickupAt.toISOString(),
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((q) => setQuote(q))
+        .catch(() => undefined);
+    }, 250);
+    return () => {
+      window.clearTimeout(t);
+      ctrl.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, pickup.lat, pickup.lng, dropoff.lat, dropoff.lng, category, when, date, time, slug]);
+  const routeCoords = useMemo(() => (quote?.polyline ? decodePolyline(quote.polyline) : null), [quote?.polyline]);
+  const estimate = showPrice ? (quote?.priceCents ?? null) : null;
+  void pricing;
 
   if (done !== null) {
     return (
@@ -137,17 +166,28 @@ export function BookingForm({ slug, categories, pricing, showPrice, phone }: { s
       <Field label="Précisions" optional><Textarea name="comment" placeholder="Siège enfant, pancarte, arrêt intermédiaire…" /></Field>
       <input type="text" name="website" tabIndex={-1} autoComplete="off" className="hidden" aria-hidden />
 
-      {route && (
-        <div className="flex items-center justify-between rounded-xl border border-line bg-white/[0.02] px-4 py-3">
-          <span className="text-[12.5px] text-fg-muted">
-            <span className="num text-fg">{formatDistance(route.distanceM)}</span> · <span className="num text-fg">{formatDuration(route.durationS)}</span> estimés
-          </span>
-          {estimate != null && (
-            <span className="text-right">
-              <span className="block text-[11px] text-fg-subtle">Prix estimé</span>
-              <span className="num text-[20px] font-semibold text-brand">{formatPrice(estimate)}</span>
+      {ready && (
+        <div className="overflow-hidden rounded-xl border border-line">
+          <div className="relative h-52">
+            <RoutePreview pickup={{ lat: pickup.lat!, lng: pickup.lng! }} dropoff={{ lat: dropoff.lat!, lng: dropoff.lng! }} route={routeCoords} padding={36} />
+          </div>
+          <div className="flex items-center justify-between bg-white/[0.02] px-4 py-3">
+            <span className="text-[13px] text-fg-muted">
+              {quote ? (
+                <>
+                  <span className="num text-fg">{formatDistance(quote.distanceM)}</span> · <span className="num text-fg">{formatDuration(quote.durationS)}</span> de trajet
+                </>
+              ) : (
+                "Calcul de l'itinéraire…"
+              )}
             </span>
-          )}
+            {estimate != null && (
+              <span className="text-right">
+                <span className="block text-[11.5px] text-fg-subtle">{quote?.fixedFare ? `Forfait ${quote.fixedFare}` : "Prix estimé"}</span>
+                <span className="num text-[20px] font-semibold text-brand">{formatPrice(estimate)}</span>
+              </span>
+            )}
+          </div>
         </div>
       )}
 

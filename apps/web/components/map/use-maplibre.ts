@@ -21,6 +21,7 @@ export function useMapLibre({
 
   useEffect(() => {
     let disposed = false;
+    let ro: ResizeObserver | null = null;
     (async () => {
       const lib = await import("maplibre-gl");
       if (disposed || !containerRef.current) return;
@@ -41,9 +42,13 @@ export function useMapLibre({
       mapRef.current = map;
       if (interactive && controls) map.addControl(new lib.NavigationControl({ showCompass: false }), "bottom-right");
       map.on("load", () => !disposed && setReady(true));
+      // Le conteneur peut changer de taille (panneau, fenêtre, animation) : on suit
+      ro = new ResizeObserver(() => map.resize());
+      ro.observe(containerRef.current);
     })();
     return () => {
       disposed = true;
+      ro?.disconnect();
       setReady(false);
       mapRef.current?.remove();
       mapRef.current = null;

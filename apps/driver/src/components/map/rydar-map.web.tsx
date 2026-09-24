@@ -29,6 +29,7 @@ export function RydarMap({ me, pickup, dropoff, route, dim, pulse, padding = { t
 
   useEffect(() => {
     let disposed = false;
+    let ro: ResizeObserver | null = null;
     (async () => {
       const m = await import("maplibre-gl");
       if (disposed || !container.current) return;
@@ -44,6 +45,8 @@ export function RydarMap({ me, pickup, dropoff, route, dim, pulse, padding = { t
         fadeDuration: 0,
       });
       map.current = instance;
+      ro = new ResizeObserver(() => instance.resize());
+      ro.observe(container.current);
       instance.on("load", () => {
         instance.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         instance.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#0b0d10", "line-width": 10 } });
@@ -53,6 +56,7 @@ export function RydarMap({ me, pickup, dropoff, route, dim, pulse, padding = { t
     })();
     return () => {
       disposed = true;
+      ro?.disconnect();
       map.current?.remove();
       map.current = null;
       markers.current = {};

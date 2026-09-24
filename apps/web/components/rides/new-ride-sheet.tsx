@@ -329,36 +329,41 @@ export function NewRideSheet({
             </div>
 
             {/* Pied : prix + validation */}
-            <div className="flex items-end gap-3 border-t border-line px-5 py-4">
-              <Field error={errors.priceCents} className="w-32">
-                <div className="relative">
-                  <Input
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    inputMode="decimal"
-                    placeholder={suggested != null ? String(suggested / 100) : "Prix"}
-                    aria-label="Prix en euros"
-                    className="h-11 pr-7 text-[16px] font-semibold"
-                  />
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>
-                </div>
-              </Field>
-              <div className="min-w-0 flex-1 pb-0.5 text-[11.5px] leading-tight text-fg-subtle">
+            <div className="space-y-2 border-t border-line px-5 py-4">
+              <p className="text-[12px] text-fg-subtle">
                 {suggested != null && !price ? (
                   quote?.fixedFare ? (
-                    <span className="text-brand">Forfait {quote.fixedFare.label}{quote.meteredCents ? <span className="text-fg-subtle"> · compteur ≈ {formatPrice(quote.meteredCents)}</span> : null}</span>
+                    <>
+                      <span className="text-brand">Forfait {quote.fixedFare.label}</span>
+                      {quote.meteredCents ? <> · au compteur ≈ {formatPrice(quote.meteredCents)}</> : null}
+                    </>
                   ) : (
-                    <>Tarif {quote?.pricingRule ?? "de la grille"}</>
+                    <>Tarif {quote?.pricingRule ?? "de la grille"} · modifiable</>
                   )
                 ) : price ? (
                   <>Prix saisi manuellement</>
                 ) : (
-                  <>Calculé dès le départ et la destination choisis</>
+                  <>Le prix se calcule dès le départ et la destination choisis</>
                 )}
+              </p>
+              <div className="flex items-center gap-3">
+                <Field error={errors.priceCents} className="w-32">
+                  <div className="relative">
+                    <Input
+                      value={price}
+                      onChange={(e) => setPrice(e.target.value)}
+                      inputMode="decimal"
+                      placeholder={suggested != null ? String(suggested / 100) : "Prix"}
+                      aria-label="Prix en euros"
+                      className="h-11 pr-7 text-[16px] font-semibold"
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>
+                  </div>
+                </Field>
+                <Button type="submit" variant="primary" size="lg" loading={pending} className="flex-1">
+                  {when === "now" ? "Créer et dispatcher" : "Planifier la course"}
+                </Button>
               </div>
-              <Button type="submit" variant="primary" size="lg" loading={pending}>
-                {when === "now" ? "Créer et dispatcher" : "Planifier la course"}
-              </Button>
             </div>
           </div>
 

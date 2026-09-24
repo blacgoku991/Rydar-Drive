@@ -38,7 +38,7 @@ export function AddressInput({
   useEffect(() => setQuery(value.address), [value.address]);
 
   useEffect(() => {
-    if (!open || query.trim().length < 2 || query === value.address) {
+    if (!open || query.trim().length < 2 || (value.lat != null && query === value.address)) {
       setResults([]);
       return;
     }
@@ -60,7 +60,7 @@ export function AddressInput({
       }
     }, 180);
     return () => clearTimeout(t);
-  }, [query, open, value.address, near]);
+  }, [query, open, value.address, value.lat, near]);
 
   function pick(p: Place) {
     onChange({ address: p.address, lat: p.lat, lng: p.lng });
