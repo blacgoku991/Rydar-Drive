@@ -83,3 +83,41 @@ jobs:
           bash scripts/db-local.sh --reset --seed
           test "$(psql -d rydar_demo -tAc 'select count(*) from public.drivers')" = "19"
           test "$(psql -d rydar_demo -tAc 'select count(*) from public.organizations')" = "2"
+
+  worker-image:
+    name: Image Docker du worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build de l'image
+        run: docker build -f apps/worker/Dockerfile -t rydar-worker:ci .
+      - name: Base (stubs + migrations)
+        run: DB_NAME=rydar bash scripts/db-local.sh --reset
+      - name: Démarrage + healthcheck
+        run: |
+          docker run -d --name worker --network host \
+            -e DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/rydar \
+            -e PUSH_DRY_RUN=true rydar-worker:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/ | grep -q '"healthy":true'; then docker logs worker; exit 0; fi
+            sleep 1
+          done
+          docker logs worker
+          exit 1

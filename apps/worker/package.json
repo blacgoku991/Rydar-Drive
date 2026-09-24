@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
     "start": "node --env-file-if-exists=.env dist/index.js",
-    "build": "tsup src/index.ts src/simulator.ts --format esm --target node20 --clean --no-splitting --noExternal @rydar/shared",
+    "build": "tsup",
     "simulate": "tsx --env-file-if-exists=.env src/simulator.ts",
     "typecheck": "tsc --noEmit"
   },

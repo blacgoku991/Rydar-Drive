@@ -26,3 +26,6 @@ scratch/
 apps/web/public/dev-map/
 apps/web/public/vendor/
 .expo-export-check/
+
+# Généré par next dev/build/typegen
+apps/web/next-env.d.ts
