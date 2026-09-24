@@ -34,7 +34,8 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 
 ## Local
 - Stack Supabase sans Docker : `bash scripts/local-stack/setup.sh` puis `start.sh` (GoTrue 54332, PostgREST 54331, passerelle 54321) ; clés → `apps/web/.env.local`.
-- Dev web : `cd apps/web && npx next dev` ; captures Playwright : script scratchpad `shot.cjs` (LOGIN=email:mdp).
+- Dev web : `cd apps/web && npx next dev` ; captures Playwright : scripts scratchpad `shot.cjs` (LOGIN=email:mdp), `final.cjs` (docs/screenshots), `driver-flow.cjs` (app chauffeur :8081).
+- ⚠️ Ne jamais `pkill -f <motif>` si le motif apparaît dans la commande en cours (tue le shell) → scratchpad `sim.sh start|stop`.
 - Sandbox : tuiles/geocodage/routage externes bloqués (seuls npm, pypi, raw.githubusercontent, GitHub releases, S3 Overture passent) → dev-geo local (voir M11).
 - Tailwind v4 : classes custom = `@utility` (sinon pas de variantes `lg:`). MapLibre v6 ESM : worker copié dans public/vendor (predev).
 - PG16+PostGIS local : `pg_ctlcluster 16 main start` ; Redis `redis-server --daemonize yes`.
@@ -52,10 +53,16 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [x] M8 app chauffeur (`apps/driver`, Expo 57 / RN 0.86 / React 19.2.3 partout ; `npx expo export --platform android` OK)
 - [x] M9 Stripe (checkout/portal/webhook)
 - [x] M10 docs (README, docs/ARCHITECTURE|API|SECURITY), CI GitHub verte (3 jobs), 47 tests DB, révocation sessions (mig 001300)
-- [ ] M11 REFONTE demandée par l'utilisateur : design plus épuré, vraie carte, géocodage + itinéraire + prix calculés, visuels partout, app chauffeur « waw » simple
-  - dev-geo (agent) : `scripts/dev-geo/` + `.dev-geo/` → tuiles OpenMapTiles réelles (Overture S3) dans public/dev-map/tiles, router OSRM-compatible :5001, géocodeur BAN-compatible :5002
-  - prod : style Rydar sur OpenFreeMap (schéma OpenMapTiles, sans clé) ; géocodage geopf/BAN ; routage OSRM/Mapbox/Google via env
-- [ ] docs/DEPLOYMENT.md + captures finales (docs/screenshots/*.jpg référencées par README)
+- [x] M11 REFONTE (demande utilisateur : épuré, vraie carte, géoloc + calculs, visuels partout, app chauffeur « waw »)
+  - géo serveur : `apps/web/lib/geocode.ts` (geopf|ban|google|mapbox, GEOCODER_URL), `lib/geo/routing.ts` (osrm|mapbox|google + repli), `lib/geo/quote.ts`
+  - API : /api/quote (dashboard), /api/route, /api/geocode/reverse, /api/book/[slug]/quote (public) ; rides.route_polyline (mig 001400)
+  - forfaits : `matchFixedFare` (@rydar/shared/pricing) → devis, mini-site, API sans prix
+  - carte : style Rydar (@rydar/shared/map-style, OpenMapTiles/OpenFreeMap), `components/map/{use-maplibre,fleet-map,route-preview,markers}`, thème jour/nuit
+  - web : command center (ride-focus, fleet-panel, ride-row, kpi-strip), nouvelle course = WorkspaceContent + RoutePreview, RideProgress, RouteGlyph
+  - app chauffeur : home carte plein écran, offre, course (SlideToConfirm, StepDots), `rydar-map(.web).tsx` ; aperçu web `pnpm --filter @rydar/driver web`
+  - worker : simulateur sur itinéraires OSRM, `backfill-routes`
+  - dev-geo : `scripts/dev-geo/` (tuiles OMT Overture, router :5001, géocodeur :5002) ; env dev dans apps/web/.env.local
+- [x] docs/DEPLOYMENT.md + captures docs/screenshots/*.jpg
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

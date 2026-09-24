@@ -2,11 +2,17 @@
 
 **Le dispatch VTC, sans WhatsApp.** Rydar Drive est un SaaS multi-organisation pour les rattacheurs, centrales VTC et gestionnaires de flottes. Une réservation arrive, par votre site ou votre dashboard. Les chauffeurs de **votre** flotte les plus proches sont notifiés en même temps et **le premier qui accepte obtient la course**. La même course ne peut pas être attribuée deux fois. Vous suivez tout en temps réel.
 
-![Dashboard temps réel](docs/screenshots/dashboard-live.jpg)
+![Poste de pilotage en direct : carte réelle, vrais itinéraires, flotte](docs/screenshots/dashboard-live.jpg)
 
-| Rattacheur : courses & timeline | Journal du dispatch | Super Admin |
+| Nouvelle course : trajet, durée, prix (forfait) et chauffeurs proches calculés en direct | Détail d'une course sans quitter la carte |
+| --- | --- |
+| ![Nouvelle course](docs/screenshots/new-ride.jpg) | ![Course sélectionnée](docs/screenshots/dashboard-ride.jpg) |
+
+![App chauffeur : en ligne, offre avec compte à rebours, course guidée](docs/screenshots/driver-app.jpg)
+
+| Fiche course : étapes horodatées + trajet | Courses (miniature du tracé) | Super Admin |
 | --- | --- | --- |
-| ![Détail d'une course](docs/screenshots/ride.jpg) | ![Journal du dispatch](docs/screenshots/dispatch.jpg) | ![Super Admin](docs/screenshots/admin.jpg) |
+| ![Fiche course](docs/screenshots/ride.jpg) | ![Courses](docs/screenshots/rides.jpg) | ![Super Admin](docs/screenshots/admin.jpg) |
 
 ## En bref
 
@@ -20,7 +26,8 @@
 - **Acceptation atomique** : verrou transactionnel PostgreSQL et index unique partiel. Les autres chauffeurs reçoivent « Course déjà attribuée. ».
 - **Courses planifiées** proposées à la flotte, avec rappels à 24 h, 3 h, 1 h et 30 min.
 - **Cycle de vie complet** : `CREATED → SEARCHING_DRIVER → OFFERED → ACCEPTED → DRIVER_EN_ROUTE → DRIVER_ARRIVED → PASSENGER_ONBOARD → IN_PROGRESS → COMPLETED`, plus `CANCELLED` et `NO_DRIVER_FOUND`. Chaque étape est horodatée dans une **timeline** par course.
-- **Carte temps réel** : chauffeurs disponibles, course proposée, en route, arrivé, en course, hors ligne. On y voit aussi les rayons de recherche et les offres en cours.
+- **Carte temps réel** : chauffeurs disponibles, course proposée, en route, arrivé, en course, hors ligne. On y voit aussi les vrais itinéraires routiers, l'approche du chauffeur avec son heure d'arrivée, le rayon de recherche et les chauffeurs sollicités. Carte sombre ou claire.
+- **Adresses, itinéraires et prix calculés** : autocomplétion d'adresses (IGN/BAN), itinéraire routier réel (OSRM, Mapbox ou Google), distance et durée. Le prix suit la grille de l'organisation, et les **forfaits** (Paris ↔ CDG…) sont reconnus automatiquement. Les chauffeurs disponibles s'affichent avec leur temps d'approche. Tout cela vaut aussi pour l'API et pour le mini-site.
 - **Multi-tenant strict** : RLS PostgreSQL sur toutes les tables, contrôles serveur et audit. Une tentative d'accès inter-organisation renvoie **403**.
 - **Offres SaaS** Starter, Pro et Business avec limites appliquées en base, abonnement Stripe.
 
@@ -90,7 +97,9 @@ DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/rydar PUSH_DRY_RUN=tr
 SIM_NEW_RIDE_EVERY=30 pnpm --filter @rydar/worker simulate    # chauffeurs qui roulent, acceptent, terminent
 ```
 
-**App chauffeur** : `cp apps/driver/.env.example apps/driver/.env`, puis `pnpm dev:driver` (Expo). Voir [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#application-chauffeur-eas).
+**App chauffeur** : `cp apps/driver/.env.example apps/driver/.env`, puis `pnpm dev:driver` (Expo), ou `pnpm --filter @rydar/driver web` pour l'aperçu navigateur. Voir [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#5-application-chauffeur-eas).
+
+**Carte, adresses et itinéraires en local, avec de vraies données** (facultatif, hors ligne) : `bash scripts/dev-geo/build.sh && bash scripts/dev-geo/start.sh`. Ces scripts génèrent, à partir d'Overture Maps (Paris et Nice), des tuiles au schéma OpenMapTiles, un routeur compatible OSRM et un géocodeur compatible BAN. Voir [scripts/dev-geo/README.md](scripts/dev-geo/README.md).
 
 ### Comptes de démonstration (seed)
 
