@@ -3,7 +3,7 @@ import {
   PRESENCE_META, RIDE_STATUS_META, decodePolyline, formatPhone, formatTime, haversine, initials, shortAddress,
   type Coord, type OrgKpis, type PricingRule, type RideStatus,
 } from "@rydar/shared";
-import { Crosshair, Eye, EyeOff, Phone, Plus, Radar, Search, Tag, X } from "lucide-react";
+import { Crosshair, Eye, EyeOff, Moon, Phone, Plus, Radar, Search, Sun, Tag, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { FleetPanel } from "@/components/command/fleet-panel";
@@ -99,6 +99,24 @@ export function CommandCenter({
   const [query, setQuery] = useState("");
   const [showOffline, setShowOffline] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
+  const [mapTheme, setMapTheme] = useState<"night" | "day">("night");
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("rydar.mapTheme") === "day") setMapTheme("day");
+    } catch {
+      /* stockage indisponible */
+    }
+  }, []);
+  const toggleTheme = () =>
+    setMapTheme((t) => {
+      const next = t === "night" ? "day" : "night";
+      try {
+        window.localStorage.setItem("rydar.mapTheme", next);
+      } catch {
+        /* stockage indisponible */
+      }
+      return next;
+    });
   const [newRideOpen, setNewRideOpen] = useState(false);
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [approach, setApproach] = useState<{ rideId: string; coordinates: Coord[]; durationS: number; from: { lat: number; lng: number } } | null>(null);
@@ -265,6 +283,7 @@ export function CommandCenter({
           showOffline={showOffline}
           showLabels={showLabels}
           approach={approach}
+          theme={mapTheme}
           padding={{ top: 110, bottom: 60, left: 420, right: 360 }}
         />
       </div>
@@ -281,6 +300,11 @@ export function CommandCenter({
           <Tooltip content={showOffline ? "Masquer les hors ligne" : "Afficher les hors ligne"}>
             <Button variant="ghost" size="icon-sm" onClick={() => setShowOffline((v) => !v)} aria-label="Chauffeurs hors ligne">
               {showOffline ? <Eye className="text-brand" /> : <EyeOff />}
+            </Button>
+          </Tooltip>
+          <Tooltip content={mapTheme === "night" ? "Carte claire" : "Carte sombre"}>
+            <Button variant="ghost" size="icon-sm" onClick={toggleTheme} aria-label="Thème de la carte">
+              {mapTheme === "night" ? <Sun /> : <Moon />}
             </Button>
           </Tooltip>
           <Tooltip content="Recentrer sur la flotte">

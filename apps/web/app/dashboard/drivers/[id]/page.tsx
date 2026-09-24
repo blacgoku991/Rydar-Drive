@@ -37,7 +37,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
     .eq("organization_id", ctx.org.id)
     .maybeSingle();
   if (!d) notFound();
-  const [{ data: stats }, { data: rides }, { data: docs }] = await Promise.all([
+  const [{ data: stats }, { data: rides }, { data: docs }, { data: trail }] = await Promise.all([
     ctx.supabase.rpc("driver_stats", { p_driver: id, p_days: 30 }),
     ctx.supabase
       .from("rides")
@@ -47,6 +47,14 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
       .order("pickup_at", { ascending: false })
       .limit(25),
     ctx.supabase.from("driver_documents").select("id, type, number, expires_at, status").eq("driver_id", id).order("expires_at"),
+    // Trajet des 3 dernières heures (historique échantillonné)
+    ctx.supabase
+      .from("driver_location_history")
+      .select("lat, lng, recorded_at")
+      .eq("driver_id", id)
+      .gte("recorded_at", new Date(Date.now() - 3 * 3600_000).toISOString())
+      .order("recorded_at", { ascending: true })
+      .limit(1500),
   ]);
   const vehicle = Array.isArray(d.vehicle) ? d.vehicle[0] : d.vehicle;
   const location = Array.isArray(d.location) ? d.location[0] : d.location;
@@ -95,9 +103,9 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
-          <Card className="overflow-hidden">
-            <CardHeader title="Dernière position" icon={<MapPin />} description={location ? `Mise à jour ${formatRelative(location.updated_at)}${location.battery_level != null ? ` · batterie ${Math.round(location.battery_level * 100)} %` : ""}` : "Jamais connecté"} />
-            <div className="relative h-[300px]">{location ? <DriverMap driver={live} /> : <EmptyState icon={<MapPin />} title="Pas encore de position" description="La position apparaît dès que le chauffeur passe EN LIGNE." />}</div>
+          <Card className="flex flex-col overflow-hidden">
+            <CardHeader title="Position et trajet des 3 dernières heures" icon={<MapPin />} description={location ? `Mise à jour ${formatRelative(location.updated_at)}${location.battery_level != null ? ` · batterie ${Math.round(location.battery_level * 100)} %` : ""}` : "Jamais connecté"} />
+            <div className="relative min-h-[340px] flex-1">{location ? <DriverMap driver={live} trail={((trail ?? []) as { lat: number; lng: number }[]).map((p) => [p.lng, p.lat] as [number, number])} /> : <EmptyState icon={<MapPin />} title="Pas encore de position" description="La position apparaît dès que le chauffeur passe EN LIGNE." />}</div>
           </Card>
           <div className="grid gap-6">
             <Card>

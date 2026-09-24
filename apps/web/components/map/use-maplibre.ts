@@ -18,6 +18,8 @@ export function useMapLibre({
   const libRef = useRef<MapLib | null>(null);
   const mapRef = useRef<MLMap | null>(null);
   const [ready, setReady] = useState(false);
+  // Conserve le cadrage quand la carte est recréée (changement de thème)
+  const view = useRef<{ center: [number, number]; zoom: number } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -30,8 +32,8 @@ export function useMapLibre({
       const map = new lib.Map({
         container: containerRef.current,
         style: mapStyle(theme),
-        center,
-        zoom,
+        center: view.current?.center ?? center,
+        zoom: view.current?.zoom ?? zoom,
         interactive,
         attributionControl: { compact: true },
         fadeDuration: 0,
@@ -39,6 +41,10 @@ export function useMapLibre({
         pitchWithRotate: false,
       });
       map.touchZoomRotate.disableRotation();
+      map.on("moveend", () => {
+        const c = map.getCenter();
+        view.current = { center: [c.lng, c.lat], zoom: map.getZoom() };
+      });
       mapRef.current = map;
       if (interactive && controls) map.addControl(new lib.NavigationControl({ showCompass: false }), "bottom-right");
       map.on("load", () => !disposed && setReady(true));
@@ -56,7 +62,7 @@ export function useMapLibre({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interactive, theme]);
 
-  return { containerRef, libRef, mapRef, ready };
+  return { containerRef, libRef, mapRef, ready, hasView: () => view.current != null };
 }
 
 type GeoJSONSource = import("maplibre-gl").GeoJSONSource;
