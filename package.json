@@ -1,0 +1,37 @@
+{
+  "name": "rydar-drive",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Rydar Drive — SaaS de dispatch VTC multi-tenant pour rattacheurs et centrales",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @rydar/web dev",
+    "dev:worker": "pnpm --filter @rydar/worker dev",
+    "dev:driver": "pnpm --filter @rydar/driver start",
+    "build": "pnpm -r --filter ./packages/** --filter @rydar/web --filter @rydar/worker build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "vitest run --project unit",
+    "test:db": "vitest run --project db",
+    "db:local": "bash scripts/db-local.sh",
+    "db:reset": "bash scripts/db-local.sh --reset --seed"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.0",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "unrs-resolver"
+    ]
+  }
+}
