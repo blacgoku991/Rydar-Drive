@@ -71,7 +71,7 @@ begin
     'cancelled_today', count(*) filter (where r.status = 'CANCELLED' and r.cancelled_at >= v_day),
     'no_driver_today', count(*) filter (where r.status = 'NO_DRIVER_FOUND' and r.no_driver_at >= v_day),
     'avg_assign_seconds_today', round(avg(extract(epoch from (r.accepted_at - r.dispatch_started_at)))
-      filter (where r.accepted_at >= v_day and r.dispatch_started_at is not null)::numeric, 1)
+      filter (where r.accepted_at >= v_day and r.dispatch_started_at is not null and r.type = 'instant')::numeric, 1)
   ) into v_rides
   from public.rides r
   where r.organization_id = p_org
@@ -131,7 +131,7 @@ begin
     'revenue_cents', coalesce(sum(price_cents) filter (where status = 'COMPLETED'), 0),
     'avg_price_cents', round(avg(price_cents) filter (where status = 'COMPLETED')),
     'avg_assign_seconds', round(avg(extract(epoch from (accepted_at - dispatch_started_at)))
-      filter (where accepted_at is not null and dispatch_started_at is not null)::numeric, 1),
+      filter (where accepted_at is not null and dispatch_started_at is not null and type = 'instant')::numeric, 1),
     'completion_rate', case when count(*) > 0 then round(count(*) filter (where status = 'COMPLETED')::numeric / count(*), 4) end
   ) into v_summary
   from public.rides
