@@ -1,10 +1,10 @@
 "use client";
 import { VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META } from "@rydar/shared";
-import { Ban, CheckCircle2, FilePlus2, KeyRound, Pencil, PowerOff } from "lucide-react";
+import { Ban, CheckCircle2, FilePlus2, KeyRound, LogOut, Pencil, PowerOff } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { addDriverDocument, resetDriverPassword, setDriverStatus, updateDriver } from "@/app/dashboard/drivers/actions";
+import { addDriverDocument, resetDriverPassword, revokeDriverSessions, setDriverStatus, updateDriver } from "@/app/dashboard/drivers/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
@@ -55,6 +55,9 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
           <Button variant="secondary" onClick={() => setDialog("password")}>
             <KeyRound /> Mot de passe
           </Button>
+          <Button variant="secondary" loading={pending} onClick={() => run(() => revokeDriverSessions(driver.id), "Chauffeur déconnecté de tous ses appareils")}>
+            <LogOut /> Déconnecter
+          </Button>
           {driver.status !== "active" && (
             <Button variant="primary" loading={pending} onClick={() => run(() => setDriverStatus(driver.id, { status: "active" }), "Chauffeur activé")}>
               <CheckCircle2 /> Activer
@@ -88,7 +91,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
       </Dialog>
 
       <Dialog open={dialog === "password"} onOpenChange={(o) => !o && setDialog(null)}>
-        <DialogContent title="Nouveau mot de passe" description="Les sessions existantes restent valides jusqu'à expiration ; suspendez pour couper l'accès immédiatement.">
+        <DialogContent title="Nouveau mot de passe" description="Le chauffeur est déconnecté de tous ses appareils et devra se reconnecter avec ce mot de passe.">
           <Field label="Mot de passe" hint="10 caractères minimum.">
             <Input value={password} onChange={(e) => setPassword(e.target.value)} className="num" />
           </Field>

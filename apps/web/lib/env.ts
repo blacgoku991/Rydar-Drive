@@ -19,6 +19,5 @@ export function serverEnv() {
     geocoder: (process.env.GEOCODER_PROVIDER ?? "geopf") as "geopf" | "google" | "mapbox",
     googleMapsKey: process.env.GOOGLE_MAPS_API_KEY ?? "",
     mapboxToken: process.env.MAPBOX_TOKEN ?? "",
-    turnstileSecret: process.env.TURNSTILE_SECRET_KEY ?? "",
   };
 }

@@ -127,7 +127,6 @@ export const apiRideCreateSchema = z
     comment: optionalText(2000),
     flight_number: flightNumber.optional(),
     external_reference: optionalText(100),
-    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .superRefine((v, ctx) => {
     if ((v.date && !v.time) || (!v.date && v.time)) {

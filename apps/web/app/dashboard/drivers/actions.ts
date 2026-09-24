@@ -174,7 +174,19 @@ export async function resetDriverPassword(driverId: string, password: string): P
   if (!driver?.user_id) return { ok: false, error: "Chauffeur introuvable." };
   const { error } = await createAdminClient().auth.admin.updateUserById(driver.user_id, { password });
   if (error) return { ok: false, error: "Impossible de modifier le mot de passe." };
+  // Nouveau mot de passe = déconnexion de tous les appareils
+  await ctx.supabase.rpc("revoke_driver_sessions", { p_driver_id: driverId });
   await audit({ organizationId: ctx.org.id, actorUserId: ctx.user.id, action: "driver.password_reset", entityType: "drivers", entityId: driverId, severity: "warning" });
+  return { ok: true };
+}
+
+/** Ferme toutes les sessions du chauffeur (téléphone perdu, changement d'appareil…). */
+export async function revokeDriverSessions(driverId: string): Promise<Result> {
+  const ctx = await fleetManager();
+  if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent déconnecter un chauffeur." };
+  const { error } = await ctx.supabase.rpc("revoke_driver_sessions", { p_driver_id: driverId });
+  if (error) return { ok: false, error: humanizeError(error.message, actionError(error)) };
+  revalidatePath(`/dashboard/drivers/${driverId}`);
   return { ok: true };
 }
 
