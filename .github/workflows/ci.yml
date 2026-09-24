@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  EXPO_NO_TELEMETRY: "1"
+
+jobs:
+  checks:
+    name: Typecheck · tests unitaires · builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck (shared, web, worker, app chauffeur)
+        run: pnpm typecheck
+      - name: Tests unitaires
+        run: pnpm test
+      - name: Build worker
+        run: pnpm --filter @rydar/worker build
+      - name: Build web
+        run: pnpm --filter @rydar/web build
+        env:
+          # Valeurs factices : aucune page n'appelle Supabase au build.
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-anon-key
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          NEXT_PUBLIC_ROOT_DOMAIN: rydar.localhost
+
+  database:
+    name: PostgreSQL — RLS, dispatch, concurrence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Dépendances (racine uniquement)
+        run: pnpm install --frozen-lockfile --filter rydar-drive
+      - name: Tests base de données (stubs Supabase + migrations sur base vierge)
+        run: pnpm test:db
+        env:
+          TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      - name: Migrations + seed de démonstration sur une base neuve
+        env:
+          DB_NAME: rydar_demo
+          PGHOST: 127.0.0.1
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          bash scripts/db-local.sh --reset --seed
+          test "$(psql -d rydar_demo -tAc 'select count(*) from public.drivers')" = "19"
+          test "$(psql -d rydar_demo -tAc 'select count(*) from public.organizations')" = "2"

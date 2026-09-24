@@ -9,7 +9,7 @@
     "prebuild": "node scripts/copy-maplibre.mjs",
     "build": "next build",
     "start": "next start --port 3000",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@rydar/shared": "workspace:*",
