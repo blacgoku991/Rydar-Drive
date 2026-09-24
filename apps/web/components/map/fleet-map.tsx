@@ -32,6 +32,8 @@ type Props = {
   className?: string;
   interactive?: boolean;
   initialZoom?: number;
+  /** Points à cadrer au chargement (sinon : flotte en ligne + courses proches). */
+  focus?: [number, number][];
 };
 
 const STALE_MS = 3 * 60_000;
@@ -87,6 +89,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     className,
     interactive = true,
     initialZoom = 11.6,
+    focus,
   },
   ref,
 ) {
@@ -102,8 +105,8 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   callbacks.current = { onSelectDriver, onSelectRide };
   const paddingRef = useRef(padding);
   paddingRef.current = padding;
-  const dataRef = useRef({ drivers, rides });
-  dataRef.current = { drivers, rides };
+  const dataRef = useRef({ drivers, rides, focus });
+  dataRef.current = { drivers, rides, focus };
 
   // ---------------------------------------------------------------- init
   useEffect(() => {
@@ -190,10 +193,10 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     const map = mapRef.current;
     const lib = libRef.current;
     if (!map || !lib) return;
-    const pts: [number, number][] = [];
-    for (const d of dataRef.current.drivers) if (d.location && d.presence !== "offline") pts.push([d.location.lng, d.location.lat]);
+    const pts: [number, number][] = [...(dataRef.current.focus ?? [])];
+    if (!pts.length) for (const d of dataRef.current.drivers) if (d.location && d.presence !== "offline") pts.push([d.location.lng, d.location.lat]);
     const soon = Date.now() + 2 * 3600_000;
-    for (const r of dataRef.current.rides)
+    if (!dataRef.current.focus?.length) for (const r of dataRef.current.rides)
       if (!["COMPLETED", "CANCELLED", "NO_DRIVER_FOUND"].includes(r.status) && new Date(r.pickup_at).getTime() < soon) pts.push([r.pickup_lng, r.pickup_lat]);
     if (!pts.length) return;
     const bounds = pts.reduce((b, p) => b.extend(p), new lib.LngLatBounds(pts[0]!, pts[0]!));

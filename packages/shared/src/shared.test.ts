@@ -88,3 +88,11 @@ describe("schémas", () => {
     expect(res.success).toBe(false);
   });
 });
+
+import { zonedTimeToUtc } from "./time";
+describe("fuseaux horaires", () => {
+  it("heure locale Paris → UTC (été / hiver)", () => {
+    expect(zonedTimeToUtc("2026-09-25", "06:30", "Europe/Paris").toISOString()).toBe("2026-09-25T04:30:00.000Z");
+    expect(zonedTimeToUtc("2026-12-25", "06:30", "Europe/Paris").toISOString()).toBe("2026-12-25T05:30:00.000Z");
+  });
+});

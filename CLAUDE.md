@@ -33,14 +33,18 @@ Accent marque lime `--brand`. Statuts : available lime, offered amber #FFB020, e
 Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center).
 
 ## Local
+- Stack Supabase sans Docker : `bash scripts/local-stack/setup.sh` puis `start.sh` (GoTrue 54332, PostgREST 54331, passerelle 54321) ; clés → `apps/web/.env.local`.
+- Dev web : `cd apps/web && npx next dev` ; captures Playwright : script scratchpad `shot.cjs` (LOGIN=email:mdp).
+- Sandbox : tuiles/geocodage externes bloqués → style offline `public/dev-map` (gitignoré).
+- Tailwind v4 : classes custom = `@utility` (sinon pas de variantes `lg:`). MapLibre v6 ESM : worker copié dans public/vendor (predev).
 - PG16+PostGIS local : `pg_ctlcluster 16 main start` ; Redis `redis-server --daemonize yes`.
 - Tests DB : `pnpm test:db` (crée DB `rydar_test`, applique `scripts/sql/local-supabase-stubs.sql` + migrations).
 
 ## Avancement (cocher au fil de l'eau)
 - [x] M0 scaffold monorepo
 - [x] M1 DB : 9 migrations + seed + 32 tests verts (`pnpm test:db`)
-- [ ] M2 shared
-- [ ] M3 web socle (design system, auth, layouts)
+- [x] M2 shared (tests `pnpm test`)
+- [x] M3 web socle + command center (`apps/web/components/command`, carte `components/map/fleet-map.tsx`)
 - [ ] M4 super admin
 - [ ] M5 rattacheur (command center carte, courses, nouvelle course, chauffeurs, journal, stats, API keys, mini-site, réglages)
 - [ ] M6 API v1 + booking site + geocode + rate limit
