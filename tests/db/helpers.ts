@@ -158,7 +158,50 @@ export async function createRideAsOwner(org: Org, overrides: Record<string, unkn
 
 export async function rideState(rideId: string) {
   const [ride] = await sql(`select * from public.rides where id = $1`, [rideId]);
-  const offers = await sql(`select * from public.ride_offers where ride_id = $1 order by sent_at, driver_id`, [rideId]);
+  const offers = await sql(`select * from public.ride_offers where ride_id = $1 order by sent_at, distance_m nulls last, driver_id`, [rideId]);
   const events = await sql(`select * from public.ride_events where ride_id = $1 order by id`, [rideId]);
   return { ride, offers, events };
 }
+
+/**
+ * Insère une course « historique » (statut et horodatages libres) via le mode
+ * import du seed : connexion directe + GUC rydar.bypass_ride_rules, sans JWT.
+ */
+export async function insertRideBypass(org: Org, fields: Record<string, unknown>) {
+  const ride = {
+    organization_id: org.id,
+    type: "instant",
+    status: "COMPLETED",
+    source: "dashboard",
+    pickup_address: "Place de l'Opéra, 75009 Paris",
+    pickup_lat: 48.872,
+    pickup_lng: 2.3316,
+    dropoff_address: "Gare de Lyon, 75012 Paris",
+    pickup_at: new Date(),
+    customer_name: "Client Historique",
+    customer_phone: "+33600000001",
+    passengers: 1,
+    vehicle_category: "business",
+    price_cents: 5000,
+    ...fields,
+  };
+  const cols = Object.keys(ride);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select set_config('rydar.bypass_ride_rules', 'on', true)");
+    const { rows } = await client.query(
+      `insert into public.rides (${cols.join(", ")}) values (${cols.map((_, i) => `$${i + 1}`).join(", ")}) returning id`,
+      Object.values(ride),
+    );
+    await client.query("commit");
+    return rows[0].id as string;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
