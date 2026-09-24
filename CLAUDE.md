@@ -45,9 +45,9 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [x] M1 DB : 9 migrations + seed + 32 tests verts (`pnpm test:db`)
 - [x] M2 shared (tests `pnpm test`)
 - [x] M3 web socle + command center (`apps/web/components/command`, carte `components/map/fleet-map.tsx`)
-- [ ] M4 super admin
-- [ ] M5 rattacheur (command center carte, courses, nouvelle course, chauffeurs, journal, stats, API keys, mini-site, réglages)
-- [ ] M6 API v1 + booking site + geocode + rate limit
+- [ ] M4 super admin (à faire)
+- [~] M5 rattacheur : FAIT command center, courses+détail, chauffeurs+fiche, journal, stats, intégrations/API keys ; RESTE mini-site (réglages), réglages (org/dispatch/tarifs/équipe/facturation)
+- [~] M6 FAIT API v1 (`apps/web/lib/api/v1.ts`, testée curl : 201/200 idempotent/403/401/422/429) + geocode ; RESTE mini-site public `/book/[slug]`
 - [ ] M7 worker
 - [ ] M8 app chauffeur
 - [ ] M9 Stripe

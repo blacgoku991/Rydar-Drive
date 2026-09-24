@@ -2,6 +2,9 @@ import { z } from "zod";
 import { PAYMENT_METHODS, VEHICLE_CATEGORIES } from "./domain";
 import { normalizePhone } from "./format";
 
+// Messages de validation en français (API publique, formulaires).
+z.config(z.locales.fr());
+
 // -----------------------------------------------------------------------------
 // Briques
 // -----------------------------------------------------------------------------
