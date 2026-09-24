@@ -1,6 +1,6 @@
 "use client";
 import {
-  PAYMENT_METHOD_LABELS, RIDE_STATUS_META, VEHICLE_CATEGORY_META, formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate,
+  DEFAULT_DISPATCH_RADII_M, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, VEHICLE_CATEGORY_META, formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate,
   formatTime, haversine, initials, type DriverPresence, type PaymentMethod, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeft, ExternalLink, Luggage, Phone, Plane, Users } from "lucide-react";
@@ -99,7 +99,7 @@ export function RideFocus({
           <p className="mt-1 text-[12.5px] text-fg-muted">
             {SEARCHING.has(status)
               ? ride.type === "instant"
-                ? `Vague ${ride.dispatch_wave || 1} · rayon ${formatDistance(ride.dispatch_radius_m ?? 3000)} · ${offers} chauffeur${offers > 1 ? "s" : ""} sollicité${offers > 1 ? "s" : ""}`
+                ? `Vague ${ride.dispatch_wave || 1} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])} · ${offers} chauffeur${offers > 1 ? "s" : ""} sollicité${offers > 1 ? "s" : ""}`
                 : `Proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`
               : eta != null
                 ? `Arrivée au départ dans ~${formatDuration(eta)} (${formatTime(new Date(Date.now() + eta * 1000))})`

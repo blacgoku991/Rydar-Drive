@@ -7,8 +7,8 @@ export const metadata: Metadata = { title: "Connexion" };
 
 const FEED = [
   { t: "14:32:02", m: "Course #1928 reçue via le site", tone: "text-fg-muted" },
-  { t: "14:32:03", m: "Recherche GPS — rayon 3 km", tone: "text-fg-muted" },
-  { t: "14:32:04", m: "5 chauffeurs à moins de 3 km", tone: "text-fg" },
+  { t: "14:32:03", m: "Recherche GPS — rayon 4 km", tone: "text-fg-muted" },
+  { t: "14:32:04", m: "5 chauffeurs à moins de 4 km", tone: "text-fg" },
   { t: "14:32:04", m: "5 notifications envoyées", tone: "text-fg" },
   { t: "14:32:11", m: "Mohamed accepte · course verrouillée", tone: "text-brand" },
 ];

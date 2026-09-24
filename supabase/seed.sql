@@ -19,7 +19,7 @@ insert into public.plans (code, name, description, price_monthly_cents, price_ye
 values
   ('starter', 'Starter', 'Pour démarrer et quitter WhatsApp.', 4900, 49000,
    '{"max_drivers":10,"max_rides_per_month":500,"max_admins":2,"api_access":false,"booking_site":false,"custom_domain":false,"advanced_stats":false,"history_days":90}',
-   array['Dispatch automatique 3 → 12 km', 'Application chauffeur iOS & Android', 'Carte temps réel', 'Jusqu''à 10 chauffeurs', '500 courses / mois'],
+   array['Dispatch automatique 4 → 16 km', 'Application chauffeur iOS & Android', 'Carte temps réel', 'Jusqu''à 10 chauffeurs', '500 courses / mois'],
    false, 1),
   ('pro', 'Pro', 'Connectez votre site et automatisez tout.', 14900, 149000,
    '{"max_drivers":40,"max_rides_per_month":3000,"max_admins":5,"api_access":true,"booking_site":true,"custom_domain":false,"advanced_stats":true,"history_days":365}',
@@ -351,7 +351,7 @@ begin
           case when v_status = 'COMPLETED' then v_driver.id end,
           case when v_status = 'COMPLETED' then v_driver.vehicle_id end,
           case when v_status = 'NO_DRIVER_FOUND' then 4 else 1 end,
-          case when v_status = 'NO_DRIVER_FOUND' then 12000 else 3000 end,
+          case when v_status = 'NO_DRIVER_FOUND' then 16000 else 4000 end,
           v_created, v_created + interval '1 second',
           case when v_status = 'COMPLETED' then v_accept end,
           case when v_status = 'COMPLETED' then v_pickup - interval '14 minutes' end,
@@ -371,20 +371,20 @@ begin
         if v_status = 'COMPLETED' then
           v_offer_dist := 250 + floor(random() * 2700)::int;
           insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, expires_at, responded_at)
-          values (v_org.id, v_ride, v_driver.id, 'accepted', 'geo', 1, 3000, v_offer_dist, v_created + interval '1 second',
+          values (v_org.id, v_ride, v_driver.id, 'accepted', 'geo', 1, 4000, v_offer_dist, v_created + interval '1 second',
                   v_created + interval '31 seconds', v_accept)
           returning id into v_offer;
           insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, expires_at, responded_at, closed_reason)
           select v_org.id, v_ride, x.id,
                  case when random() < 0.15 then 'declined' else 'closed' end::public.offer_status,
-                 'geo', 1, 3000, 400 + floor(random() * 2500)::int, v_created + interval '1 second', v_created + interval '31 seconds', v_accept,
+                 'geo', 1, 4000, 400 + floor(random() * 3500)::int, v_created + interval '1 second', v_created + interval '31 seconds', v_accept,
                  'assigned_to_other'
           from (select id from public.drivers where organization_id = v_org.id and id <> v_driver.id order by random() limit v_candidates - 1) x;
           insert into public.ride_assignments (organization_id, ride_id, driver_id, vehicle_id, offer_id, method, assigned_at)
           values (v_org.id, v_ride, v_driver.id, v_driver.vehicle_id, v_offer, 'accepted', v_accept);
         elsif v_status = 'NO_DRIVER_FOUND' then
           insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, expires_at, responded_at, closed_reason)
-          select v_org.id, v_ride, x.id, 'expired', 'geo', 3, 8000, 5000 + floor(random() * 3000)::int,
+          select v_org.id, v_ride, x.id, 'expired', 'geo', 3, 12000, 8500 + floor(random() * 3500)::int,
                  v_created + interval '61 seconds', v_created + interval '91 seconds', v_created + interval '91 seconds', 'timeout'
           from (select id from public.drivers where organization_id = v_org.id order by random() limit 2) x;
         end if;
@@ -394,10 +394,10 @@ begin
           (v_org.id, v_ride, 'timeline', 'info', 'ride.created',
            case v_source when 'api' then 'Course reçue via l''API (site du rattacheur)' when 'booking_site' then 'Course reçue via le site de réservation' else 'Course créée par le rattacheur' end,
            case v_source when 'api' then 'api' when 'booking_site' then 'booking_site' else 'user' end::public.actor_type, '{}', v_created),
-          (v_org.id, v_ride, 'timeline', 'info', 'dispatch.search', 'Recherche GPS — rayon 3 km (vague 1)', 'system', '{"wave":1,"radius_m":3000}', v_created + interval '400 milliseconds'),
+          (v_org.id, v_ride, 'timeline', 'info', 'dispatch.search', 'Recherche GPS — rayon 4 km (vague 1)', 'system', '{"wave":1,"radius_m":4000}', v_created + interval '400 milliseconds'),
           (v_org.id, v_ride, 'timeline', 'info', 'dispatch.online', format('%s chauffeurs en ligne', v_online), 'system', jsonb_build_object('online', v_online), v_created + interval '450 milliseconds'),
           (v_org.id, v_ride, 'timeline', case when v_status = 'NO_DRIVER_FOUND' then 'warning' else 'info' end::public.event_level, 'dispatch.candidates',
-           format('%s %s à moins de 3 km', case when v_status = 'NO_DRIVER_FOUND' then 0 else v_candidates end,
+           format('%s %s à moins de 4 km', case when v_status = 'NO_DRIVER_FOUND' then 0 else v_candidates end,
              private.pl(case when v_status = 'NO_DRIVER_FOUND' then 0 else v_candidates end, 'chauffeur', 'chauffeurs')),
            'system', jsonb_build_object('candidates', v_candidates), v_created + interval '900 milliseconds');
 

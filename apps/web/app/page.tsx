@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 const FEATURES = [
-  { icon: Radar, title: "Dispatch par vagues", text: "3 km, puis 5, 8, 12 km : les chauffeurs en ligne, disponibles et compatibles les plus proches sont notifiés en même temps." },
+  { icon: Radar, title: "Dispatch par vagues", text: "4 km, puis 8, 12, 16 km : les chauffeurs en ligne, disponibles et compatibles les plus proches sont notifiés en même temps." },
   { icon: Zap, title: "Le premier qui accepte", text: "Verrou transactionnel PostgreSQL : une course n'est jamais attribuée deux fois. Les autres voient « Course déjà attribuée »." },
   { icon: MapPinned, title: "Carte temps réel", text: "Toute votre flotte en direct : disponibles, course proposée, en route, arrivé, en course. Rayons et offres visibles." },
   { icon: Smartphone, title: "App chauffeur iOS & Android", text: "EN LIGNE / HORS LIGNE, sonnerie, ACCEPTER en un geste, cycle de course guidé, position en arrière-plan." },
@@ -25,9 +25,9 @@ const FEATURES = [
 
 const TIMELINE = [
   ["14:32:02", "Course créée par le rattacheur", "text-fg-muted"],
-  ["14:32:03", "Recherche GPS — rayon 3 km", "text-fg-muted"],
+  ["14:32:03", "Recherche GPS — rayon 4 km", "text-fg-muted"],
   ["14:32:03", "12 chauffeurs en ligne", "text-fg"],
-  ["14:32:04", "5 chauffeurs à moins de 3 km", "text-fg"],
+  ["14:32:04", "5 chauffeurs à moins de 4 km", "text-fg"],
   ["14:32:04", "5 notifications envoyées", "text-brand"],
   ["14:32:11", "Mohamed accepte", "text-brand"],
   ["14:32:11", "Course verrouillée", "text-fg"],

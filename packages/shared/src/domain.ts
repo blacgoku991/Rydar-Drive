@@ -190,7 +190,7 @@ export function classifyRide(pickupAt: Date | null, now: Date, instantThresholdM
   return pickupAt.getTime() <= now.getTime() + instantThresholdMinutes * 60_000 ? "instant" : "scheduled";
 }
 
-export const DEFAULT_DISPATCH_RADII_M = [3000, 5000, 8000, 12000] as const;
+export const DEFAULT_DISPATCH_RADII_M = [4000, 8000, 12000, 16000] as const;
 export const DEFAULT_REMINDER_OFFSETS_MIN = [1440, 180, 60, 30] as const;
 
 /** Codes d'erreur métier renvoyés par les RPC / l'API. */

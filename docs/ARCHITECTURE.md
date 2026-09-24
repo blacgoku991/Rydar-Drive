@@ -28,7 +28,7 @@ Les paramètres de dispatch sont réglables par organisation (`organization_sett
 
 | Paramètre | Défaut | Effet |
 | --- | --- | --- |
-| `dispatch_radii_m` | `{3000, 5000, 8000, 12000}` | Rayons successifs des vagues GPS |
+| `dispatch_radii_m` | `{4000, 8000, 12000, 16000}` | Rayons successifs des vagues GPS |
 | `offer_timeout_seconds` | 30 | Durée de vie d'une offre instantanée |
 | `max_search_seconds` | 300 | Au-delà : `NO_DRIVER_FOUND` |
 | `max_offers_per_wave` | 25 | Chauffeurs notifiés au plus par vague |
@@ -57,7 +57,7 @@ Qu'elle vienne de l'API, du dashboard ou du mini-site, une course passe par le t
 - ils n'ont pas déjà décliné cette course ;
 - ils se trouvent à moins de R mètres : `ST_DWithin(driver_locations.location, rides.pickup_location, R)`.
 
-Ils sont triés par distance, dans la limite de `max_offers_per_wave`. S'il n'y a personne dans 3 km, la vague suivante (5 km, puis 8, puis 12) est lancée **immédiatement**, dans la même transaction.
+Ils sont triés par distance, dans la limite de `max_offers_per_wave`. S'il n'y a personne dans 4 km, la vague suivante (8 km, puis 12, puis 16) est lancée **immédiatement**, dans la même transaction.
 
 Pour les chauffeurs retenus, le moteur crée dans une seule transaction :
 
@@ -65,7 +65,7 @@ Pour les chauffeurs retenus, le moteur crée dans une seule transaction :
 - une notification dans l'outbox ;
 - le passage du chauffeur à `offered`.
 
-La course passe à `OFFERED`. La timeline enregistre par exemple : « Recherche GPS — rayon 3 km (vague 1) », « 12 chauffeurs en ligne », « 5 chauffeurs à moins de 3 km », « 5 notifications envoyées ».
+La course passe à `OFFERED`. La timeline enregistre par exemple : « Recherche GPS — rayon 4 km (vague 1) », « 12 chauffeurs en ligne », « 5 chauffeurs à moins de 4 km », « 5 notifications envoyées ».
 
 Toutes les 2 s, le worker appelle `private.dispatch_tick()`. Cette fonction verrouille les courses dues avec `FOR UPDATE SKIP LOCKED`, ce qui permet de lancer plusieurs workers. Elle expire les offres sans réponse, libère les chauffeurs et relance une vague. Si la recherche dépasse `max_search_seconds`, la course passe à `NO_DRIVER_FOUND`.
 

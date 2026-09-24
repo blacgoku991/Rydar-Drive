@@ -1,5 +1,5 @@
 import "server-only";
-import { estimatePrice, haversine, isCategoryCompatible, matchFixedFare, type LatLng, type PricingRule, type VehicleCategory } from "@rydar/shared";
+import { DEFAULT_DISPATCH_RADII_M, estimatePrice, haversine, isCategoryCompatible, matchFixedFare, type LatLng, type PricingRule, type VehicleCategory } from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { approachTimes, computeRoute, type Route } from "@/lib/geo/routing";
 
@@ -20,7 +20,7 @@ export type Quote = {
   meteredCents: number | null;
   pricingRule: string | null;
   fixedFare: { label: string; price_cents: number } | null;
-  nearby: { total: number; within3km: number; drivers: NearbyDriver[] };
+  nearby: { total: number; firstRadiusM: number; withinFirstRadius: number; drivers: NearbyDriver[] };
 };
 
 /**
@@ -61,7 +61,7 @@ export async function quoteRide(
 
   const allowUpgrade = settings.data?.allow_category_upgrade ?? true;
   const maxAgeMs = (settings.data?.location_max_age_seconds ?? 180) * 1000;
-  const radii = (settings.data?.dispatch_radii_m as number[] | undefined) ?? [3000, 5000, 8000, 12000];
+  const radii = (settings.data?.dispatch_radii_m as number[] | undefined) ?? [...DEFAULT_DISPATCH_RADII_M];
   const maxRadius = Math.max(...radii);
   const now = Date.now();
   const candidates = ((fleet.data ?? []) as any[])
@@ -99,6 +99,6 @@ export async function quoteRide(
     meteredCents,
     pricingRule: fixedFare ? `forfait ${fixedFare.label}` : (rule?.name ?? null),
     fixedFare,
-    nearby: { total: candidates.length, within3km: candidates.filter((c) => c.distanceM <= 3000).length, drivers },
+    nearby: { total: candidates.length, firstRadiusM: radii[0]!, withinFirstRadius: candidates.filter((c) => c.distanceM <= radii[0]!).length, drivers },
   };
 }

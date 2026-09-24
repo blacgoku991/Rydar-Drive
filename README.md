@@ -22,7 +22,7 @@
   2. La **création manuelle** dans le dashboard (« Nouvelle course » : téléphone, hôtel, conciergerie…).
 
   En option, un **mini-site de réservation** aux couleurs de l'organisation : `slug.rydar.app` ou domaine personnalisé.
-- **Dispatch instantané** : chauffeurs de l'organisation, en ligne, disponibles, de catégorie compatible, à moins de **3 km** (PostGIS `ST_DWithin`). Le rayon s'élargit ensuite par vagues **3 → 5 → 8 → 12 km** (configurable). Toutes les offres partent en même temps, avec sonnerie, vibration et bouton ACCEPTER.
+- **Dispatch instantané** : chauffeurs de l'organisation, en ligne, disponibles, de catégorie compatible, à moins de **4 km** (PostGIS `ST_DWithin`). S'il n'y a personne, le rayon s'élargit par vagues **4 → 8 → 12 → 16 km** (configurable). Toutes les offres partent en même temps, avec sonnerie, vibration et bouton ACCEPTER.
 - **Acceptation atomique** : verrou transactionnel PostgreSQL et index unique partiel. Les autres chauffeurs reçoivent « Course déjà attribuée. ».
 - **Courses planifiées** proposées à la flotte, avec rappels à 24 h, 3 h, 1 h et 30 min.
 - **Cycle de vie complet** : `CREATED → SEARCHING_DRIVER → OFFERED → ACCEPTED → DRIVER_EN_ROUTE → DRIVER_ARRIVED → PASSENGER_ONBOARD → IN_PROGRESS → COMPLETED`, plus `CANCELLED` et `NO_DRIVER_FOUND`. Chaque étape est horodatée dans une **timeline** par course.
@@ -123,7 +123,7 @@ pnpm typecheck    # shared, web, worker, app chauffeur
 Les tests `tests/db` prouvent notamment :
 
 - **isolation** : le rattacheur A ne lit ni ne modifie rien de B. Changer `organization_id` est refusé en 42501, soit 403 côté API.
-- **dispatch** : seuls les chauffeurs éligibles à moins de 3 km reçoivent l'offre, les vagues s'élargissent, `NO_DRIVER_FOUND` à l'échéance.
+- **dispatch** : seuls les chauffeurs éligibles à moins de 4 km reçoivent l'offre, les vagues s'élargissent, `NO_DRIVER_FOUND` à l'échéance.
 - **concurrence** : 10 chauffeurs acceptent en même temps et **un seul** obtient la course.
 - **limites des offres, rôles, audit, file de notifications, indicateurs**.
 

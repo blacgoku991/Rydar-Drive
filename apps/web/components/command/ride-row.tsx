@@ -1,5 +1,5 @@
 "use client";
-import { RIDE_STATUS_META, formatDistance, formatPrice, formatTime, shortAddress, type RideStatus } from "@rydar/shared";
+import { DEFAULT_DISPATCH_RADII_M, RIDE_STATUS_META, formatDistance, formatPrice, formatTime, shortAddress, type RideStatus } from "@rydar/shared";
 import { CalendarClock } from "lucide-react";
 import { toneDot, toneText } from "@/components/ui/badge";
 import type { LiveDriver, LiveRide } from "@/lib/queries/live";
@@ -48,7 +48,7 @@ export function RideRow({
   let detail: string | null = null;
   if (searching) {
     detail = ride.type === "instant"
-      ? `${offers} offre${offers > 1 ? "s" : ""} · rayon ${formatDistance(ride.dispatch_radius_m ?? 3000)}${remaining > 0 ? ` · ${Math.ceil(remaining)} s` : ""}`
+      ? `${offers} offre${offers > 1 ? "s" : ""} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])}${remaining > 0 ? ` · ${Math.ceil(remaining)} s` : ""}`
       : `proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`;
   } else if (driver) {
     detail = `${driver.first_name} ${driver.last_name.charAt(0)}. · ${driver.vehicle?.plate ?? ""}`;

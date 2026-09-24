@@ -16,12 +16,12 @@ afterAll(async () => {
 });
 
 describe("Dispatch instantané (PostGIS)", () => {
-  it("n'offre la course qu'aux chauffeurs du tenant, en ligne, compatibles, à moins de 3 km", async () => {
+  it("n'offre la course qu'aux chauffeurs du tenant, en ligne, compatibles, à moins de 4 km", async () => {
     const org = await createOrg("Geo");
     const other = await createOrg("Geo Other");
     const near1 = await createDriver(org, { firstName: "Near1", at: north(CHAMPS_ELYSEES, 900) });
     const near2 = await createDriver(org, { firstName: "Near2", at: north(CHAMPS_ELYSEES, 2500) });
-    await createDriver(org, { firstName: "Far", at: north(CHAMPS_ELYSEES, 4200) });
+    await createDriver(org, { firstName: "Far", at: north(CHAMPS_ELYSEES, 4600) });
     await createDriver(org, { firstName: "Offline", at: north(CHAMPS_ELYSEES, 300), presence: "offline" });
     await createDriver(org, { firstName: "Stale", at: north(CHAMPS_ELYSEES, 300), locationAgeSeconds: 900 });
     await createDriver(org, { firstName: "Van", at: north(CHAMPS_ELYSEES, 200), category: "van", seats: 7 });
@@ -33,7 +33,7 @@ describe("Dispatch instantané (PostGIS)", () => {
 
     expect(r.type).toBe("instant");
     expect(r.status).toBe("OFFERED");
-    expect(r.dispatch_radius_m).toBe(3000);
+    expect(r.dispatch_radius_m).toBe(4000);
     expect(offers.map((o) => o.driver_id).sort()).toEqual([near1.id, near2.id].sort());
     expect(offers.find((o) => o.driver_id === foreign.id)).toBeUndefined();
     expect(offers[0].distance_m).toBeGreaterThan(800);
@@ -42,7 +42,7 @@ describe("Dispatch instantané (PostGIS)", () => {
     const messages = events.map((e) => e.message);
     expect(messages).toContain("Course créée par le rattacheur");
     expect(messages).toContain("Course instantanée détectée");
-    expect(messages).toContain("2 chauffeurs à moins de 3 km");
+    expect(messages).toContain("2 chauffeurs à moins de 4 km");
     expect(messages).toContain("2 notifications envoyées");
 
     const notifs = await sql("select driver_id, title, body from public.notifications where ride_id = $1", [ride.id]);
@@ -54,16 +54,43 @@ describe("Dispatch instantané (PostGIS)", () => {
     expect(presences.every((p) => p.presence === "offered")).toBe(true);
   });
 
-  it("élargit immédiatement le rayon (3 → 5 km) quand personne n'est proche", async () => {
+  it("élargit immédiatement le rayon (4 → 8 km) quand personne n'est proche", async () => {
     const org = await createOrg("Waves");
     const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 4300) });
     const ride = await createRideAsOwner(org);
     const { ride: r, offers, events } = await rideState(ride.id);
     expect(r.status).toBe("OFFERED");
     expect(r.dispatch_wave).toBe(2);
-    expect(r.dispatch_radius_m).toBe(5000);
+    expect(r.dispatch_radius_m).toBe(8000);
     expect(offers.map((o) => o.driver_id)).toEqual([d.id]);
-    expect(events.map((e) => e.message)).toContain("0 chauffeur à moins de 3 km");
+    expect(events.map((e) => e.message)).toContain("0 chauffeur à moins de 4 km");
+  });
+
+  it.each([
+    [2500, 1, 4000],
+    [6000, 2, 8000],
+    [10500, 3, 12000],
+    [15000, 4, 16000],
+  ])("chauffeur à %i m → vague %i, rayon %i m (4 → 8 → 12 → 16 km)", async (distance, wave, radius) => {
+    const org = await createOrg(`Waves ${distance}`);
+    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, distance) });
+    const ride = await createRideAsOwner(org);
+    const { ride: r, offers } = await rideState(ride.id);
+    expect(r.status).toBe("OFFERED");
+    expect(r.dispatch_wave).toBe(wave);
+    expect(r.dispatch_radius_m).toBe(radius);
+    expect(offers.map((o) => [o.driver_id, o.wave, o.radius_m])).toEqual([[d.id, wave, radius]]);
+  });
+
+  it("au-delà de 16 km, personne n'est sollicité et la course reste en recherche", async () => {
+    const org = await createOrg("Too far");
+    await createDriver(org, { at: north(CHAMPS_ELYSEES, 17500) });
+    const ride = await createRideAsOwner(org);
+    const { ride: r, offers, events } = await rideState(ride.id);
+    expect(r.status).toBe("SEARCHING_DRIVER");
+    expect(offers).toHaveLength(0);
+    const messages = events.map((e) => e.message);
+    for (const km of [4, 8, 12, 16]) expect(messages).toContain(`0 chauffeur à moins de ${km} km`);
   });
 
   it("respecte catégorie, upgrade et nombre de places", async () => {

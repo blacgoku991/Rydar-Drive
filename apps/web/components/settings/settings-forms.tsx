@@ -133,7 +133,7 @@ export function DispatchSettingsForm({ settings, readOnly }: { settings: OrgSett
                 </div>
               ))}
               {!readOnly && s.dispatch_radii_m.length < 8 && (
-                <Button type="button" variant="outline" size="sm" onClick={() => set("dispatch_radii_m", [...s.dispatch_radii_m, (s.dispatch_radii_m.at(-1) ?? 3000) + 5000])}>
+                <Button type="button" variant="outline" size="sm" onClick={() => set("dispatch_radii_m", [...s.dispatch_radii_m, Math.min(100000, (s.dispatch_radii_m.at(-1) ?? 0) + 4000)])}>
                   <Plus /> Vague
                 </Button>
               )}

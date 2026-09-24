@@ -10,7 +10,7 @@ const BLIPS = [
   { x: 55, y: 80, c: "#c8f03c", d: "1.4s" },
 ];
 
-/** Scène radar animée (CSS pur) : vagues de dispatch 3 → 12 km autour d'une prise en charge. */
+/** Scène radar animée (CSS pur) : vagues de dispatch 4 → 16 km autour d'une prise en charge. */
 export function RadarScene({ className, showLabels = true }: { className?: string; showLabels?: boolean }) {
   return (
     <div className={cn("relative aspect-square w-full max-w-[640px]", className)}>
@@ -28,7 +28,7 @@ export function RadarScene({ className, showLabels = true }: { className?: strin
         >
           {showLabels && (
             <span className="num absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-ink-900 px-1.5 text-[10px] text-fg-subtle">
-              {["12 km", "8 km", "5 km", "3 km"][i]}
+              {["16 km", "12 km", "8 km", "4 km"][i]}
             </span>
           )}
         </div>

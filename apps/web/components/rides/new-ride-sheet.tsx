@@ -23,7 +23,7 @@ type Quote = {
   meteredCents: number | null;
   pricingRule: string | null;
   fixedFare: { label: string; price_cents: number } | null;
-  nearby: { total: number; within3km: number; drivers: { id: string; name: string; vehicle: string | null; lat: number; lng: number; distanceM: number; etaS: number }[] };
+  nearby: { total: number; firstRadiusM: number; withinFirstRadius: number; drivers: { id: string; name: string; vehicle: string | null; lat: number; lng: number; distanceM: number; etaS: number }[] };
 };
 
 const QUICK_PLACES = ["Aéroport CDG — Terminal 2E", "Aéroport d'Orly — Terminal 4", "Gare de Lyon", "Gare du Nord", "La Défense — Parvis"]
