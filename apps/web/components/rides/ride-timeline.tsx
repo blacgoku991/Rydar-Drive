@@ -19,9 +19,9 @@ export type TimelineEvent = {
 const LEVEL = {
   debug: { dot: "bg-fg-subtle", text: "text-fg-subtle" },
   info: { dot: "bg-blue", text: "text-fg" },
-  success: { dot: "bg-brand shadow-[0_0_10px_var(--color-brand)]", text: "text-brand" },
-  warning: { dot: "bg-amber shadow-[0_0_10px_var(--color-amber)]", text: "text-amber" },
-  error: { dot: "bg-red shadow-[0_0_10px_var(--color-red)]", text: "text-red" },
+  success: { dot: "bg-brand", text: "text-brand" },
+  warning: { dot: "bg-amber", text: "text-amber" },
+  error: { dot: "bg-red", text: "text-red" },
 };
 
 const HIDDEN_KEYS = new Set(["driver_ids"]);

@@ -1,5 +1,5 @@
 import {
-  RIDE_FILTER_STATUSES, RIDE_FILTERS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, formatPrice, formatRideDate, shortAddress,
+  RIDE_FILTER_STATUSES, RIDE_FILTERS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, formatDistance, formatPrice, formatRideDate, shortAddress,
   type RideFilterKey, type RideSource, type VehicleCategory,
 } from "@rydar/shared";
 import { ChevronLeft, ChevronRight, Route, Search } from "lucide-react";
@@ -7,6 +7,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { NewRideButton } from "@/components/rides/new-ride-button";
+import { RouteGlyph } from "@/components/rides/route-glyph";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -32,7 +33,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
   let query = ctx.supabase
     .from("rides")
     .select(
-      "id, number, type, status, source, pickup_address, dropoff_address, pickup_at, customer_name, customer_phone, vehicle_category, price_cents, driver:drivers!rides_organization_id_driver_id_fkey(first_name, last_name, number)",
+      "id, number, type, status, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, route_polyline, estimated_distance_m, pickup_at, customer_name, customer_phone, vehicle_category, price_cents, driver:drivers!rides_organization_id_driver_id_fkey(first_name, last_name, number)",
       { count: "exact" },
     )
     .eq("organization_id", ctx.org.id);
@@ -124,15 +125,20 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                     <TD>
                       <Link href={`/dashboard/rides/${r.id}`} className="absolute inset-0 z-0" aria-label={`Course ${r.number}`} />
                       <div className="flex items-center gap-2">
-                        <span className="num text-[13px] font-semibold text-fg">#{r.number}</span>
+                        <span className="text-[13px] font-semibold tabular-nums text-fg">#{r.number}</span>
                         <RideTypeTag type={r.type} />
                       </div>
                       <span className="text-[11.5px] text-fg-subtle">{RIDE_SOURCE_LABELS[r.source as RideSource]}</span>
                     </TD>
                     <TD className="whitespace-nowrap text-[13px] text-fg-muted">{formatRideDate(r.pickup_at, ctx.org.timezone)}</TD>
-                    <TD className="max-w-[320px]">
-                      <p className="truncate text-[13px] text-fg">{shortAddress(r.pickup_address)}</p>
-                      <p className="truncate text-[12px] text-fg-subtle">→ {shortAddress(r.dropoff_address)}</p>
+                    <TD className="max-w-[380px]">
+                      <div className="flex items-center gap-3">
+                        <RouteGlyph polyline={r.route_polyline} from={{ lat: r.pickup_lat, lng: r.pickup_lng }} to={{ lat: r.dropoff_lat, lng: r.dropoff_lng }} />
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] text-fg">{shortAddress(r.pickup_address)}</p>
+                          <p className="truncate text-[12px] text-fg-subtle">→ {shortAddress(r.dropoff_address)}{r.estimated_distance_m ? ` · ${formatDistance(r.estimated_distance_m)}` : ""}</p>
+                        </div>
+                      </div>
                     </TD>
                     <TD className="max-w-[220px]">
                       <p className="truncate text-[13px]">{r.customer_name}</p>
@@ -147,7 +153,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                         <span className="text-fg-subtle">—</span>
                       )}
                     </TD>
-                    <TD className="num text-right text-[14px] font-semibold">{formatPrice(r.price_cents)}</TD>
+                    <TD className="text-right text-[14px] font-semibold tabular-nums">{formatPrice(r.price_cents)}</TD>
                     <TD>
                       <RideStatusBadge status={r.status} />
                     </TD>

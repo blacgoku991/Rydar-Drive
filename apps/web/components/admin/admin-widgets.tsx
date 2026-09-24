@@ -71,7 +71,7 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
             <Field label="Ville" optional className="sm:col-span-2"><Input name="city" /></Field>
           </div>
           <div className="grid gap-4 rounded-xl border border-line bg-white/[0.02] p-4 sm:grid-cols-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-subtle sm:col-span-2">Compte propriétaire</p>
+            <p className="text-[13px] font-medium text-fg-muted sm:col-span-2">Compte propriétaire</p>
             <Field label="Nom complet"><Input name="ownerName" required /></Field>
             <Field label="E-mail"><Input name="ownerEmail" type="email" required /></Field>
             <Field label="Mot de passe provisoire" optional hint="Vide = invitation par e-mail" className="sm:col-span-2"><Input name="ownerPassword" className="num" /></Field>

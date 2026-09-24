@@ -1,7 +1,8 @@
 "use server";
-import { estimateRoute, fieldErrors, rideFormSchema, type RideFormInput, type RpcResult } from "@rydar/shared";
+import { fieldErrors, rideFormSchema, type RideFormInput, type RpcResult } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { actionError } from "@/lib/errors";
+import { rideRouteColumns } from "@/lib/geo/routing";
 import { getOrgContext } from "@/lib/org-context";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; fieldErrors?: Record<string, string> };
@@ -13,10 +14,7 @@ export async function createRide(input: RideFormInput): Promise<Result<{ id: str
   if (!parsed.success) return { ok: false, error: "Vérifiez les champs du formulaire.", fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt!;
-  const route =
-    v.dropoff.lat != null && v.dropoff.lng != null
-      ? estimateRoute({ lat: v.pickup.lat, lng: v.pickup.lng }, { lat: v.dropoff.lat, lng: v.dropoff.lng })
-      : null;
+  const route = await rideRouteColumns({ lat: v.pickup.lat, lng: v.pickup.lng }, v.dropoff);
 
   const { data, error } = await ctx.supabase
     .from("rides")
@@ -39,8 +37,7 @@ export async function createRide(input: RideFormInput): Promise<Result<{ id: str
       payment_method: v.paymentMethod,
       comment: v.comment ?? null,
       flight_number: v.flightNumber ?? null,
-      estimated_distance_m: route?.distanceM ?? null,
-      estimated_duration_s: route?.durationS ?? null,
+      ...route,
     })
     .select("id, number")
     .single();

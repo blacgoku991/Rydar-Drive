@@ -42,6 +42,11 @@ export type LiveRide = {
   dispatch_radius_m: number | null;
   next_dispatch_at: string | null;
   flight_number?: string | null;
+  estimated_distance_m?: number | null;
+  estimated_duration_s?: number | null;
+  route_polyline?: string | null;
+  payment_method?: string | null;
+  accepted_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -66,7 +71,7 @@ export type LiveSnapshot = {
 };
 
 const RIDE_FIELDS =
-  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, created_at, updated_at";
+  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, estimated_distance_m, estimated_duration_s, route_polyline, payment_method, accepted_at, created_at, updated_at";
 
 export async function getKpis(supabase: SupabaseClient, orgId: string): Promise<OrgKpis | null> {
   const { data } = await supabase.rpc("org_kpis", { p_org: orgId });

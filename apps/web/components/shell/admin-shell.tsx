@@ -36,7 +36,7 @@ export function AdminShell({ children, user }: { children: React.ReactNode; user
           </div>
         }
       />
-      <div className="lg:pl-[248px]">{children}</div>
+      <div className="lg:pl-[232px]">{children}</div>
     </>
   );
 }

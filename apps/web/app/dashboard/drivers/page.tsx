@@ -6,6 +6,7 @@ import { Search, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DriverFormSheet } from "@/components/drivers/driver-form-sheet";
+import { FleetOverviewMap } from "@/components/drivers/fleet-overview-map";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
 import { PresenceBadge } from "@/components/rides/status";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +37,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
   const [{ data: drivers }, { data: metrics }] = await Promise.all([
     ctx.supabase
       .from("drivers")
-      .select("id, number, first_name, last_name, phone, email, photo_url, status, presence, last_seen_at, vehicle:vehicles(model, brand, plate, category), location:driver_locations(updated_at)")
+      .select("id, number, first_name, last_name, phone, email, photo_url, status, presence, current_ride_id, online_since, last_seen_at, vehicle:vehicles(model, brand, plate, category, color, seats), location:driver_locations(lat, lng, heading, speed_mps, updated_at)")
       .eq("organization_id", ctx.org.id)
       .order("number"),
     ctx.supabase.rpc("org_driver_metrics", { p_org: ctx.org.id, p_days: 30 }),
@@ -73,6 +74,18 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
           <StatCard label="En course" value={active.filter((d) => busy.has(d.presence)).length} tone="cyan" />
           <StatCard label="Suspendus" value={all.filter((d) => d.status === "suspended").length} tone={all.some((d) => d.status === "suspended") ? "red" : undefined} />
         </div>
+
+        <Card className="relative h-[320px] overflow-hidden">
+          <FleetOverviewMap
+            drivers={active
+              .filter((d) => d.presence !== "offline")
+              .map((d) => ({
+                ...d,
+                vehicle: Array.isArray(d.vehicle) ? (d.vehicle[0] ?? null) : d.vehicle,
+                location: Array.isArray(d.location) ? (d.location[0] ?? null) : d.location,
+              }))}
+          />
+        </Card>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-1 rounded-xl border border-line bg-ink-850 p-1">

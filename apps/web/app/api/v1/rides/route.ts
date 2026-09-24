@@ -1,7 +1,8 @@
-import { TENANT_FIELDS, apiRideCreateSchema, estimateRoute, fieldErrors, zonedTimeToUtc } from "@rydar/shared";
+import { TENANT_FIELDS, apiRideCreateSchema, fieldErrors, zonedTimeToUtc } from "@rydar/shared";
 import { ApiError, PUBLIC_RIDE_SELECT, handle, preflight, publicRide, readJson } from "@/lib/api/v1";
 import { env } from "@/lib/env";
 import { geocodeOne } from "@/lib/geocode";
+import { rideRouteColumns } from "@/lib/geo/routing";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +39,7 @@ export async function POST(req: Request) {
     }
 
     const pickupAt = v.pickup_at ? new Date(v.pickup_at) : v.date && v.time ? zonedTimeToUtc(v.date, v.time, ctx.orgTimezone) : new Date();
-    const route = dropoff.lat != null && dropoff.lng != null ? estimateRoute({ lat: pickup.lat!, lng: pickup.lng! }, { lat: dropoff.lat, lng: dropoff.lng }) : null;
+    const route = await rideRouteColumns({ lat: pickup.lat!, lng: pickup.lng! }, dropoff);
     const idempotencyKey = req.headers.get("idempotency-key")?.slice(0, 100) || null;
 
     const admin = createAdminClient();
@@ -67,8 +68,7 @@ export async function POST(req: Request) {
         comment: v.comment ?? null,
         flight_number: v.flight_number ?? null,
         external_reference: v.external_reference ?? null,
-        estimated_distance_m: route?.distanceM ?? null,
-        estimated_duration_s: route?.durationS ?? null,
+        ...route,
       } as never)
       .select("id")
       .single();

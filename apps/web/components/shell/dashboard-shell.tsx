@@ -1,26 +1,10 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { RealtimeProvider, useRealtimeStatus } from "@/components/realtime/realtime-provider";
+import { RealtimeProvider } from "@/components/realtime/realtime-provider";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { signOut } from "@/app/login/actions";
 import { switchOrganization } from "@/app/dashboard/actions";
-
-function LiveIndicator() {
-  const status = useRealtimeStatus();
-  const live = status === "live";
-  return (
-    <div className="flex items-center gap-2.5 rounded-xl border border-line bg-white/[0.02] px-3 py-2.5">
-      <span className="relative grid size-2.5 place-items-center">
-        <span className={live ? "absolute size-2.5 animate-ping rounded-full bg-brand/60" : "hidden"} />
-        <span className={`size-2 rounded-full ${live ? "bg-brand" : status === "connecting" ? "bg-amber" : "bg-amber"}`} />
-      </span>
-      <span className="text-[12px] text-fg-muted">
-        {live ? "Dispatch temps réel actif" : status === "connecting" ? "Connexion au temps réel…" : "Synchronisation périodique"}
-      </span>
-    </div>
-  );
-}
 
 export function DashboardShell({
   children,
@@ -41,7 +25,7 @@ export function DashboardShell({
     {
       title: "Opérations",
       items: [
-        { href: "/dashboard", label: "Command center", icon: "radar", exact: true },
+        { href: "/dashboard", label: "En direct", icon: "radar", exact: true },
         { href: "/dashboard/rides", label: "Courses", icon: "route", badge: alerts },
         { href: "/dashboard/drivers", label: "Chauffeurs", icon: "users" },
         { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
@@ -72,9 +56,8 @@ export function DashboardShell({
           })
         }
         signOut={() => start(() => signOut())}
-        footer={<LiveIndicator />}
       />
-      <div className="lg:pl-[248px]">{children}</div>
+      <div className="lg:pl-[232px]">{children}</div>
     </RealtimeProvider>
   );
 }

@@ -99,7 +99,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
               </div>
               <div className="min-w-[200px] flex-1">
                 <p className="text-[13.5px] font-medium">{k.name}</p>
-                <p className="num text-[12px] text-fg-subtle">
+                <p className="mono text-[12px] text-fg-subtle">
                   {k.prefix}_••••{k.last4}
                 </p>
               </div>
@@ -196,7 +196,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
       <Dialog open={!!revealed} onOpenChange={(o) => !o && setRevealed(null)}>
         <DialogContent title="Votre clé API" description="Copiez-la maintenant : elle ne sera plus jamais affichée (seul un hash est conservé).">
           <div className="rounded-xl border border-brand/30 bg-brand/[0.05] p-4">
-            <p className="num break-all text-[13px] text-fg">{revealed?.key}</p>
+            <p className="mono break-all text-[13px] text-fg">{revealed?.key}</p>
           </div>
           <div className="mt-3 flex items-start gap-2 text-[12px] text-amber">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" /> Ne l&apos;exposez jamais dans le code JavaScript public de votre site : appelez l&apos;API depuis votre serveur.

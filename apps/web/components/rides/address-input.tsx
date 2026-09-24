@@ -16,6 +16,7 @@ export function AddressInput({
   marker,
   invalid,
   autoFocus,
+  near,
 }: {
   value: PlaceValue;
   onChange: (v: PlaceValue) => void;
@@ -23,6 +24,8 @@ export function AddressInput({
   marker: "pickup" | "dropoff";
   invalid?: boolean;
   autoFocus?: boolean;
+  /** Point de référence pour classer les résultats par proximité */
+  near?: { lat: number; lng: number } | null;
 }) {
   const [query, setQuery] = useState(value.address);
   const [results, setResults] = useState<Place[]>([]);
@@ -45,7 +48,8 @@ export function AddressInput({
       abort.current = ctrl;
       setLoading(true);
       try {
-        const res = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`, { signal: ctrl.signal });
+        const nearQs = near ? `&lat=${near.lat.toFixed(4)}&lng=${near.lng.toFixed(4)}` : "";
+        const res = await fetch(`/api/geocode?q=${encodeURIComponent(query)}${nearQs}`, { signal: ctrl.signal });
         const json = (await res.json()) as { results?: Place[] };
         setResults(json.results ?? []);
         setActive(0);
@@ -56,7 +60,7 @@ export function AddressInput({
       }
     }, 180);
     return () => clearTimeout(t);
-  }, [query, open, value.address]);
+  }, [query, open, value.address, near]);
 
   function pick(p: Place) {
     onChange({ address: p.address, lat: p.lat, lng: p.lng });
@@ -69,7 +73,7 @@ export function AddressInput({
       <span
         className={cn(
           "pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2",
-          marker === "pickup" ? "size-2.5 rounded-full bg-brand shadow-[0_0_10px_var(--color-brand)]" : "size-2.5 rotate-45 rounded-[2px] bg-fg",
+          marker === "pickup" ? "size-2.5 rounded-full bg-brand ring-4 ring-brand/15" : "size-2.5 rounded-[2px] bg-fg ring-4 ring-white/10",
         )}
       />
       <input
@@ -107,7 +111,7 @@ export function AddressInput({
         {loading ? (
           <span className="block size-3.5 animate-spin rounded-full border-2 border-fg-subtle border-r-transparent" />
         ) : value.lat != null ? (
-          <span className="block size-1.5 rounded-full bg-green shadow-[0_0_8px_var(--color-green)]" title="Adresse géolocalisée" />
+          <span className="block size-1.5 rounded-full bg-green" title="Adresse géolocalisée" />
         ) : null}
       </span>
       {open && results.length > 0 && (

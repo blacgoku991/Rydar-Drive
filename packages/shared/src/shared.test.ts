@@ -96,3 +96,25 @@ describe("fuseaux horaires", () => {
     expect(zonedTimeToUtc("2026-12-25", "06:30", "Europe/Paris").toISOString()).toBe("2026-12-25T05:30:00.000Z");
   });
 });
+
+describe("itinéraires", () => {
+  it("encode / décode une polyline (exemple de référence Google)", async () => {
+    const { encodePolyline, decodePolyline } = await import("./geo");
+    const line: [number, number][] = [[-120.2, 38.5], [-120.95, 40.7], [-126.453, 43.252]];
+    expect(encodePolyline(line)).toBe("_p~iF~ps|U_ulLnnqC_mqNvxq`@");
+    expect(decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@")).toEqual(line);
+    expect(decodePolyline(encodePolyline(line, 6), 6)).toEqual(line);
+  });
+
+  it("simplifie un tracé et calcule un point le long de la ligne", async () => {
+    const { simplifyLine, pointAlong, lineLength } = await import("./geo");
+    const straight: [number, number][] = Array.from({ length: 50 }, (_, k) => [2.3 + k * 0.001, 48.85]);
+    expect(simplifyLine(straight, 5)).toHaveLength(2);
+    const len = lineLength(straight);
+    const mid = pointAlong(straight, len / 2);
+    expect(mid.done).toBe(false);
+    expect(mid.point[0]).toBeCloseTo(2.3245, 3);
+    expect(Math.round(mid.heading)).toBe(90);
+    expect(pointAlong(straight, len + 10).done).toBe(true);
+  });
+});

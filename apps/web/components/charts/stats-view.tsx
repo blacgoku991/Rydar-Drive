@@ -18,7 +18,7 @@ const dayLabel = (v: string) => {
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="surface rounded-xl p-4">
-      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-fg-subtle">{label}</p>
+      <p className="text-[12.5px] text-fg-subtle">{label}</p>
       <p className="mt-2 text-[26px] font-semibold leading-none tracking-tight text-fg">{value}</p>
       {sub && <p className="mt-1.5 text-[12px] text-fg-subtle">{sub}</p>}
     </div>
@@ -122,7 +122,7 @@ export function StatsView({ stats }: { stats: any }) {
             <div className="max-h-[360px] overflow-y-auto">
               <table className="w-full text-[13px]">
                 <thead className="sticky top-0 bg-ink-800">
-                  <tr className="border-b border-line text-[11px] uppercase tracking-[0.08em] text-fg-subtle">
+                  <tr className="border-b border-line text-[12px] text-fg-subtle">
                     <th className="px-5 py-2.5 text-left font-medium">Chauffeur</th>
                     <th className="px-3 py-2.5 text-right font-medium">Courses</th>
                     <th className="px-3 py-2.5 text-right font-medium">CA</th>

@@ -70,7 +70,7 @@ export function DriverFormSheet() {
         <form action={submit} className="flex min-h-full flex-col">
           <div className="flex-1 space-y-7 px-6 py-6">
             <section className="grid grid-cols-2 gap-3">
-              <p className="col-span-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">Identité</p>
+              <p className="col-span-2 text-[13px] font-medium text-fg-muted">Identité</p>
               <Field label="Prénom" error={errors.firstName}>
                 <Input name="firstName" required placeholder="Mohamed" />
               </Field>
@@ -89,7 +89,7 @@ export function DriverFormSheet() {
             </section>
 
             <section className="grid grid-cols-2 gap-3">
-              <p className="col-span-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">Véhicule</p>
+              <p className="col-span-2 text-[13px] font-medium text-fg-muted">Véhicule</p>
               <Field label="Marque" optional>
                 <Input name="brand" placeholder="Mercedes-Benz" />
               </Field>
@@ -123,7 +123,7 @@ export function DriverFormSheet() {
             </section>
 
             <section className="space-y-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">Accès à l&apos;application</p>
+              <p className="text-[13px] font-medium text-fg-muted">Accès à l&apos;application</p>
               <div className="grid grid-cols-2 gap-2">
                 {(
                   [

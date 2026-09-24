@@ -81,12 +81,15 @@ Réponse **201** :
     "passengers": 2, "luggage": 2, "vehicle_category": "business",
     "price_cents": 8500, "currency": "EUR", "payment_method": "card",
     "flight_number": "AF1234", "external_reference": "WEB-8842",
+    "route": { "distance_m": 31840, "duration_s": 2460, "polyline": "o~diHwfuM…" },
     "driver": null,
     "timestamps": { "created_at": "…", "accepted_at": null, "driver_arrived_at": null, "started_at": null, "completed_at": null, "cancelled_at": null },
     "links": { "self": "https://app.rydar.app/api/v1/rides/8d0c…" }
   }
 }
 ```
+
+L'itinéraire routier (`route`) est calculé par Rydar à la création : distance, durée et tracé encodé en *polyline* (précision 5, format Google/OSRM).
 
 **Idempotence** : avec un en-tête `Idempotency-Key`, un renvoi de la même requête (après un timeout réseau, par exemple) renvoie **200** et `"idempotent_replay": true` au lieu de créer un doublon.
 

@@ -11,6 +11,7 @@ import { PageBody } from "@/components/layout/page-header";
 import { LiveRefresh } from "@/components/rides/live-refresh";
 import { RideActions, type AssignableDriver } from "@/components/rides/ride-actions";
 import { RideMap } from "@/components/rides/ride-map";
+import { RideProgress } from "@/components/rides/ride-progress";
 import { RideTimeline, type TimelineEvent } from "@/components/rides/ride-timeline";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +26,7 @@ export const dynamic = "force-dynamic";
 function Info({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.02] text-fg-subtle [&_svg]:size-4">{icon}</span>
+      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-subtle [&_svg]:size-4">{icon}</span>
       <div className="min-w-0">
         <p className="text-[11.5px] text-fg-subtle">{label}</p>
         <div className="text-[13.5px] text-fg">{children}</div>
@@ -90,7 +91,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               <ArrowLeft className="size-3.5" /> Courses
             </Link>
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="num text-[28px] font-semibold tracking-tight">#{ride.number}</h1>
+              <h1 className="text-[26px] font-semibold tracking-tight">Course #{ride.number}</h1>
               <RideStatusBadge status={status} />
               <RideTypeTag type={ride.type} />
               <Badge tone="neutral" dot={false}>{RIDE_SOURCE_LABELS[ride.source as RideSource]}</Badge>
@@ -115,15 +116,18 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
       <PageBody className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
         <div className="space-y-6">
           <Card className="overflow-hidden">
-            <div className="relative h-[340px]">
+            <div className="border-b border-line px-5 py-4">
+              <RideProgress ride={ride} timeZone={tz} />
+            </div>
+            <div className="relative h-[420px]">
               <RideMap ride={ride as LiveRide} drivers={mapDrivers} offers={offerRows.filter((o) => o.status === "pending").map((o) => ({ ...o, ride_id: id })) as LiveOffer[]} />
             </div>
             <div className="grid gap-5 border-t border-line p-5 sm:grid-cols-2">
               <div className="flex gap-3">
                 <div className="flex flex-col items-center pt-1.5">
-                  <span className="size-2.5 rounded-full bg-brand shadow-[0_0_10px_var(--color-brand)]" />
-                  <span className="my-1 w-px flex-1 bg-gradient-to-b from-brand/60 to-white/20" />
-                  <span className="size-2.5 rotate-45 rounded-[2px] bg-fg" />
+                  <span className="size-2.5 rounded-full bg-brand ring-4 ring-brand/15" />
+                  <span className="my-1 w-px flex-1 bg-line-strong" />
+                  <span className="size-2.5 rounded-[2px] bg-fg ring-4 ring-white/10" />
                 </div>
                 <div className="space-y-4">
                   <div>

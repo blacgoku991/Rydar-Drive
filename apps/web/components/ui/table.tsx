@@ -14,7 +14,7 @@ export function THead({ className, ...props }: React.HTMLAttributes<HTMLTableSec
 export function TH({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={cn("h-10 whitespace-nowrap px-4 text-left align-middle text-[11px] font-medium uppercase tracking-[0.08em] text-fg-subtle", className)}
+      className={cn("h-10 whitespace-nowrap px-4 text-left align-middle text-[12px] font-medium text-fg-subtle", className)}
       {...props}
     />
   );

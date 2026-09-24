@@ -1,6 +1,7 @@
 "use server";
-import { bookingRequestSchema, estimatePrice, estimateRoute, fieldErrors, type BookingRequest, type PricingRule } from "@rydar/shared";
+import { bookingRequestSchema, estimatePrice, fieldErrors, type BookingRequest, type PricingRule } from "@rydar/shared";
 import { z } from "zod";
+import { computeRoute } from "@/lib/geo/routing";
 import { rateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -30,7 +31,7 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
 
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt;
   if (!pickupAt || pickupAt.getTime() < Date.now() - 5 * 60_000) return { ok: false, error: "Date de prise en charge invalide.", fieldErrors: { pickupAt: "Date passée" } };
-  const route = estimateRoute(v.pickup, v.dropoff);
+  const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500 });
   const { data: rule } = await admin
     .from("pricing_rules")
     .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end")
@@ -63,6 +64,8 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
       price_cents: price,
       estimated_distance_m: route.distanceM,
       estimated_duration_s: route.durationS,
+      route_polyline: route.polyline,
+      route_provider: route.provider,
     } as never)
     .select("number")
     .single();

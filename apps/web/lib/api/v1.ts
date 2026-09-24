@@ -181,6 +181,7 @@ export function publicRide(r: any, appUrl: string) {
     payment_method: r.payment_method,
     flight_number: r.flight_number,
     external_reference: r.external_reference,
+    route: r.estimated_distance_m != null ? { distance_m: r.estimated_distance_m, duration_s: r.estimated_duration_s, polyline: r.route_polyline ?? null } : null,
     driver: d ? { first_name: d.first_name, vehicle: v ? { model: `${v.brand ?? ""} ${v.model}`.trim(), color: v.color, plate: v.plate } : null } : null,
     timestamps: {
       created_at: r.created_at,
@@ -195,7 +196,7 @@ export function publicRide(r: any, appUrl: string) {
 }
 
 export const PUBLIC_RIDE_SELECT =
-  "id, number, type, status, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, passengers, luggage, vehicle_category, price_cents, currency, payment_method, flight_number, external_reference, created_at, accepted_at, driver_arrived_at, started_at, completed_at, cancelled_at, driver:drivers!rides_organization_id_driver_id_fkey(first_name, vehicle:vehicles(brand, model, color, plate))";
+  "id, number, type, status, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, passengers, luggage, vehicle_category, price_cents, currency, payment_method, flight_number, external_reference, estimated_distance_m, estimated_duration_s, route_polyline, created_at, accepted_at, driver_arrived_at, started_at, completed_at, cancelled_at, driver:drivers!rides_organization_id_driver_id_fkey(first_name, vehicle:vehicles(brand, model, color, plate))";
 
 /** Accès inter-tenant : 403 + trace de sécurité si la ressource existe ailleurs, 404 sinon. */
 export async function notFoundOrForbidden(ctx: ApiContext, rideId: string): Promise<never> {

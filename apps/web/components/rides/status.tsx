@@ -1,6 +1,7 @@
 import {
   PRESENCE_META, RIDE_STATUS_META, isSearching, type DriverPresence, type RideStatus,
 } from "@rydar/shared";
+import { CalendarClock, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 export function RideStatusBadge({ status, className }: { status: RideStatus | string; className?: string }) {
@@ -23,12 +24,12 @@ export function PresenceBadge({ presence, className }: { presence: DriverPresenc
 
 export function RideTypeTag({ type }: { type: "instant" | "scheduled" | string }) {
   return type === "instant" ? (
-    <span className="inline-flex items-center gap-1 rounded-md border border-brand/20 bg-brand/[0.07] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-brand">
-      Immédiate
+    <span className="inline-flex items-center gap-1 text-[11.5px] text-fg-subtle">
+      <Zap className="size-3" /> Immédiate
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 rounded-md border border-violet/20 bg-violet/[0.08] px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-violet">
-      Planifiée
+    <span className="inline-flex items-center gap-1 text-[11.5px] text-violet">
+      <CalendarClock className="size-3" /> Planifiée
     </span>
   );
 }

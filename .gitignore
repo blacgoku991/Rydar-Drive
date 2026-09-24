@@ -29,3 +29,6 @@ apps/web/public/vendor/
 
 # Généré par next dev/build/typegen
 apps/web/next-env.d.ts
+
+# Stack géo de dev (données Overture générées)
+.dev-geo/

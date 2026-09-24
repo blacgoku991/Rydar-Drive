@@ -108,7 +108,7 @@ export function DispatchJournal({ initial, tenant, timeZone, rideNumbers }: { in
           const num = e.ride_id ? numbers[e.ride_id] : undefined;
           return (
             <div key={e.id}>
-              {header && <div className="px-3 pb-1 pt-3 text-[11px] uppercase tracking-[0.14em] text-fg-subtle">— {day} —</div>}
+              {header && <div className="px-3 pb-1 pt-3 text-[12px] text-fg-subtle">— {day} —</div>}
               <div className={cn("group grid grid-cols-[84px_38px_76px_1fr] gap-3 rounded-md px-3 hover:bg-white/[0.03]", e.level === "error" && "bg-red/[0.05]")}>
                 <span className="text-fg-subtle">{formatTime(e.created_at, timeZone, true)}</span>
                 <span className={cn("text-[11px] font-semibold", LEVEL_STYLE[e.level])}>{LEVEL_TAG[e.level]}</span>

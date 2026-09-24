@@ -27,7 +27,9 @@ export function RideActions({
   canRedispatch,
   canAssign,
   drivers,
+  compact,
 }: {
+  compact?: boolean;
   rideId: string;
   number: number;
   canCancel: boolean;
@@ -56,17 +58,17 @@ export function RideActions({
   return (
     <>
       {canRedispatch && (
-        <Button variant="secondary" disabled={pending} onClick={() => run(() => redispatchRide(rideId), "Dispatch relancé")}>
-          <RotateCcw /> Relancer le dispatch
+        <Button variant="secondary" size={compact ? "sm" : "md"} disabled={pending} onClick={() => run(() => redispatchRide(rideId), "Dispatch relancé")}>
+          <RotateCcw /> {compact ? "Relancer" : "Relancer le dispatch"}
         </Button>
       )}
       {canAssign && (
-        <Button variant="secondary" disabled={pending} onClick={() => setAssignOpen(true)}>
+        <Button variant="secondary" size={compact ? "sm" : "md"} disabled={pending} onClick={() => setAssignOpen(true)}>
           <UserCheck /> Attribuer
         </Button>
       )}
       {canCancel && (
-        <Button variant="danger" disabled={pending} onClick={() => setCancelOpen(true)}>
+        <Button variant="danger" size={compact ? "sm" : "md"} disabled={pending} onClick={() => setCancelOpen(true)}>
           <Ban /> Annuler
         </Button>
       )}

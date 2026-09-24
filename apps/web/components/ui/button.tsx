@@ -9,8 +9,8 @@ export const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          "bg-brand text-brand-fg font-semibold shadow-[0_1px_0_rgb(255_255_255/0.35)_inset,0_8px_24px_-10px_rgb(200_240_60/0.6)] hover:bg-brand-strong hover:shadow-glow",
-        secondary: "bg-ink-600 text-fg border border-line-strong hover:bg-ink-500 hover:border-white/15",
+          "bg-brand text-brand-fg font-semibold shadow-[0_1px_0_rgb(255_255_255/0.3)_inset] hover:bg-brand-strong",
+        secondary: "bg-ink-600 text-fg border border-line hover:bg-ink-500",
         outline: "border border-line-strong text-fg hover:bg-white/[0.04] hover:border-white/20",
         ghost: "text-fg-muted hover:text-fg hover:bg-white/[0.05]",
         danger: "bg-red/12 text-red border border-red/25 hover:bg-red/20",

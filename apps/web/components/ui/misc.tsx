@@ -150,7 +150,7 @@ export function DropdownMenuItem({ className, destructive, ...props }: React.Com
   );
 }
 export function DropdownMenuLabel({ className, ...props }: React.ComponentProps<typeof DM.Label>) {
-  return <DM.Label className={cn("px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wider text-fg-subtle", className)} {...props} />;
+  return <DM.Label className={cn("px-2.5 py-1.5 text-[12px] text-fg-subtle", className)} {...props} />;
 }
 export function DropdownMenuSeparator() {
   return <DM.Separator className="my-1 h-px bg-line" />;

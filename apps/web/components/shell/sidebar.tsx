@@ -36,17 +36,17 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
   const current = orgs?.find((o) => o.id === currentOrgId);
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center px-5">
-        <Link href={sections[0]?.items[0]?.href ?? "/"} onClick={onNavigate}>
-          <Logo size={28} subtitle={subtitle} />
+      <div className="flex h-14 items-center px-5">
+        <Link href={sections[0]?.items[0]?.href ?? "/"} onClick={onNavigate} title={subtitle}>
+          <Logo size={24} />
         </Link>
       </div>
 
       {current && (
         <div className="px-3 pb-2">
           <DropdownMenu>
-            <DropdownMenuTrigger className="group flex w-full items-center gap-3 rounded-xl border border-line bg-white/[0.02] px-3 py-2.5 text-left transition-colors hover:border-line-strong hover:bg-white/[0.04]">
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-brand/25 to-brand/5 text-[13px] font-bold text-brand">
+            <DropdownMenuTrigger className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04]">
+              <span className="grid size-7 shrink-0 place-items-center rounded-md bg-brand/15 text-[12px] font-bold text-brand">
                 {current.name.slice(0, 1)}
               </span>
               <span className="min-w-0 flex-1">
@@ -68,10 +68,10 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
         </div>
       )}
 
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
+      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
         {sections.map((section) => (
           <div key={section.title}>
-            <p className="mb-2 px-3 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">{section.title}</p>
+            <p className="mb-1 px-3 text-[11.5px] text-fg-subtle">{section.title}</p>
             <ul className="space-y-0.5">
               {section.items.map((item) => {
                 const Icon = ICONS[item.icon];
@@ -82,15 +82,14 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
                       href={item.href}
                       onClick={onNavigate}
                       className={cn(
-                        "group relative flex h-9 items-center gap-3 rounded-lg px-3 text-[13.5px] font-medium transition-colors",
-                        active ? "bg-white/[0.06] text-fg" : "text-fg-muted hover:bg-white/[0.03] hover:text-fg",
+                        "group relative flex h-8 items-center gap-2.5 rounded-lg px-3 text-[13.5px] transition-colors",
+                        active ? "bg-white/[0.07] font-medium text-fg" : "text-fg-muted hover:bg-white/[0.035] hover:text-fg",
                       )}
                     >
-                      {active && <span className="absolute -left-3 top-2 h-5 w-[3px] rounded-r-full bg-brand shadow-[0_0_12px_var(--color-brand)]" />}
-                      <Icon className={cn("size-[17px]", active ? "text-brand" : "text-fg-subtle group-hover:text-fg-muted")} />
+                      <Icon className={cn("size-4", active ? "text-brand" : "text-fg-subtle group-hover:text-fg-muted")} />
                       <span className="flex-1">{item.label}</span>
                       {!!item.badge && (
-                        <span className="num rounded-full bg-red/15 px-1.5 text-[11px] font-semibold text-red">{item.badge}</span>
+                        <span className="rounded-full bg-red/15 px-1.5 text-[11px] font-semibold tabular-nums text-red">{item.badge}</span>
                       )}
                     </Link>
                   </li>
@@ -103,7 +102,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
 
       {footer && <div className="px-3 pb-3">{footer}</div>}
 
-      <div className="border-t border-line p-3">
+      <div className="border-t border-line p-2">
         <DropdownMenu>
           <DropdownMenuTrigger className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-white/[0.04]">
             <Avatar name={user.name} size={30} />
@@ -127,7 +126,7 @@ export function Sidebar(props: Props) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] border-r border-line bg-ink-950/95 lg:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[232px] border-r border-line bg-ink-950 lg:block">
         <NavContent {...props} />
       </aside>
       {/* Mobile */}

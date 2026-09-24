@@ -31,7 +31,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <div className="relative z-10 flex flex-1 items-center justify-center px-10">
           <RadarScene className="max-w-[520px]" />
           <div className="glass absolute bottom-10 left-10 w-[320px] animate-rise rounded-2xl p-4">
-            <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.14em] text-fg-subtle">Journal du dispatch</p>
+            <p className="mb-3 text-[12.5px] text-fg-subtle">Journal du dispatch</p>
             <ul className="space-y-1.5">
               {FEED.map((f, i) => (
                 <li key={i} className="flex gap-3 text-[12.5px]" style={{ animation: `rise .5s ${0.25 * i + 0.3}s both` }}>

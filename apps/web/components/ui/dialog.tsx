@@ -86,3 +86,37 @@ export function SheetContent({
     </D.Portal>
   );
 }
+
+/** Grande fenêtre de travail (création de course avec carte). */
+export function WorkspaceContent({
+  className,
+  children,
+  title,
+  description,
+  ...props
+}: React.ComponentProps<typeof D.Content> & { title: React.ReactNode; description?: React.ReactNode }) {
+  return (
+    <D.Portal>
+      <D.Overlay className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[3px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
+      <D.Content
+        className={cn(
+          "fixed inset-2 z-50 mx-auto flex max-w-[1320px] flex-col overflow-hidden rounded-2xl border border-line bg-ink-850 shadow-float data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.98] sm:inset-4 lg:inset-6",
+          className,
+        )}
+        {...props}
+      >
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
+          <div>
+            <D.Title className="text-[15px] font-semibold tracking-tight">{title}</D.Title>
+            <D.Description className={cn("text-[12.5px] text-fg-muted", !description && "sr-only")}>{description ?? "Fenêtre"}</D.Description>
+          </div>
+          <D.Close className="grid size-8 place-items-center rounded-lg text-fg-subtle hover:bg-white/5 hover:text-fg">
+            <X className="size-4" />
+            <span className="sr-only">Fermer</span>
+          </D.Close>
+        </div>
+        <div className="min-h-0 flex-1">{children}</div>
+      </D.Content>
+    </D.Portal>
+  );
+}
