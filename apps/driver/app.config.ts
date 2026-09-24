@@ -37,6 +37,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ],
     config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_ANDROID_KEY ?? "" } },
   },
+  web: { bundler: "metro", output: "single", favicon: "./assets/images/icon.png" },
   plugins: [
     "expo-router",
     "expo-secure-store",

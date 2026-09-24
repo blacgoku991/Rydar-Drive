@@ -37,6 +37,11 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // Tuiles / polices de la carte locale (dev) : lisibles par l'aperçu web de l'app chauffeur
+        source: "/dev-map/:path*",
+        headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
+      },
+      {
         source: "/((?!book|embed).*)",
         headers: [...baseHeaders, { key: "X-Frame-Options", value: "DENY" }, { key: "Content-Security-Policy", value: csp("'none'") }],
       },

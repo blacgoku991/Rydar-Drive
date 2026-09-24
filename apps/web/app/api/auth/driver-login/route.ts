@@ -9,12 +9,31 @@ export const dynamic = "force-dynamic";
 
 const WINDOW = 15 * 60;
 
+// L'app mobile n'est pas concernée par le CORS ; seules les origines listées
+// (aperçu web de l'app chauffeur, ex. http://localhost:8081) sont autorisées.
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("origin");
+  const allowed = (process.env.DRIVER_APP_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+  if (!origin || !allowed.includes(origin)) return {};
+  return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", Vary: "Origin" };
+}
+
+export function OPTIONS(req: Request) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
+}
+
 /**
  * Connexion de l'application chauffeur : anti brute force (IP + compte), puis
  * vérification que le compte est un chauffeur ACTIF d'une organisation active.
  * Renvoie les jetons Supabase que l'app installe via auth.setSession().
  */
 export async function POST(req: Request) {
+  const res = await login(req);
+  for (const [k, v] of Object.entries(corsHeaders(req))) res.headers.set(k, v);
+  return res;
+}
+
+async function login(req: Request): Promise<NextResponse> {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip") ?? "0.0.0.0";
   const parsed = loginSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ error: "Identifiants invalides." }, { status: 400 });

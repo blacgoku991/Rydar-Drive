@@ -1,6 +1,7 @@
 import * as Battery from "expo-battery";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
+import { Platform } from "react-native";
 import { api } from "./api";
 import { supabase } from "./supabase";
 
@@ -45,19 +46,25 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
   }
 }
 
+const isWeb = Platform.OS === "web";
+let webWatch: Location.LocationSubscription | null = null;
+
 // Tâche d'arrière-plan : définie au chargement du module (import dans le layout racine).
-TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
-  if (error) return;
-  const { locations } = (data ?? {}) as { locations?: Location.LocationObject[] };
-  const last = locations?.[locations.length - 1];
-  if (last) await pushLocation(last);
-});
+if (!isWeb) {
+  TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
+    if (error) return;
+    const { locations } = (data ?? {}) as { locations?: Location.LocationObject[] };
+    const last = locations?.[locations.length - 1];
+    if (last) await pushLocation(last);
+  });
+}
 
 export type PermissionState = "granted" | "foreground-only" | "denied";
 
 export async function requestLocationPermissions(): Promise<PermissionState> {
   const fg = await Location.requestForegroundPermissionsAsync();
   if (fg.status !== "granted") return "denied";
+  if (isWeb) return "foreground-only";
   const bg = await Location.requestBackgroundPermissionsAsync().catch(() => ({ status: "denied" as const }));
   return bg.status === "granted" ? "granted" : "foreground-only";
 }
@@ -68,6 +75,12 @@ export async function startTracking() {
   if (perm === "denied") throw new Error("Autorisez la localisation pour passer en ligne.");
   const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
   if (current) await pushLocation(current, true);
+  if (isWeb) {
+    // Navigateur : suivi au premier plan uniquement
+    webWatch?.remove();
+    webWatch = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High, distanceInterval: 20 }, (l) => void pushLocation(l)).catch(() => null);
+    return perm;
+  }
   if (perm === "granted" && !(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) {
     await Location.startLocationUpdatesAsync(LOCATION_TASK, {
       accuracy: Location.Accuracy.Balanced,
@@ -89,6 +102,11 @@ export async function startTracking() {
 }
 
 export async function stopTracking() {
+  if (isWeb) {
+    webWatch?.remove();
+    webWatch = null;
+    return;
+  }
   if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false)) {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK);
   }
@@ -96,6 +114,7 @@ export async function stopTracking() {
 
 /** Mode course : précision élevée (arrivée au client, guidage). */
 export async function setHighAccuracy(enabled: boolean) {
+  if (isWeb) return;
   if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) return;
   await Location.stopLocationUpdatesAsync(LOCATION_TASK);
   await Location.startLocationUpdatesAsync(LOCATION_TASK, {

@@ -9,7 +9,8 @@
     "start": "node --env-file-if-exists=.env dist/index.js",
     "build": "tsup",
     "simulate": "tsx --env-file-if-exists=.env src/simulator.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "backfill-routes": "tsx --env-file-if-exists=.env src/backfill-routes.ts"
   },
   "dependencies": {
     "@rydar/shared": "workspace:*",

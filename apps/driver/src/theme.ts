@@ -1,23 +1,23 @@
-// Palette « Night Radar » (identique au dashboard web).
+// Palette « Rydar Night » (identique au dashboard web).
 export const colors = {
-  bg: "#07080B",
-  bgDeep: "#040506",
-  surface: "#0E1116",
-  surface2: "#13161D",
-  surface3: "#1A1E27",
-  line: "rgba(255,255,255,0.08)",
-  lineStrong: "rgba(255,255,255,0.14)",
-  fg: "#F4F5F7",
-  muted: "#9AA3B2",
-  subtle: "#5F6777",
+  bg: "#0A0B0E",
+  bgDeep: "#060709",
+  surface: "#111318",
+  surface2: "#16191F",
+  surface3: "#1C2027",
+  line: "rgba(255,255,255,0.07)",
+  lineStrong: "rgba(255,255,255,0.12)",
+  fg: "#EEF0F3",
+  muted: "#9EA5B1",
+  subtle: "#666D79",
   brand: "#C8F03C",
   brandFg: "#0B0D04",
-  amber: "#FFB020",
-  blue: "#4C9DFF",
-  violet: "#A78BFA",
-  cyan: "#22D3EE",
-  green: "#3DDC97",
-  red: "#FF4D5E",
+  amber: "#F5B544",
+  blue: "#6AA6FF",
+  violet: "#B39DFA",
+  cyan: "#45D6E6",
+  green: "#4FD58F",
+  red: "#F2555A",
 };
 
 export const presenceColor: Record<string, string> = {
@@ -30,4 +30,10 @@ export const presenceColor: Record<string, string> = {
 };
 
 export const radius = { sm: 10, md: 14, lg: 20, xl: 28 };
-export const mono = { fontVariant: ["tabular-nums"] as ("tabular-nums")[] };
+export const mono = { fontVariant: ["tabular-nums"] as "tabular-nums"[] };
+
+/** Estimation d'approche (voiture en ville) à partir d'une distance à vol d'oiseau. */
+export function approachSeconds(distanceM: number | null | undefined) {
+  if (distanceM == null) return null;
+  return Math.round(((distanceM * 1.35) / 1000 / 24) * 3600) + 60;
+}

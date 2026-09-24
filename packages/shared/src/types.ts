@@ -95,6 +95,8 @@ export interface Ride {
   external_reference: string | null;
   estimated_distance_m: number | null;
   estimated_duration_s: number | null;
+  /** Tracé routier encodé (polyline précision 5) */
+  route_polyline?: string | null;
   driver_id: Uuid | null;
   vehicle_id: Uuid | null;
   dispatch_wave: number;
@@ -197,6 +199,7 @@ export interface DriverOffer {
   distance_m: number | null;
   estimated_distance_m: number | null;
   estimated_duration_s: number | null;
+  route_polyline?: string | null;
   flight_number: string | null;
   comment: string | null;
   sent_at: Iso;

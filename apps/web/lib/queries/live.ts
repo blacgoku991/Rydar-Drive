@@ -83,7 +83,7 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
   const recent = new Date(Date.now() - 30 * 60_000).toISOString();
   const horizon = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
-  const [drivers, rides, kpis] = await Promise.all([
+  const [drivers, active, finished, kpis] = await Promise.all([
     supabase
       .from("drivers")
       .select(
@@ -92,18 +92,29 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
       .eq("organization_id", orgId)
       .eq("status", "active")
       .order("number"),
+    // Courses actives (jamais tronquées par l'historique) …
     supabase
       .from("rides")
       .select(RIDE_FIELDS)
       .eq("organization_id", orgId)
       .lte("pickup_at", horizon)
-      .or(`status.not.in.(COMPLETED,CANCELLED,NO_DRIVER_FOUND),updated_at.gte.${recent}`)
+      .not("status", "in", "(COMPLETED,CANCELLED,NO_DRIVER_FOUND)")
       .order("pickup_at", { ascending: true })
-      .limit(300),
+      .limit(400),
+    // … et celles terminées il y a peu (affichées en fin de liste)
+    supabase
+      .from("rides")
+      .select(RIDE_FIELDS)
+      .eq("organization_id", orgId)
+      .in("status", ["COMPLETED", "CANCELLED", "NO_DRIVER_FOUND"])
+      .gte("updated_at", recent)
+      .gte("pickup_at", new Date(Date.now() - 12 * 3600_000).toISOString())
+      .order("updated_at", { ascending: false })
+      .limit(30),
     getKpis(supabase, orgId),
   ]);
 
-  const rideRows = (rides.data ?? []) as LiveRide[];
+  const rideRows = [...((active.data ?? []) as LiveRide[]), ...((finished.data ?? []) as LiveRide[])];
   const openIds = rideRows.filter((r) => ["SEARCHING_DRIVER", "OFFERED"].includes(r.status)).map((r) => r.id);
   const offers = openIds.length
     ? await supabase

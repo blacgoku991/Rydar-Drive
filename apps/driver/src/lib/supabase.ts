@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as aesjs from "aes-js";
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 import { appConfig } from "./config";
 
 /**
@@ -40,8 +40,11 @@ class LargeSecureStore {
 
 export const isConfigured = Boolean(appConfig.supabaseUrl && appConfig.supabaseAnonKey);
 
+// Web (aperçu / démo) : stockage du navigateur ; mobile : trousseau chiffré.
+const storage = Platform.OS === "web" ? (typeof window !== "undefined" ? window.localStorage : undefined) : new LargeSecureStore();
+
 export const supabase = createClient(appConfig.supabaseUrl || "https://not-configured.supabase.co", appConfig.supabaseAnonKey || "missing", {
-  auth: { storage: new LargeSecureStore(), autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
+  auth: { storage, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
 });
 
 // Rafraîchissement du jeton uniquement au premier plan (recommandation Supabase RN)

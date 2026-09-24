@@ -63,9 +63,9 @@ export default function Login() {
 
 const styles = StyleSheet.create({
   logo: { width: 76, height: 76, borderRadius: 38, borderWidth: 2, borderColor: colors.brand, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(200,240,60,0.08)" },
-  logoDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.brand, shadowColor: colors.brand, shadowOpacity: 1, shadowRadius: 16, shadowOffset: { width: 0, height: 0 } },
+  logoDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.brand },
   brand: { color: colors.fg, fontSize: 30, fontWeight: "800", marginTop: 8, letterSpacing: -0.5 },
-  tagline: { color: colors.subtle, fontSize: 13, marginTop: 6, letterSpacing: 2, textTransform: "uppercase" },
+  tagline: { color: colors.subtle, fontSize: 14, marginTop: 6 },
   field: { flexDirection: "row", alignItems: "center", gap: 10, height: 58, borderRadius: radius.md, borderWidth: 1, borderColor: colors.lineStrong, backgroundColor: colors.surface, paddingHorizontal: 16 },
   input: { flex: 1, color: colors.fg, fontSize: 16 },
   error: { color: colors.red, fontSize: 14, textAlign: "center" },

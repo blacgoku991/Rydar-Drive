@@ -7,7 +7,7 @@ import { appConfig } from "./config";
 import { installationId } from "./device";
 
 // Affichage des notifications même application ouverte (le modal d'offre prend ensuite le relais).
-Notifications.setNotificationHandler({
+if (Platform.OS !== "web") Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
@@ -17,6 +17,7 @@ Notifications.setNotificationHandler({
 });
 
 export async function setupNotificationChannels() {
+  if (Platform.OS === "web") return;
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("ride-offers", {
       name: "Nouvelles courses",
@@ -47,6 +48,7 @@ let registeredToken: string | null = null;
 
 /** Demande la permission, récupère le token Expo et l'enregistre pour ce chauffeur. */
 export async function registerForPush(): Promise<string | null> {
+  if (Platform.OS === "web") return null; // pas de push en aperçu web
   const id = await installationId();
   const base = {
     installationId: id,

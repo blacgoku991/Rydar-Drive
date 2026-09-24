@@ -32,3 +32,8 @@ apps/web/next-env.d.ts
 
 # Stack géo de dev (données Overture générées)
 .dev-geo/
+
+# Aperçu web app chauffeur
+apps/driver/public/maplibre-gl-worker.mjs
+apps/driver/dist-web/
+apps/driver/public/maplibre-gl-shared.mjs
