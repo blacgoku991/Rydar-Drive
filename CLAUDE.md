@@ -45,12 +45,12 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [x] M1 DB : 9 migrations + seed + 32 tests verts (`pnpm test:db`)
 - [x] M2 shared (tests `pnpm test`)
 - [x] M3 web socle + command center (`apps/web/components/command`, carte `components/map/fleet-map.tsx`)
-- [ ] M4 super admin (à faire)
-- [~] M5 rattacheur : FAIT command center, courses+détail, chauffeurs+fiche, journal, stats, intégrations/API keys ; RESTE mini-site (réglages), réglages (org/dispatch/tarifs/équipe/facturation)
-- [~] M6 FAIT API v1 (`apps/web/lib/api/v1.ts`, testée curl : 201/200 idempotent/403/401/422/429) + geocode ; RESTE mini-site public `/book/[slug]`
-- [ ] M7 worker
-- [ ] M8 app chauffeur
-- [ ] M9 Stripe
+- [x] M4 super admin (`apps/web/app/admin`)
+- [x] M5 rattacheur (toutes pages)
+- [x] M6 API v1 (`apps/web/lib/api/v1.ts`, testée curl 201/200/403/401/422/429) + mini-site `/book/[slug]`
+- [x] M7 worker (`apps/worker` : tick, outbox push Expo/FCM/APNs, simulateur `SIM_ORG=elite-paris SIM_NEW_RIDE_EVERY=20 npx tsx src/simulator.ts`)
+- [x] M8 app chauffeur (`apps/driver`, Expo 57 / RN 0.86 / React 19.2.3 partout ; `npx expo export --platform android` OK)
+- [x] M9 Stripe (checkout/portal/webhook)
 - [ ] M10 docs + captures + vérif finale
 
 ## Notes / prochaines étapes
