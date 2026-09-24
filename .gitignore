@@ -37,3 +37,6 @@ apps/web/next-env.d.ts
 apps/driver/public/maplibre-gl-worker.mjs
 apps/driver/dist-web/
 apps/driver/public/maplibre-gl-shared.mjs
+
+# Redis local
+dump.rdb
