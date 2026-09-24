@@ -34,7 +34,7 @@ export function Logo({ size = 28, className, subtitle }: { size?: number; classN
     <span className={cn("inline-flex items-center gap-2.5", className)}>
       <RadarMark size={size} animated />
       <span className="flex flex-col leading-none">
-        <span className="text-[15px] font-semibold tracking-tight text-fg">
+        <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight text-fg">
           Rydar<span className="font-normal text-fg-muted"> Drive</span>
         </span>
         {subtitle && <span className="mt-1 text-[10.5px] font-medium uppercase tracking-[0.14em] text-fg-subtle">{subtitle}</span>}
