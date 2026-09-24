@@ -7,7 +7,7 @@ function Kpi({ label, value, sub, tone, emphasis }: { label: string; value: Reac
   return (
     <div className={cn("flex min-w-[112px] flex-col justify-center px-4 py-2.5", emphasis && "min-w-[132px]")}>
       <span className="text-[10.5px] font-medium uppercase tracking-[0.12em] text-fg-subtle">{label}</span>
-      <span className={cn("num mt-1 text-[21px] font-semibold leading-none", color)}>{value}</span>
+      <span className={cn("mt-1 text-[21px] font-semibold leading-none tracking-tight", color)}>{value}</span>
       {sub && <span className="mt-1 text-[11px] text-fg-subtle">{sub}</span>}
     </div>
   );

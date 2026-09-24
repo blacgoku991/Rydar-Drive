@@ -55,7 +55,7 @@ export function StatCard({
         <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-fg-subtle">{label}</span>
         {icon && <span className="text-fg-subtle [&_svg]:size-4">{icon}</span>}
       </div>
-      <div className={cn("num mt-2 text-[26px] font-semibold leading-none", tone ? color : "text-fg")}>{value}</div>
+      <div className={cn("mt-2 text-[26px] font-semibold leading-none tracking-tight", tone ? color : "text-fg")}>{value}</div>
       {sub && <div className="mt-1.5 text-[12px] text-fg-subtle">{sub}</div>}
     </div>
   );
