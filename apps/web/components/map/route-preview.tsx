@@ -37,7 +37,7 @@ export function RoutePreview({
   interactive?: boolean;
   padding?: number | { top: number; bottom: number; left: number; right: number };
 }) {
-  const { containerRef, libRef, mapRef, ready } = useMapLibre({ interactive, zoom: 11 });
+  const { containerRef, libRef, mapRef, ready } = useMapLibre({ interactive, zoom: 11, controls: false });
   const markers = useRef<{ start?: MLMarker; end?: MLMarker; cars: Map<string, MLMarker> }>({ cars: new Map() });
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;

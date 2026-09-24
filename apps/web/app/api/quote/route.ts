@@ -14,6 +14,8 @@ const schema = z.object({
   category: vehicleCategorySchema.default("business"),
   passengers: z.number().int().min(1).max(20).default(1),
   pickupAt: z.iso.datetime({ offset: true }).optional(),
+  pickupAddress: z.string().max(300).optional(),
+  dropoffAddress: z.string().max(300).optional(),
 });
 
 /** Devis temps réel du formulaire « Nouvelle course » : itinéraire, prix, chauffeurs proches. */
@@ -32,6 +34,8 @@ export async function POST(request: Request) {
     passengers: v.passengers,
     pickupAt: v.pickupAt ? new Date(v.pickupAt) : undefined,
     timezone: ctx.org.timezone ?? "Europe/Paris",
+    pickupAddress: v.pickupAddress,
+    dropoffAddress: v.dropoffAddress,
   });
   return NextResponse.json(quote, { headers: { "cache-control": "no-store" } });
 }

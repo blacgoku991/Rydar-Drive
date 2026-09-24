@@ -20,7 +20,9 @@ const empty: PlaceValue = { address: "", lat: null, lng: null };
 type Quote = {
   route: { distanceM: number; durationS: number; polyline: string; approximate: boolean } | null;
   priceCents: number | null;
+  meteredCents: number | null;
   pricingRule: string | null;
+  fixedFare: { label: string; price_cents: number } | null;
   nearby: { total: number; within3km: number; drivers: { id: string; name: string; vehicle: string | null; lat: number; lng: number; distanceM: number; etaS: number }[] };
 };
 
@@ -111,7 +113,7 @@ export function NewRideSheet({
           method: "POST",
           headers: { "content-type": "application/json" },
           signal: ctrl.signal,
-          body: JSON.stringify({ pickup: pickupPt, dropoff: dropoffPt, category, passengers, pickupAt: pickupAt?.toISOString() }),
+          body: JSON.stringify({ pickup: pickupPt, dropoff: dropoffPt, category, passengers, pickupAt: pickupAt?.toISOString(), pickupAddress: pickup.address, dropoffAddress: dropoff.address }),
         });
         if (res.ok) setQuote((await res.json()) as Quote);
       } catch {
@@ -343,7 +345,11 @@ export function NewRideSheet({
               </Field>
               <div className="min-w-0 flex-1 pb-0.5 text-[11.5px] leading-tight text-fg-subtle">
                 {suggested != null && !price ? (
-                  <>Tarif {quote?.pricingRule ?? "de la grille"}</>
+                  quote?.fixedFare ? (
+                    <span className="text-brand">Forfait {quote.fixedFare.label}{quote.meteredCents ? <span className="text-fg-subtle"> · compteur ≈ {formatPrice(quote.meteredCents)}</span> : null}</span>
+                  ) : (
+                    <>Tarif {quote?.pricingRule ?? "de la grille"}</>
+                  )
                 ) : price ? (
                   <>Prix saisi manuellement</>
                 ) : (
@@ -376,7 +382,7 @@ export function NewRideSheet({
               <div className="glass grid grid-cols-2 gap-px overflow-hidden rounded-2xl sm:grid-cols-4">
                 <Metric icon={Route} label="Distance" value={quote?.route ? formatDistance(quote.route.distanceM) : "—"} loading={quoting && !!dropoffPt} />
                 <Metric icon={Clock3} label="Durée" value={quote?.route ? formatDuration(quote.route.durationS) : "—"} loading={quoting && !!dropoffPt} />
-                <Metric icon={Zap} label="Prix estimé" value={finalPrice != null ? formatPrice(finalPrice) : "—"} accent loading={quoting && !!dropoffPt && !price} />
+                <Metric icon={Zap} label={quote?.fixedFare && !price ? "Forfait" : "Prix estimé"} value={finalPrice != null ? formatPrice(finalPrice) : "—"} accent loading={quoting && !!dropoffPt && !price} />
                 <Metric
                   icon={Car}
                   label={quote ? `${quote.nearby.total} chauffeur${quote.nearby.total > 1 ? "s" : ""} dispo.` : "Chauffeurs"}

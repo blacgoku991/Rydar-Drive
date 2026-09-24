@@ -1,4 +1,4 @@
-import { TENANT_FIELDS, apiRideCreateSchema, fieldErrors, zonedTimeToUtc } from "@rydar/shared";
+import { TENANT_FIELDS, apiRideCreateSchema, estimatePrice, fieldErrors, matchFixedFare, zonedTimeToUtc, type PricingRule } from "@rydar/shared";
 import { ApiError, PUBLIC_RIDE_SELECT, handle, preflight, publicRide, readJson } from "@/lib/api/v1";
 import { env } from "@/lib/env";
 import { geocodeOne } from "@/lib/geocode";
@@ -43,6 +43,21 @@ export async function POST(req: Request) {
     const idempotencyKey = req.headers.get("idempotency-key")?.slice(0, 100) || null;
 
     const admin = createAdminClient();
+    // Prix absent : grille de l'organisation (forfait reconnu, sinon compteur)
+    let priceCents = v.price_cents ?? null;
+    if (priceCents == null) {
+      const { data: rule } = await admin
+        .from("pricing_rules")
+        .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end, fixed_fares")
+        .eq("organization_id", ctx.orgId)
+        .eq("vehicle_category", v.vehicle_category)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (rule) {
+        const fixed = matchFixedFare(rule as PricingRule, pickup.address, dropoff.address);
+        priceCents = fixed?.price_cents ?? (route.estimated_distance_m != null ? estimatePrice(rule as PricingRule, route.estimated_distance_m, route.estimated_duration_s ?? 0, pickupAt, ctx.orgTimezone) : null);
+      }
+    }
     const { data: created, error } = await admin
       .from("rides")
       .insert({
@@ -63,7 +78,7 @@ export async function POST(req: Request) {
         passengers: v.passengers,
         luggage: v.luggage,
         vehicle_category: v.vehicle_category,
-        price_cents: v.price_cents ?? null,
+        price_cents: priceCents,
         payment_method: v.payment_method,
         comment: v.comment ?? null,
         flight_number: v.flight_number ?? null,

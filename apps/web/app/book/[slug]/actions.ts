@@ -1,5 +1,5 @@
 "use server";
-import { bookingRequestSchema, estimatePrice, fieldErrors, type BookingRequest, type PricingRule } from "@rydar/shared";
+import { bookingRequestSchema, estimatePrice, fieldErrors, matchFixedFare, type BookingRequest, type PricingRule } from "@rydar/shared";
 import { z } from "zod";
 import { computeRoute } from "@/lib/geo/routing";
 import { rateLimit } from "@/lib/rate-limit";
@@ -34,12 +34,13 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
   const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500 });
   const { data: rule } = await admin
     .from("pricing_rules")
-    .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end")
+    .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end, fixed_fares")
     .eq("organization_id", (org as any).id)
     .eq("vehicle_category", v.vehicleCategory)
     .eq("is_active", true)
     .maybeSingle();
-  const price = rule ? estimatePrice(rule as PricingRule, route.distanceM, route.durationS, pickupAt) : null;
+  const fixed = rule ? matchFixedFare(rule as PricingRule, v.pickup.address, v.dropoff.address) : null;
+  const price = fixed?.price_cents ?? (rule ? estimatePrice(rule as PricingRule, route.distanceM, route.durationS, pickupAt) : null);
   const { data, error } = await admin
     .from("rides")
     .insert({

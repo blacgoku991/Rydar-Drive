@@ -118,3 +118,15 @@ describe("itinéraires", () => {
     expect(pointAlong(straight, len + 10).done).toBe(true);
   });
 });
+
+describe("forfaits", () => {
+  it("reconnaît Paris ↔ CDG dans les deux sens, pas un trajet intra-Paris", async () => {
+    const { matchFixedFare } = await import("./pricing");
+    const rule = { fixed_fares: [{ label: "Paris ↔ CDG", price_cents: 7900 }, { label: "Paris ↔ Orly", price_cents: 6500 }] };
+    expect(matchFixedFare(rule, "Gare de Lyon, Place Louis-Armand, 75012 Paris", "Aéroport Paris-Charles de Gaulle, Terminal 2E, 95700 Roissy-en-France")?.price_cents).toBe(7900);
+    expect(matchFixedFare(rule, "Aéroport de Paris-Orly, Terminal 4, 94390 Orly", "Hôtel Plaza Athénée, 25 Avenue Montaigne, 75008 Paris")?.price_cents).toBe(6500);
+    expect(matchFixedFare(rule, "Gare de Lyon, 75012 Paris", "Opéra Garnier, 75009 Paris")).toBeNull();
+    expect(matchFixedFare(rule, "La Défense, 92400 Courbevoie", "Aéroport Paris-Charles de Gaulle, Terminal 2E")).toBeNull();
+    expect(matchFixedFare(rule, "Aéroport Paris-Charles de Gaulle, Terminal 2E", "Aéroport de Paris-Orly, Terminal 4")).toBeNull();
+  });
+});

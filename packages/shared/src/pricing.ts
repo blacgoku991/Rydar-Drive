@@ -40,3 +40,48 @@ export function estimatePrice(
   const withNight = isNight(pickupAt, rule, timeZone) ? raw * (1 + rule.night_surcharge_percent / 100) : raw;
   return Math.max(rule.minimum_fare_cents, Math.round(withNight / 100) * 100);
 }
+
+// ---------------------------------------------------------------------------
+// Forfaits (« Paris ↔ CDG ») : reconnus automatiquement à partir des adresses.
+// ---------------------------------------------------------------------------
+const PLACE_ALIASES: Record<string, RegExp> = {
+  cdg: /charles[\s-]*de[\s-]*gaulle|\bcdg\b|roissy/i,
+  "roissy-cdg": /charles[\s-]*de[\s-]*gaulle|\bcdg\b|roissy/i,
+  orly: /\borly\b/i,
+  disneyland: /disney|marne[\s-]*la[\s-]*vall|chessy/i,
+  disney: /disney|marne[\s-]*la[\s-]*vall|chessy/i,
+  "le bourget": /bourget/i,
+  beauvais: /beauvais|till[ée]/i,
+  paris: /\bparis\b|\b75\d{3}\b/i,
+  nice: /\bnice\b|\b06[0-9]00\b/i,
+  "aéroport de nice": /a[ée]roport.*nice|nice.*a[ée]roport|c[ôo]te d'azur/i,
+  monaco: /monaco|\b98000\b/i,
+};
+
+const AIRPORT = /a[ée]roport|terminal|\bcdg\b|charles[\s-]*de[\s-]*gaulle|\borly\b|roissy|bourget|beauvais/i;
+const CITIES = new Set(["paris", "nice", "monaco"]);
+
+function matchesPlace(token: string, address: string): boolean {
+  const key = token.trim().toLowerCase();
+  const re = PLACE_ALIASES[key];
+  const hit = re ? re.test(address) : address.toLowerCase().includes(key);
+  // « Paris » désigne la ville, pas un aéroport « Paris-Orly » / « Paris-CDG »
+  return CITIES.has(key) ? hit && !AIRPORT.test(address) : hit;
+}
+
+/** Forfait applicable au trajet (dans un sens ou dans l'autre), sinon null. */
+export function matchFixedFare(
+  rule: Pick<PricingRule, "fixed_fares">,
+  pickupAddress: string,
+  dropoffAddress: string,
+): { label: string; price_cents: number } | null {
+  for (const fare of rule.fixed_fares ?? []) {
+    const parts = fare.label.split(/\s*(?:↔|<->|->|→|-|—|\/)\s*/).filter(Boolean);
+    if (parts.length !== 2) continue;
+    const [a, b] = parts as [string, string];
+    const direct = matchesPlace(a, pickupAddress) && matchesPlace(b, dropoffAddress);
+    const reverse = matchesPlace(b, pickupAddress) && matchesPlace(a, dropoffAddress);
+    if (direct || reverse) return fare;
+  }
+  return null;
+}
