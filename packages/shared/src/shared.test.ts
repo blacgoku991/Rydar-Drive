@@ -130,3 +130,19 @@ describe("forfaits", () => {
     expect(matchFixedFare(rule, "Aéroport Paris-Charles de Gaulle, Terminal 2E", "Aéroport de Paris-Orly, Terminal 4")).toBeNull();
   });
 });
+
+describe("libellés des nouveautés (vols, signalements)", () => {
+  it("badge vol : retard, atterri, annulé, à l'heure", async () => {
+    const { flightBadge, formatDelay, fleetReportTitle } = await import("./features");
+    expect(formatDelay(35)).toBe("+35 min");
+    expect(formatDelay(-10)).toBe("−10 min");
+    expect(formatDelay(80)).toBe("+1 h 20");
+    expect(flightBadge({ flight_number: null })).toBeNull();
+    expect(flightBadge({ flight_number: "af 1234", flight_status: "delayed", flight_delay_minutes: 35, flight_terminal: "2E" })).toEqual({ text: "AF1234 · +35 min · T2E", tone: "amber" });
+    expect(flightBadge({ flight_number: "AF1234", flight_status: "landed", flight_actual_arrival: "2026-09-25T12:52:00Z", flight_terminal: "T2E" }, "Europe/Paris")?.text).toBe("AF1234 · atterri 14:52 · T2E");
+    expect(flightBadge({ flight_number: "AF1234", flight_status: "cancelled" })).toEqual({ text: "AF1234 · annulé", tone: "red" });
+    expect(flightBadge({ flight_number: "AF1234", flight_status: "scheduled", flight_delay_minutes: 2 })?.text).toBe("AF1234 · à l'heure");
+    expect(fleetReportTitle("police", "Karim")).toBe("Police signalée par Karim");
+    expect(fleetReportTitle("control")).toBe("Contrôle signalé");
+  });
+});
