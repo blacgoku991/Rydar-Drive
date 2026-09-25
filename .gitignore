@@ -40,3 +40,6 @@ apps/driver/public/maplibre-gl-shared.mjs
 
 # Redis local
 dump.rdb
+
+# Copies de travail temporaires des agents (git worktree)
+.claude/worktrees/
