@@ -96,3 +96,34 @@ export const RIDE_ALERT_META: Record<RideAlertKind, { label: string; short: stri
 };
 
 export const ALERT_SEVERITY_TONE: Record<RideAlertSeverity, "amber" | "red"> = { warning: "amber", critical: "red" };
+
+// -----------------------------------------------------------------------------
+// Documents chauffeur (migration 20260924002400) : statut calculé côté serveur
+// -----------------------------------------------------------------------------
+export type DocumentState = "valid" | "expiring" | "expired" | "pending" | "rejected" | "missing";
+
+export const DOCUMENT_TYPE_LABELS: Record<string, string> = {
+  vtc_card: "Carte VTC",
+  driving_license: "Permis de conduire",
+  identity: "Pièce d'identité",
+  insurance: "Attestation d'assurance",
+  vehicle_registration: "Carte grise",
+  medical: "Visite médicale",
+  other: "Document",
+};
+
+export const DOCUMENT_STATE_META: Record<DocumentState, { label: string; tone: "green" | "amber" | "red" | "blue" | "neutral" }> = {
+  valid: { label: "Valide", tone: "green" },
+  expiring: { label: "Expire bientôt", tone: "amber" },
+  expired: { label: "Expiré", tone: "red" },
+  pending: { label: "En attente de validation", tone: "blue" },
+  rejected: { label: "Refusé", tone: "red" },
+  missing: { label: "Manquant", tone: "neutral" },
+};
+
+/** « Expire dans 12 j », « Expire aujourd'hui », « Expiré depuis 3 j », sinon le libellé du statut. */
+export function documentStateLabel(state: DocumentState, daysLeft?: number | null): string {
+  if (state === "expiring" && daysLeft != null) return daysLeft <= 0 ? "Expire aujourd'hui" : `Expire dans ${daysLeft} j`;
+  if (state === "expired" && daysLeft != null && daysLeft < 0) return `Expiré depuis ${-daysLeft} j`;
+  return DOCUMENT_STATE_META[state].label;
+}

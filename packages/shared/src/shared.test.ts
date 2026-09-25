@@ -144,5 +144,10 @@ describe("libellés des nouveautés (vols, signalements)", () => {
     expect(flightBadge({ flight_number: "AF1234", flight_status: "scheduled", flight_delay_minutes: 2 })?.text).toBe("AF1234 · à l'heure");
     expect(fleetReportTitle("police", "Karim")).toBe("Police signalée par Karim");
     expect(fleetReportTitle("control")).toBe("Contrôle signalé");
+    const { documentStateLabel } = await import("./features");
+    expect(documentStateLabel("expiring", 12)).toBe("Expire dans 12 j");
+    expect(documentStateLabel("expiring", 0)).toBe("Expire aujourd'hui");
+    expect(documentStateLabel("expired", -3)).toBe("Expiré depuis 3 j");
+    expect(documentStateLabel("pending")).toBe("En attente de validation");
   });
 });
