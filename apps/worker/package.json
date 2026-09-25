@@ -10,6 +10,7 @@
     "build": "tsup",
     "simulate": "tsx --env-file-if-exists=.env src/simulator.ts",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. --project unit apps/worker",
     "backfill-routes": "tsx --env-file-if-exists=.env src/backfill-routes.ts"
   },
   "dependencies": {

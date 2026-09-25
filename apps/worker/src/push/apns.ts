@@ -16,7 +16,7 @@ export function apnsPayload(payload: PushPayload, now = Date.now()) {
       sound: p.sound,
       ...(p.categoryId ? { category: p.categoryId } : {}),
       "interruption-level": p.interruptionLevel,
-      "thread-id": String(payload.data.ride_id ?? payload.type),
+      "thread-id": p.threadId,
     },
     body: appData(payload),
   };

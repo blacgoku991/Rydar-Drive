@@ -9,6 +9,18 @@ export const config = {
   dispatchTickMs: num("DISPATCH_TICK_MS", 2000),
   notificationPollMs: num("NOTIFICATION_POLL_MS", 3000),
   housekeepingMs: num("HOUSEKEEPING_MS", 5 * 60_000),
+  /** Surveillance des courses en cours (retard, immobile, GPS muet, pas démarrée) : private.watch_rides(). */
+  watchRidesMs: num("WATCH_RIDES_MS", 30_000),
+  /** Échéances des documents chauffeur (au démarrage puis toutes les 6 h) : private.document_reminders(). */
+  documentRemindersMs: num("DOCUMENT_REMINDERS_MS", 6 * 3600_000),
+  /** Suivi des vols (fournisseur : voir flights/index.ts, FLIGHT_PROVIDER). */
+  flights: {
+    pollMs: num("FLIGHT_POLL_MS", 60_000),
+    batch: num("FLIGHT_BATCH", 30),
+    concurrency: num("FLIGHT_CONCURRENCY", 3),
+    timeoutMs: num("FLIGHT_TIMEOUT_MS", 5_000),
+    cacheMs: num("FLIGHT_CACHE_MS", 120_000),
+  },
   batchSize: num("NOTIFICATION_BATCH", 200),
   healthPort: num("HEALTH_PORT", 8080),
   expoAccessToken: process.env.EXPO_ACCESS_TOKEN || undefined,

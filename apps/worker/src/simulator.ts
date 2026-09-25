@@ -6,7 +6,13 @@
  *
  * Les véhicules suivent de vrais itinéraires routiers (OSRM) : maraude, approche
  * du client, puis trajet jusqu'à la destination. Les chauffeurs acceptent ~75 %
- * des offres après quelques secondes.
+ * des offres après quelques secondes. Les courses simulées au départ d'un aéroport
+ * portent un numéro de vol (suivi par le worker, fournisseur « mock » en dev).
+ *
+ * SIM_REPORTS=1 : messagerie simulée (send_chat_message en tant que chauffeur) —
+ *   - de temps en temps (SIM_REPORT_EVERY secondes, 120 par défaut) un chauffeur publie un
+ *     signalement (police / contrôle / bouchon) près de sa position ;
+ *   - les chauffeurs répondent aux messages directs de la centrale après 3 à 8 s.
  */
 import { decodePolyline, haversine, pointAlong, type Coord } from "@rydar/shared";
 import pg from "pg";
@@ -21,9 +27,25 @@ const SPEEDUP = Number(process.env.SIM_SPEEDUP ?? 3);
 const ACCEPT_RATE = Number(process.env.SIM_ACCEPT_RATE ?? 0.75);
 /** E-mails des chauffeurs pilotés à la main (vraie app) : le simulateur ne les touche pas. */
 const EXCLUDE = (process.env.SIM_EXCLUDE ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+const REPORTS = ["1", "true", "yes", "on"].includes((process.env.SIM_REPORTS ?? "").toLowerCase());
+const REPORT_EVERY_S = Number(process.env.SIM_REPORT_EVERY ?? 120);
 
 type Leg = { key: string; coords: Coord[]; length: number; speed: number; done: number };
-type Sim = { id: string; userId: string; name: string; lat: number; lng: number; heading: number; leg?: Leg; routing?: boolean; waitUntil?: number };
+type Sim = {
+  id: string;
+  userId: string;
+  name: string;
+  lat: number;
+  lng: number;
+  heading: number;
+  leg?: Leg;
+  routing?: boolean;
+  waitUntil?: number;
+  /** Dernier passage où le chauffeur était en ligne (ms). */
+  seenAt?: number;
+  /** Dernier signalement publié (ms) — la base limite à 5 / 10 min par auteur. */
+  reportedAt?: number;
+};
 const sims = new Map<string, Sim>();
 const pendingDecisions = new Set<string>();
 
@@ -98,6 +120,7 @@ async function step(org: string) {
       s = { id: d.id, userId: d.user_id, name: d.first_name, lat: d.lat ?? 48.8566, lng: d.lng ?? 2.3522, heading: Math.random() * 360 };
       sims.set(d.id, s);
     }
+    s.seenAt = Date.now();
     const ride = d.current_ride_id
       ? (await pool.query("select id, status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, route_polyline from rides where id = $1", [d.current_ride_id])).rows[0]
       : null;
@@ -141,11 +164,12 @@ async function step(org: string) {
     );
   }
 
-  // Décisions sur les offres en attente
+  // Décisions sur les offres en attente (jamais pour les chauffeurs pilotés à la main : SIM_EXCLUDE)
   const { rows: offers } = await pool.query(
     `select o.id, o.driver_id, d.user_id, d.first_name from ride_offers o join drivers d on d.id = o.driver_id
-      where o.organization_id = $1 and o.status = 'pending'`,
-    [org],
+      where o.organization_id = $1 and o.status = 'pending'
+        and not (lower(coalesce(d.email, '')) = any($2::text[]))`,
+    [org, EXCLUDE],
   );
   for (const o of offers) {
     if (pendingDecisions.has(o.id)) continue;
@@ -179,28 +203,134 @@ const SPOTS = [
 ] as const;
 const CUSTOMERS = ["M. Laurent Dubois", "Mme Claire Fontaine", "Famille Martin", "M. Pierre Girard", "Cabinet Delsol — M. Perrin", "Mme Sophie Bernard", "M. Julien Morel"];
 
+const pick = <T>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)]!;
+const between = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
+
+/**
+ * Numéro de vol plausible pour une prise en charge à l'aéroport : Air France partout ;
+ * à Roissy aussi Emirates (Dubaï, EK071/073/075) et British Airways (Londres, BA3xx).
+ */
+function simulatedFlight(pickupAddress: string): string | null {
+  if (!/a[ée]roport/i.test(pickupAddress)) return null;
+  if (/orly/i.test(pickupAddress)) return `AF${between(6100, 6299)}`;
+  const roll = Math.random();
+  if (roll < 0.2) return pick(["EK071", "EK073", "EK075"]);
+  if (roll < 0.4) return pick(["BA304", "BA306", "BA308", "BA314", "BA318"]);
+  return `AF${between(1000, 1899)}`;
+}
+
 async function newRide(org: string) {
   const a = SPOTS[Math.floor(Math.random() * SPOTS.length)]!;
   let b = SPOTS[Math.floor(Math.random() * SPOTS.length)]!;
   if (b === a) b = SPOTS[(SPOTS.indexOf(a) + 3) % SPOTS.length]!;
   const route = await osrmRoute({ lat: a[1], lng: a[2] }, { lat: b[1], lng: b[2] });
   const price = Math.max(35, Math.round((20 + (route.distanceM / 1000) * 1.9 + (route.durationS / 60) * 0.45) / 1)) * 100;
+  const flight = simulatedFlight(a[0]);
   const { rows } = await pool.query(
     `insert into rides (organization_id, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng,
-       customer_name, customer_phone, passengers, vehicle_category, price_cents, estimated_distance_m, estimated_duration_s, route_polyline, route_provider)
+       customer_name, customer_phone, passengers, vehicle_category, price_cents, estimated_distance_m, estimated_duration_s, route_polyline, route_provider,
+       flight_number)
      values ($1, 'api', $2, $3, $4, $5, $6, $7, $8, '+33612345678', 1 + floor(random() * 3)::int,
-       (array['business','business','standard'])[1 + floor(random() * 3)::int]::vehicle_category, $9, $10, $11, $12, $13)
+       (array['business','business','standard'])[1 + floor(random() * 3)::int]::vehicle_category, $9, $10, $11, $12, $13, $14)
      returning number`,
-    [org, a[0], a[1], a[2], b[0], b[1], b[2], CUSTOMERS[Math.floor(Math.random() * CUSTOMERS.length)], price, route.distanceM, route.durationS, route.polyline, route.approximate ? "estimate" : "osrm"],
+    [org, a[0], a[1], a[2], b[0], b[1], b[2], CUSTOMERS[Math.floor(Math.random() * CUSTOMERS.length)], price, route.distanceM, route.durationS, route.polyline, route.approximate ? "estimate" : "osrm", flight],
   );
-  log("info", "course simulée créée", { number: rows[0]?.number, km: Math.round(route.distanceM / 100) / 10 });
+  log("info", "course simulée créée", { number: rows[0]?.number, km: Math.round(route.distanceM / 100) / 10, ...(flight ? { flight } : {}) });
+}
+
+// ----------------------------------------------------------------- messagerie simulée (SIM_REPORTS=1)
+
+const REPORT_TEXTS: Record<"police" | "control" | "traffic", string[]> = {
+  police: ["", "Police au carrefour, ralentissez", "Contrôle radar mobile"],
+  control: ["", "Contrôle VTC, cartes pro vérifiées", "Brigade des taxis en contrôle"],
+  traffic: ["", "Gros bouchon, évitez le secteur", "Travaux, une seule voie"],
+};
+
+/** Un chauffeur en ligne (pas signalé depuis 10 min) publie un signalement à quelques centaines de mètres. */
+async function publishReport() {
+  const now = Date.now();
+  const candidates = [...sims.values()].filter((s) => now - (s.seenAt ?? 0) < 30_000 && now - (s.reportedAt ?? 0) > 10 * 60_000);
+  if (!candidates.length) return;
+  const s = pick(candidates);
+  const type = pick(["police", "police", "control", "traffic", "traffic"] as const);
+  const at = randomAround(s.lat, s.lng, 500);
+  s.reportedAt = now;
+  const res = await asDriver<{ r: { id: string; notified?: number } }>(
+    s.userId,
+    "select public.send_chat_message(null::uuid, 'fleet', null::uuid, $1::text, $2::text, $3::float8, $4::float8) as r",
+    [pick(REPORT_TEXTS[type]), type, at.lat, at.lng],
+  );
+  log("info", `${s.name} → signalement ${type}`, { notified: res?.r?.notified });
+}
+
+let lastDirect: Date | null = null;
+const replying = new Set<string>();
+/** Messages déjà traités (la date JS, au ms près, peut ré-sélectionner un message à la µs près). */
+const handled = new Set<string>();
+
+/** Réponse selon la situation du chauffeur (course en cours, en approche, libre). */
+function replyFor(rideStatus: string | null) {
+  if (rideStatus === "PASSENGER_ONBOARD" || rideStatus === "IN_PROGRESS") return "Client à bord";
+  if (rideStatus === "ACCEPTED" || rideStatus === "DRIVER_EN_ROUTE") return "J'arrive dans 5 min";
+  return "Bien reçu 👍";
+}
+
+/** Messages directs de la centrale depuis le dernier passage → réponse du chauffeur simulé après 3 à 8 s. */
+async function answerDirectMessages(org: string) {
+  if (!lastDirect) {
+    lastDirect = (await pool.query<{ now: Date }>("select now() as now")).rows[0]!.now;
+    return;
+  }
+  const { rows } = await pool.query<{ id: string; driver_id: string; user_id: string; first_name: string; created_at: Date }>(
+    `select m.id, m.driver_id, d.user_id, d.first_name, m.created_at
+       from chat_messages m join drivers d on d.id = m.driver_id
+      where m.organization_id = $1 and m.channel = 'driver' and m.author_type = 'user' and m.created_at >= $2
+        and d.status = 'active' and d.presence <> 'offline' and d.user_id is not null
+        and not (lower(coalesce(d.email, '')) = any($3::text[]))
+      order by m.created_at`,
+    [org, lastDirect, EXCLUDE],
+  );
+  if (handled.size > 1000) handled.clear();
+  for (const m of rows) {
+    if (m.created_at > lastDirect) lastDirect = m.created_at;
+    if (handled.has(m.id)) continue;
+    handled.add(m.id);
+    if (replying.has(m.driver_id)) continue; // une seule réponse par rafale
+    replying.add(m.driver_id);
+    setTimeout(async () => {
+      try {
+        const { rows: cur } = await pool.query<{ status: string | null }>(
+          "select r.status from drivers d left join rides r on r.id = d.current_ride_id where d.id = $1",
+          [m.driver_id],
+        );
+        const body = replyFor(cur[0]?.status ?? null);
+        await asDriver(m.user_id, "select public.send_chat_message(null::uuid, 'driver', null::uuid, $1::text) as r", [body]);
+        log("info", `${m.first_name} → centrale`, { body });
+      } catch (e) {
+        log("warn", "sim reply failed", { driver: m.first_name, error: (e as Error).message });
+      } finally {
+        replying.delete(m.driver_id);
+      }
+    }, between(3000, 8000));
+  }
 }
 
 async function main() {
   const org = await orgId();
-  log("info", "simulateur démarré", { org, stepMs: STEP_MS, newRideEvery: NEW_RIDE_EVERY_S || "off", speedup: SPEEDUP });
+  log("info", "simulateur démarré", { org, stepMs: STEP_MS, newRideEvery: NEW_RIDE_EVERY_S || "off", speedup: SPEEDUP, reports: REPORTS ? `${REPORT_EVERY_S}s` : "off" });
   setInterval(() => step(org).catch((e) => log("error", "step failed", { error: (e as Error).message })), STEP_MS);
   if (NEW_RIDE_EVERY_S > 0) setInterval(() => newRide(org).catch((e) => log("error", "new ride failed", { error: (e as Error).message })), NEW_RIDE_EVERY_S * 1000);
+  if (REPORTS) {
+    // premier signalement après une maraude (positions à jour), puis à intervalle ± 30 %
+    const schedule = (ms: number) =>
+      setTimeout(() => {
+        publishReport()
+          .catch((e) => log("warn", "sim report failed", { error: (e as Error).message }))
+          .finally(() => schedule(REPORT_EVERY_S * 1000 * (0.7 + Math.random() * 0.6)));
+      }, ms);
+    schedule(Math.min(30_000, REPORT_EVERY_S * 1000));
+    setInterval(() => answerDirectMessages(org).catch((e) => log("warn", "sim replies failed", { error: (e as Error).message })), 2000);
+  }
 }
 
 void main();

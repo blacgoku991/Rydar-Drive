@@ -1,4 +1,5 @@
-# Worker Rydar Drive — tick du dispatch, notifications push, ménage.
+# Worker Rydar Drive — tick du dispatch, notifications push, ménage, suivi des vols,
+# surveillance des courses, rappels d'échéance des documents.
 #   docker build -f apps/worker/Dockerfile -t rydar-worker .
 #   docker run -e DATABASE_URL=... -e EXPO_ACCESS_TOKEN=... rydar-worker
 FROM node:22-alpine AS build
