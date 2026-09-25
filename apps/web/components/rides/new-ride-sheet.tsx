@@ -187,12 +187,13 @@ export function NewRideSheet({
     if (centrale) {
       // Le chauffeur voit sa part dans l'offre : prix obligatoire, commission cohérente
       const e: Record<string, string> = {};
-      if (finalPrice == null || !Number.isFinite(finalPrice)) e.priceCents = "Prix obligatoire en mode centrale";
+      if (finalPrice == null) e.priceCents = "Prix obligatoire en mode centrale";
+      else if (!Number.isFinite(finalPrice)) e.priceCents = "Montant en euros (ex. 59 ou 59,50)";
       if (!commissionValid) e.commissionCents = "Montant en euros (ex. 14 ou 14,50)";
       else if (split.data?.error === "COMMISSION_TOO_HIGH") e.commissionCents = "Commission + frais plateforme > prix";
       if (Object.keys(e).length) {
         setErrors(e);
-        toast.error(e.priceCents ? "Indiquez le prix : le chauffeur voit sa part avant d'accepter." : "Vérifiez la commission.");
+        toast.error(finalPrice == null ? "Indiquez le prix : le chauffeur voit sa part avant d'accepter." : Object.values(e)[0]!);
         return;
       }
     }
