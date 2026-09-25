@@ -214,3 +214,112 @@ export interface DriverHome {
   next_scheduled: { id: Uuid; number: number; pickup_at: Iso; pickup_address: string; dropoff_address: string; price_cents: number | null } | null;
   pending_offers: number;
 }
+
+// -----------------------------------------------------------------------------
+// Messagerie centrale ⇄ chauffeurs + signalements flotte (migration 20260924002300_chat)
+// -----------------------------------------------------------------------------
+export type ChatChannel = "driver" | "fleet";
+export type ChatAuthorType = "user" | "driver" | "system";
+export type FleetReportType = "police" | "control" | "accident" | "traffic" | "danger" | "other";
+/** Clé de fil : « fleet » ou « driver:<driver_id> » (fil direct centrale ⇄ chauffeur). */
+export type ChatThreadKey = "fleet" | `driver:${string}`;
+
+/** Ligne de public.chat_messages (lecture directe via RLS). */
+export interface ChatMessageRow {
+  id: Uuid;
+  organization_id: Uuid;
+  channel: ChatChannel;
+  driver_id: Uuid | null;
+  author_type: ChatAuthorType;
+  author_user_id: Uuid | null;
+  author_driver_id: Uuid | null;
+  author_name: string;
+  body: string;
+  report_type: FleetReportType | null;
+  lat: number | null;
+  lng: number | null;
+  expires_at: Iso | null;
+  confirmations: number;
+  dismissals: number;
+  created_at: Iso;
+}
+
+/** Message tel que renvoyé par les RPC et diffusé en temps réel (« chat.message »). */
+export interface ChatMessage extends ChatMessageRow {
+  thread: ChatThreadKey;
+  /** Signalement non expiré au moment de l'envoi / de la lecture */
+  active: boolean;
+}
+
+export interface SendChatMessageResult extends ChatMessage {
+  /** Push mis en file : 1 pour un message direct de la centrale, N chauffeurs pour un signalement */
+  notified: number;
+}
+
+/** Signalement actif vu par un chauffeur (driver_chat_overview). */
+export interface FleetReport extends ChatMessage {
+  distance_m: number | null;
+  my_vote: boolean | null;
+}
+
+export interface ChatThreadSummary {
+  thread: ChatThreadKey;
+  last_message: ChatMessage | null;
+  unread: number;
+  last_read_at: Iso | null;
+}
+
+export interface ChatOverview {
+  organization_id: Uuid;
+  fleet: ChatThreadSummary & { thread: "fleet"; active_reports: number };
+  drivers: Array<ChatThreadSummary & {
+    driver: { id: Uuid; number: number; first_name: string; last_name: string; presence: DriverPresence; status: DriverStatus; photo_url: string | null };
+    /** Dernière lecture du fil par le chauffeur (« Vu ») */
+    driver_last_read_at: Iso | null;
+  }>;
+  unread_total: number;
+}
+
+export interface DriverChatOverview {
+  driver_id: Uuid;
+  organization_id: Uuid;
+  dispatch: ChatThreadSummary & { seen_by_dispatch_at: Iso | null; messages: ChatMessage[] };
+  fleet: ChatThreadSummary & { thread: "fleet"; messages: ChatMessage[] };
+  reports: FleetReport[];
+  unread_total: number;
+}
+
+export interface MarkChatReadResult {
+  ok: true;
+  thread: ChatThreadKey;
+  last_read_at: Iso;
+}
+
+export interface FleetReportVoteResult {
+  ok: boolean;
+  code: "VOTED" | "ALREADY_VOTED" | "REPORT_EXPIRED";
+  message?: string;
+  report: ChatMessage;
+  my_vote?: boolean;
+  expired?: boolean;
+}
+
+/** Temps réel « chat.report » (org:<org> et fleet:<org>) */
+export interface FleetReportUpdate {
+  id: Uuid;
+  organization_id: Uuid;
+  report_type: FleetReportType;
+  expires_at: Iso;
+  confirmations: number;
+  dismissals: number;
+  active: boolean;
+}
+
+/** Temps réel « chat.read » (accusé de lecture) */
+export interface ChatReadEvent {
+  organization_id: Uuid;
+  thread: ChatThreadKey;
+  reader_key: string;
+  reader_type: "user" | "driver";
+  last_read_at: Iso;
+}
