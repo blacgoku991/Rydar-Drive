@@ -45,7 +45,7 @@ type Ctx = {
 };
 const AlertsContext = createContext<Ctx | null>(null);
 
-const STORE_KEY = "rydar.alerts";
+const STORE_KEY = "rydar.alerts:";
 const SOUND_KEY = "rydar.sound";
 
 function read<T>(storage: () => Storage, key: string, fallback: T): T {
@@ -64,7 +64,8 @@ function write(storage: () => Storage, key: string, value: unknown) {
   }
 }
 
-export function AlertsProvider({ children }: { children: React.ReactNode }) {
+/** `scope` : organisation + utilisateur (l'historique ne suit ni un changement d'organisation ni un autre compte). */
+export function AlertsProvider({ scope, children }: { scope: string; children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [items, setItems] = useState<AlertItem[]>([]);
@@ -76,7 +77,16 @@ export function AlertsProvider({ children }: { children: React.ReactNode }) {
   soundRef.current = sound;
 
   useEffect(() => {
-    setItems(read(() => window.sessionStorage, STORE_KEY, [] as AlertItem[]));
+    setItems(read(() => window.sessionStorage, STORE_KEY + scope, [] as AlertItem[]));
+    // anciennes clés (autre organisation, autre compte) : effacées
+    try {
+      for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+        const k = window.sessionStorage.key(i);
+        if (k && (k === "rydar.alerts" || (k.startsWith(STORE_KEY) && k !== STORE_KEY + scope))) window.sessionStorage.removeItem(k);
+      }
+    } catch {
+      /* stockage indisponible */
+    }
     setSoundState(read(() => window.localStorage, SOUND_KEY, true));
     setDesktop(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
     const unlock = () => unlockAudio();
@@ -87,7 +97,7 @@ export function AlertsProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("keydown", unlock);
     };
   }, []);
-  useEffect(() => write(() => window.sessionStorage, STORE_KEY, items.slice(0, 40)), [items]);
+  useEffect(() => write(() => window.sessionStorage, STORE_KEY + scope, items.slice(0, 40)), [items, scope]);
 
   const focusRide = useCallback(
     (id: string) => {

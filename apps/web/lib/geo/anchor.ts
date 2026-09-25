@@ -11,9 +11,11 @@ const median = (xs: number[]) => {
 };
 
 /**
- * Point de référence de l'activité d'une organisation : médiane des derniers départs,
- * sinon des positions de sa flotte. Sert de biais de proximité au géocodage et de
- * garde-fou contre les coordonnées aberrantes (0,0 ; latitude/longitude inversées).
+ * Point de référence de l'activité d'une organisation : médiane des départs de courses
+ * réellement prises par un chauffeur (une réservation anonyme du mini-site ne peut donc
+ * pas le déplacer), sinon des positions de sa flotte. Sert de biais de proximité au
+ * géocodage et de garde-fou contre les coordonnées aberrantes (0,0 ; lat/lng inversées).
+ * Donnée interne : ne jamais l'exposer telle quelle (voir publicAnchor).
  */
 export async function orgAnchor(orgId: string): Promise<LatLng | null> {
   const hit = cache.get(orgId);
@@ -24,6 +26,7 @@ export async function orgAnchor(orgId: string): Promise<LatLng | null> {
     .from("rides")
     .select("pickup_lat, pickup_lng")
     .eq("organization_id", orgId)
+    .not("driver_id", "is", null)
     .order("created_at", { ascending: false })
     .limit(60);
   pts = (rides ?? []).map((r: any) => ({ lat: r.pickup_lat, lng: r.pickup_lng }));
@@ -34,6 +37,12 @@ export async function orgAnchor(orgId: string): Promise<LatLng | null> {
   const anchor = pts.length ? { lat: median(pts.map((p) => p.lat)), lng: median(pts.map((p) => p.lng)) } : null;
   cache.set(orgId, anchor);
   return anchor;
+}
+
+/** Version publique (mini-site) : arrondie à 0,1° (~10 km), ne révèle aucune adresse ni position. */
+export async function publicAnchor(orgId: string): Promise<LatLng | null> {
+  const a = await orgAnchor(orgId);
+  return a ? { lat: Math.round(a.lat * 10) / 10, lng: Math.round(a.lng * 10) / 10 } : null;
 }
 
 export const MAX_PICKUP_DISTANCE_M = 600_000;

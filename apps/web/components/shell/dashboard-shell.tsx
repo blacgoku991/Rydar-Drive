@@ -44,7 +44,7 @@ export function DashboardShell({
   ];
   return (
     <RealtimeProvider topic={`org:${org.id}`}>
-      <AlertsProvider>
+      <AlertsProvider key={org.id} scope={`${org.id}:${user.email}`}>
         <Sidebar
           headerAction={<AlertsBell />}
           sections={sections}
