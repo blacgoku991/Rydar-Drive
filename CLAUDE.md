@@ -54,7 +54,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [x] M7 worker (`apps/worker` : tick, outbox push Expo/FCM/APNs, simulateur `SIM_ORG=elite-paris SIM_NEW_RIDE_EVERY=20 npx tsx src/simulator.ts`)
 - [x] M8 app chauffeur (`apps/driver`, Expo 57 / RN 0.86 / React 19.2.3 partout ; `npx expo export --platform android` OK)
 - [x] M9 Stripe (checkout/portal/webhook)
-- [x] M10 docs (README, docs/ARCHITECTURE|API|SECURITY), CI GitHub verte (3 jobs), 63 tests DB, révocation sessions (mig 001300)
+- [x] M10 docs (README, docs/ARCHITECTURE|API|SECURITY), CI GitHub verte (3 jobs), révocation sessions (mig 001300)
 - [x] Audit géoloc/notifs/dispatch : vagues cumulatives (migr. 1700), flotte re-balayée toutes les 5 min (1800), géocodage API avec seuil de confiance (`lib/geocode.ts`, `lib/geo/anchor.ts`), alertes dashboard son + navigateur (`components/alerts`), relais Realtime local (`scripts/local-stack/realtime.mjs`)
 - [x] M11 REFONTE (demande utilisateur : épuré, vraie carte, géoloc + calculs, visuels partout, app chauffeur « waw »)
   - géo serveur : `apps/web/lib/geocode.ts` (geopf|ban|google|mapbox, GEOCODER_URL), `lib/geo/routing.ts` (osrm|mapbox|google + repli), `lib/geo/quote.ts`
@@ -66,7 +66,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   - worker : simulateur sur itinéraires OSRM, `backfill-routes`
   - dev-geo : `scripts/dev-geo/` (tuiles OMT Overture, router :5001, géocodeur :5002) ; env dev dans apps/web/.env.local
 - [x] docs/DEPLOYMENT.md + captures docs/screenshots/*.jpg
-- [ ] M12 NOUVEAUTÉS (choix utilisateur 3/6/7/10) — SQL fait (mig 002050→002400), écrans en cours
+- [x] M12 NOUVEAUTÉS (choix utilisateur 3/6/7/10) — mig 002050→002500, 183 tests DB, 75 unitaires, 55 worker
   - vols 002100 : rides.flight_*, pickup_at_original ; décalage RELATIF (heure demandée + retard), « arrivée + marge » seulement
     sans horaire prévu ou si l'heure demandée précède l'atterrissage ; worker : flights_to_check / apply_flight_status
   - alertes 002200 : ride_alerts (late|stalled|no_gps|not_started), private.watch_rides() 30 s ; la CENTRALE décide :
@@ -78,6 +78,13 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
     org_document_alerts, private.document_reminders() ; commission organization_settings.driver_commission_percent
   - stats 002050 : ride_offers.missed_at (offre géo prolongée/expirée sans réponse = manquée)
   - libellés communs : `@rydar/shared` features.ts (flightBadge, FLEET_REPORT_META, RIDE_ALERT_META, documents)
+  - revue SQL (mig 002500 + corrections en place) : fuseau IANA validé, votes anti-abus (OWN_REPORT, 1 min, 3 h max),
+    created_at des messages au COMMIT (déclencheur différé), EXPIRY_REQUIRED pour valider une pièce à échéance
+  - web : `components/alerts/{dispatch-alerts,ride-alert-ui}`, `components/rides/{flight-info,ride-alert-list}`,
+    `/dashboard/messages` + `components/chat/*` (unread-provider), `components/drivers/{driver-documents,driver-earnings}`
+  - app : `app/(app)/{messages,earnings,documents}.tsx`, `src/components/{fleet-report,flight}.tsx`, canal fleet:{org}
+  - worker : `src/flights/` (aerodatabox|aviationstack|flightaware|mock, FLIGHT_MOCK_DELAYS), watch_rides 30 s,
+    document_reminders 6 h, simulateur SIM_REPORTS=1
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
