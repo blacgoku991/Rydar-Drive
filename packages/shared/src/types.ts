@@ -207,12 +207,23 @@ export interface DriverOffer {
 }
 
 export interface DriverHome {
-  driver: { id: Uuid; number: number; first_name: string; last_name: string; presence: DriverPresence; photo_url: string | null; current_ride_id: Uuid | null };
-  organization: { id: Uuid; name: string; logo_url: string | null; phone: string | null; timezone: string };
+  driver: {
+    id: Uuid; number: number; first_name: string; last_name: string; presence: DriverPresence; photo_url: string | null;
+    current_ride_id: Uuid | null; trust_level?: TrustLevel;
+  };
+  organization: { id: Uuid; name: string; logo_url: string | null; phone: string | null; timezone: string; dispatch_model?: DispatchModel };
   vehicle: { brand: string | null; model: string; plate: string; color: string | null; category: VehicleCategory; seats: number } | null;
-  today: { rides: number; revenue_cents: number };
-  next_scheduled: { id: Uuid; number: number; pickup_at: Iso; pickup_address: string; dropoff_address: string; price_cents: number | null } | null;
+  /** net_cents : part chauffeur du jour (mode centrale), null en mode flotte */
+  today: { rides: number; revenue_cents: number; net_cents?: number | null };
+  next_scheduled: {
+    id: Uuid; number: number; pickup_at: Iso; pickup_address: string; dropoff_address: string; price_cents: number | null;
+    driver_payout_cents?: number | null;
+  } | null;
   pending_offers: number;
+  /** Modèle d'exploitation de l'organisation (migration 20260924002600) */
+  model?: DispatchModel;
+  /** Mode centrale : commissions à régler, gains à recevoir, blocage éventuel (null en mode flotte) */
+  settlement?: DriverSettlementSummary | null;
 }
 
 // -----------------------------------------------------------------------------
@@ -633,4 +644,376 @@ export interface DriverDocumentEvent {
   replaced_ids?: Uuid[];
   /** expiring / expired : seuil de rappel (30, 7 ou 0 jours) */
   threshold?: 30 | 7 | 0;
+}
+
+// -----------------------------------------------------------------------------
+// Mode « Centrale à commission » (migration 20260924002600_centrale_mode)
+// -----------------------------------------------------------------------------
+/** fleet : flotte de la société (option 1) ; centrale : réseau de chauffeurs indépendants à commission (option 2). */
+export type DispatchModel = "fleet" | "centrale";
+/** new : plafond de prix des offres (réglage) jusqu'à N courses réglées ; trusted : toutes les courses. */
+export type TrustLevel = "new" | "trusted";
+/** Motif de blocage des offres : commission en retard / contestée, encours au-delà du plafond, course trop chère pour un nouveau. */
+export type DriverBlocker = "unpaid" | "credit_limit" | "new_driver";
+export type SettlementDirection = "driver_owes" | "centrale_owes";
+export type SettlementStatus = "due" | "declared" | "paid" | "waived" | "disputed";
+export type SettlementMethod = "link" | "cash" | "transfer";
+export type BanCategory = "unpaid" | "fraud" | "behavior" | "documents" | "other";
+export type IdentityKind = "phone" | "email" | "vtc_card" | "driving_license" | "identity_doc" | "plate" | "device";
+export type DriverApplicationStatus = "pending" | "approved" | "rejected";
+
+/** Répartition stockée sur la course (mode centrale). */
+export interface RideSplitFields {
+  commission_cents: number | null;
+  platform_fee_cents: number | null;
+  driver_payout_cents: number | null;
+  /** commission saisie à la course (sinon % + fixe des réglages) */
+  commission_manual: boolean;
+}
+export interface Ride extends Partial<RideSplitFields> {}
+
+export interface DriverOfferSplit {
+  dispatch_model: DispatchModel;
+  commission_cents: number | null;
+  platform_fee_cents: number | null;
+  /** « Vous gagnez … » */
+  driver_payout_cents: number | null;
+  /** espèces / carte à bord : le chauffeur encaisse le client (et doit commission + frais) */
+  driver_collects: boolean;
+  blocked: DriverBlocker | null;
+}
+export interface DriverOffer extends Partial<DriverOfferSplit> {}
+
+export interface OrganizationCentraleFields {
+  dispatch_model: DispatchModel;
+  platform_fee_percent: number;
+  platform_fee_fixed_cents: number;
+  join_code: string | null;
+  join_enabled: boolean;
+  join_auto_approve: boolean;
+}
+export interface Organization extends Partial<OrganizationCentraleFields> {}
+
+export interface DriverCentraleFields {
+  trust_level: TrustLevel;
+  joined_via: "dashboard" | "join_link";
+  application_status: DriverApplicationStatus | null;
+  application_message: string | null;
+  applied_at: Iso | null;
+  application_reviewed_at: Iso | null;
+  application_note: string | null;
+  banned_at: Iso | null;
+  ban_reason: string | null;
+  ban_scope: "org" | "platform" | null;
+  suspended_reason: string | null;
+}
+export interface Driver extends Partial<DriverCentraleFields> {}
+
+export interface EarningsRide {
+  commission_cents?: number | null;
+  platform_fee_cents?: number | null;
+  settlement_status?: SettlementStatus | null;
+  settlement_direction?: SettlementDirection | null;
+}
+export interface DriverEarnings {
+  model?: DispatchModel;
+}
+
+/** Résumé renvoyé par driver_home().settlement */
+export interface DriverSettlementSummary {
+  owed_cents: number;
+  overdue_cents: number;
+  declared_cents: number;
+  to_receive_cents: number;
+  open_count: number;
+  next_due_at: Iso | null;
+  blocked: DriverBlocker | null;
+  blocked_message: string | null;
+}
+
+/** Règlement d'une course (private.settlement_json) */
+export interface Settlement {
+  id: Uuid;
+  ride_id: Uuid;
+  driver_id: Uuid | null;
+  driver_label: string;
+  direction: SettlementDirection;
+  /** driver_owes : commission + frais ; centrale_owes : part chauffeur */
+  amount_cents: number;
+  price_cents: number;
+  commission_cents: number;
+  platform_fee_cents: number;
+  driver_payout_cents: number;
+  currency: string;
+  payment_method: PaymentMethod;
+  /** « C1783 » : libellé de virement / lien de paiement */
+  reference: string;
+  status: SettlementStatus;
+  /** à régler et échéance passée */
+  overdue: boolean;
+  /** bloque les offres : en retard ou contesté */
+  blocking: boolean;
+  due_at: Iso;
+  declared_at: Iso | null;
+  declared_method: SettlementMethod | null;
+  declared_note: string | null;
+  settled_at: Iso | null;
+  settled_method: SettlementMethod | "other" | null;
+  note: string | null;
+  reminders_sent: number;
+  last_reminded_at: Iso | null;
+  created_at: Iso;
+  updated_at: Iso;
+}
+
+export interface DriverSettlementItem extends Settlement {
+  ride: { number: number; pickup: string; dropoff: string; completed_at: Iso | null };
+}
+
+/** RPC driver_settlements(p_limit) */
+export interface DriverSettlements {
+  model: DispatchModel;
+  currency: string;
+  organization: { name: string; phone: string | null };
+  grace_hours: number;
+  summary: {
+    owed_cents: number;
+    overdue_cents: number;
+    declared_cents: number;
+    to_receive_cents: number;
+    paid_month_cents: number;
+    received_month_cents: number;
+    next_due_at: Iso | null;
+  };
+  /** Tout ce qui est à régler (à régler + contesté), avec le lien prérempli ({montant}, {reference}) */
+  pay: {
+    amount_cents: number;
+    count: number;
+    settlement_ids: Uuid[];
+    reference: string | null;
+    link: string | null;
+    methods: SettlementMethod[];
+    instructions: string | null;
+  };
+  blocked: DriverBlocker | null;
+  blocked_message: string | null;
+  items: DriverSettlementItem[];
+}
+
+export type OrgSettlementFilter = "open" | "declared" | "overdue" | "disputed" | "to_pay" | "paid" | "waived" | "all";
+
+export interface OrgSettlementItem extends Settlement {
+  ride: { number: number; pickup: string; dropoff: string; completed_at: Iso | null; customer_name: string };
+  driver: {
+    id: Uuid; number: number; first_name: string; last_name: string; phone: string; trust_level: TrustLevel; banned: boolean;
+  } | null;
+}
+
+/** RPC org_settlements(p_org, p_filter, p_driver, p_limit, p_before) */
+export interface OrgSettlements {
+  filter: OrgSettlementFilter;
+  items: OrgSettlementItem[];
+}
+
+export interface OrgSettlementDriver {
+  driver_id: Uuid;
+  number: number;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  status: DriverStatus;
+  trust_level: TrustLevel;
+  banned: boolean;
+  owed_cents: number;
+  overdue_cents: number;
+  declared_cents: number;
+  to_pay_cents: number;
+  open_count: number;
+  oldest_due_at: Iso | null;
+  last_reminded_at: Iso | null;
+  blocked: DriverBlocker | null;
+}
+
+export interface CentraleSettings {
+  commission_percent: number | null;
+  commission_fixed_cents: number | null;
+  grace_hours: number;
+  credit_limit_cents: number | null;
+  block_unpaid: boolean;
+  new_driver_max_price_cents: number | null;
+  trust_after_rides: number | null;
+  methods: SettlementMethod[];
+  link: string | null;
+  instructions: string | null;
+}
+
+/** RPC org_settlement_overview(p_org) */
+export interface OrgSettlementOverview {
+  model: DispatchModel;
+  currency: string;
+  month_start: Iso;
+  platform_fee: { percent: number; fixed_cents: number };
+  settings: CentraleSettings;
+  totals: {
+    to_collect_cents: number;
+    overdue_cents: number;
+    declared_cents: number;
+    declared_count: number;
+    disputed_count: number;
+    open_count: number;
+    to_pay_cents: number;
+    collected_month_cents: number;
+    paid_out_month_cents: number;
+    waived_month_cents: number;
+  };
+  month: { rides: number; volume_cents: number; commission_cents: number; platform_fee_cents: number; driver_payout_cents: number };
+  drivers: OrgSettlementDriver[];
+}
+
+/** Temps réel « settlement.updated » (org:{id} et driver:{id}) */
+export interface SettlementEvent {
+  action: "created" | "updated" | "declared" | "paid" | "disputed" | "waived" | "reopened";
+  settlement: Settlement;
+}
+
+/** RPC preview_ride_split(p_org, p_price, p_commission) */
+export interface PreviewRideSplit {
+  model: DispatchModel;
+  price_cents?: number | null;
+  commission_cents?: number | null;
+  platform_fee_cents?: number | null;
+  driver_payout_cents?: number | null;
+  manual?: boolean;
+  error?: "PRICE_REQUIRED" | "COMMISSION_TOO_HIGH" | null;
+}
+
+export type DriverAccountStateKind =
+  | "active" | "pending" | "rejected" | "banned" | "suspended" | "inactive" | "invited" | "organization_suspended" | "none";
+
+/** RPC driver_account_state() — utilisable même compte en attente, refusé ou banni */
+export interface DriverAccountState {
+  state: DriverAccountStateKind;
+  message?: string;
+  driver?: { id: Uuid; number: number; first_name: string; last_name: string; applied_at: Iso | null; trust_level: TrustLevel };
+  organization?: { name: string; logo_url: string | null; phone: string | null; email: string | null; dispatch_model: DispatchModel };
+  reason?: string | null;
+  can_submit_documents?: boolean;
+}
+
+/** RPC svc_join_info(p_code) (service role) */
+export interface JoinInfo {
+  ok: boolean;
+  code?: "JOIN_LINK_INVALID";
+  message?: string;
+  organization?: { id: Uuid; name: string; logo_url: string | null; brand_color: string | null; city: string | null; phone: string | null; email: string | null };
+  auto_approve?: boolean;
+}
+
+/** RPC svc_identity_check (service role) */
+export interface IdentityCheck {
+  banned: boolean;
+  duplicate: "phone" | "email" | "plate" | null;
+}
+
+export type DriverApplyCode =
+  | "PENDING" | "APPROVED" | "JOIN_DISABLED" | "ALREADY_REGISTERED" | "INVALID_FORM" | "PHONE_TAKEN" | "PLATE_TAKEN"
+  | "EMAIL_TAKEN" | "IDENTITY_BANNED";
+
+/** RPC svc_driver_apply (service role) */
+export interface DriverApplyResult {
+  ok: boolean;
+  code: DriverApplyCode;
+  message?: string;
+  driver_id?: Uuid;
+  number?: number;
+  organization?: { name: string };
+}
+
+/** Temps réel « driver.application » (org:{id}) */
+export interface DriverApplicationEvent {
+  action: "applied" | "approved" | "rejected";
+  driver: { id: Uuid; number: number; first_name: string; last_name: string; phone?: string; applied_at?: Iso };
+}
+
+/** Temps réel « driver.flagged » (org:{id}) : appareil d'un compte banni */
+export interface DriverFlaggedEvent {
+  driver_id: Uuid;
+  number: number;
+  first_name: string;
+  last_name: string;
+  reason: "banned_device";
+}
+
+/** RPC ban_driver(p_driver_id, p_reason, p_category, p_report_to_platform, p_ban_vehicle) */
+export interface BanDriverResult {
+  ok: boolean;
+  code: "BANNED" | "DRIVER_NOT_FOUND" | "REASON_REQUIRED" | "INVALID_CATEGORY" | "ALREADY_BANNED" | "DRIVER_ON_RIDE";
+  message?: string;
+  identities?: number;
+  reassigned_rides?: number;
+  report_id?: Uuid | null;
+  user_id?: Uuid | null;
+}
+
+export interface FraudReport {
+  id: Uuid;
+  organization_id: Uuid;
+  driver_id: Uuid | null;
+  driver_label: string;
+  category: BanCategory;
+  reason: string;
+  identities: { kind: IdentityKind; hash: string; hint: string | null }[];
+  status: "open" | "platform_banned" | "dismissed" | "lifted";
+  reported_by: Uuid | null;
+  reviewed_by: Uuid | null;
+  reviewed_at: Iso | null;
+  review_note: string | null;
+  created_at: Iso;
+  updated_at: Iso;
+}
+
+export interface BannedIdentity {
+  id: Uuid;
+  scope: "org" | "platform";
+  organization_id: Uuid | null;
+  kind: IdentityKind;
+  value_hash: string;
+  hint: string | null;
+  driver_id: Uuid | null;
+  report_id: Uuid | null;
+  reason: string | null;
+  created_by: Uuid | null;
+  created_at: Iso;
+  lifted_at: Iso | null;
+  lifted_by: Uuid | null;
+  lift_reason: string | null;
+}
+
+export interface AdminCentraleRow {
+  id: Uuid;
+  name: string;
+  slug: string;
+  status: OrgStatus;
+  platform_fee_percent: number;
+  platform_fee_fixed_cents: number;
+  join_enabled: boolean;
+  join_auto_approve: boolean;
+  drivers_active: number;
+  applications_pending: number;
+  drivers_banned: number;
+  rides: number;
+  volume_cents: number;
+  commission_cents: number;
+  platform_fee_cents: number;
+  outstanding_cents: number;
+  overdue_cents: number;
+}
+
+/** RPC admin_centrale_overview(p_from) (super admin) */
+export interface AdminCentraleOverview {
+  from: Iso;
+  organizations: AdminCentraleRow[];
+  totals: { centrales: number; rides: number; volume_cents: number; platform_fee_cents: number };
+  reports_open: number;
+  platform_bans: number;
 }

@@ -151,3 +151,57 @@ describe("libellés des nouveautés (vols, signalements)", () => {
     expect(documentStateLabel("pending")).toBe("En attente de validation");
   });
 });
+
+describe("mode centrale (option 2)", () => {
+  it("lien de paiement, message WhatsApp, répartition affichée", async () => {
+    const { settlementPaymentLink, settlementRequestMessage, splitSummary, whatsappLink, whatsappNumber, settlementStatusLabel } = await import("./centrale");
+    // Même calcul que private.settlement_payment_link
+    expect(settlementPaymentLink("https://revolut.me/centrale/{montant}?ref={reference}", 1900, "C1783")).toBe("https://revolut.me/centrale/19.00?ref=C1783");
+    expect(settlementPaymentLink("https://pay.example/{montant_centimes}", 1950, null)).toBe("https://pay.example/1950");
+    expect(settlementPaymentLink(null, 1900, "C1")).toBeNull();
+    expect(settlementPaymentLink("https://x/{montant}", 0, "C1")).toBeNull();
+
+    expect(whatsappNumber("06 12 34 56 78")).toBe("33612345678");
+    expect(whatsappNumber("+33 6 12 34 56 78")).toBe("33612345678");
+    expect(whatsappNumber("0044 20 7946 0000")).toBe("442079460000");
+    expect(whatsappNumber("12")).toBeNull();
+
+    const sp = (v: string | null) => v?.replace(/\u00a0/g, " ") ?? null;
+    const text = sp(settlementRequestMessage({
+      firstName: "Karim", organizationName: "Elite Paris", amountCents: 1900, rideNumbers: [1783],
+      link: "https://revolut.me/elite/19.00", reference: "C1783",
+    }));
+    expect(text).toContain("Bonjour Karim, merci pour la course #1783 !");
+    expect(text).toContain("Commission Elite Paris : 19 € (réf. C1783).");
+    expect(text).toContain("Paiement : https://revolut.me/elite/19.00");
+    expect(whatsappLink("06 12 34 56 78", "Bonjour")).toBe("https://wa.me/33612345678?text=Bonjour");
+
+    expect(sp(splitSummary({ price_cents: 5900, driver_payout_cents: 4000, commission_cents: 1400, platform_fee_cents: 500 })))
+      .toBe("59 € = 40 € chauffeur + 14 € commission + 5 € plateforme");
+    expect(splitSummary({ price_cents: 5900, driver_payout_cents: null })).toBeNull();
+    expect(settlementStatusLabel("due", "driver_owes", true)).toBe("En retard");
+    expect(settlementStatusLabel("paid", "centrale_owes")).toBe("Versé");
+  });
+
+  it("formulaires : réglages de la centrale et candidature publique", async () => {
+    const { centraleSettingsSchema, joinApplicationSchema } = await import("./centrale");
+    const ok = centraleSettingsSchema.parse({
+      commissionPercent: "", commissionFixedCents: "1400", graceHours: 24, creditLimitCents: "", blockUnpaid: true,
+      newDriverMaxPriceCents: 5000, trustAfterRides: 10, methods: ["link", "cash"], link: "https://revolut.me/x/{montant}", instructions: "",
+    });
+    expect(ok).toMatchObject({ commissionPercent: null, commissionFixedCents: 1400, creditLimitCents: null, link: "https://revolut.me/x/{montant}", instructions: null });
+    const noLink = centraleSettingsSchema.safeParse({ ...ok, commissionPercent: 20, link: "", methods: ["link"] });
+    expect(noLink.success).toBe(false);
+    const http = centraleSettingsSchema.safeParse({ ...ok, link: "http://paypal.me/x" });
+    expect(http.success).toBe(false);
+
+    const application = joinApplicationSchema.safeParse({
+      firstName: "Samir", lastName: "B.", phone: "06 12 34 56 78", email: "Samir@Test.dev", password: "motdepasse-solide",
+      vehicle: { model: "Prius+", plate: "AB-123-CD", category: "standard", seats: 7 }, acceptTerms: true, website: "",
+    });
+    expect(application.success).toBe(true);
+    if (application.success) expect(application.data).toMatchObject({ phone: "+33612345678", email: "samir@test.dev" });
+    expect(joinApplicationSchema.safeParse({ ...application.data, acceptTerms: false }).success).toBe(false);
+    expect(joinApplicationSchema.safeParse({ ...application.data, acceptTerms: true, website: "spam" }).success).toBe(false);
+  });
+});

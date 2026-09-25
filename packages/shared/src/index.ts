@@ -7,3 +7,4 @@ export * from "./types";
 export * from "./time";
 export * from "./map-style";
 export * from "./features";
+export * from "./centrale";
