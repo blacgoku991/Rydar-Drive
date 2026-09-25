@@ -86,10 +86,12 @@ function Figure({ label, cents, currency, tone, hint }: { label: string; cents: 
       <p className="flex items-center gap-1.5 truncate text-[11.5px] text-fg-subtle">
         {tone && <span className={cn("size-1.5 shrink-0 rounded-full", tone === "brand" ? "bg-brand" : tone === "blue" ? "bg-blue" : "bg-violet")} />}
         {label}
-        {hint && <span className="rounded bg-white/[0.06] px-1 text-[10px] font-medium">{hint}</span>}
       </p>
-      <p className={cn("mono mt-0.5 truncate text-[15px] font-semibold tracking-tight", tone === "brand" ? "text-brand" : "text-fg")}>
-        {cents == null ? "—" : formatPrice(cents, currency)}
+      <p className="mt-0.5 flex min-w-0 items-baseline gap-1.5">
+        <span className={cn("mono truncate text-[15px] font-semibold tracking-tight", tone === "brand" ? "text-brand" : "text-fg")}>
+          {cents == null ? "—" : formatPrice(cents, currency)}
+        </span>
+        {hint && <span className="shrink-0 rounded bg-white/[0.06] px-1 text-[10px] font-medium text-fg-subtle">{hint}</span>}
       </p>
     </div>
   );
