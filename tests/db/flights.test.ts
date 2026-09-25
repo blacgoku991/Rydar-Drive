@@ -522,6 +522,47 @@ describe("apply_flight_status — prise en charge à l'aéroport", () => {
     expect(await apply("00000000-0000-0000-0000-000000000000", { status: "landed" })).toMatchObject({ ok: false, code: "RIDE_NOT_FOUND" });
   });
 
+  it("instantanée non attribuée repoussée de 3 h : repasse en planifiée, proposée à la flotte (pas de NO_DRIVER_FOUND)", async () => {
+    const org = await createOrg("Vols requalif");
+    const T0 = minuteFromNow(20 * MIN);
+    const ride = await airportRide(org, T0); // aucun chauffeur : recherche GPS en cours
+    expect(ride.type).toBe("instant");
+    const S = plus(T0, -15 * MIN);
+    const res = await apply(ride.id, { status: "delayed", scheduled: S, estimated: plus(S, 180 * MIN) });
+    expect(res).toMatchObject({ pickup_changed: true, requalified: "fleet" });
+    const late = await createDriver(org, { firstName: "Nadia", at: north(CDG, 900) });
+    await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [ride.id]);
+    await sql("select private.dispatch_tick()");
+    const state = await rideState(ride.id);
+    expect(state.ride).toMatchObject({ type: "scheduled", dispatch_mode: "fleet", status: "OFFERED" });
+    expect(state.offers.some((o) => o.driver_id === late.id && o.mode === "fleet" && o.status === "pending")).toBe(true);
+    const [ev] = await sql("select message from public.ride_events where ride_id = $1 and type = 'ride.requalified'", [ride.id]);
+    expect(ev.message).toContain("course repassée en planifiée et proposée à toute la flotte");
+    // plusieurs heures avant la prise en charge, la recherche ne s'arrête pas au bout de 5 min
+    await sql("update public.rides set dispatch_started_at = now() - interval '10 minutes', next_dispatch_at = now() - interval '1 second' where id = $1", [ride.id]);
+    await sql("select private.dispatch_tick()");
+    expect((await rideState(ride.id)).ride.status).not.toBe("NO_DRIVER_FOUND");
+  });
+
+  it("instantanée acceptée repoussée d'1 h 30 : planifiée, chauffeur gardé mais libéré d'ici là", async () => {
+    const org = await createOrg("Vols requalif acceptée");
+    const d = await createDriver(org, { firstName: "Yanis", at: north(CDG, 500) });
+    const T0 = minuteFromNow(20 * MIN);
+    const ride = await airportRide(org, T0);
+    const offer = (await rideState(ride.id)).offers.find((o) => o.driver_id === d.id)!;
+    const [acc] = await as({ sub: d.userId }, (q) => q("select public.accept_ride_offer($1) as r", [offer.id]));
+    expect(acc.r.code).toBe("ACCEPTED");
+    const S = plus(T0, -15 * MIN);
+    const res = await apply(ride.id, { status: "delayed", scheduled: S, estimated: plus(S, 90 * MIN) });
+    expect(res).toMatchObject({ pickup_changed: true, requalified: "assigned" });
+    const [r] = await sql("select type, status, driver_id from public.rides where id = $1", [ride.id]);
+    expect(r).toEqual({ type: "scheduled", status: "ACCEPTED", driver_id: d.id });
+    const [dx] = await sql("select presence, current_ride_id from public.drivers where id = $1", [d.id]);
+    expect(dx).toEqual({ presence: "available", current_ride_id: null });
+    const reminders = await sql("select count(*)::int as n from public.notifications where ride_id = $1 and type = 'ride_reminder' and status = 'queued'", [ride.id]);
+    expect(reminders[0].n).toBeGreaterThan(0);
+  });
+
   it("réservation avant l'atterrissage : prise en charge à l'arrivée + marge (0 min ici)", async () => {
     const org = await createOrg("Vols Marge", { settings: { flight_pickup_buffer_minutes: 0 } });
     const T0 = minuteFromNow(3 * HOUR);

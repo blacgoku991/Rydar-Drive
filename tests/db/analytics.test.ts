@@ -107,6 +107,19 @@ describe("Indicateurs du dashboard", () => {
     expect(os.s.offers).toMatchObject({ offers_sent: 2, accepted: 1, expired: 1, acceptance_rate: 0.5 });
   });
 
+  it("offre fermée par « Relancer le dispatch » : pas une offre manquée du chauffeur", async () => {
+    const org = await createOrg("Redispatch stats");
+    const d = await createDriver(org, { firstName: "Ines", at: north(CHAMPS_ELYSEES, 500) });
+    const ride = await createRideAsOwner(org);
+    await as({ sub: org.ownerId }, (q) => q("select public.redispatch_ride($1)", [ride.id]));
+    const offer = (await rideState(ride.id)).offers.find((o) => o.driver_id === d.id && o.status === "pending")!;
+    await as({ sub: d.userId }, (q) => q("select public.accept_ride_offer($1)", [offer.id]));
+    const [first] = await sql("select missed_at from public.ride_offers where ride_id = $1 and closed_reason = 'redispatch'", [ride.id]);
+    expect(first.missed_at).toBeNull();
+    const [ds] = await as({ sub: org.ownerId }, (q) => q("select public.driver_stats($1, 30) as s", [d.id]));
+    expect(ds.s.offers).toMatchObject({ offers: 2, accepted: 1, expired: 0, acceptance_rate: 1 });
+  });
+
   it("org_kpis : temps d'attribution moyen calculé sur les seules courses instantanées", async () => {
     const org = await createOrg("Kpis");
     const now = Date.now();

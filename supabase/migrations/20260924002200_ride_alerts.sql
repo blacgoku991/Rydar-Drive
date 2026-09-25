@@ -443,6 +443,11 @@ begin
         v_cond := null;
       elsif v_dist <= 800 then
         v_cond := false;
+      elsif r.pickup_at > now() + make_interval(secs => round(v_dist * 1.35 / 8.3)::integer)
+                             + make_interval(mins => v_stall_min + v_tolerance) then
+        -- Rien ne presse (prise en charge repoussée par un retard de vol, planifiée en avance) :
+        -- s'arrêter n'est pas une anomalie
+        v_cond := false;
       else
         -- Censé rouler depuis : départ « en route » (ou acceptation d'une instantanée)
         v_start := coalesce(

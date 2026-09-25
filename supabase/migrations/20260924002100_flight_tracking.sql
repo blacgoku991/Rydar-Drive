@@ -246,6 +246,7 @@ declare
   v_lead interval;
   v_shift boolean := false;
   v_relative boolean := false;
+  v_requalified text;
   v_incoherent boolean := false;
   v_fleet boolean := false;
   v_changed boolean;
@@ -386,6 +387,37 @@ begin
     update public.ride_offers
        set expires_at = greatest(v_target - v_lead, now() + make_interval(secs => coalesce(s.offer_timeout_seconds, 30)))
      where ride_id = r.id and status = 'pending' and mode = 'fleet';
+  end if;
+
+  -- Retard qui repousse une course INSTANTANÉE au-delà du seuil « instantané » : elle redevient une
+  -- planifiée, comme à la création ou à la relance. Sinon : vagues GPS et « aucun chauffeur » des heures
+  -- avant la prise en charge, ou chauffeur bloqué « en route » pendant tout le retard.
+  if v_shift and r.type = 'instant'
+     and v_target > now() + make_interval(mins => coalesce(s.instant_threshold_minutes, 45)) then
+    if r.driver_id is null and r.status in ('SEARCHING_DRIVER', 'OFFERED', 'NO_DRIVER_FOUND') then
+      perform private.close_pending_offers(r.id, 'closed', 'flight_rescheduled');
+      update public.rides
+         set type = 'scheduled', dispatch_mode = 'fleet', status = 'SEARCHING_DRIVER', dispatch_wave = 0,
+             dispatch_radius_m = null, dispatch_started_at = now(), no_driver_at = null, next_dispatch_at = null
+       where id = r.id;
+      perform private.offer_to_fleet(r.id);
+      v_requalified := 'fleet';
+    elsif r.driver_id is not null and r.status = 'ACCEPTED' then
+      -- Le chauffeur garde la course (planning, rappels) et redevient disponible d'ici là
+      update public.rides set type = 'scheduled' where id = r.id;
+      update public.drivers set presence = 'available', current_ride_id = null
+       where id = r.driver_id and current_ride_id = r.id;
+      v_requalified := 'assigned';
+    end if;
+    if v_requalified is not null then
+      perform private.log_event(r.organization_id, r.id, 'ride.requalified',
+        format('Prise en charge repoussée à %s : course repassée en planifiée%s',
+          private.fmt_local_time(v_target, v_tz, v_reference),
+          case v_requalified when 'fleet' then ' et proposée à toute la flotte'
+            else ' — le chauffeur reste attribué et redevient disponible d''ici là' end),
+        'timeline', 'info', jsonb_build_object('type', 'scheduled', 'pickup_at', v_target, 'mode', v_requalified),
+        'system', null);
+    end if;
   end if;
 
   if v_shift and r.driver_id is not null then
@@ -547,7 +579,9 @@ begin
     'previous_pickup_at', r.pickup_at,
     'pickup_at_original', case when v_shift then coalesce(r.pickup_at_original, r.pickup_at) else r.pickup_at_original end,
     'events', to_jsonb(v_events),
-    'notified', v_notified);
+    'notified', v_notified,
+    -- 'fleet' | 'assigned' : instantanée repassée en planifiée (voir plus haut), sinon null
+    'requalified', v_requalified);
 end;
 $$;
 

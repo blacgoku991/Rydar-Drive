@@ -580,6 +580,13 @@ begin
     return jsonb_build_object('ok', false, 'code', 'DOCUMENT_EXPIRED',
       'message', 'Ce document est expiré : corrigez la date ou refusez-le.');
   end if;
+  -- Pièce à échéance validée sans date : elle serait classée derrière l'ancienne (document_superseded)
+  -- et l'ancienne continuerait d'être affichée et rappelée → date obligatoire pour valider
+  if p_approve and coalesce(p_expires_at, v_doc.expires_at) is null
+     and v_doc.type in ('vtc_card', 'driving_license', 'insurance', 'identity', 'medical') then
+    return jsonb_build_object('ok', false, 'code', 'EXPIRY_REQUIRED',
+      'message', 'Indiquez la date d''expiration pour valider ce document.');
+  end if;
 
   update public.driver_documents
      set status = case when p_approve then 'valid' else 'rejected' end::public.document_status,

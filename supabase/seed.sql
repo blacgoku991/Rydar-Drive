@@ -383,9 +383,11 @@ begin
           insert into public.ride_assignments (organization_id, ride_id, driver_id, vehicle_id, offer_id, method, assigned_at)
           values (v_org.id, v_ride, v_driver.id, v_driver.vehicle_id, v_offer, 'accepted', v_accept);
         elsif v_status = 'NO_DRIVER_FOUND' then
-          insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, expires_at, responded_at, closed_reason)
+          -- offres restées sans réponse : « manquées » dans les statistiques (missed_at, migr. 002050)
+          insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, expires_at, responded_at, closed_reason, missed_at)
           select v_org.id, v_ride, x.id, 'expired', 'geo', 3, 12000, 8500 + floor(random() * 3500)::int,
-                 v_created + interval '61 seconds', v_created + interval '91 seconds', v_created + interval '91 seconds', 'timeout'
+                 v_created + interval '61 seconds', v_created + interval '91 seconds', v_created + interval '91 seconds', 'timeout',
+                 v_created + interval '91 seconds'
           from (select id from public.drivers where organization_id = v_org.id order by random() limit 2) x;
         end if;
 

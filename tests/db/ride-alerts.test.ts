@@ -269,6 +269,22 @@ describe("watch_rides — chauffeur immobile", () => {
     await watch();
     expect(await openAlert(ride.id, "stalled")).toBeUndefined();
   });
+
+  it("prise en charge repoussée (retard de vol) : s'arrêter en attendant n'est pas « immobile »", async () => {
+    const { org, d, ride } = await enRoute("Stalled Flight", north(CHAMPS_ELYSEES, 5000));
+    await sql(
+      `update public.rides set accepted_at = now() - interval '7 minutes', driver_en_route_at = now() - interval '6 minutes',
+         pickup_at_original = pickup_at, pickup_at = now() + interval '100 minutes' where id = $1`,
+      [ride.id],
+    );
+    for (const s of [400, 300, 180, 60]) await addHistory(org, d, north(CHAMPS_ELYSEES, 5000), s);
+    await watch();
+    expect(await openAlert(ride.id, "stalled")).toBeUndefined();
+    // l'heure approche : il doit partir → l'alerte redevient possible
+    await sql("update public.rides set pickup_at = now() + interval '5 minutes' where id = $1", [ride.id]);
+    await watch();
+    expect(await openAlert(ride.id, "stalled")).toBeDefined();
+  });
 });
 
 describe("watch_rides — GPS muet", () => {
@@ -543,7 +559,8 @@ describe("reassign_ride — « Relancer » (retirer la course au chauffeur)", ()
     await rpc(org.ownerId, "reassign_ride", [ride.id, null]);
     const metrics = await as({ sub: org.ownerId }, (q) => q("select * from public.org_driver_metrics($1, 30)", [org.id]));
     const mx = metrics.find((m) => m.driver_id === x.id)!;
-    expect(mx).toMatchObject({ declined: "0" });
+    // le marqueur d'exclusion n'est ni un refus ni une offre envoyée
+    expect(mx).toMatchObject({ declined: "0", offers: "1" });
     expect(Number(mx.acceptance_rate)).toBe(1);
   });
 

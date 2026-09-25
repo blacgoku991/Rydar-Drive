@@ -6,9 +6,11 @@
 --
 -- ride_offers.missed_at : posé (déclencheur) quand une offre géo passe une fenêtre complète sans réponse
 -- (prolongation par le tick, expiration « timeout » / « ignored »). Pas pour les offres flotte (proposées à
--- tous, non répondre n'est pas un manque) ni pour « driver_unavailable » (chauffeur parti sur une autre course).
+-- tous, non répondre n'est pas un manque), ni pour les fermetures dont le chauffeur n'est pas responsable
+-- (relance par la centrale, chauffeur parti sur une autre course, hors ligne…).
 -- Manquée = status in ('expired','closed') and missed_at is not null ; compte dans le dénominateur.
 -- La clé JSON « expired » des statistiques garde son nom (compatibilité) et compte les offres manquées.
+-- Le marqueur d'exclusion de reassign_ride (closed / removed_by_dispatch, 002200) n'est pas une offre envoyée.
 
 alter table public.ride_offers add column if not exists missed_at timestamptz;
 
@@ -19,7 +21,7 @@ set search_path = ''
 as $$
 begin
   if new.missed_at is null and new.mode = 'geo' and (
-       (new.status = 'expired' and new.closed_reason is distinct from 'driver_unavailable')
+       (new.status = 'expired' and new.closed_reason in ('timeout', 'ignored'))
     -- seule la vague suivante du tick prolonge une offre géo en attente : sa fenêtre est passée sans réponse
     or (new.status = 'pending' and new.expires_at > old.expires_at)
   ) then
@@ -38,11 +40,11 @@ create trigger ride_offers_mark_missed
   when (old.status = 'pending')
   execute function private.mark_offer_missed();
 
--- Historique : les offres géo déjà expirées (hors chauffeur indisponible) étaient des manques
+-- Historique : les offres géo expirées faute de réponse étaient des manques
 update public.ride_offers
    set missed_at = coalesce(responded_at, expires_at)
  where missed_at is null and mode = 'geo' and status = 'expired'
-   and closed_reason is distinct from 'driver_unavailable';
+   and closed_reason in ('timeout', 'ignored');
 
 create or replace function public.org_stats(p_org uuid, p_from timestamptz, p_to timestamptz)
 returns jsonb
@@ -99,7 +101,8 @@ begin
     'avg_pickup_distance_m', round(avg(distance_m) filter (where status = 'accepted' and mode = 'geo'))
   ) into v_offers
   from public.ride_offers
-  where organization_id = p_org and sent_at >= p_from and sent_at < p_to;
+  where organization_id = p_org and sent_at >= p_from and sent_at < p_to
+    and closed_reason is distinct from 'removed_by_dispatch';
 
   select coalesce(jsonb_agg(jsonb_build_object('date', d.day, 'rides', coalesce(x.rides, 0), 'completed', coalesce(x.completed, 0),
     'revenue_cents', coalesce(x.revenue, 0)) order by d.day), '[]'::jsonb)
@@ -168,6 +171,7 @@ begin
                round(avg(distance_m) filter (where status = 'accepted' and mode = 'geo')) as avg_distance
         from public.ride_offers
         where organization_id = p_org and sent_at >= p_from and sent_at < p_to
+          and closed_reason is distinct from 'removed_by_dispatch'
         group by driver_id
       ) os on os.driver_id = d.id
       where d.organization_id = p_org and (rs.driver_id is not null or os.driver_id is not null)
@@ -231,7 +235,8 @@ begin
     'avg_response_ms', round(avg(extract(epoch from (responded_at - sent_at)) * 1000) filter (where status = 'accepted'))
   ) into v_offers
   from public.ride_offers
-  where driver_id = p_driver and sent_at >= v_from;
+  where driver_id = p_driver and sent_at >= v_from
+    and closed_reason is distinct from 'removed_by_dispatch';
 
   return jsonb_build_object('days', p_days, 'rides', v_rides, 'offers', v_offers);
 end;
@@ -279,6 +284,7 @@ begin
            count(*) filter (where (x.status in ('accepted', 'declined') or (x.status in ('expired', 'closed') and x.missed_at is not null))) as answered
     from public.ride_offers x
     where x.organization_id = p_org and x.sent_at >= v_from
+      and x.closed_reason is distinct from 'removed_by_dispatch'
     group by x.driver_id
   ) o on o.driver_id = d.id
   left join (

@@ -103,6 +103,44 @@ create trigger chat_report_votes_forbid_org_change
   before update of organization_id on public.chat_report_votes
   for each row execute function private.forbid_org_change();
 
+-- Limite de débit des votes (vote_fleet_report)
+create index chat_report_votes_voter_idx on public.chat_report_votes (voter_key, updated_at desc);
+
+-- Horodatage à la VALIDATION : created_at reprend l'heure du commit (déclencheur différé). Sans cela, un
+-- message inséré avant mais validé après une lecture (autre auteur, transaction plus longue) porterait une
+-- heure antérieure au repère « lu jusqu'à » et ne serait jamais compté comme non lu.
+create or replace function private.chat_stamp_at_commit()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_at timestamptz := clock_timestamp();
+begin
+  update public.chat_messages set created_at = v_at where id = new.id and created_at < v_at;
+  -- « écrire vaut lecture » (send_chat_message) : le repère de l'auteur suit son message
+  update public.chat_reads
+     set last_read_at = v_at
+   where organization_id = new.organization_id
+     and thread_key = case when new.channel = 'fleet' then 'fleet' else 'driver:' || new.driver_id::text end
+     and reader_key = case new.author_type
+                        when 'driver' then 'driver:' || new.author_driver_id::text
+                        when 'user' then 'user:' || new.author_user_id::text
+                      end
+     and last_read_at >= new.created_at
+     and last_read_at < v_at;
+  return null;
+end;
+$$;
+
+revoke execute on function private.chat_stamp_at_commit() from public, anon, authenticated;
+
+create constraint trigger chat_messages_stamp_commit
+  after insert on public.chat_messages
+  deferrable initially deferred
+  for each row execute function private.chat_stamp_at_commit();
+
 -- -----------------------------------------------------------------------------
 -- RLS : lecture seule côté client, écritures via RPC
 -- -----------------------------------------------------------------------------
@@ -754,6 +792,7 @@ declare
   m public.chat_messages;
   v_org uuid;
   v_prev boolean;
+  v_prev_at timestamptz;
   v_expire_now boolean;
 begin
   if p_message_id is null or p_still_there is null then
@@ -782,12 +821,29 @@ begin
       'report', private.chat_message_json(m));
   end if;
 
+  -- L'auteur ne confirme pas son propre signalement (il peut le retirer : « plus là »)
+  if p_still_there and c.kind = 'driver' and m.author_driver_id = c.driver_id then
+    return jsonb_build_object('ok', false, 'code', 'OWN_REPORT',
+      'message', 'Vous ne pouvez pas confirmer votre propre signalement.', 'report', private.chat_message_json(m));
+  end if;
+
   -- La ligne du signalement est verrouillée : les votes sont sérialisés.
-  select v.still_there into v_prev from public.chat_report_votes v
+  select v.still_there, v.updated_at into v_prev, v_prev_at from public.chat_report_votes v
    where v.message_id = m.id and v.voter_key = c.reader_key;
   if found and v_prev = p_still_there then
     return jsonb_build_object('ok', true, 'code', 'ALREADY_VOTED', 'report', private.chat_message_json(m),
       'my_vote', p_still_there, 'expired', false);
+  end if;
+
+  -- Limites de débit (chaque vote est diffusé à toute l'organisation) : une minute avant de changer
+  -- d'avis sur un même signalement, 20 signalements votés par tranche de 10 min
+  if v_prev_at is not null and v_prev_at > now() - interval '1 minute' then
+    raise exception 'RATE_LIMITED: vous venez de voter, patientez une minute' using errcode = 'PT429';
+  end if;
+  if (select count(*) from public.chat_report_votes v
+       where v.organization_id = m.organization_id and v.voter_key = c.reader_key
+         and v.updated_at > now() - interval '10 minutes') >= 20 then
+    raise exception 'RATE_LIMITED: trop de votes, patientez quelques minutes' using errcode = 'PT429';
   end if;
 
   insert into public.chat_report_votes as v (organization_id, message_id, voter_key, still_there)
@@ -796,10 +852,14 @@ begin
     set still_there = excluded.still_there, updated_at = now();
 
   if p_still_there then
+    -- Prolongation au PREMIER « toujours là » d'un votant seulement (pas en changeant d'avis),
+    -- et durée de vie plafonnée à 3 h après la publication
     update public.chat_messages
        set confirmations = confirmations + 1,
            dismissals = case when v_prev is false then greatest(dismissals - 1, 0) else dismissals end,
-           expires_at = greatest(expires_at, now() + interval '30 minutes')
+           expires_at = case when v_prev is null
+             then greatest(expires_at, least(now() + interval '30 minutes', created_at + interval '3 hours'))
+             else expires_at end
      where id = m.id
     returning * into m;
   else
@@ -893,7 +953,13 @@ begin
   get diagnostics v_history = row_count;
   delete from public.api_logs where created_at < now() - interval '90 days';
   get diagnostics v_logs = row_count;
-  update public.driver_documents set status = 'expired' where status = 'valid' and expires_at < current_date;
+  -- Échéance au jour LOCAL de l'organisation (comme private.document_reminders), pas au jour UTC du serveur
+  update public.driver_documents x
+     set status = 'expired'
+    from public.organizations o
+   where o.id = x.organization_id
+     and x.status = 'valid'
+     and x.expires_at < (now() at time zone coalesce(o.timezone, 'Europe/Paris'))::date;
   get diagnostics v_docs = row_count;
   delete from public.notifications where created_at < now() - interval '90 days' and status in ('sent', 'cancelled');
   get diagnostics v_notifs = row_count;

@@ -537,6 +537,22 @@ describe("Documents — review_driver_document", () => {
     expect(await sql(`select 1 from public.notifications where driver_id = $1 and type = 'document_reviewed'`, [d.id])).toHaveLength(0);
   });
 
+  it("pièce à échéance : date obligatoire pour valider (sinon le renouvellement resterait masqué par l'ancienne)", async () => {
+    const org = await createOrg("Docs Expiry Required");
+    const d = await createDriver(org);
+    const admin = await addMember(org, "admin");
+    await insertDoc(org, d, "driving_license", { days: 6, createdAgo: 365 * DAY });
+    const renewed = (await submit(d, { type: "driving_license", path: path(org, d) })).document.id;
+    expect(await review(admin, renewed, true)).toMatchObject({ ok: false, code: "EXPIRY_REQUIRED" });
+    expect((await doc(renewed)).status).toBe("pending");
+    expect(await review(admin, renewed, true, null, await dayOffset(3650))).toMatchObject({ ok: true, code: "DOCUMENT_VALIDATED" });
+    const list = await call(d.userId, "public.driver_documents()");
+    expect(list.documents.map((x: any) => x.id)).toEqual([renewed]);
+    // Pièce sans échéance (carte grise) : validable sans date
+    const reg = (await submit(d, { type: "vehicle_registration", path: path(org, d) })).document.id;
+    expect(await review(admin, reg, true)).toMatchObject({ ok: true, code: "DOCUMENT_VALIDATED" });
+  });
+
   it("validation directe depuis le dashboard : décision horodatée ; nouvelle échéance → rappels réarmés", async () => {
     const org = await createOrg("Docs Direct");
     const d = await createDriver(org);
@@ -762,5 +778,40 @@ describe("Documents — stockage driver-documents", () => {
     const q = path(org, d, "photo.jpg");
     await sql(`insert into storage.objects (bucket_id, name) values ('driver-photos', $1)`, [q]);
     expect(await submit(d, { type: "identity", path: q })).toMatchObject({ ok: false, code: "FILE_NOT_FOUND" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fuseau horaire de l'organisation
+// ---------------------------------------------------------------------------
+describe("Échéances et fuseau horaire de l'organisation", () => {
+  it("fuseau inconnu refusé (22023) : une organisation ne peut plus bloquer les tâches de toutes les autres", async () => {
+    const org = await createOrg("TZ Guard");
+    const bad = await expectPgError(
+      as({ sub: org.ownerId }, (q) => q("update public.organizations set timezone = 'Mars/Olympus' where id = $1", [org.id])),
+    );
+    expect(bad.code).toBe("22023");
+    await as({ sub: org.ownerId }, (q) => q("update public.organizations set timezone = 'America/Martinique' where id = $1", [org.id]));
+    const [o] = await sql("select timezone from public.organizations where id = $1", [org.id]);
+    expect(o.timezone).toBe("America/Martinique");
+    expect(await runReminders()).toHaveProperty("reminders");
+  });
+
+  it("ménage : un document qui expire aujourd'hui (jour local de l'org) reste valide jusqu'à minuit local", async () => {
+    // UTC−12 : le matin (UTC), le jour local est la veille du jour UTC — cas où l'ancien ménage expirait trop tôt
+    const org = await createOrg("TZ Housekeeping");
+    await sql("update public.organizations set timezone = 'Etc/GMT+12' where id = $1", [org.id]);
+    const d = await createDriver(org);
+    const [row] = await sql(
+      `insert into public.driver_documents (organization_id, driver_id, type, expires_at, status, file_path)
+       values ($1::uuid, $2::uuid, 'insurance', private.org_today($1::uuid), 'valid', $1::text || '/' || $2::text || '/a.pdf') returning id`,
+      [org.id, d.id],
+    );
+    await sql("select private.housekeeping()");
+    expect((await doc(row.id)).status).toBe("valid");
+    // La veille (jour local) : expiré
+    await sql("update public.driver_documents set expires_at = private.org_today($1) - 1 where id = $2", [org.id, row.id]);
+    await sql("select private.housekeeping()");
+    expect((await doc(row.id)).status).toBe("expired");
   });
 });

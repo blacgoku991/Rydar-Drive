@@ -491,11 +491,46 @@ describe("Votes sur les signalements", () => {
 
   it("changer d'avis : la confirmation est retirée au profit du « plus là »", async () => {
     const m = await report("traffic");
+    const aged = () => sql(`update public.chat_report_votes set updated_at = now() - interval '2 minutes' where message_id = $1`, [m.id]);
     await vote(v1.userId, m.id, true);
+    await aged(); // une minute minimum entre deux avis
     const res = await vote(v1.userId, m.id, false);
     expect(res.report).toMatchObject({ confirmations: 0, dismissals: 1, active: true });
+    await aged();
     const back = await vote(v1.userId, m.id, true);
     expect(back.report).toMatchObject({ confirmations: 1, dismissals: 0, active: true });
+  });
+
+  it("anti-abus : pas d'auto-confirmation, changer d'avis ne prolonge pas, 1 min entre deux avis, 3 h max", async () => {
+    const m = await report("police", v1);
+    expect(await vote(v1.userId, m.id, true)).toMatchObject({ ok: false, code: "OWN_REPORT" });
+
+    await sql(`update public.chat_messages set expires_at = now() + interval '2 minutes' where id = $1`, [m.id]);
+    await vote(v2.userId, m.id, true); // premier « toujours là » : +30 min
+    expect(new Date((await row(m.id)).expires_at).getTime() - Date.now()).toBeGreaterThan(29 * 60_000);
+    // Changer d'avis aussitôt : refusé (chaque vote est diffusé à toute l'organisation)
+    expect((await expectPgError(vote(v2.userId, m.id, false))).code).toBe("PT429");
+
+    // Alterner « plus là » / « toujours là » ne relance plus l'expiration
+    const aged = () => sql(`update public.chat_report_votes set updated_at = now() - interval '2 minutes' where message_id = $1`, [m.id]);
+    await aged();
+    await vote(v2.userId, m.id, false);
+    await sql(`update public.chat_messages set expires_at = now() + interval '2 minutes' where id = $1`, [m.id]);
+    await aged();
+    const back = await vote(v2.userId, m.id, true);
+    expect(back.report.confirmations).toBe(1);
+    expect(new Date((await row(m.id)).expires_at).getTime() - Date.now()).toBeLessThan(3 * 60_000);
+
+    // Plafond : 3 h après la publication, quels que soient les votes
+    const m2 = await report("control", v1);
+    await sql(
+      `update public.chat_messages set created_at = now() - interval '2 hours 50 minutes', expires_at = now() + interval '1 minute' where id = $1`,
+      [m2.id],
+    );
+    await vote(v2.userId, m2.id, true);
+    const left = new Date((await row(m2.id)).expires_at).getTime() - Date.now();
+    expect(left).toBeGreaterThan(9 * 60_000);
+    expect(left).toBeLessThan(11 * 60_000);
   });
 
   it("l'auteur ou la centrale retire le signalement immédiatement", async () => {
@@ -586,6 +621,27 @@ describe("Non-lus et vues d'ensemble", () => {
     await send(karim.userId, { channel: "driver", body: "Merci" });
     const again = await overview(A.ownerId, A.id);
     expect(again.drivers.find((t: any) => t.thread === `driver:${karim.id}`).unread).toBe(1);
+  });
+
+  it("message validé APRÈS une lecture du fil (transaction plus longue) : reste compté non lu", async () => {
+    const other = await createMember(A, "dispatcher", "Dispatch Rapide");
+    const slow = await pool.connect();
+    try {
+      await slow.query("begin");
+      await slow.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: A.ownerId, role: "authenticated" })]);
+      await slow.query("set local role authenticated");
+      await slow.query("select public.send_chat_message($1, 'fleet', null, 'MESSAGE LENT', null, null, null)", [A.id]);
+      // Pendant ce temps : un autre message est validé, puis Karim lit le fil flotte
+      await send(other, { org: A.id, channel: "fleet", body: "message rapide" });
+      await markRead(karim.userId, null, "fleet");
+      expect((await driverOverview(karim.userId)).fleet.unread).toBe(0);
+      await slow.query("commit");
+    } finally {
+      slow.release();
+    }
+    const o = await driverOverview(karim.userId);
+    expect(o.fleet.unread).toBe(1);
+    expect(o.fleet.last_message.body).toBe("MESSAGE LENT");
   });
 
   it("répondre dans un fil vaut lecture de ce fil", async () => {
