@@ -33,6 +33,32 @@ describe("File de notifications du worker", () => {
     expect((await claim()).find((n) => n.id === mine[0].id)).toBeUndefined();
   });
 
+  it("reprend une notification restée « sending » (worker interrompu) après 2 minutes", async () => {
+    const org = await createOrg("Notif Revive");
+    await createDriver(org, { at: north(CHAMPS_ELYSEES, 600) });
+    const ride = await createRideAsOwner(org);
+    const [first] = (await claim()).filter((n) => n.ride_id === ride.id);
+    expect(first).toBeDefined();
+    // Toujours « sending » juste après : personne ne la reprend
+    expect((await claim()).find((n) => n.id === first.id)).toBeUndefined();
+
+    await sql("update public.notifications set claimed_at = now() - interval '3 minutes' where id = $1", [first.id]);
+    const again = (await claim()).find((n) => n.id === first.id);
+    expect(again?.attempts).toBe(2);
+  });
+
+  it("marque en échec une notification dont l'accusé de réception Expo est une erreur", async () => {
+    const org = await createOrg("Notif Receipt");
+    await createDriver(org, { at: north(CHAMPS_ELYSEES, 600) });
+    const ride = await createRideAsOwner(org);
+    const [n] = (await claim()).filter((x) => x.ride_id === ride.id);
+    await complete(n.id, true);
+    await sql("select private.fail_notification_delivery($1, 'InvalidCredentials')", [n.id]);
+    const row = await notif(n.id);
+    expect(row.status).toBe("failed");
+    expect(row.last_error).toBe("InvalidCredentials");
+  });
+
   it("annule, sans l'envoyer, la notification d'une offre déjà fermée (course prise par un autre)", async () => {
     const org = await createOrg("Notif Stale");
     const fast = await createDriver(org, { at: north(CHAMPS_ELYSEES, 400) });

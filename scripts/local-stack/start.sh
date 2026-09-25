@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Démarre GoTrue (54332), PostgREST (54331) et la passerelle (54321) en arrière-plan.
+# Démarre GoTrue (54332), PostgREST (54331) et la passerelle (54321, avec le relais Realtime) en arrière-plan.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN="${LOCAL_STACK_BIN:-$ROOT/.local-stack}"
@@ -33,7 +33,7 @@ server-port = 54331
 db-pool = 20
 CONF
 setsid nohup "$BIN/postgrest" "$BIN/postgrest.conf" </dev/null >"$LOGS/postgrest.log" 2>&1 &
-setsid nohup node "$ROOT/scripts/local-stack/gateway.mjs" </dev/null >"$LOGS/gateway.log" 2>&1 &
+DB_NAME="$DB" setsid nohup node "$ROOT/scripts/local-stack/gateway.mjs" </dev/null >"$LOGS/gateway.log" 2>&1 &
 sleep 2
 echo "✓ stack locale : http://127.0.0.1:54321  (logs : $LOGS)"
 node "$ROOT/scripts/local-stack/keys.mjs"

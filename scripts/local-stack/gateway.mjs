@@ -1,5 +1,6 @@
-// Mini passerelle façon Kong : /rest/v1 → PostgREST, /auth/v1 → GoTrue (+ CORS).
+// Mini passerelle façon Kong : /rest/v1 → PostgREST, /auth/v1 → GoTrue, /realtime/v1 → relais local (+ CORS).
 import http from "node:http";
+import { createRealtime } from "./realtime.mjs";
 
 const PORT = Number(process.env.GATEWAY_PORT ?? 54321);
 const ROUTES = [
@@ -14,6 +15,8 @@ const CORS = {
   "access-control-expose-headers": "content-range,x-supabase-api-version",
   "access-control-max-age": "86400",
 };
+
+const realtime = createRealtime(process.env.DATABASE_URL ?? `postgresql://postgres:postgres@127.0.0.1:5432/${process.env.DB_NAME ?? "rydar"}`);
 
 http
   .createServer((req, res) => {
@@ -44,5 +47,8 @@ http
     });
     req.pipe(upstream);
   })
-  .on("upgrade", (_req, socket) => socket.destroy())
+  .on("upgrade", (req, socket, head) => {
+    if (req.url?.startsWith("/realtime/v1/websocket")) realtime.handleUpgrade(req, socket, head);
+    else socket.destroy();
+  })
   .listen(PORT, "127.0.0.1", () => console.log(`gateway http://127.0.0.1:${PORT}`));

@@ -52,7 +52,7 @@ Qu'elle vienne de l'API, du dashboard ou du mini-site, une course passe par le t
 
 - ils appartiennent à la **même organisation** ;
 - ils sont `active` et `available` ;
-- leur position a moins de `location_max_age_seconds` ;
+- leur position a moins de `location_max_age_seconds` et une précision meilleure que 1,5 km ;
 - leur véhicule est de catégorie compatible et a assez de places ;
 - ils n'ont pas déjà décliné cette course ;
 - ils se trouvent à moins de R mètres : `ST_DWithin(driver_locations.location, rides.pickup_location, R)`.
@@ -67,11 +67,11 @@ Pour les chauffeurs retenus, le moteur crée dans une seule transaction :
 
 La course passe à `OFFERED`. La timeline enregistre par exemple : « Recherche GPS — rayon 4 km (vague 1) », « 12 chauffeurs en ligne », « 5 chauffeurs à moins de 4 km », « 5 notifications envoyées ».
 
-Toutes les 2 s, le worker appelle `private.dispatch_tick()`. Cette fonction verrouille les courses dues avec `FOR UPDATE SKIP LOCKED`, ce qui permet de lancer plusieurs workers. Elle expire les offres sans réponse, libère les chauffeurs et relance une vague. Si la recherche dépasse `max_search_seconds`, la course passe à `NO_DRIVER_FOUND`.
+Toutes les 2 s, le worker appelle `private.dispatch_tick()`. Cette fonction verrouille les courses dues avec `FOR UPDATE SKIP LOCKED`, ce qui permet de lancer plusieurs workers. Quand une vague reste sans réponse après `offer_timeout_seconds`, le rayon s'élargit et les vagues sont **cumulatives** : les chauffeurs déjà sollicités **gardent leur offre** (prolongée, sans nouvelle sonnerie) et la vague ajoute ceux du rayon suivant. À 8 km, ce sont donc bien tous les chauffeurs à moins de 8 km qui peuvent accepter. Après la dernière vague, seuls les chauffeurs nouvellement disponibles dans la zone sont notifiés. Si la recherche dépasse `max_search_seconds`, les offres sont fermées et la course passe à `NO_DRIVER_FOUND`. « Relancer » et la bascule d'une planifiée repartent de 4 km.
 
 ### 3. Course planifiée : offre à la flotte
 
-`private.offer_to_fleet` propose la course à toute la flotte éligible de l'organisation (actifs, catégorie compatible, places suffisantes), sans critère de distance. L'offre reste ouverte jusqu'à T-`scheduled_dispatch_lead_minutes`. Si personne ne l'a prise à ce moment, le tick **bascule en recherche GPS**. Quand un chauffeur est attribué, les rappels (24 h, 3 h, 1 h, 30 min) sont programmés dans l'outbox avec `scheduled_for`.
+`private.offer_to_fleet` propose la course à toute la flotte éligible de l'organisation (actifs, en ligne ou non, catégorie compatible, places suffisantes), sans critère de distance. L'offre reste ouverte jusqu'à T-`scheduled_dispatch_lead_minutes`, et la flotte est re-balayée toutes les 5 min : un chauffeur ajouté ou réactivé entre-temps la reçoit aussi. Si personne ne l'a prise à T-lead, le tick **bascule en recherche GPS** (4 km d'abord). Quand un chauffeur est attribué, les rappels (24 h, 3 h, 1 h, 30 min) sont programmés dans l'outbox avec `scheduled_for`.
 
 ### 4. Acceptation atomique
 
@@ -112,7 +112,7 @@ La policy RLS sur `realtime.messages` n'autorise l'écoute d'un topic qu'aux mem
 Les notifications sont insérées dans `notifications` **dans la même transaction** que l'événement métier (offre, attribution, annulation, rappel), puis `pg_notify('rydar_notifications')` réveille le worker. Le worker :
 
 1. réserve un lot avec `private.claim_notifications`, en `SKIP LOCKED`. Les notifications d'offres déjà fermées ne partent jamais : elles sont annulées avec la raison `offer_closed` ;
-2. envoie via Expo Push (par défaut), FCM HTTP v1 ou APNs HTTP/2, avec le canal Android `ride-offers` (priorité max, son) et la catégorie iOS `ride_offer` (actions ACCEPTER / REFUSER) ;
+2. envoie via Expo Push (par défaut), FCM HTTP v1 ou APNs HTTP/2, avec le canal Android `ride-offers-v2` (priorité max, sonnerie de 10 s) et la catégorie iOS `ride_offer` (actions ACCEPTER / REFUSER) ;
 3. finalise avec `private.complete_notification` : succès, nouvel essai avec backoff exponentiel (2 tentatives au plus pour une offre, qui n'a de sens que 30 s ; 5 pour le reste) ou échec définitif. Les jetons refusés par le fournisseur sont désactivés (`private.deactivate_push_tokens`).
 
 Côté app chauffeur, l'offre s'affiche aussi par Realtime quand l'app est ouverte : le push n'est qu'un canal parmi d'autres.

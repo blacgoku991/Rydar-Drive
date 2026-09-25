@@ -1,5 +1,3 @@
-import "@/lib/location"; // enregistre la tâche de localisation d'arrière-plan au démarrage
-import "@/lib/notifications";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";

@@ -86,10 +86,11 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 - `DATABASE_URL` doit être une **connexion directe** (port 5432) et non le pooler transactionnel : le worker utilise `LISTEN/NOTIFY`.
 - Vous pouvez lancer plusieurs instances : les tâches sont réparties par `FOR UPDATE SKIP LOCKED`.
 - Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}`.
-- Pushs :
-  - Expo Push (`EXPO_ACCESS_TOKEN`, recommandé) ;
-  - ou FCM v1 direct (`FCM_SERVICE_ACCOUNT_B64`) ;
-  - ou APNs direct (`APNS_KEY_P8_B64`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`).
+- Pushs : l'app chauffeur enregistre des **jetons Expo**, donc **Expo Push est la voie supportée** (`EXPO_ACCESS_TOKEN`) :
+  - Android : téléversez la clé de compte de service **FCM v1** dans EAS (`eas credentials`) ;
+  - iOS : la **clé APNs** (.p8) dans EAS ;
+  - le worker vérifie les accusés de réception Expo (15 s à 5 min après l'envoi) : un jeton `DeviceNotRegistered` est désactivé, et une notification qu'aucun appareil n'a reçue passe en échec ;
+  - FCM v1 direct (`FCM_SERVICE_ACCOUNT_B64`) et APNs direct (`APNS_KEY_P8_B64`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`) ne servent qu'à un build spécifique qui enregistre des jetons natifs (provider `fcm` / `apns`).
 - Tracés manquants (après une migration ou une panne du routeur) : `node dist/backfill-routes.js --days 30`, avec `OSRM_URL`.
 
 ## 4. Stripe

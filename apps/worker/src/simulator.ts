@@ -2,7 +2,7 @@
  * Simulateur de flotte (démo / recette) — passe par les VRAIES RPC chauffeur :
  * update_driver_location, accept_ride_offer, driver_update_ride_status.
  *
- *   SIM_ORG=<uuid|slug>  SIM_NEW_RIDE_EVERY=45  SIM_SPEEDUP=3  OSRM_URL=…  pnpm --filter @rydar/worker simulate
+ *   SIM_ORG=<uuid|slug>  SIM_NEW_RIDE_EVERY=45  SIM_SPEEDUP=3  SIM_EXCLUDE=chauffeur@exemple.fr  OSRM_URL=…  pnpm --filter @rydar/worker simulate
  *
  * Les véhicules suivent de vrais itinéraires routiers (OSRM) : maraude, approche
  * du client, puis trajet jusqu'à la destination. Les chauffeurs acceptent ~75 %
@@ -19,6 +19,8 @@ const STEP_MS = Number(process.env.SIM_STEP_MS ?? 3000);
 const NEW_RIDE_EVERY_S = Number(process.env.SIM_NEW_RIDE_EVERY ?? 0);
 const SPEEDUP = Number(process.env.SIM_SPEEDUP ?? 3);
 const ACCEPT_RATE = Number(process.env.SIM_ACCEPT_RATE ?? 0.75);
+/** E-mails des chauffeurs pilotés à la main (vraie app) : le simulateur ne les touche pas. */
+const EXCLUDE = (process.env.SIM_EXCLUDE ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 
 type Leg = { key: string; coords: Coord[]; length: number; speed: number; done: number };
 type Sim = { id: string; userId: string; name: string; lat: number; lng: number; heading: number; leg?: Leg; routing?: boolean; waitUntil?: number };
@@ -86,8 +88,9 @@ async function step(org: string) {
   const { rows: drivers } = await pool.query(
     `select d.id, d.user_id, d.first_name, d.presence, d.current_ride_id, l.lat, l.lng
        from drivers d left join driver_locations l on l.driver_id = d.id
-      where d.organization_id = $1 and d.status = 'active' and d.presence <> 'offline' and d.user_id is not null`,
-    [org],
+      where d.organization_id = $1 and d.status = 'active' and d.presence <> 'offline' and d.user_id is not null
+        and not (lower(coalesce(d.email, '')) = any($2::text[]))`,
+    [org, EXCLUDE],
   );
   for (const d of drivers) {
     let s = sims.get(d.id);

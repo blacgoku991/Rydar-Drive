@@ -55,7 +55,7 @@ curl https://app.rydar.app/api/v1/rides \
 | Champ | Type | Obligatoire | Détail |
 | --- | --- | --- | --- |
 | `pickup.address` | string | oui | 3 à 300 caractères |
-| `pickup.lat`, `pickup.lng` | number | recommandé | Sans coordonnées, l'adresse est géocodée. Échec : 422 `PICKUP_NOT_GEOCODED` |
+| `pickup.lat`, `pickup.lng` | number | recommandé | Sans coordonnées, l'adresse est géocodée, avec priorité à votre zone d'activité. Si elle est introuvable ou imprécise (ville seule, rue inconnue, code postal incohérent), la réponse est 422 `PICKUP_NOT_GEOCODED`. Un nom de lieu en tête est accepté (« Hôtel X, 25 avenue … »). Les coordonnées fournies sont contrôlées : (0, 0), latitude et longitude inversées ou point à plus de 600 km de votre activité donnent 422 `INVALID_COORDINATES` |
 | `dropoff.address` (+ `lat`, `lng`) | string | oui | Géocodage facultatif |
 | `pickup_at` | ISO 8601 avec fuseau | non | **ou** `date` (AAAA-MM-JJ) + `time` (HH:MM), heure locale de l'organisation. Sans date, la course est immédiate |
 | `customer.name`, `customer.phone` | string | oui | Téléphone normalisé (formats FR et internationaux) |
@@ -122,7 +122,7 @@ Format commun :
 | 404 | `RIDE_NOT_FOUND` |
 | 409 | codes métier d'annulation (ex. course déjà terminée) |
 | 413 | `PAYLOAD_TOO_LARGE` |
-| 422 | `VALIDATION_ERROR`, `PICKUP_NOT_GEOCODED`, `PICKUP_IN_PAST`, `PICKUP_TOO_FAR` |
+| 422 | `VALIDATION_ERROR`, `PICKUP_NOT_GEOCODED`, `INVALID_COORDINATES`, `PICKUP_IN_PAST`, `PICKUP_TOO_FAR` |
 | 429 | `RATE_LIMITED`, avec l'en-tête `Retry-After` |
 
 Chaque réponse porte `X-Request-Id` et `X-RateLimit-Limit` / `-Remaining` / `-Reset`. Toutes les requêtes sont journalisées (`api_logs`, 90 jours) et visibles dans **Intégrations**.

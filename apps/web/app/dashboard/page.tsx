@@ -16,7 +16,7 @@ export default async function DashboardPage() {
       .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end, fixed_fares")
       .eq("organization_id", ctx.org.id)
       .eq("is_active", true),
-    ctx.supabase.from("organization_settings").select("offer_timeout_seconds, default_payment_method").eq("organization_id", ctx.org.id).maybeSingle(),
+    ctx.supabase.from("organization_settings").select("offer_timeout_seconds, default_payment_method, location_max_age_seconds").eq("organization_id", ctx.org.id).maybeSingle(),
   ]);
   return (
     <CommandCenter
@@ -24,6 +24,7 @@ export default async function DashboardPage() {
       orgName={ctx.org.name}
       pricing={(pricing.data ?? []) as PricingRule[]}
       offerTimeout={settings.data?.offer_timeout_seconds ?? 30}
+      locationMaxAgeS={settings.data?.location_max_age_seconds ?? 180}
       defaultPayment={settings.data?.default_payment_method ?? "card"}
     />
   );

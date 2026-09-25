@@ -6,6 +6,8 @@ import { api } from "./api";
 import { supabase } from "./supabase";
 
 export const LOCATION_TASK = "rydar-location";
+/** Au-delà, le serveur ignore la position (dispatch par rayons de 4 km, 8 km…). */
+export const MAX_ACCURACY_M = 1500;
 
 // Envoi adaptatif : le serveur suggère l'intervalle (5 s en course / offre, 15 s disponible).
 let lastSent = 0;
@@ -47,9 +49,10 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
 }
 
 const isWeb = Platform.OS === "web";
-let webWatch: Location.LocationSubscription | null = null;
+let foregroundWatch: Location.LocationSubscription | null = null;
 
-// Tâche d'arrière-plan : définie au chargement du module (import dans le layout racine).
+// Tâche d'arrière-plan : définie au chargement du module, importé en tête de index.ts
+// (avant le routeur) pour exister aussi lors d'une relance sans interface.
 if (!isWeb) {
   TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
     if (error) return;
@@ -59,76 +62,105 @@ if (!isWeb) {
   });
 }
 
-export type PermissionState = "granted" | "foreground-only" | "denied";
+/**
+ * Options de la tâche. iOS n'a pas d'intervalle de temps (distance seulement) : précision élevée
+ * pour garder un flux régulier même à l'arrêt ; Android garde Balanced + timeInterval.
+ */
+function taskOptions(ride: boolean): Location.LocationTaskOptions {
+  return {
+    // GPS précis dès qu'on est en ligne : une position à ±1,5 km est ignorée par le dispatch (4 km d'abord)
+    accuracy: Location.Accuracy.High,
+    timeInterval: ride ? 3000 : 5000,
+    distanceInterval: 0,
+    deferredUpdatesInterval: ride ? 0 : 5000,
+    pausesUpdatesAutomatically: false,
+    activityType: Location.ActivityType.AutomotiveNavigation,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: ride ? "Rydar Drive — course en cours" : "Rydar Drive — EN LIGNE",
+      notificationBody: "Votre position est partagée avec votre centrale.",
+      notificationColor: "#C8F03C",
+      killServiceOnDestroy: false,
+    },
+  };
+}
 
+export type PermissionState = "granted" | "foreground-only" | "coarse" | "denied";
+
+/**
+ * Autorisations avant de passer EN LIGNE. « Pendant l'utilisation » suffit (service de premier plan
+ * Android, indicateur iOS) ; « Toujours » est demandé mais facultatif. Position exacte obligatoire.
+ */
 export async function requestLocationPermissions(): Promise<PermissionState> {
   const fg = await Location.requestForegroundPermissionsAsync();
   if (fg.status !== "granted") return "denied";
+  // Position approximative (Android) / « Position exacte » désactivée (iOS) : inexploitable pour le dispatch
+  if (fg.android?.accuracy === "coarse" || fg.ios?.accuracy === "reduced") return "coarse";
   if (isWeb) return "foreground-only";
   const bg = await Location.requestBackgroundPermissionsAsync().catch(() => ({ status: "denied" as const }));
   return bg.status === "granted" ? "granted" : "foreground-only";
 }
 
-/** Démarre le partage de position (EN LIGNE). Économe : précision équilibrée, envoi adaptatif. */
-export async function startTracking() {
-  const perm = await requestLocationPermissions();
-  if (perm === "denied") throw new Error("Autorisez la localisation pour passer en ligne.");
+async function startForegroundWatch() {
+  foregroundWatch?.remove();
+  foregroundWatch = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High, distanceInterval: 20 }, (l) => void pushLocation(l));
+}
+
+export type TrackingResult = {
+  /** Précision (m) du premier point, null si aucun point. */
+  accuracyM: number | null;
+  /** false : suivi limité à l'application au premier plan (tâche indisponible). */
+  background: boolean;
+};
+
+/**
+ * Démarre le partage de position — à appeler une fois le chauffeur EN LIGNE côté serveur :
+ * le premier point (forcé) reçoit alors l'intervalle « disponible » et non celui « hors ligne ».
+ */
+export async function startTracking(): Promise<TrackingResult> {
+  const fg = await Location.requestForegroundPermissionsAsync().catch(() => null);
+  if (fg?.status !== "granted") throw new Error("Autorisez la localisation pour passer en ligne.");
   const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
   if (current) await pushLocation(current, true);
+  const accuracyM = current?.coords.accuracy ?? null;
   if (isWeb) {
     // Navigateur : suivi au premier plan uniquement
-    webWatch?.remove();
-    webWatch = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High, distanceInterval: 20 }, (l) => void pushLocation(l)).catch(() => null);
-    return perm;
+    await startForegroundWatch().catch(() => null);
+    return { accuracyM, background: false };
   }
-  if (perm === "granted" && !(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) {
-    await Location.startLocationUpdatesAsync(LOCATION_TASK, {
-      accuracy: Location.Accuracy.Balanced,
-      timeInterval: 5000,
-      distanceInterval: 0,
-      deferredUpdatesInterval: 5000,
-      pausesUpdatesAutomatically: false,
-      activityType: Location.ActivityType.AutomotiveNavigation,
-      showsBackgroundLocationIndicator: true,
-      foregroundService: {
-        notificationTitle: "Rydar Drive — EN LIGNE",
-        notificationBody: "Votre position est partagée avec votre centrale.",
-        notificationColor: "#C8F03C",
-        killServiceOnDestroy: false,
-      },
-    });
+  try {
+    if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) {
+      await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(false));
+    }
+    foregroundWatch?.remove();
+    foregroundWatch = null;
+    return { accuracyM, background: true };
+  } catch (e) {
+    // Tâche refusée (services de localisation, configuration native) : repli premier plan
+    try {
+      await startForegroundWatch();
+    } catch {
+      throw e;
+    }
+    return { accuracyM, background: false };
   }
-  return perm;
 }
 
 export async function stopTracking() {
-  if (isWeb) {
-    webWatch?.remove();
-    webWatch = null;
-    return;
-  }
+  foregroundWatch?.remove();
+  foregroundWatch = null;
+  if (isWeb) return;
   if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false)) {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK);
   }
 }
 
-/** Mode course : précision élevée (arrivée au client, guidage). */
+/**
+ * Mode course : précision élevée (arrivée au client, guidage). Relancer la tâche met simplement
+ * ses options à jour (pas d'arrêt : un redémarrage depuis l'arrière-plan est refusé sur Android).
+ */
 export async function setHighAccuracy(enabled: boolean) {
   if (isWeb) return;
   if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) return;
-  await Location.stopLocationUpdatesAsync(LOCATION_TASK);
-  await Location.startLocationUpdatesAsync(LOCATION_TASK, {
-    accuracy: enabled ? Location.Accuracy.High : Location.Accuracy.Balanced,
-    timeInterval: enabled ? 3000 : 5000,
-    distanceInterval: 0,
-    pausesUpdatesAutomatically: false,
-    activityType: Location.ActivityType.AutomotiveNavigation,
-    showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: enabled ? "Rydar Drive — course en cours" : "Rydar Drive — EN LIGNE",
-      notificationBody: "Votre position est partagée avec votre centrale.",
-      notificationColor: "#C8F03C",
-      killServiceOnDestroy: false,
-    },
-  });
+  await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(enabled));
 }

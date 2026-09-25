@@ -37,9 +37,10 @@ type Props = {
   /** Itinéraire d'approche réel (chauffeur → départ) de la course sélectionnée. */
   approach?: { rideId: string; coordinates: Coord[] } | null;
   theme?: "night" | "day";
+  /** Âge au-delà duquel une position est « ancienne » (location_max_age_seconds de l'organisation). */
+  staleMs?: number;
 };
 
-const STALE_MS = 3 * 60_000;
 const SEARCHING = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED"]);
 const TO_PICKUP = new Set(["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED"]);
 const ON_BOARD = new Set(["PASSENGER_ONBOARD", "IN_PROGRESS"]);
@@ -78,6 +79,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     focus,
     approach,
     theme = "night",
+    staleMs = 3 * 60_000,
   },
   ref,
 ) {
@@ -213,7 +215,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         entry.anim = requestAnimationFrame(step);
         m.pos = target;
       }
-      const stale = now - new Date(d.location.updated_at).getTime() > STALE_MS;
+      const stale = now - new Date(d.location.updated_at).getTime() > staleMs;
       const related = !selectedRide || selectedRide.driver_id === d.id || offers.some((o) => o.ride_id === selectedRide.id && o.driver_id === d.id);
       updateCar(m.el, {
         color: PRESENCE_COLOR[d.presence as DriverPresence] ?? PRESENCE_COLOR.offline,
@@ -238,7 +240,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
       fitted.current = true;
       fitAll();
     }
-  }, [drivers, ready, showOffline, selectedDriverId, selectedRideId, rides, offers, offeredDrivers, fitAll, mapRef, libRef]);
+  }, [drivers, ready, showOffline, selectedDriverId, selectedRideId, rides, offers, offeredDrivers, fitAll, mapRef, libRef, staleMs]);
 
   // ---------------------------------------------------------------- courses & tracés
   useEffect(() => {
@@ -274,7 +276,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         }
         p.marker.setLngLat([r.pickup_lng, r.pickup_lat]);
         p.el.style.setProperty("--c", rideColor(r.status));
-        p.el.dataset.searching = String(SEARCHING.has(r.status) && r.type === "instant");
+        p.el.dataset.searching = String(SEARCHING.has(r.status) && (r.type === "instant" || r.dispatch_mode === "geo"));
         p.el.dataset.dim = String(!!selectedRideId && !selected);
         p.el.style.zIndex = selected ? "4" : "2";
       }
@@ -308,7 +310,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         });
       }
       // Recherche en cours sur la course sélectionnée : rayon + chauffeurs sollicités
-      if (selected && SEARCHING.has(r.status) && r.type === "instant") {
+      if (selected && SEARCHING.has(r.status) && (r.type === "instant" || r.dispatch_mode === "geo")) {
         for (const o of offers) {
           const od = o.ride_id === r.id && o.status === "pending" ? byId.get(o.driver_id) : undefined;
           if (od?.location)
@@ -327,7 +329,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     setData(
       map,
       "rd-radius",
-      sel && SEARCHING.has(sel.status) && sel.type === "instant" && sel.dispatch_radius_m
+      sel && SEARCHING.has(sel.status) && (sel.type === "instant" || sel.dispatch_mode === "geo") && sel.dispatch_radius_m
         ? [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circlePolygon({ lat: sel.pickup_lat, lng: sel.pickup_lng }, sel.dispatch_radius_m)] } }]
         : [],
     );

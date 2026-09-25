@@ -5,7 +5,7 @@ Sources de course : dashboard rattacheur | API `POST /api/v1/rides` (API key →
 
 ## Stack / layout (pnpm workspaces)
 - `apps/web` Next 16 App Router, TS, Tailwind v4, composants shadcn-like maison (`components/ui`), MapLibre (style dark CARTO, env `NEXT_PUBLIC_MAP_STYLE_URL`), Supabase SSR.
-- `apps/driver` Expo 57 + expo-router, expo-location (bg task), expo-notifications (canal `ride-offers`, action ACCEPTER).
+- `apps/driver` Expo 57 + expo-router, expo-location (bg task), expo-notifications (canal `ride-offers-v2`, sonnerie 10 s `ride_offer_v2.wav`, action ACCEPTER), entrée `index.ts` (tâche GPS définie avant expo-router).
 - `apps/worker` Node : outbox `notifications` → push (Expo/FCM/APNs), `dispatch_tick()` (vagues/timeout/escalade planifiées), rappels, ménage.
 - `packages/shared` (`@rydar/shared`) : statuts, transitions, zod schemas, catégories, format FR.
 - `supabase/migrations` SQL (source de vérité), `supabase/seed.sql`, `tests/db` (vitest + pg réel).
@@ -52,7 +52,8 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [x] M7 worker (`apps/worker` : tick, outbox push Expo/FCM/APNs, simulateur `SIM_ORG=elite-paris SIM_NEW_RIDE_EVERY=20 npx tsx src/simulator.ts`)
 - [x] M8 app chauffeur (`apps/driver`, Expo 57 / RN 0.86 / React 19.2.3 partout ; `npx expo export --platform android` OK)
 - [x] M9 Stripe (checkout/portal/webhook)
-- [x] M10 docs (README, docs/ARCHITECTURE|API|SECURITY), CI GitHub verte (3 jobs), 47 tests DB, révocation sessions (mig 001300)
+- [x] M10 docs (README, docs/ARCHITECTURE|API|SECURITY), CI GitHub verte (3 jobs), 63 tests DB, révocation sessions (mig 001300)
+- [x] Audit géoloc/notifs/dispatch : vagues cumulatives (migr. 1700), flotte re-balayée toutes les 5 min (1800), géocodage API avec seuil de confiance (`lib/geocode.ts`, `lib/geo/anchor.ts`), alertes dashboard son + navigateur (`components/alerts`), relais Realtime local (`scripts/local-stack/realtime.mjs`)
 - [x] M11 REFONTE (demande utilisateur : épuré, vraie carte, géoloc + calculs, visuels partout, app chauffeur « waw »)
   - géo serveur : `apps/web/lib/geocode.ts` (geopf|ban|google|mapbox, GEOCODER_URL), `lib/geo/routing.ts` (osrm|mapbox|google + repli), `lib/geo/quote.ts`
   - API : /api/quote (dashboard), /api/route, /api/geocode/reverse, /api/book/[slug]/quote (public) ; rides.route_polyline (mig 001400)

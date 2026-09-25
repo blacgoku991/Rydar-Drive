@@ -21,6 +21,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         "Lorsque vous êtes EN LIGNE, votre position est partagée avec votre centrale même application fermée, pour recevoir les courses proches.",
       ITSAppUsesNonExemptEncryption: false,
     },
+    // Offres de course en « time-sensitive » (traversent les résumés / modes Concentration)
+    entitlements: { "com.apple.developer.usernotifications.time-sensitive": true },
   },
   android: {
     package: process.env.ANDROID_PACKAGE ?? "app.rydar.driver",
@@ -55,7 +57,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         icon: "./assets/images/notification-icon.png",
         color: "#C8F03C",
-        sounds: ["./assets/sounds/ride_offer.wav"],
+        // v2 : sonnerie ~10 s (canal Android « ride-offers-v2 ») ; v1 conservée (carillon court, anciens envois)
+        sounds: ["./assets/sounds/ride_offer_v2.wav", "./assets/sounds/ride_offer.wav"],
       },
     ],
     ["expo-splash-screen", { image: "./assets/images/splash.png", backgroundColor: "#07080B", imageWidth: 160 }],

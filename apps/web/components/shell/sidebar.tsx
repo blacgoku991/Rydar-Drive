@@ -29,17 +29,20 @@ type Props = {
   onSwitchOrg?: (id: string) => void;
   signOut: () => void;
   footer?: React.ReactNode;
+  /** Action à droite du logo (ex. cloche des notifications). */
+  headerAction?: React.ReactNode;
 };
 
-function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, onNavigate }: Props & { onNavigate?: () => void }) {
+function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, headerAction, onNavigate }: Props & { onNavigate?: () => void }) {
   const pathname = usePathname();
   const current = orgs?.find((o) => o.id === currentOrgId);
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-14 items-center px-5">
+      <div className="flex h-14 items-center justify-between pl-5 pr-3">
         <Link href={sections[0]?.items[0]?.href ?? "/"} onClick={onNavigate} title={subtitle}>
           <Logo size={24} />
         </Link>
+        {headerAction}
       </div>
 
       {current && (
@@ -132,20 +135,23 @@ export function Sidebar(props: Props) {
       {/* Mobile */}
       <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-ink-950/90 px-4 backdrop-blur lg:hidden">
         <Logo size={24} />
-        <D.Root open={open} onOpenChange={setOpen}>
-          <D.Trigger className="grid size-9 place-items-center rounded-lg border border-line text-fg-muted">
-            <Menu className="size-4" />
-            <span className="sr-only">Menu</span>
-          </D.Trigger>
-          <D.Portal>
-            <D.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
-            <D.Content className="fixed inset-y-0 left-0 z-50 w-[280px] border-r border-line bg-ink-950 data-[state=open]:animate-in data-[state=open]:slide-in-from-left">
-              <D.Title className="sr-only">Navigation</D.Title>
-              <D.Description className="sr-only">Menu principal</D.Description>
-              <NavContent {...props} onNavigate={() => setOpen(false)} />
-            </D.Content>
-          </D.Portal>
-        </D.Root>
+        <div className="flex items-center gap-2">
+          {props.headerAction}
+          <D.Root open={open} onOpenChange={setOpen}>
+            <D.Trigger className="grid size-9 place-items-center rounded-lg border border-line text-fg-muted">
+              <Menu className="size-4" />
+              <span className="sr-only">Menu</span>
+            </D.Trigger>
+            <D.Portal>
+              <D.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+              <D.Content className="fixed inset-y-0 left-0 z-50 w-[280px] border-r border-line bg-ink-950 data-[state=open]:animate-in data-[state=open]:slide-in-from-left">
+                <D.Title className="sr-only">Navigation</D.Title>
+                <D.Description className="sr-only">Menu principal</D.Description>
+                <NavContent {...props} headerAction={null} onNavigate={() => setOpen(false)} />
+              </D.Content>
+            </D.Portal>
+          </D.Root>
+        </div>
       </div>
     </>
   );

@@ -1,7 +1,8 @@
+import { Expo } from "expo-server-sdk";
 import { config, log } from "./config";
 import { pool } from "./db";
 import { apnsProvider } from "./push/apns";
-import { expoProvider } from "./push/expo";
+import { expoProvider, expoReceiptTracker } from "./push/expo";
 import { fcmProvider } from "./push/fcm";
 import type { PushProvider, PushResult, PushTarget } from "./push/types";
 
@@ -16,17 +17,33 @@ type Claimed = {
   tokens: PushTarget[];
 };
 
-const providers: Partial<Record<PushTarget["provider"], PushProvider>> = { expo: expoProvider(config.expoAccessToken) };
+const expo = new Expo({ accessToken: config.expoAccessToken });
+const providers: Partial<Record<PushTarget["provider"], PushProvider>> = { expo: expoProvider(expo) };
 if (config.fcmServiceAccount) providers.fcm = fcmProvider(config.fcmServiceAccount);
 if (config.apns) providers.apns = apnsProvider(config.apns);
 
-/** Agrège les résultats par notification : envoyée si au moins un appareil l'a reçue. */
+/** Accusés de réception Expo : jetons morts désactivés, notification « failed » si aucun appareil ne l'a reçue. */
+const receipts = expoReceiptTracker(expo, {
+  deactivateTokens: (tokens, reason) => pool.query("select private.deactivate_push_tokens($1, $2)", [tokens, reason]),
+  failNotification: (id, error) => pool.query("select private.fail_notification_delivery($1, $2)", [id, error]),
+  log,
+});
+
+/**
+ * Agrège les résultats par notification : envoyée si au moins un appareil l'a reçue.
+ * receipts : tickets Expo à vérifier plus tard ; deliveredElsewhere : un envoi réussi sans
+ * accusé à suivre (FCM/APNs direct, dry-run) → la notification ne pourra pas être passée en échec.
+ */
 export function summarize(results: PushResult[]) {
-  const ok = results.find((r) => r.ok);
+  const delivered = results.filter((r) => r.ok);
+  const ok = delivered.length > 0;
   const invalid = results.filter((r) => r.invalid).map((r) => r.token);
   const retryable = !ok && results.some((r) => r.retryable);
   const error = ok ? null : results.map((r) => r.error).filter(Boolean).join(" | ") || "NO_RESULT";
-  return { ok: !!ok, messageId: ok?.messageId ?? null, invalid, retryable, error };
+  const messageId = delivered.map((r) => r.messageId).filter(Boolean).join(",") || null;
+  const receipts = delivered.flatMap((r) => (r.receiptId ? [{ token: r.token, id: r.receiptId }] : []));
+  const deliveredElsewhere = delivered.some((r) => !r.receiptId);
+  return { ok, messageId, receipts, deliveredElsewhere, invalid, retryable, error };
 }
 
 async function deliver(n: Claimed) {
@@ -55,16 +72,19 @@ async function deliver(n: Claimed) {
   await pool.query("select private.complete_notification($1, $2, $3, $4, $5, $6)", [
     n.id, s.ok, s.error, [...byProvider.keys()].join(","), s.messageId, s.retryable,
   ]);
+  // Après « sent » : fail_notification_delivery ne s'applique qu'à une notification envoyée.
+  if (s.receipts.length) receipts.track(n.id, s.receipts, { deliveredElsewhere: s.deliveredElsewhere });
 }
 
 let running = false;
+let stopping = false;
 /** Réserve un lot (SKIP LOCKED → plusieurs workers possibles) et l'envoie. */
 export async function processNotifications(): Promise<number> {
-  if (running) return 0;
+  if (running || stopping) return 0;
   running = true;
   let total = 0;
   try {
-    for (;;) {
+    while (!stopping) {
       const { rows } = await pool.query<Claimed>("select * from private.claim_notifications($1)", [config.batchSize]);
       if (!rows.length) break;
       total += rows.length;
@@ -83,4 +103,20 @@ export async function processNotifications(): Promise<number> {
     running = false;
   }
   return total;
+}
+
+/** Vérifie les accusés de réception Expo arrivés à échéance. */
+export async function checkPushReceipts() {
+  if (stopping) return;
+  try {
+    const s = await receipts.poll();
+    if (s.errors || s.deactivated || s.failed) log("info", "expo receipts", { ...s, pending: receipts.size() });
+  } catch (error) {
+    log("error", "expo receipts failed", { error: (error as Error).message });
+  }
+}
+
+/** Arrêt : plus de nouveau lot ni de vérification (le lot en cours se termine). */
+export function stopNotifications() {
+  stopping = true;
 }

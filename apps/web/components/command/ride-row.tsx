@@ -41,13 +41,14 @@ export function RideRow({
   const status = ride.status as RideStatus;
   const meta = RIDE_STATUS_META[status] ?? { label: status, tone: "neutral" as const };
   const searching = SEARCHING.has(status);
+  const geo = ride.type === "instant" || ride.dispatch_mode === "geo";
   const remaining = ride.next_dispatch_at ? Math.max(0, (new Date(ride.next_dispatch_at).getTime() - now) / 1000) : 0;
-  const pct = searching && ride.type === "instant" ? Math.min(100, (remaining / timeout) * 100) : 0;
+  const pct = searching && geo ? Math.min(100, (remaining / timeout) * 100) : 0;
   const day = dayLabel(ride.pickup_at, now);
 
   let detail: string | null = null;
   if (searching) {
-    detail = ride.type === "instant"
+    detail = geo
       ? `${offers} offre${offers > 1 ? "s" : ""} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])}${remaining > 0 ? ` · ${Math.ceil(remaining)} s` : ""}`
       : `proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`;
   } else if (driver) {

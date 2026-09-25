@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { DRIVER_FLOW, RIDE_STATUS_META, formatPrice, formatRideDate, shortAddress, type Ride, type RideStatus } from "@rydar/shared";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { RydarMap } from "@/components/map/rydar-map";
 import { BigButton, Pill, RouteLine, Screen, Sheet } from "@/components/ui";
@@ -27,7 +27,14 @@ export default function Home() {
 
   async function toggle() {
     const res = await setOnline(!online);
-    if (!res.ok || res.message) Alert.alert(res.ok ? "Localisation" : "Action impossible", res.message ?? "Réessayez.");
+    if (res.code === "coarse") {
+      Alert.alert("Activez la position exacte", res.message, [
+        { text: "Plus tard", style: "cancel" },
+        { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
+      ]);
+      return;
+    }
+    if (!res.ok || res.message) Alert.alert(res.ok ? (res.code === "imprecise" ? "Position imprécise" : "Localisation") : "Action impossible", res.message ?? "Réessayez.");
   }
 
   const initials = `${(home?.driver.first_name ?? "?").charAt(0)}${(home?.driver.last_name ?? "").charAt(0)}`;

@@ -8,26 +8,61 @@ export type PushPayload = {
   priority: "high" | "normal";
 };
 
-/** Résultat par token : ok, ou erreur (invalid = token à désactiver, retryable = réessayer). */
-export type PushResult = { token: string; ok: boolean; messageId?: string; error?: string; invalid?: boolean; retryable?: boolean };
+/**
+ * Résultat par token : ok, ou erreur (invalid = token à désactiver, retryable = réessayer).
+ * receiptId : identifiant du ticket Expo, à vérifier plus tard (accusé de réception).
+ */
+export type PushResult = { token: string; ok: boolean; messageId?: string; receiptId?: string; error?: string; invalid?: boolean; retryable?: boolean };
 
 export interface PushProvider {
   name: "expo" | "fcm" | "apns";
   send(targets: PushTarget[], payload: PushPayload): Promise<PushResult[]>;
 }
 
-/** Réglages de présentation communs : son + canal + catégorie actionnable pour les offres. */
-export function presentation(payload: PushPayload) {
+/** Noms partagés avec l'app chauffeur (canal Android + sonnerie des offres). */
+export const RIDE_OFFER_CHANNEL = "ride-offers-v2";
+export const RIDE_OFFER_SOUND_IOS = "ride_offer_v2.wav";
+export const RIDE_OFFER_SOUND_ANDROID = "ride_offer_v2";
+
+/**
+ * TTL push d'une offre : jusqu'à son expiration (data.expires_at), au moins 1 s, au plus
+ * max (600 s = offer_timeout_seconds max) ; fallback si expires_at est absent ou illisible.
+ * Inutile de livrer une offre déjà expirée à un téléphone qui se reconnecte.
+ */
+export function offerTtlSeconds(expiresAt: unknown, now = Date.now(), max = 600, fallback = 60) {
+  const at = typeof expiresAt === "string" || typeof expiresAt === "number" ? new Date(expiresAt).getTime() : Number.NaN;
+  if (!Number.isFinite(at)) return fallback;
+  return Math.min(max, Math.max(1, Math.ceil((at - now) / 1000)));
+}
+
+function ttlSeconds(payload: PushPayload, now: number) {
+  if (payload.type === "ride_offer") return offerTtlSeconds(payload.data.expires_at, now);
+  // offre planifiée : fenêtre longue (jusqu'à T-lead), 1 h max comme les autres notifications
+  if (payload.type === "ride_offer_scheduled") return offerTtlSeconds(payload.data.expires_at, now, 3600, 3600);
+  return 3600;
+}
+
+/**
+ * Réglages de présentation communs : son + canal + catégorie actionnable (ACCEPTER / Refuser)
+ * pour toutes les offres, instantanées comme planifiées. Seule l'offre instantanée perce le
+ * mode Concentration iOS (time-sensitive) ; une offre planifiée peut attendre.
+ */
+export function presentation(payload: PushPayload, now = Date.now()) {
   const isOffer = payload.type === "ride_offer" || payload.type === "ride_offer_scheduled";
-  const urgent = isOffer || payload.type === "ride_cancelled" || payload.type === "ride_assigned";
+  const urgent = payload.type === "ride_offer" || payload.type === "ride_cancelled" || payload.type === "ride_assigned";
   return {
-    sound: isOffer ? "ride_offer.wav" : "default",
-    androidSound: isOffer ? "ride_offer" : "default",
-    channelId: isOffer ? "ride-offers" : urgent ? "ride-updates" : "default",
-    categoryId: payload.type === "ride_offer" ? "ride_offer" : undefined,
+    sound: isOffer ? RIDE_OFFER_SOUND_IOS : "default",
+    androidSound: isOffer ? RIDE_OFFER_SOUND_ANDROID : "default",
+    channelId: isOffer ? RIDE_OFFER_CHANNEL : urgent ? "ride-updates" : "default",
+    categoryId: isOffer ? "ride_offer" : undefined,
     interruptionLevel: urgent ? ("time-sensitive" as const) : ("active" as const),
-    ttlSeconds: payload.type === "ride_offer" ? 60 : 3600,
+    ttlSeconds: ttlSeconds(payload, now),
   };
+}
+
+/** Données métier exposées à l'app (content.data côté expo-notifications). */
+export function appData(payload: PushPayload): Record<string, unknown> {
+  return { ...payload.data, type: payload.type };
 }
 
 /** FCM / APNs n'acceptent que des chaînes dans « data ». */

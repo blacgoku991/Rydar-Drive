@@ -2,6 +2,7 @@ import { TENANT_FIELDS, apiRideCreateSchema, estimatePrice, fieldErrors, matchFi
 import { ApiError, PUBLIC_RIDE_SELECT, handle, preflight, publicRide, readJson } from "@/lib/api/v1";
 import { env } from "@/lib/env";
 import { geocodeOne } from "@/lib/geocode";
+import { coordinateProblem, orgAnchor } from "@/lib/geo/anchor";
 import { rideRouteColumns } from "@/lib/geo/routing";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -25,17 +26,24 @@ export async function POST(req: Request) {
     if (!parsed.success) throw new ApiError(422, "VALIDATION_ERROR", "Données de réservation invalides.", fieldErrors(parsed.error));
     const v = parsed.data;
 
-    // Géocodage si les coordonnées ne sont pas fournies
+    // Coordonnées fournies : contrôlées ; absentes : géocodage (biais vers la zone de l'organisation)
+    const anchor = await orgAnchor(ctx.orgId).catch(() => null);
     let pickup = { address: v.pickup.address, lat: v.pickup.lat, lng: v.pickup.lng };
     if (pickup.lat == null || pickup.lng == null) {
-      const g = await geocodeOne(pickup.address);
-      if (!g) throw new ApiError(422, "PICKUP_NOT_GEOCODED", "Adresse de départ introuvable : fournissez pickup.lat et pickup.lng.");
+      const g = await geocodeOne(pickup.address, anchor ?? undefined).catch(() => null);
+      if (!g) throw new ApiError(422, "PICKUP_NOT_GEOCODED", "Adresse de départ introuvable ou imprécise : précisez le numéro et la ville, ou fournissez pickup.lat et pickup.lng.");
       pickup = { address: pickup.address, lat: g.lat, lng: g.lng };
+    } else {
+      const problem = coordinateProblem({ lat: pickup.lat, lng: pickup.lng }, anchor);
+      if (problem) throw new ApiError(422, "INVALID_COORDINATES", `pickup : ${problem}`, { "pickup.lat": problem });
     }
     let dropoff = { address: v.dropoff.address, lat: v.dropoff.lat ?? null, lng: v.dropoff.lng ?? null };
     if (dropoff.lat == null || dropoff.lng == null) {
-      const g = await geocodeOne(dropoff.address).catch(() => null);
+      const g = await geocodeOne(dropoff.address, { lat: pickup.lat!, lng: pickup.lng! }, { precise: false }).catch(() => null);
       if (g) dropoff = { address: dropoff.address, lat: g.lat, lng: g.lng };
+    } else {
+      const problem = coordinateProblem({ lat: dropoff.lat, lng: dropoff.lng }, { lat: pickup.lat!, lng: pickup.lng! }, 1_500_000);
+      if (problem) throw new ApiError(422, "INVALID_COORDINATES", `dropoff : ${problem}`, { "dropoff.lat": problem });
     }
 
     const pickupAt = v.pickup_at ? new Date(v.pickup_at) : v.date && v.time ? zonedTimeToUtc(v.date, v.time, ctx.orgTimezone) : new Date();

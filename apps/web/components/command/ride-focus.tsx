@@ -98,7 +98,7 @@ export function RideFocus({
           </p>
           <p className="mt-1 text-[12.5px] text-fg-muted">
             {SEARCHING.has(status)
-              ? ride.type === "instant"
+              ? ride.type === "instant" || ride.dispatch_mode === "geo"
                 ? `Vague ${ride.dispatch_wave || 1} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])} · ${offers} chauffeur${offers > 1 ? "s" : ""} sollicité${offers > 1 ? "s" : ""}`
                 : `Proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`
               : eta != null

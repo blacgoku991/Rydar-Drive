@@ -16,14 +16,19 @@ if (Platform.OS !== "web") Notifications.setNotificationHandler({
   }),
 });
 
+/** Canal Android des offres (le worker envoie channelId « ride-offers-v2 », son « ride_offer_v2 »). */
+const RIDE_OFFER_CHANNEL = "ride-offers-v2";
+
 export async function setupNotificationChannels() {
   if (Platform.OS === "web") return;
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("ride-offers", {
+    // Android 8+ : le son d'un canal est figé à sa création → nouveau canal pour la nouvelle sonnerie
+    await Notifications.deleteNotificationChannelAsync("ride-offers").catch(() => null);
+    await Notifications.setNotificationChannelAsync(RIDE_OFFER_CHANNEL, {
       name: "Nouvelles courses",
       description: "Offres de course : sonnerie et vibration prioritaires",
       importance: Notifications.AndroidImportance.MAX,
-      sound: "ride_offer.wav",
+      sound: "ride_offer_v2.wav",
       vibrationPattern: [0, 500, 250, 500, 250, 900],
       enableVibrate: true,
       bypassDnd: true,
@@ -76,4 +81,26 @@ export async function registerForPush(): Promise<string | null> {
 export async function unregisterPush() {
   if (registeredToken) await api.unregisterToken(registeredToken).catch(() => null);
   registeredToken = null;
+}
+
+type PresentedOffer = { id: string; offerId: string };
+
+/** Notifications d'offre affichées dans le centre de notifications (hors web). */
+export async function presentedOfferNotifications(): Promise<PresentedOffer[]> {
+  if (Platform.OS === "web") return [];
+  const list = await Notifications.getPresentedNotificationsAsync().catch(() => []);
+  return list.flatMap((n) => {
+    const offerId = (n.request.content.data as Record<string, unknown> | undefined)?.offer_id;
+    return offerId ? [{ id: n.request.identifier, offerId: String(offerId) }] : [];
+  });
+}
+
+/**
+ * Retire les notifications des offres qui ne sont plus en attente (prises, expirées, refusées).
+ * `presented` doit être relevé AVANT la lecture des offres : une offre arrivée entre-temps reste affichée.
+ */
+export async function dismissClosedOfferNotifications(presented: PresentedOffer[], pendingOfferIds: Set<string>) {
+  for (const n of presented) {
+    if (!pendingOfferIds.has(n.offerId)) await Notifications.dismissNotificationAsync(n.id).catch(() => null);
+  }
 }

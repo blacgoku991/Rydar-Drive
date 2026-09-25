@@ -1,7 +1,8 @@
 "use server";
-import { fieldErrors, rideFormSchema, type RideFormInput, type RpcResult } from "@rydar/shared";
+import { estimatePrice, fieldErrors, matchFixedFare, rideFormSchema, type PricingRule, type RideFormInput, type RpcResult } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { actionError } from "@/lib/errors";
+import { geocodeOne } from "@/lib/geocode";
 import { rideRouteColumns } from "@/lib/geo/routing";
 import { getOrgContext } from "@/lib/org-context";
 
@@ -14,7 +15,28 @@ export async function createRide(input: RideFormInput): Promise<Result<{ id: str
   if (!parsed.success) return { ok: false, error: "Vérifiez les champs du formulaire.", fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt!;
-  const route = await rideRouteColumns({ lat: v.pickup.lat, lng: v.pickup.lng }, v.dropoff);
+  // Destination tapée sans choisir de suggestion : géocodée ici (trajet, durée et prix restent calculés)
+  let dropoff = { ...v.dropoff };
+  if ((dropoff.lat == null || dropoff.lng == null) && dropoff.address.trim()) {
+    const g = await geocodeOne(dropoff.address, { lat: v.pickup.lat, lng: v.pickup.lng }, { precise: false }).catch(() => null);
+    if (g) dropoff = { ...dropoff, lat: g.lat, lng: g.lng };
+  }
+  const route = await rideRouteColumns({ lat: v.pickup.lat, lng: v.pickup.lng }, dropoff);
+  // Prix non saisi : grille de l'organisation (forfait reconnu, sinon compteur), comme l'API
+  let priceCents = v.priceCents ?? null;
+  if (priceCents == null) {
+    const { data: rule } = await ctx.supabase
+      .from("pricing_rules")
+      .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end, fixed_fares")
+      .eq("organization_id", ctx.org.id)
+      .eq("vehicle_category", v.vehicleCategory)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (rule) {
+      const fixed = matchFixedFare(rule as PricingRule, v.pickup.address, dropoff.address);
+      priceCents = fixed?.price_cents ?? (route.estimated_distance_m != null ? estimatePrice(rule as PricingRule, route.estimated_distance_m, route.estimated_duration_s ?? 0, pickupAt, ctx.org.timezone ?? "Europe/Paris") : null);
+    }
+  }
 
   const { data, error } = await ctx.supabase
     .from("rides")
@@ -23,9 +45,9 @@ export async function createRide(input: RideFormInput): Promise<Result<{ id: str
       pickup_address: v.pickup.address,
       pickup_lat: v.pickup.lat,
       pickup_lng: v.pickup.lng,
-      dropoff_address: v.dropoff.address,
-      dropoff_lat: v.dropoff.lat ?? null,
-      dropoff_lng: v.dropoff.lng ?? null,
+      dropoff_address: dropoff.address,
+      dropoff_lat: dropoff.lat ?? null,
+      dropoff_lng: dropoff.lng ?? null,
       pickup_at: pickupAt.toISOString(),
       customer_name: v.customerName,
       customer_phone: v.customerPhone,
@@ -33,7 +55,7 @@ export async function createRide(input: RideFormInput): Promise<Result<{ id: str
       passengers: v.passengers,
       luggage: v.luggage,
       vehicle_category: v.vehicleCategory,
-      price_cents: v.priceCents ?? null,
+      price_cents: priceCents,
       payment_method: v.paymentMethod,
       comment: v.comment ?? null,
       flight_number: v.flightNumber ?? null,

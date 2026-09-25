@@ -1,5 +1,16 @@
 // Lieux fréquents VTC (aéroports, gares) — suggestions instantanées, sans appel réseau.
-export type Place = { label: string; address: string; lat: number; lng: number; kind: "airport" | "station" | "poi" | "address" | "city" };
+import { haversine } from "@rydar/shared";
+
+export type Place = {
+  label: string;
+  address: string;
+  lat: number;
+  lng: number;
+  kind: "airport" | "station" | "poi" | "address" | "city";
+  /** Confiance du géocodeur (0–1, formats BAN / Géoplateforme). */
+  score?: number;
+  postcode?: string;
+};
 
 export const FAVORITE_PLACES: Place[] = [
   { label: "Aéroport CDG — Terminal 1", address: "Aéroport Paris-Charles de Gaulle, Terminal 1, 95700 Roissy-en-France", lat: 49.0097, lng: 2.5479, kind: "airport" },
@@ -32,11 +43,26 @@ export const FAVORITE_PLACES: Place[] = [
 
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-export function matchFavorites(q: string, limit = 4): Place[] {
+/** Lieux favoris correspondant à la saisie ; avec `near`, seulement ceux à moins de 80 km, du plus proche au plus loin. */
+export function matchFavorites(q: string, limit = 4, near?: { lat: number; lng: number }): Place[] {
   const terms = norm(q).split(/\s+/).filter(Boolean);
   if (!terms.length) return [];
-  return FAVORITE_PLACES.filter((p) => {
+  let found = FAVORITE_PLACES.filter((p) => {
     const hay = norm(`${p.label} ${p.address}`);
     return terms.every((t) => hay.includes(t) || (t === "cdg" && hay.includes("charles de gaulle")));
-  }).slice(0, limit);
+  });
+  if (near) {
+    found = found
+      .map((p) => ({ p, d: haversine(near, p) }))
+      .filter((x) => x.d <= 80_000)
+      .sort((a, b) => a.d - b.d)
+      .map((x) => x.p);
+  }
+  return found.slice(0, limit);
+}
+
+/** Favori dont le libellé ou l'adresse correspond exactement à la saisie (ex. « Gare de Lyon »). */
+export function exactFavorite(q: string): Place | null {
+  const n = norm(q).replace(/\s+/g, " ").trim();
+  return FAVORITE_PLACES.find((p) => norm(p.label) === n || norm(p.address) === n) ?? null;
 }

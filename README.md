@@ -8,6 +8,8 @@
 | --- | --- |
 | ![Nouvelle course](docs/screenshots/new-ride.jpg) | ![Course sélectionnée](docs/screenshots/dashboard-ride.jpg) |
 
+![Alertes du rattacheur : course attribuée, avec son et compteur dans l'onglet](docs/screenshots/dashboard-alerts.jpg)
+
 ![App chauffeur : en ligne, offre avec compte à rebours, course guidée](docs/screenshots/driver-app.jpg)
 
 | Fiche course : étapes horodatées + trajet | Courses (miniature du tracé) | Super Admin |
@@ -22,9 +24,10 @@
   2. La **création manuelle** dans le dashboard (« Nouvelle course » : téléphone, hôtel, conciergerie…).
 
   En option, un **mini-site de réservation** aux couleurs de l'organisation : `slug.rydar.app` ou domaine personnalisé.
-- **Dispatch instantané** : chauffeurs de l'organisation, en ligne, disponibles, de catégorie compatible, à moins de **4 km** (PostGIS `ST_DWithin`). S'il n'y a personne, le rayon s'élargit par vagues **4 → 8 → 12 → 16 km** (configurable). Toutes les offres partent en même temps, avec sonnerie, vibration et bouton ACCEPTER.
+- **Dispatch instantané** : chauffeurs de l'organisation, en ligne, disponibles, de catégorie compatible, à moins de **4 km** (PostGIS `ST_DWithin`). S'il n'y a personne, ou si personne ne répond, le rayon s'élargit par vagues **4 → 8 → 12 → 16 km** (configurable) : les premiers sollicités gardent leur offre. Toutes les offres partent en même temps, avec sonnerie, vibration et bouton ACCEPTER.
 - **Acceptation atomique** : verrou transactionnel PostgreSQL et index unique partiel. Les autres chauffeurs reçoivent « Course déjà attribuée. ».
-- **Courses planifiées** proposées à la flotte, avec rappels à 24 h, 3 h, 1 h et 30 min.
+- **Courses planifiées** proposées à toute la flotte (en ligne ou non), avec rappels à 24 h, 3 h, 1 h et 30 min. Sans preneur à H-1, recherche GPS à partir de 4 km.
+- **Alertes du rattacheur** : nouvelle course, attribution, « aucun chauffeur » ou planifiée sans preneur. Chaque alerte arrive avec un son, un toast et une notification du navigateur, et un compteur s'affiche dans l'onglet.
 - **Cycle de vie complet** : `CREATED → SEARCHING_DRIVER → OFFERED → ACCEPTED → DRIVER_EN_ROUTE → DRIVER_ARRIVED → PASSENGER_ONBOARD → IN_PROGRESS → COMPLETED`, plus `CANCELLED` et `NO_DRIVER_FOUND`. Chaque étape est horodatée dans une **timeline** par course.
 - **Carte temps réel** : chauffeurs disponibles, course proposée, en route, arrivé, en course, hors ligne. On y voit aussi les vrais itinéraires routiers, l'approche du chauffeur avec son heure d'arrivée, le rayon de recherche et les chauffeurs sollicités. Carte sombre ou claire.
 - **Adresses, itinéraires et prix calculés** : autocomplétion d'adresses (IGN/BAN), itinéraire routier réel (OSRM, Mapbox ou Google), distance et durée. Le prix suit la grille de l'organisation, et les **forfaits** (Paris ↔ CDG…) sont reconnus automatiquement. Les chauffeurs disponibles s'affichent avec leur temps d'approche. Tout cela vaut aussi pour l'API et pour le mini-site.
@@ -86,7 +89,7 @@ pnpm dev                # http://localhost:3000
 ```bash
 bash scripts/db-local.sh --reset --seed     # base « rydar » : stubs Supabase + migrations + seed
 bash scripts/local-stack/setup.sh           # télécharge GoTrue / PostgREST, génère les clés JWT
-bash scripts/local-stack/start.sh           # passerelle http://localhost:54321
+bash scripts/local-stack/start.sh           # passerelle http://localhost:54321 (REST, Auth et relais Realtime)
 pnpm dev
 ```
 
@@ -95,6 +98,7 @@ pnpm dev
 ```bash
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/rydar PUSH_DRY_RUN=true pnpm dev:worker
 SIM_NEW_RIDE_EVERY=30 pnpm --filter @rydar/worker simulate    # chauffeurs qui roulent, acceptent, terminent
+# SIM_EXCLUDE=chauffeur@exemple.fr : laisse un chauffeur à piloter dans la vraie app (aperçu web ou téléphone)
 ```
 
 **App chauffeur** : `cp apps/driver/.env.example apps/driver/.env`, puis `pnpm dev:driver` (Expo), ou `pnpm --filter @rydar/driver web` pour l'aperçu navigateur. Voir [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#5-application-chauffeur-eas).

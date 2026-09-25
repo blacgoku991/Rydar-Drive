@@ -270,6 +270,16 @@ export const orgSettingsSchema = z.object({
   allow_category_upgrade: z.boolean(),
   location_max_age_seconds: z.number().int().min(30).max(3600),
   default_payment_method: paymentMethodSchema,
+}).superRefine((v, ctx) => {
+  // La recherche doit laisser à chaque vague (4 → 8 → 12 → 16 km) son délai de réponse complet
+  const min = v.dispatch_radii_m.length * v.offer_timeout_seconds;
+  if (v.max_search_seconds < min) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["max_search_seconds"],
+      message: `Durée de recherche trop courte : au moins ${Math.ceil(min / 60)} min pour ${v.dispatch_radii_m.length} vagues de ${v.offer_timeout_seconds} s.`,
+    });
+  }
 });
 export type OrgSettings = z.output<typeof orgSettingsSchema>;
 

@@ -1,10 +1,28 @@
 import { connect, type ClientHttp2Session } from "node:http2";
 import { SignJWT, importPKCS8 } from "jose";
-import { presentation, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
+import { appData, presentation, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
 
 type ApnsConfig = { key: string; keyId: string; teamId: string; bundleId: string; production: boolean };
 
-/** Envoi direct Apple Push Notification service (HTTP/2, jeton .p8). */
+/**
+ * Charge utile APNs au format lu par expo-notifications iOS : les données de l'app sous
+ * « body » (userInfo["body"] → content.data), la présentation dans « aps ».
+ */
+export function apnsPayload(payload: PushPayload, now = Date.now()) {
+  const p = presentation(payload, now);
+  return {
+    aps: {
+      alert: { title: payload.title, body: payload.body },
+      sound: p.sound,
+      ...(p.categoryId ? { category: p.categoryId } : {}),
+      "interruption-level": p.interruptionLevel,
+      "thread-id": String(payload.data.ride_id ?? payload.type),
+    },
+    body: appData(payload),
+  };
+}
+
+/** Envoi direct Apple Push Notification service (HTTP/2, jeton .p8) pour des jetons APNs natifs (build spécifique, provider « apns »). */
 export function apnsProvider(cfg: ApnsConfig): PushProvider {
   const host = cfg.production ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com";
   let session: ClientHttp2Session | null = null;
@@ -50,20 +68,15 @@ export function apnsProvider(cfg: ApnsConfig): PushProvider {
     name: "apns",
     async send(targets: PushTarget[], payload: PushPayload): Promise<PushResult[]> {
       const p = presentation(payload);
-      const auth = await bearer();
-      const body = JSON.stringify({
-        aps: {
-          alert: { title: payload.title, body: payload.body },
-          sound: p.sound,
-          category: p.categoryId,
-          "interruption-level": p.interruptionLevel,
-          "thread-id": String(payload.data.ride_id ?? payload.type),
-        },
-        ...payload.data,
-        type: payload.type,
-      });
+      let auth: string;
+      try {
+        auth = await bearer();
+      } catch (error) {
+        return targets.map((t) => ({ token: t.token, ok: false, error: `APNS_AUTH: ${(error as Error).message}`, retryable: false }));
+      }
+      const body = JSON.stringify(apnsPayload(payload));
       return Promise.all(
-        targets.map(async (t) => {
+        targets.map(async (t): Promise<PushResult> => {
           const res = await post(t.token, {
             authorization: `bearer ${auth}`,
             "apns-topic": cfg.bundleId,
@@ -72,7 +85,7 @@ export function apnsProvider(cfg: ApnsConfig): PushProvider {
             "apns-expiration": String(Math.floor(Date.now() / 1000) + p.ttlSeconds),
           }, body);
           if (res.status === 200) return { token: t.token, ok: true, messageId: res.id };
-          const reason = (JSON.parse(res.body || "{}") as { reason?: string }).reason ?? `HTTP_${res.status}`;
+          const reason = parseReason(res.body) ?? `HTTP_${res.status}`;
           return {
             token: t.token,
             ok: false,
@@ -84,4 +97,12 @@ export function apnsProvider(cfg: ApnsConfig): PushProvider {
       );
     },
   };
+}
+
+function parseReason(body: string) {
+  try {
+    return (JSON.parse(body || "{}") as { reason?: string }).reason;
+  } catch {
+    return undefined;
+  }
 }

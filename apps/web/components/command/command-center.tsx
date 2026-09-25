@@ -84,12 +84,15 @@ export function CommandCenter({
   orgName,
   pricing,
   offerTimeout,
+  locationMaxAgeS = 180,
   defaultPayment,
 }: {
   initial: LiveSnapshot;
   orgName: string;
   pricing: PricingRule[];
   offerTimeout: number;
+  /** Au-delà, la position n'est plus prise en compte par le dispatch (réglage de l'organisation). */
+  locationMaxAgeS?: number;
   defaultPayment: string;
 }) {
   const [state, dispatch] = useReducer(reducer, initial, (s) => reducer({ drivers: {}, rides: {}, offers: {}, kpis: null }, { type: "snapshot", snapshot: s }));
@@ -258,6 +261,23 @@ export function CommandCenter({
     if (d?.location) mapRef.current?.flyTo(d.location.lng, d.location.lat, 14.5);
   };
 
+  // Ouverture d'une course depuis une alerte (toast, cloche, notification du navigateur) ou ?ride=
+  const selectRideRef = useRef(selectRide);
+  selectRideRef.current = selectRide;
+  useEffect(() => {
+    const onFocus = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) selectRideRef.current(id);
+    };
+    window.addEventListener("rydar:focus-ride", onFocus);
+    const fromUrl = new URLSearchParams(window.location.search).get("ride");
+    if (fromUrl) {
+      window.setTimeout(() => selectRideRef.current(fromUrl), 400);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    return () => window.removeEventListener("rydar:focus-ride", onFocus);
+  }, []);
+
   const driver = selectedDriver ? state.drivers[selectedDriver] : null;
   const driverRide = driver?.current_ride_id ? state.rides[driver.current_ride_id] : null;
   const fleetCenter = useMemo(() => {
@@ -284,6 +304,7 @@ export function CommandCenter({
           showLabels={showLabels}
           approach={approach}
           theme={mapTheme}
+          staleMs={locationMaxAgeS * 1000}
           padding={{ top: 110, bottom: 60, left: 420, right: 360 }}
         />
       </div>
@@ -408,7 +429,7 @@ export function CommandCenter({
 
       {/* Flotte (droite) */}
       <aside className="z-10 hidden min-h-0 xl:glass xl:absolute xl:bottom-3 xl:right-3 xl:top-[76px] xl:flex xl:w-[312px] xl:flex-col xl:rounded-2xl">
-        <FleetPanel drivers={drivers} rides={state.rides} selectedId={selectedDriver} onSelect={selectDriver} now={now} className="flex-1" />
+        <FleetPanel drivers={drivers} rides={state.rides} selectedId={selectedDriver} onSelect={selectDriver} now={now} staleMs={locationMaxAgeS * 1000} className="flex-1" />
       </aside>
 
       {/* Fiche chauffeur sélectionné */}

@@ -1,6 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
+import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
 import { RealtimeProvider } from "@/components/realtime/realtime-provider";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { signOut } from "@/app/login/actions";
@@ -43,21 +44,24 @@ export function DashboardShell({
   ];
   return (
     <RealtimeProvider topic={`org:${org.id}`}>
-      <Sidebar
-        sections={sections}
-        subtitle="Dispatch"
-        user={user}
-        orgs={orgs}
-        currentOrgId={org.id}
-        onSwitchOrg={(id) =>
-          start(async () => {
-            await switchOrganization(id);
-            router.refresh();
-          })
-        }
-        signOut={() => start(() => signOut())}
-      />
-      <div className="lg:pl-[232px]">{children}</div>
+      <AlertsProvider>
+        <Sidebar
+          headerAction={<AlertsBell />}
+          sections={sections}
+          subtitle="Dispatch"
+          user={user}
+          orgs={orgs}
+          currentOrgId={org.id}
+          onSwitchOrg={(id) =>
+            start(async () => {
+              await switchOrganization(id);
+              router.refresh();
+            })
+          }
+          signOut={() => start(() => signOut())}
+        />
+        <div className="lg:pl-[232px]">{children}</div>
+      </AlertsProvider>
     </RealtimeProvider>
   );
 }

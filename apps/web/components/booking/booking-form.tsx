@@ -23,7 +23,7 @@ function Counter({ value, set, min, max }: { value: number; set: (v: number) => 
   );
 }
 
-export function BookingForm({ slug, categories, pricing, showPrice, phone }: { slug: string; categories: VehicleCategory[]; pricing: PricingRule[]; showPrice: boolean; phone?: string | null }) {
+export function BookingForm({ slug, categories, pricing, showPrice, phone, near }: { slug: string; categories: VehicleCategory[]; pricing: PricingRule[]; showPrice: boolean; phone?: string | null; near?: { lat: number; lng: number } | null }) {
   const [pickup, setPickup] = useState<PlaceValue>(empty);
   const [dropoff, setDropoff] = useState<PlaceValue>(empty);
   const [when, setWhen] = useState<"now" | "scheduled">("scheduled");
@@ -125,8 +125,8 @@ export function BookingForm({ slug, categories, pricing, showPrice, phone }: { s
       }}
     >
       <div className="space-y-2.5">
-        <Field error={errors.pickup}><AddressInput marker="pickup" value={pickup} onChange={setPickup} placeholder="Adresse de prise en charge" /></Field>
-        <Field error={errors.dropoff}><AddressInput marker="dropoff" value={dropoff} onChange={setDropoff} placeholder="Destination (aéroport, gare, adresse…)" /></Field>
+        <Field error={errors.pickup}><AddressInput marker="pickup" value={pickup} onChange={setPickup} near={near} placeholder="Adresse de prise en charge" /></Field>
+        <Field error={errors.dropoff}><AddressInput marker="dropoff" value={dropoff} onChange={setDropoff} near={pickup.lat != null && pickup.lng != null ? { lat: pickup.lat, lng: pickup.lng } : near} placeholder="Destination (aéroport, gare, adresse…)" /></Field>
       </div>
 
       <div className="grid grid-cols-2 gap-2 rounded-xl border border-line bg-ink-850 p-1">

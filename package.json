@@ -25,7 +25,8 @@
     "@types/pg": "^8.23.1",
     "pg": "^8.23.0",
     "typescript": "~5.9.3",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "ws": "^8.21.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

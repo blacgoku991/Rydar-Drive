@@ -15,6 +15,7 @@ export function FleetPanel({
   selectedId,
   onSelect,
   now,
+  staleMs = 180_000,
   className,
 }: {
   drivers: LiveDriver[];
@@ -22,6 +23,7 @@ export function FleetPanel({
   selectedId: string | null;
   onSelect: (id: string) => void;
   now: number;
+  staleMs?: number;
   className?: string;
 }) {
   const [filter, setFilter] = useState<DriverPresence | "online">("online");
@@ -65,7 +67,7 @@ export function FleetPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {list.map((d) => {
           const ride = d.current_ride_id ? rides[d.current_ride_id] : undefined;
-          const stale = d.location ? now - new Date(d.location.updated_at).getTime() > 180_000 : true;
+          const stale = d.location ? now - new Date(d.location.updated_at).getTime() > staleMs : true;
           return (
             <button
               key={d.id}

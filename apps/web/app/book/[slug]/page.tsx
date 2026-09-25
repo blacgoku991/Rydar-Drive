@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { BookingForm } from "@/components/booking/booking-form";
 import { RadarMark } from "@/components/brand/logo";
 import { getSession } from "@/lib/auth";
+import { orgAnchor } from "@/lib/geo/anchor";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -110,7 +111,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             <h2 className="text-[17px] font-semibold tracking-tight">Réserver une course</h2>
             <p className="mt-0.5 text-[12.5px] text-fg-muted">Sans compte · confirmation immédiate</p>
           </div>
-          <BookingForm slug={slug} categories={(site.vehicle_categories ?? ["standard"]) as VehicleCategory[]} pricing={(pricing ?? []) as PricingRule[]} showPrice={site.show_price_estimate} phone={site.phone} />
+          <BookingForm near={await orgAnchor(data.org.id).catch(() => null)} slug={slug} categories={(site.vehicle_categories ?? ["standard"]) as VehicleCategory[]} pricing={(pricing ?? []) as PricingRule[]} showPrice={site.show_price_estimate} phone={site.phone} />
         </div>
       </section>
 

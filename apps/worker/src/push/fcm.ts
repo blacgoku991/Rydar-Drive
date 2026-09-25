@@ -1,9 +1,50 @@
 import { SignJWT, importPKCS8 } from "jose";
-import { presentation, stringifyData, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
+import { appData, presentation, stringifyData, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
 
 type ServiceAccount = { project_id: string; client_email: string; private_key: string };
 
-/** Envoi direct Firebase Cloud Messaging (HTTP v1) pour les tokens FCM natifs Android. */
+/**
+ * Message FCM HTTP v1 « data only », haute priorité, au format lu par expo-notifications Android
+ * (NotificationData.kt : title, message, body = JSON des données, channelId, categoryId, sound).
+ * Sans bloc « notification », c'est expo-notifications qui affiche la notification, avec le canal
+ * et les boutons ACCEPTER / Refuser (catégorie).
+ */
+export function fcmMessage(token: string, payload: PushPayload, now = Date.now()) {
+  const p = presentation(payload, now);
+  return {
+    token,
+    data: stringifyData({
+      title: payload.title,
+      message: payload.body,
+      body: JSON.stringify(appData(payload)),
+      channelId: p.channelId,
+      ...(p.categoryId ? { categoryId: p.categoryId } : {}),
+      sound: p.androidSound,
+    }),
+    android: {
+      priority: payload.priority === "high" ? "HIGH" : "NORMAL",
+      ttl: `${p.ttlSeconds}s`,
+    },
+  };
+}
+
+type FcmError = { error?: { status?: string; message?: string; details?: { "@type"?: string; errorCode?: string }[] } };
+
+/** Seuls UNREGISTERED / NOT_FOUND signifient un jeton mort (INVALID_ARGUMENT = message mal formé). */
+export function fcmFailure(token: string, httpStatus: number, err: FcmError): PushResult {
+  const status = err.error?.status ?? `HTTP_${httpStatus}`;
+  const code = err.error?.details?.find((d) => d.errorCode)?.errorCode;
+  const reason = code && code !== status ? `${status}/${code}` : status;
+  return {
+    token,
+    ok: false,
+    error: `${reason}: ${err.error?.message ?? ""}`,
+    invalid: code === "UNREGISTERED" || status === "UNREGISTERED" || status === "NOT_FOUND",
+    retryable: httpStatus === 0 || httpStatus === 429 || httpStatus >= 500,
+  };
+}
+
+/** Envoi direct Firebase Cloud Messaging (HTTP v1) pour des jetons FCM natifs (build spécifique, provider « fcm »). */
 export function fcmProvider(sa: ServiceAccount): PushProvider {
   let cached: { token: string; exp: number } | null = null;
 
@@ -23,47 +64,38 @@ export function fcmProvider(sa: ServiceAccount): PushProvider {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
     });
-    const json = (await res.json()) as { access_token: string; expires_in: number };
-    cached = { token: json.access_token, exp: Date.now() + json.expires_in * 1000 };
+    const json = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string };
+    if (!res.ok || !json.access_token) throw new Error(`FCM_OAUTH_${json.error ?? res.status}`);
+    cached = { token: json.access_token, exp: Date.now() + (json.expires_in ?? 3600) * 1000 };
     return cached.token;
   }
 
   return {
     name: "fcm",
     async send(targets: PushTarget[], payload: PushPayload): Promise<PushResult[]> {
-      const p = presentation(payload);
-      const bearer = await accessToken();
+      let bearer: string;
+      try {
+        bearer = await accessToken();
+      } catch (error) {
+        return targets.map((t) => ({ token: t.token, ok: false, error: (error as Error).message, retryable: true }));
+      }
       return Promise.all(
-        targets.map(async (t) => {
-          const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
-            method: "POST",
-            headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-            body: JSON.stringify({
-              message: {
-                token: t.token,
-                notification: { title: payload.title, body: payload.body },
-                data: stringifyData({ ...payload.data, type: payload.type }),
-                android: {
-                  priority: payload.priority === "high" ? "HIGH" : "NORMAL",
-                  ttl: `${p.ttlSeconds}s`,
-                  notification: { channel_id: p.channelId, sound: p.androidSound, click_action: p.categoryId },
-                },
-              },
-            }),
-          }).catch((e: Error) => ({ ok: false, status: 0, json: async () => ({ error: { status: e.message } }) }) as unknown as Response);
+        targets.map(async (t): Promise<PushResult> => {
+          let res: Response;
+          try {
+            res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
+              method: "POST",
+              headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+              body: JSON.stringify({ message: fcmMessage(t.token, payload) }),
+            });
+          } catch (error) {
+            return { token: t.token, ok: false, error: (error as Error).message, retryable: true };
+          }
           if (res.ok) {
-            const json = (await res.json()) as { name: string };
+            const json = (await res.json().catch(() => ({}))) as { name?: string };
             return { token: t.token, ok: true, messageId: json.name };
           }
-          const err = (await res.json().catch(() => ({}))) as { error?: { status?: string; message?: string } };
-          const status = err.error?.status ?? `HTTP_${res.status}`;
-          return {
-            token: t.token,
-            ok: false,
-            error: `${status}: ${err.error?.message ?? ""}`,
-            invalid: status === "NOT_FOUND" || status === "UNREGISTERED" || status === "INVALID_ARGUMENT",
-            retryable: res.status >= 500 || res.status === 429 || res.status === 0,
-          };
+          return fcmFailure(t.token, res.status, (await res.json().catch(() => ({}))) as FcmError);
         }),
       );
     },
