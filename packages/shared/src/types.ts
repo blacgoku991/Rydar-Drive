@@ -214,3 +214,149 @@ export interface DriverHome {
   next_scheduled: { id: Uuid; number: number; pickup_at: Iso; pickup_address: string; dropoff_address: string; price_cents: number | null } | null;
   pending_offers: number;
 }
+
+// ---------------------------------------------------------------------------
+// Gains + documents chauffeur (migration 20260924002400_driver_money_docs)
+// ---------------------------------------------------------------------------
+export type DocumentType = "driving_license" | "vtc_card" | "insurance" | "vehicle_registration" | "identity" | "medical" | "other";
+/** Statut stocké (colonne driver_documents.status). */
+export type DocumentStoredStatus = "pending" | "valid" | "expired" | "rejected";
+/** Statut affiché, calculé côté SQL (expiring = échéance ≤ 30 j). */
+export type DocumentState = "valid" | "expiring" | "expired" | "pending" | "rejected";
+
+/** Réglage centrale : organization_settings.driver_commission_percent (0..100, null = pas de net estimé). */
+export interface DriverCommissionSetting {
+  driver_commission_percent: number | null;
+}
+
+/** Ligne public.driver_documents (colonnes ajoutées : source, reminders_sent, reviewed_at, reviewed_by, review_note). */
+export interface DriverDocumentRow {
+  id: Uuid;
+  organization_id: Uuid;
+  driver_id: Uuid;
+  type: DocumentType;
+  label: string | null;
+  file_path: string | null;
+  number: string | null;
+  issued_at: string | null;
+  expires_at: string | null;
+  status: DocumentStoredStatus;
+  source: "dashboard" | "driver";
+  reminders_sent: number[];
+  reviewed_at: Iso | null;
+  reviewed_by: Uuid | null;
+  review_note: string | null;
+  created_at: Iso;
+  updated_at: Iso;
+}
+
+export interface EarningsPeriod {
+  from: Iso;
+  rides: number;
+  revenue_cents: number;
+  net_cents: number | null;
+  commission_cents: number | null;
+  cash_cents: number;
+  distance_m: number;
+  duration_s: number;
+  unpriced_rides: number;
+}
+
+export interface EarningsDay {
+  /** AAAA-MM-JJ (fuseau de l'organisation) */
+  date: string;
+  rides: number;
+  revenue_cents: number;
+  net_cents: number | null;
+  distance_m: number;
+}
+
+export interface EarningsRide {
+  id: Uuid;
+  number: number;
+  pickup: string;
+  dropoff: string;
+  completed_at: Iso;
+  price_cents: number | null;
+  net_cents: number | null;
+  currency: string;
+  payment_method: PaymentMethod;
+  vehicle_category: VehicleCategory;
+  distance_m: number | null;
+  duration_s: number | null;
+}
+
+/** RPC driver_earnings(p_days) */
+export interface DriverEarnings {
+  currency: string;
+  timezone: string;
+  commission_percent: number | null;
+  days: number;
+  today: EarningsPeriod;
+  week: EarningsPeriod;
+  month: EarningsPeriod;
+  upcoming: { rides: number; revenue_cents: number; net_cents: number | null };
+  series: EarningsDay[];
+  recent: EarningsRide[];
+}
+
+/** Document tel que renvoyé par les RPC (driver_documents, driver_submit_document, review, alertes, temps réel). */
+export interface DriverDocumentItem {
+  id: Uuid;
+  driver_id: Uuid;
+  type: DocumentType;
+  /** Intitulé affichable (label saisi, sinon libellé FR du type) */
+  label: string;
+  number: string | null;
+  issued_at: string | null;
+  expires_at: string | null;
+  status: DocumentState;
+  /** expires_at − aujourd'hui (fuseau org) ; négatif si échu ; null sans échéance */
+  days_left: number | null;
+  file_path: string | null;
+  source: "dashboard" | "driver";
+  review_note: string | null;
+  reviewed_at: Iso | null;
+  created_at: Iso;
+  updated_at: Iso;
+}
+
+/** RPC driver_documents() */
+export interface DriverDocuments {
+  today: string;
+  documents: DriverDocumentItem[];
+  summary: Record<DocumentState, number>;
+  /** Types exigés sans document valide / bientôt échu / en validation */
+  missing_types: DocumentType[];
+}
+
+export interface DocumentDriverRef {
+  id: Uuid;
+  number: number;
+  first_name: string;
+  last_name: string;
+}
+
+export interface OrgDocumentAlert extends DriverDocumentItem {
+  driver: DocumentDriverRef & { photo_url: string | null; status: DriverStatus };
+}
+
+/** RPC org_document_alerts(p_org) */
+export interface OrgDocumentAlerts {
+  today: string;
+  counts: { pending: number; expired: number; expiring: number };
+  pending: OrgDocumentAlert[];
+  expired: OrgDocumentAlert[];
+  expiring: OrgDocumentAlert[];
+}
+
+/** Temps réel « driver.document » (org:{id} avec driver ; driver:{id} sans). */
+export interface DriverDocumentEvent {
+  action: "submitted" | "validated" | "rejected" | "expiring" | "expired";
+  document: DriverDocumentItem;
+  driver?: DocumentDriverRef;
+  /** submitted : documents en attente retirés par ce nouveau dépôt */
+  replaced_ids?: Uuid[];
+  /** expiring / expired : seuil de rappel (30, 7 ou 0 jours) */
+  threshold?: 30 | 7 | 0;
+}
