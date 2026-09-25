@@ -1,11 +1,11 @@
 // Carte web (aperçu navigateur de l'app chauffeur) : MapLibre + style Rydar partagé.
-import { DEFAULT_MAP_GLYPHS, DEFAULT_MAP_TILES, rydarMapStyle } from "@rydar/shared";
+import { DEFAULT_MAP_GLYPHS, DEFAULT_MAP_TILES, FLEET_REPORT_META, rydarMapStyle } from "@rydar/shared";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { colors } from "@/theme";
 import { RadarPulse } from "../radar";
-import type { RydarMapProps } from "./types";
+import type { MapReport, RydarMapProps } from "./types";
 
 type MLMap = import("maplibre-gl").Map;
 type MLMarker = import("maplibre-gl").Marker;
@@ -20,11 +20,38 @@ function dot(style: Partial<CSSStyleDeclaration>, inner?: HTMLElement) {
   return el;
 }
 
-export function RydarMap({ me, pickup, dropoff, route, dim, pulse, padding = { top: 80, bottom: 80, left: 50, right: 50 }, zoom = 15 }: RydarMapProps) {
+/** Pastille emoji d'un signalement (ancrage en bas, pointe colorée) ; l'élément interne porte la mise à l'échelle. */
+function reportElement(r: MapReport, onPress: (id: string) => void) {
+  const meta = FLEET_REPORT_META[r.type] ?? FLEET_REPORT_META.other;
+  const root = dot({ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", padding: "4px 4px 0" });
+  const bubble = dot({
+    width: "40px", height: "40px", borderRadius: "999px", background: colors.surface, border: `2.5px solid ${meta.color}`,
+    boxShadow: `0 0 0 4px ${meta.color}2E, 0 8px 18px rgba(0,0,0,.6)`, display: "grid", placeItems: "center",
+    fontSize: "20px", lineHeight: "1", transition: "transform 160ms ease", transformOrigin: "50% 100%",
+  });
+  bubble.textContent = meta.emoji;
+  bubble.dataset.role = "bubble";
+  const tip = dot({ width: "0", height: "0", borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderTop: `7px solid ${meta.color}`, marginTop: "-1px" });
+  root.append(bubble, tip);
+  root.setAttribute("role", "button");
+  root.setAttribute("aria-label", `Signalement : ${meta.label}`);
+  root.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onPress(r.id);
+  });
+  return root;
+}
+
+export function RydarMap({
+  me, pickup, dropoff, route, dim, pulse, padding = { top: 80, bottom: 80, left: 50, right: 50 }, zoom = 15, reports, selectedReportId, onReportPress, focus,
+}: RydarMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
   const lib = useRef<typeof import("maplibre-gl") | null>(null);
   const markers = useRef<{ me?: MLMarker; pickup?: MLMarker; dropoff?: MLMarker }>({});
+  const reportMarkers = useRef(new Map<string, { marker: MLMarker; el: HTMLElement; type: string }>());
+  const onReportRef = useRef(onReportPress);
+  onReportRef.current = onReportPress;
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -60,6 +87,7 @@ export function RydarMap({ me, pickup, dropoff, route, dim, pulse, padding = { t
       map.current?.remove();
       map.current = null;
       markers.current = {};
+      reportMarkers.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -96,12 +124,44 @@ export function RydarMap({ me, pickup, dropoff, route, dim, pulse, padding = { t
     if (pickup) pts.push([pickup.lng, pickup.lat]);
     if (dropoff) pts.push([dropoff.lng, dropoff.lat]);
     if (me && (pickup || dropoff)) pts.push([me.lng, me.lat]);
-    if (pts.length > 1) {
+    if (focus) m.easeTo({ center: [focus.lng, focus.lat], zoom, duration: 600 });
+    else if (pts.length > 1) {
       const b = pts.reduce((acc, p) => acc.extend(p), new L.LngLatBounds(pts[0]!, pts[0]!));
       m.fitBounds(b, { padding, maxZoom: 15.5, duration: 700 });
     } else if (me) m.easeTo({ center: [me.lng, me.lat], zoom, duration: 600 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, me?.lat, me?.lng, me?.heading, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, route]);
+  }, [ready, me?.lat, me?.lng, me?.heading, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, route, focus?.lat, focus?.lng]);
+
+  // Signalements de la flotte : un marqueur par id (ajout, déplacement, retrait à l'expiration)
+  useEffect(() => {
+    const m = map.current;
+    const L = lib.current;
+    if (!ready || !m || !L) return;
+    const current = reportMarkers.current;
+    const keep = new Set<string>();
+    for (const r of reports ?? []) {
+      keep.add(r.id);
+      let entry = current.get(r.id);
+      if (entry && entry.type !== r.type) {
+        entry.marker.remove();
+        entry = undefined;
+      }
+      if (!entry) {
+        const el = reportElement(r, (id) => onReportRef.current?.(id));
+        entry = { marker: new L.Marker({ element: el, anchor: "bottom" }).setLngLat([r.lng, r.lat]).addTo(m), el, type: r.type };
+        current.set(r.id, entry);
+      } else entry.marker.setLngLat([r.lng, r.lat]);
+      const bubble = entry.el.querySelector<HTMLElement>('[data-role="bubble"]');
+      if (bubble) bubble.style.transform = r.id === selectedReportId ? "scale(1.18)" : "scale(1)";
+      entry.el.style.zIndex = r.id === selectedReportId ? "3" : "2";
+    }
+    for (const [id, entry] of current) {
+      if (!keep.has(id)) {
+        entry.marker.remove();
+        current.delete(id);
+      }
+    }
+  }, [ready, reports, selectedReportId]);
 
   return (
     <View style={StyleSheet.absoluteFill}>

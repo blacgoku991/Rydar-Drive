@@ -1,10 +1,12 @@
-import { formatDistance, type DriverHome, type DriverOffer } from "@rydar/shared";
+import { formatDistance, type DriverChatOverview, type DriverHome, type DriverOffer } from "@rydar/shared";
 import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Platform, Vibration } from "react-native";
 import { api } from "@/lib/api";
+import { chatSession } from "@/lib/chat-session";
+import { appEvents } from "@/lib/events";
 import { locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking, type TrackingResult } from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
@@ -21,7 +23,14 @@ type Ctx = {
   setOnline: (online: boolean) => Promise<OnlineResult>;
   signOut: () => Promise<void>;
   busy: boolean;
+  /** Messagerie (centrale + flotte) et signalements actifs — driver_chat_overview, tenu à jour en temps réel. */
+  chat: DriverChatOverview | null;
+  /** Relecture immédiate de la messagerie (après un envoi, un vote, une lecture). */
+  refreshChat: () => Promise<void>;
 };
+
+/** Valeur numérique d'une donnée de notification (FCM/APNs transportent des chaînes). */
+const num = (v: unknown) => (v == null || v === "" ? undefined : Number.isFinite(Number(v)) ? Number(v) : undefined);
 
 /** Fenêtre (s) en deçà de laquelle une offre est traitée comme urgente (sonnerie, compte à rebours). */
 export const URGENT_OFFER_S = 120;
@@ -45,9 +54,12 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   const [home, setHome] = useState<DriverHome | null>(null);
   const [offers, setOffers] = useState<DriverOffer[]>([]);
   const [busy, setBusy] = useState(false);
+  const [chat, setChat] = useState<DriverChatOverview | null>(null);
   const seenOffers = useRef(new Set<string>());
   const handledResponses = useRef(new Set<string>());
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const fleetChannelRef = useRef<RealtimeChannel | null>(null);
+  const chatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Session
   useEffect(() => {
@@ -83,6 +95,20 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     }
   }, [session, openOffer]);
 
+  // Messagerie : une lecture complète (30 derniers messages par fil + signalements actifs) par rafale d'événements
+  const refreshChat = useCallback(async () => {
+    if (!session) return;
+    const c = await api.chatOverview().catch(() => null);
+    if (c) setChat(c);
+  }, [session]);
+  const scheduleChat = useCallback(() => {
+    if (chatTimer.current) return;
+    chatTimer.current = setTimeout(() => {
+      chatTimer.current = null;
+      void refreshChat();
+    }, 250);
+  }, [refreshChat]);
+
   // Initialisation après connexion : canaux, push, données, temps réel
   useEffect(() => {
     if (!session) return;
@@ -106,21 +132,59 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
           );
         }
       }
+      void refreshChat();
       await supabase.realtime.setAuth(session.access_token);
+      if (cancelled) return;
       const ch = supabase.channel(`driver:${h.driver.id}`, { config: { private: true } });
       ch.on("broadcast", { event: "offer.updated" }, () => void refresh())
-        .on("broadcast", { event: "ride.updated" }, () => void refresh())
-        .on("broadcast", { event: "ride.unassigned" }, () => void refresh())
+        .on("broadcast", { event: "ride.updated" }, (m) => {
+          void refresh();
+          // Vol retardé, prise en charge décalée… : l'écran de course ouvert se relit tout de suite
+          appEvents.emit("ride", (m.payload as { id?: string } | undefined)?.id);
+        })
+        .on("broadcast", { event: "ride.unassigned" }, (m) => {
+          void refresh();
+          appEvents.emit("ride", (m.payload as { id?: string; ride_id?: string } | undefined)?.ride_id ?? (m.payload as { id?: string } | undefined)?.id);
+        })
         .on("broadcast", { event: "driver.updated" }, () => void refresh())
+        // Fil direct avec la centrale : nouveaux messages et accusés de lecture (« Vu »)
+        .on("broadcast", { event: "chat.message" }, scheduleChat)
+        .on("broadcast", { event: "chat.read" }, scheduleChat)
+        // Documents : validation, refus, échéance
+        .on("broadcast", { event: "driver.document" }, () => appEvents.emit("documents"))
         .subscribe();
       channelRef.current = ch;
+      // Fil de la flotte (messages + signalements, votes « toujours là ») : topic privé fleet:<org>
+      const fleet = supabase.channel(`fleet:${h.organization.id}`, { config: { private: true } });
+      fleet
+        .on("broadcast", { event: "chat.message" }, scheduleChat)
+        .on("broadcast", { event: "chat.report" }, scheduleChat)
+        .subscribe();
+      fleetChannelRef.current = fleet;
     })();
     return () => {
       cancelled = true;
       if (channelRef.current) void supabase.removeChannel(channelRef.current);
+      if (fleetChannelRef.current) void supabase.removeChannel(fleetChannelRef.current);
       channelRef.current = null;
+      fleetChannelRef.current = null;
     };
-  }, [session, refresh]);
+  }, [session, refresh, refreshChat, scheduleChat]);
+
+  // Messagerie : repli périodique (le temps réel peut manquer un message) et relecture au retour au premier plan
+  useEffect(() => {
+    if (!session) return;
+    const id = setInterval(() => {
+      if (AppState.currentState === "active") void refreshChat();
+    }, 30_000);
+    const sub = AppState.addEventListener("change", (s) => s === "active" && void refreshChat());
+    return () => {
+      clearInterval(id);
+      sub.remove();
+      if (chatTimer.current) clearTimeout(chatTimer.current);
+      chatTimer.current = null;
+    };
+  }, [session, refreshChat]);
 
   // Repli : rafraîchissement périodique quand l'app est active et le chauffeur en ligne
   useEffect(() => {
@@ -150,6 +214,39 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     const data = (r.notification.request.content.data ?? {}) as Record<string, unknown>;
     const offerId = data.offer_id ? String(data.offer_id) : null;
     if (offerId) seenOffers.current.add(offerId); // pas de seconde ouverture par refresh()
+    const type = typeof data.type === "string" ? data.type : "";
+    // Messagerie, signalements, vols, documents, course retirée : chaque notification ouvre son écran
+    if (!offerId) {
+      if (type === "chat_message") {
+        void refreshChat();
+        if (chatSession.openThread) appEvents.emit("messages:tab", "dispatch");
+        else router.push({ pathname: "/messages", params: { tab: "dispatch" } });
+        return;
+      }
+      if (type === "fleet_report" && data.message_id) {
+        void refreshChat();
+        const focus = { id: String(data.message_id), lat: num(data.lat), lng: num(data.lng) };
+        router.dismissTo({ pathname: "/home", params: { report: focus.id } });
+        appEvents.emit("report:focus", focus);
+        return;
+      }
+      if (type === "flight_update" && data.ride_id) {
+        void refresh();
+        appEvents.emit("ride", String(data.ride_id));
+        router.push({ pathname: "/ride/[id]", params: { id: String(data.ride_id) } });
+        return;
+      }
+      if (type.startsWith("document_")) {
+        appEvents.emit("documents");
+        router.push("/documents");
+        return;
+      }
+      if (type === "ride_unassigned") {
+        await refresh();
+        router.dismissTo("/home");
+        return;
+      }
+    }
     if (r.actionIdentifier === "ACCEPT" && offerId) {
       const res = await api.accept(offerId).catch(() => null);
       if (res?.ok) offerSession.accepted.add(offerId);
@@ -174,15 +271,23 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       // Bannière touchée alors que l'offre est déjà à l'écran : rien à ouvrir
       if (offerSession.openId !== offerId) router.push({ pathname: "/offer/[id]", params: { id: offerId } });
     } else if (data.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(data.ride_id) } });
-  }, [refresh]);
+  }, [refresh, refreshChat]);
 
   // Notifications : réception au premier plan + actions
   useEffect(() => {
     if (!session) return;
     const received = Notifications.addNotificationReceivedListener((n) => {
       const data = n.request.content.data as Record<string, any>;
-      if (data?.type === "ride_offer" || data?.type === "ride_offer_scheduled") void refresh();
-      if (data?.type === "ride_cancelled" || data?.type === "ride_assigned" || data?.type === "ride_unassigned") void refresh();
+      const type = typeof data?.type === "string" ? (data.type as string) : "";
+      if (type === "ride_offer" || type === "ride_offer_scheduled") void refresh();
+      if (type === "ride_cancelled" || type === "ride_assigned" || type === "ride_unassigned") void refresh();
+      // Au premier plan : écrans à jour sans attendre le temps réel (la bannière est tue si le fil est ouvert)
+      if (type === "chat_message" || type === "fleet_report") scheduleChat();
+      if (type === "flight_update") {
+        void refresh();
+        appEvents.emit("ride", data?.ride_id ? String(data.ride_id) : undefined);
+      }
+      if (type.startsWith("document_")) appEvents.emit("documents");
     });
     const response = Notifications.addNotificationResponseReceivedListener((r) => void handleResponse(r).catch(() => null));
     // Démarrage à froid (tap sur ACCEPTER, app fermée) : la réponse précède l'écouteur
@@ -198,7 +303,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       received.remove();
       response.remove();
     };
-  }, [session, refresh, handleResponse]);
+  }, [session, refresh, handleResponse, scheduleChat]);
 
   const setOnline = useCallback(async (online: boolean): Promise<OnlineResult> => {
     setBusy(true);
@@ -251,10 +356,14 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut();
     setHome(null);
     setOffers([]);
+    setChat(null);
     seenOffers.current.clear();
   }, []);
 
-  const value = useMemo(() => ({ session, ready, home, offers, refresh, setOnline, signOut, busy }), [session, ready, home, offers, refresh, setOnline, signOut, busy]);
+  const value = useMemo(
+    () => ({ session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat }),
+    [session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat],
+  );
   return <DriverContext.Provider value={value}>{children}</DriverContext.Provider>;
 }
 

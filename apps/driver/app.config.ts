@@ -62,6 +62,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     ["expo-splash-screen", { image: "./assets/images/splash.png", backgroundColor: "#07080B", imageWidth: 160 }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: "Rydar Drive accède à vos photos pour envoyer vos justificatifs (carte VTC, permis…) à votre centrale.",
+        cameraPermission: "Rydar Drive utilise l'appareil photo pour photographier vos justificatifs (carte VTC, permis…).",
+        microphonePermission: false,
+      },
+    ],
   ],
   experiments: { typedRoutes: false },
   extra: {

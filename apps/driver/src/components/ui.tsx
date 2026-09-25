@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useEffect, useRef, useState } from "react";
+import { router } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator, Animated, PanResponder, Platform, Pressable, StyleSheet, Text, View,
   type LayoutChangeEvent, type PressableProps, type StyleProp, type TextStyle, type ViewStyle,
@@ -10,6 +11,11 @@ import { colors, radius } from "@/theme";
 const haptic = (style: Haptics.ImpactFeedbackStyle) => {
   if (Platform.OS !== "web") void Haptics.impactAsync(style);
 };
+
+/** Retour haptique d'une action aboutie (ou refusée). */
+export function hapticResult(ok: boolean) {
+  if (Platform.OS !== "web") void Haptics.notificationAsync(ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error).catch(() => null);
+}
 
 export function Screen({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
   return <View style={[{ flex: 1, backgroundColor: colors.bg }, style]}>{children}</View>;
@@ -179,6 +185,102 @@ export function Chip({ icon, text, color = colors.muted }: { icon: keyof typeof 
   );
 }
 
+/** En-tête d'écran secondaire : retour, titre, action à droite. */
+export function ScreenHeader({ title, right, onBack }: { title: string; right?: React.ReactNode; onBack?: () => void }) {
+  return (
+    <View style={styles.header}>
+      <Pressable
+        onPress={onBack ?? (() => (router.canGoBack() ? router.back() : router.replace("/home")))}
+        style={styles.headerBtn}
+        accessibilityRole="button"
+        accessibilityLabel="Retour"
+        hitSlop={8}
+      >
+        <Ionicons name="chevron-back" size={22} color={colors.fg} />
+      </Pressable>
+      <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+      <View style={{ minWidth: 44, alignItems: "flex-end" }}>{right}</View>
+    </View>
+  );
+}
+
+/** Sélecteur à onglets (Centrale | Flotte, Jour | Semaine | Mois), avec pastille de non-lus optionnelle. */
+export function Segmented<T extends string>({
+  options, value, onChange, style,
+}: { options: { value: T; label: string; badge?: number }[]; value: T; onChange: (v: T) => void; style?: StyleProp<ViewStyle> }) {
+  return (
+    <View style={[styles.segmented, style]} accessibilityRole="tablist">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <Pressable
+            key={o.value}
+            onPress={() => {
+              if (!active) haptic(Haptics.ImpactFeedbackStyle.Light);
+              onChange(o.value);
+            }}
+            style={[styles.segment, active && styles.segmentActive]}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+          >
+            <Text style={[styles.segmentText, active && { color: colors.fg }]}>{o.label}</Text>
+            {!!o.badge && o.badge > 0 && (
+              <View style={styles.segmentBadge}>
+                <Text style={styles.segmentBadgeText}>{o.badge > 99 ? "99+" : o.badge}</Text>
+              </View>
+            )}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+/** Pastille de compteur (non-lus) posée sur un bouton rond. */
+export function CountBadge({ count, color = colors.brand }: { count: number; color?: string }) {
+  if (count <= 0) return null;
+  return (
+    <View style={[styles.countBadge, { backgroundColor: color }]} pointerEvents="none">
+      <Text style={styles.countBadgeText}>{count > 99 ? "99+" : count}</Text>
+    </View>
+  );
+}
+
+type FlashTone = "success" | "error" | "info";
+/**
+ * Bandeau de confirmation éphémère (« Signalé à la flotte ») : `node` à placer dans l'écran,
+ * `show(texte, ton)` pour l'afficher ~2,6 s.
+ */
+export function useFlash(top = 0) {
+  const [msg, setMsg] = useState<{ text: string; tone: FlashTone; key: number } | null>(null);
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!msg) return;
+    anim.setValue(0);
+    Animated.spring(anim, { toValue: 1, useNativeDriver: true, friction: 7 }).start();
+    const t = setTimeout(() => {
+      Animated.timing(anim, { toValue: 0, duration: 220, useNativeDriver: true }).start(() => setMsg((m) => (m?.key === msg.key ? null : m)));
+    }, msg.tone === "error" ? 4200 : 2600);
+    return () => clearTimeout(t);
+  }, [msg, anim]);
+  const show = useCallback((text: string, tone: FlashTone = "success") => setMsg({ text, tone, key: Date.now() }), []);
+  const color = msg?.tone === "error" ? colors.red : msg?.tone === "info" ? colors.blue : colors.brand;
+  const node = msg ? (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.flash,
+        { top, borderColor: `${color}55`, opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }] },
+      ]}
+      accessibilityLiveRegion="polite"
+    >
+      <Ionicons name={msg.tone === "error" ? "alert-circle" : msg.tone === "info" ? "information-circle" : "checkmark-circle"} size={22} color={color} />
+      <Text style={styles.flashText}>{msg.text}</Text>
+    </Animated.View>
+  ) : null;
+  return { node, show };
+}
+
 const styles = StyleSheet.create({
   card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, padding: 18 },
   label: { color: colors.subtle, fontSize: 13, fontWeight: "600" },
@@ -195,4 +297,21 @@ const styles = StyleSheet.create({
   routeText: { color: colors.fg, fontSize: 16, fontWeight: "600" },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: colors.surface2 },
   chipText: { fontSize: 14, fontWeight: "600" },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
+  headerBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 },
+  headerTitle: { flex: 1, textAlign: "center", color: colors.fg, fontSize: 18, fontWeight: "800" },
+  segmented: { flexDirection: "row", padding: 4, borderRadius: 16, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line },
+  segment: { flex: 1, height: 42, borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  segmentActive: { backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong },
+  segmentText: { color: colors.muted, fontSize: 15, fontWeight: "800" },
+  segmentBadge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: "center", justifyContent: "center", backgroundColor: colors.brand },
+  segmentBadgeText: { color: colors.brandFg, fontSize: 11, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  countBadge: { position: "absolute", top: -3, right: -3, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: colors.bg },
+  countBadgeText: { color: colors.brandFg, fontWeight: "900", fontSize: 11, fontVariant: ["tabular-nums"] },
+  flash: {
+    position: "absolute", left: 16, right: 16, zIndex: 50, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingVertical: 14,
+    borderRadius: 18, backgroundColor: "rgba(17,19,24,0.97)", borderWidth: 1,
+    shadowColor: "#000", shadowOpacity: 0.5, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 12,
+  },
+  flashText: { flex: 1, color: colors.fg, fontSize: 16, fontWeight: "800" },
 });

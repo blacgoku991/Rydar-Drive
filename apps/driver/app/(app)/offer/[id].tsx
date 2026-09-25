@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import {
-  PAYMENT_METHOD_LABELS, VEHICLE_CATEGORY_META, decodePolyline, formatDistance, formatDuration, formatPrice, formatRideDate, type DriverOffer,
+  PAYMENT_METHOD_LABELS, VEHICLE_CATEGORY_META, decodePolyline, flightBadge, formatDistance, formatDuration, formatPrice, formatRideDate, type DriverOffer,
 } from "@rydar/shared";
 import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
@@ -15,7 +15,7 @@ import { URGENT_OFFER_S, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { api } from "@/lib/api";
 import { offerSession } from "@/lib/offer-session";
-import { approachSeconds, colors } from "@/theme";
+import { approachSeconds, colors, toneColor } from "@/theme";
 
 const RING_PATTERN = [0, 600, 300, 600, 300, 1000];
 /** La sonnerie boucle pendant les 35 premières secondes de l'offre (puis silence, le compte à rebours continue). */
@@ -243,6 +243,8 @@ export default function OfferScreen() {
   }
 
   const eta = approachSeconds(offer.distance_m);
+  // Vol suivi : « AF1234 · +35 min », « AF1234 · atterri 14:52 · T2E »
+  const flight = flightBadge(offer, home?.organization.timezone);
   return (
     <Screen>
       <View style={styles.mapBox}>
@@ -291,7 +293,7 @@ export default function OfferScreen() {
             {offer.estimated_distance_m != null && <Chip icon="navigate-outline" text={`${formatDistance(offer.estimated_distance_m)} · ${formatDuration(offer.estimated_duration_s)}`} />}
             <Chip icon="people-outline" text={`${offer.passengers}`} />
             <Chip icon="briefcase-outline" text={`${offer.luggage}`} />
-            {offer.flight_number && <Chip icon="airplane-outline" text={offer.flight_number} color={colors.cyan} />}
+            {flight && <Chip icon="airplane-outline" text={flight.text} color={flight.tone === "neutral" ? colors.cyan : toneColor(flight.tone)} />}
           </View>
           {offer.comment && <Text style={styles.comment}>« {offer.comment} »</Text>}
 
