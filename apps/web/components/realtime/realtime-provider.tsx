@@ -8,7 +8,11 @@ export type RealtimeStatus = "connecting" | "live" | "offline";
 type Ctx = { on: (event: string, handler: Handler) => () => void; status: RealtimeStatus };
 
 const RealtimeContext = createContext<Ctx | null>(null);
-const EVENTS = ["driver.location", "driver.updated", "ride.updated", "offer.updated", "ride.event"] as const;
+const EVENTS = [
+  "driver.location", "driver.updated", "ride.updated", "offer.updated", "ride.event",
+  // alertes de suivi (002200), messagerie et signalements (002300), documents chauffeur (002400)
+  "ride.alert", "chat.message", "chat.report", "chat.read", "driver.document",
+] as const;
 
 /** Canal privé org:{id} (Broadcast from database, autorisé par la RLS sur realtime.messages). */
 export function RealtimeProvider({ topic, children }: { topic: string; children: React.ReactNode }) {
