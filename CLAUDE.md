@@ -1,5 +1,7 @@
 # Rydar Drive — mémoire projet (compacte, à tenir à jour)
 
+**Langue : toujours répondre en français** (réponses, messages d'avancement, résumés, descriptions de commandes).
+
 SaaS dispatch VTC multi-tenant. Acteurs : super admin, rattacheur (org), chauffeur. **Aucun compte/app client.**
 Sources de course : dashboard rattacheur | API `POST /api/v1/rides` (API key → org) | mini-site `/book/[slug]` (option).
 
