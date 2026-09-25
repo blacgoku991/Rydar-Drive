@@ -5,6 +5,8 @@
 --   Dispatcher A       dispatch@elite-paris.fr       Rydar!Demo2026
 --   Rattacheur B       contact@riviera-prestige.fr   Rydar!Demo2026   (Riviera Prestige VTC, STARTER)
 --   Chauffeurs         mohamed@elite-paris.fr …      Rydar!Driver2026
+--   Centrale (opt. 2)  contact@centrale-express.fr   Rydar!Demo2026   (Centrale Express Paris, centrale à commission)
+--   Chauffeurs réseau  amine@centrale-express.fr …   Rydar!Driver2026 (inscription : /rejoindre/express2026demo)
 -- L'historique (30 jours) est importé en mode « bypass » ; les courses du jour
 -- passent par le VRAI moteur de dispatch (offres, acceptation, statuts).
 -- =============================================================================
@@ -575,6 +577,292 @@ begin
   perform pg_temp.accept_as('lorenzo@riviera-prestige.fr', r);
   perform pg_temp.advance_as('lorenzo@riviera-prestige.fr', r, array['DRIVER_EN_ROUTE','DRIVER_ARRIVED','PASSENGER_ONBOARD','IN_PROGRESS']::public.ride_status[]);
 
+  perform pg_temp.reset_claims();
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Option 2 — Centrale à commission : « Centrale Express Paris »
+--   Centrale        contact@centrale-express.fr   Rydar!Demo2026
+--   Chauffeurs      amine@centrale-express.fr …   Rydar!Driver2026
+--   Inscription     /rejoindre/express2026demo
+-- Répartition affichée aux chauffeurs, règlements dans tous les états (à régler, en retard →
+-- chauffeur bloqué, déclaré, contesté, encaissé, part à verser), 2 candidatures, 1 banni signalé.
+-- -----------------------------------------------------------------------------
+do $$
+begin
+  perform pg_temp.seed_user('00000000-0000-4000-a000-000000000005', 'contact@centrale-express.fr', 'Rydar!Demo2026', 'Yacine Rahmani');
+end;
+$$;
+
+insert into public.organizations (id, name, slug, plan_id, legal_name, siret, email, phone, address, city, postal_code, brand_color,
+  created_at, dispatch_model, platform_fee_fixed_cents, join_code, join_enabled)
+values ('10000000-0000-4000-a000-00000000000c', 'Centrale Express Paris', 'centrale-express',
+  (select id from public.plans where code = 'pro'), 'Centrale Express SAS', '93456789000014', 'contact@centrale-express.fr',
+  '+33 1 84 60 77 77', '9 Rue de la Paix', 'Paris', '75002', '#FFB020', now() - interval '45 days',
+  'centrale', 500, 'express2026demo', true)
+on conflict (id) do nothing;
+
+insert into public.organization_users (organization_id, user_id, role)
+values ('10000000-0000-4000-a000-00000000000c', '00000000-0000-4000-a000-000000000005', 'owner')
+on conflict do nothing;
+
+insert into public.subscriptions (organization_id, plan_id, status, billing_interval, current_period_start, current_period_end)
+select o.id, o.plan_id, 'trialing', 'month', date_trunc('month', now()), date_trunc('month', now()) + interval '1 month'
+from public.organizations o
+where o.id = '10000000-0000-4000-a000-00000000000c'
+  and not exists (select 1 from public.subscriptions s where s.organization_id = o.id);
+
+update public.organization_settings set
+  driver_commission_percent = 20,
+  settlement_grace_hours = 24,
+  settlement_credit_limit_cents = 6000,
+  block_unpaid = true,
+  new_driver_max_price_cents = 5000,
+  trust_after_rides = 5,
+  settlement_methods = '{link,cash,transfer}',
+  settlement_link = 'https://revolut.me/centrale-express/{montant}',
+  settlement_instructions = 'Indiquez la référence (ex. C1783) dans le commentaire du paiement.',
+  default_payment_method = 'cash'
+where organization_id = '10000000-0000-4000-a000-00000000000c';
+
+create temp table seed_centrale (
+  idx int, first_name text, last_name text, phone text, email text, brand text, model text, color text, plate text,
+  category public.vehicle_category, seats int, lat double precision, lng double precision, online boolean, trust text
+);
+insert into seed_centrale values
+  (1, 'Amine', 'Kaci', '+33 7 51 20 30 41', 'amine@centrale-express.fr', 'Toyota', 'C-HR Hybride', 'Blanc', 'GW-214-LA', 'standard', 4, 48.8712, 2.3325, true, 'trusted'),
+  (2, 'Bilal', 'Mansouri', '+33 7 52 21 31 42', 'bilal@centrale-express.fr', 'Mercedes-Benz', 'Classe E 220d', 'Noir', 'GX-318-MB', 'business', 4, 48.8538, 2.3690, true, 'trusted'),
+  (3, 'Walid', 'Ziani', '+33 7 53 22 32 43', 'walid@centrale-express.fr', 'Kia', 'Niro EV', 'Gris', 'GY-452-WZ', 'green', 4, 48.8795, 2.3560, true, 'new'),
+  (4, 'Rachid', 'Oukaci', '+33 7 54 23 33 44', 'rachid@centrale-express.fr', 'Mercedes-Benz', 'Classe V 250', 'Noir', 'GZ-587-RO', 'van', 7, 48.8420, 2.3200, false, 'trusted'),
+  (5, 'Moussa', 'Keita', '+33 7 55 24 34 45', 'moussa@centrale-express.fr', 'Skoda', 'Octavia Combi', 'Noir', 'HA-619-MK', 'standard', 4, 48.8418, 2.3215, true, 'trusted'),
+  (6, 'Kévin', 'Tran', '+33 7 56 25 35 46', 'kevin@centrale-express.fr', 'Tesla', 'Model Y', 'Noir', 'HB-733-KT', 'green', 4, 48.8905, 2.2400, true, 'new'),
+  (7, 'Nordine', 'Belaïd', '+33 7 57 26 36 47', 'nordine@centrale-express.fr', 'BMW', 'Série 5 530e', 'Gris', 'HC-845-NB', 'business', 4, 48.8690, 2.3080, true, 'trusted'),
+  (8, 'Farès', 'Djebbar', '+33 7 58 27 37 48', 'fares@centrale-express.fr', 'Peugeot', '508 SW', 'Noir', 'HD-951-FD', 'standard', 4, 48.8600, 2.3500, false, 'trusted');
+
+do $$
+declare
+  c constant uuid := '10000000-0000-4000-a000-00000000000c';
+  f record;
+  v_user uuid;
+  v_vehicle uuid;
+  v_driver uuid;
+begin
+  if exists (select 1 from public.drivers where organization_id = c) then
+    return;
+  end if;
+  for f in select * from seed_centrale order by idx loop
+    v_user := pg_temp.seed_user(gen_random_uuid(), f.email, 'Rydar!Driver2026', f.first_name || ' ' || f.last_name);
+    insert into public.vehicles (organization_id, brand, model, color, plate, category, seats, luggage_capacity, year)
+    values (c, f.brand, f.model, f.color, f.plate, f.category, f.seats, case when f.category = 'van' then 7 else 3 end, 2021 + (f.idx % 4))
+    returning id into v_vehicle;
+    insert into public.drivers (organization_id, user_id, first_name, last_name, phone, email, status, presence, vehicle_id,
+      vtc_card_number, online_since, trust_level, joined_via, created_at)
+    values (c, v_user, f.first_name, f.last_name, f.phone, f.email, 'active',
+      case when f.online then 'available' else 'offline' end::public.driver_presence, v_vehicle,
+      'EVTC-075-' || (41000 + f.idx * 211)::text, case when f.online then now() - make_interval(mins => 15 + f.idx * 9) end,
+      f.trust, case when f.idx in (3, 6) then 'join_link' else 'dashboard' end, now() - make_interval(days => 40 - f.idx * 3))
+    returning id into v_driver;
+    insert into public.driver_locations (driver_id, organization_id, lat, lng, heading, speed_mps, accuracy_m, battery_level, recorded_at, updated_at)
+    values (v_driver, c, f.lat, f.lng, (f.idx * 53) % 360, case when f.online then 0 end, 9, 0.5 + (f.idx % 5) / 10.0,
+      case when f.online then now() else now() - interval '5 hours' end,
+      case when f.online then now() else now() - interval '5 hours' end);
+    insert into public.driver_documents (organization_id, driver_id, type, label, number, expires_at, status) values
+      (c, v_driver, 'vtc_card', 'Carte VTC', 'EVTC-075-' || (41000 + f.idx * 211)::text, current_date + (300 + f.idx * 20), 'valid'),
+      (c, v_driver, 'driving_license', 'Permis B', 'B-' || (310000 + f.idx), current_date + 2500, 'valid');
+  end loop;
+
+  -- Candidatures reçues par le lien d'inscription (en attente de validation)
+  v_user := pg_temp.seed_user(gen_random_uuid(), 'idriss.camara@gmail.com', 'Rydar!Driver2026', 'Idriss Camara');
+  insert into public.vehicles (organization_id, brand, model, color, plate, category, seats)
+  values (c, 'Toyota', 'Prius+', 'Gris', 'HE-102-IC', 'standard', 7) returning id into v_vehicle;
+  insert into public.drivers (organization_id, user_id, first_name, last_name, phone, email, vtc_card_number, status, presence,
+    vehicle_id, trust_level, joined_via, application_status, application_message, applied_at)
+  values (c, v_user, 'Idriss', 'Camara', '+33 6 41 52 63 74', 'idriss.camara@gmail.com', 'EVTC-093-55120', 'inactive', 'offline',
+    v_vehicle, 'new', 'join_link', 'pending', 'Chauffeur VTC depuis 4 ans, dispo le soir et le week-end (groupe WhatsApp Paris Nord).',
+    now() - interval '3 hours');
+  insert into public.driver_documents (organization_id, driver_id, type, label, number, expires_at, status, source)
+  select c, d.id, 'vtc_card', 'Carte VTC', 'EVTC-093-55120', current_date + 700, 'pending', 'driver'
+  from public.drivers d where d.user_id = v_user;
+
+  v_user := pg_temp.seed_user(gen_random_uuid(), 'jordan.lefort@outlook.fr', 'Rydar!Driver2026', 'Jordan Lefort');
+  insert into public.vehicles (organization_id, brand, model, color, plate, category, seats)
+  values (c, 'Hyundai', 'Ioniq 5', 'Bleu', 'HF-208-JL', 'green', 4) returning id into v_vehicle;
+  insert into public.drivers (organization_id, user_id, first_name, last_name, phone, email, status, presence,
+    vehicle_id, trust_level, joined_via, application_status, application_message, applied_at)
+  values (c, v_user, 'Jordan', 'Lefort', '+33 6 52 63 74 85', 'jordan.lefort@outlook.fr', 'inactive', 'offline',
+    v_vehicle, 'new', 'join_link', 'pending', 'Ajouté par Karim du groupe Telegram.', now() - interval '26 minutes');
+end;
+$$;
+
+-- Historique 12 jours (import direct) + règlements dans tous les états
+create or replace function pg_temp.centrale_ride(
+  p_email text, p_at timestamptz, p_from int, p_to int, p_price int, p_commission int,
+  p_method public.payment_method, p_status text, p_customer text)
+returns uuid
+language plpgsql
+as $$
+declare
+  c constant uuid := '10000000-0000-4000-a000-00000000000c';
+  v_pois constant jsonb := '[
+    {"a":"Gare Saint-Lazare, 13 Rue d''Amsterdam, 75008 Paris","lat":48.8763,"lng":2.3253},
+    {"a":"Aéroport Paris-Charles de Gaulle, Terminal 2F, 95700 Roissy-en-France","lat":49.0034,"lng":2.5700},
+    {"a":"Aéroport de Paris-Orly, Terminal 1, 94390 Orly","lat":48.7262,"lng":2.3652},
+    {"a":"Place de la République, 75003 Paris","lat":48.8676,"lng":2.3631},
+    {"a":"Gare de Lyon, Place Louis-Armand, 75012 Paris","lat":48.8443,"lng":2.3743},
+    {"a":"Accor Arena, 8 Boulevard de Bercy, 75012 Paris","lat":48.8386,"lng":2.3785},
+    {"a":"Stade de France, 93200 Saint-Denis","lat":48.9245,"lng":2.3601},
+    {"a":"La Défense, Parvis de la Défense, 92400 Courbevoie","lat":48.8924,"lng":2.2360},
+    {"a":"Montmartre, Place du Tertre, 75018 Paris","lat":48.8865,"lng":2.3408},
+    {"a":"Gare Montparnasse, 17 Boulevard de Vaugirard, 75015 Paris","lat":48.8414,"lng":2.3209}
+  ]';
+  d record;
+  v_p jsonb := v_pois -> p_from;
+  v_d jsonb := v_pois -> p_to;
+  v_dist float;
+  v_done timestamptz;
+  v_ride uuid;
+  v_number bigint;
+  v_split record;
+  v_direction text := case when p_method in ('cash', 'card') then 'driver_owes' else 'centrale_owes' end;
+begin
+  select x.id, x.first_name, x.last_name, x.number, x.vehicle_id, v.category into d
+  from public.drivers x join public.vehicles v on v.id = x.vehicle_id
+  where x.organization_id = c and x.email = p_email;
+  v_dist := 1.35 * 111.32 * sqrt(power((v_p ->> 'lat')::float - (v_d ->> 'lat')::float, 2)
+            + power(((v_p ->> 'lng')::float - (v_d ->> 'lng')::float) * cos(radians((v_p ->> 'lat')::float)), 2));
+  v_done := p_at + make_interval(mins => 12 + (v_dist * 1.6)::int);
+
+  insert into public.rides (organization_id, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng,
+    dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, vehicle_category,
+    price_cents, commission_cents, payment_method, driver_id, vehicle_id, dispatch_wave, dispatch_radius_m,
+    dispatch_started_at, offered_at, accepted_at, driver_en_route_at, driver_arrived_at, passenger_onboard_at, started_at,
+    completed_at, created_at, estimated_distance_m, estimated_duration_s)
+  values (c, 'instant', 'COMPLETED', 'booking_site', 'geo', v_p ->> 'a', (v_p ->> 'lat')::float, (v_p ->> 'lng')::float,
+    v_d ->> 'a', (v_d ->> 'lat')::float, (v_d ->> 'lng')::float, p_at, p_customer, '+33 6 12 98 76 54', 1, d.category,
+    p_price, p_commission, p_method, d.id, d.vehicle_id, 1, 4000,
+    p_at - interval '6 minutes', p_at - interval '6 minutes', p_at - interval '5 minutes', p_at - interval '5 minutes', p_at,
+    p_at + interval '3 minutes', p_at + interval '3 minutes', v_done, p_at - interval '8 minutes',
+    (v_dist * 1000)::int, (v_dist * 100)::int)
+  returning id, number into v_ride, v_number;
+
+  select r.commission_cents, r.platform_fee_cents, r.driver_payout_cents into v_split from public.rides r where r.id = v_ride;
+  insert into public.ride_settlements (organization_id, ride_id, driver_id, driver_label, direction, amount_cents, price_cents,
+    commission_cents, platform_fee_cents, driver_payout_cents, currency, payment_method, reference, status, due_at,
+    declared_at, declared_method, settled_at, settled_method, note, reminders_sent, last_reminded_at, created_at)
+  values (c, v_ride, d.id, format('%s %s (#%s)', d.first_name, d.last_name, d.number), v_direction,
+    case when v_direction = 'driver_owes' then v_split.commission_cents + v_split.platform_fee_cents else v_split.driver_payout_cents end,
+    p_price, v_split.commission_cents, v_split.platform_fee_cents, v_split.driver_payout_cents, 'EUR', p_method,
+    'C' || v_number::text, p_status,
+    v_done + case when v_direction = 'driver_owes' then interval '24 hours' else interval '7 days' end,
+    case when p_status in ('declared', 'disputed') then v_done + interval '3 hours' end,
+    case when p_status in ('declared', 'disputed') then 'link' end,
+    case when p_status in ('paid', 'waived') then v_done + interval '20 hours' end,
+    case when p_status = 'paid' then (array['link', 'cash', 'transfer'])[1 + (v_number % 3)::int] end,
+    case p_status when 'disputed' then 'Rien reçu sur le compte Revolut' when 'waived' then 'Client parti sans payer' end,
+    case when p_status = 'due' and v_done < now() - interval '24 hours' then 1 else 0 end,
+    case when p_status = 'due' and v_done < now() - interval '24 hours' then now() - interval '2 hours' end,
+    v_done);
+  return v_ride;
+end;
+$$;
+
+do $$
+declare
+  c constant uuid := '10000000-0000-4000-a000-00000000000c';
+  v_trusted text[] := array['amine@centrale-express.fr', 'bilal@centrale-express.fr', 'rachid@centrale-express.fr',
+                            'moussa@centrale-express.fr', 'nordine@centrale-express.fr', 'fares@centrale-express.fr'];
+  v_customers text[] := array['M. Ryan Morel', 'Mme Lina Haddad', 'M. Omar Diallo', 'Mme Eva Martin', 'M. Tom Nguyen',
+    'Mme Sarah Benoit', 'M. Adam Perret', 'Mme Maya Colin'];
+  v_day timestamptz;
+  v_from int;
+  v_to int;
+  v_price int;
+  i int;
+  day_ago int;
+begin
+  if exists (select 1 from public.rides where organization_id = c) then
+    return;
+  end if;
+  perform set_config('rydar.bypass_ride_rules', 'on', false);
+
+  -- J-12 → J-3 : courses réglées (commission encaissée / part versée)
+  for day_ago in reverse 12..3 loop
+    v_day := ((now() at time zone 'Europe/Paris')::date - day_ago)::timestamp at time zone 'Europe/Paris';
+    for i in 1..(4 + floor(random() * 4)::int) loop
+      v_from := floor(random() * 10)::int;
+      v_to := (v_from + 1 + floor(random() * 8)::int) % 10;
+      v_price := 2500 + (floor(random() * 12)::int * 500);
+      perform pg_temp.centrale_ride(v_trusted[1 + floor(random() * array_length(v_trusted, 1))::int],
+        v_day + make_interval(hours => 7 + floor(random() * 15)::int, mins => floor(random() * 60)::int),
+        v_from, v_to, v_price, case when random() < 0.25 then (round(v_price * 0.24 / 100.0) * 100)::int end,
+        case when random() < 0.8 then 'cash' else 'online' end::public.payment_method, 'paid',
+        v_customers[1 + floor(random() * array_length(v_customers, 1))::int]);
+    end loop;
+  end loop;
+  -- Nouveaux chauffeurs : quelques courses réglées (sous le plafond de 50 €)
+  perform pg_temp.centrale_ride('walid@centrale-express.fr', now() - interval '5 days 3 hours', 3, 8, 3200, null, 'cash', 'paid', 'M. Tom Nguyen');
+  perform pg_temp.centrale_ride('kevin@centrale-express.fr', now() - interval '4 days 5 hours', 7, 0, 4500, null, 'cash', 'paid', 'Mme Maya Colin');
+
+  -- J-2 / J-1 : tous les états de règlement
+  v_day := ((now() at time zone 'Europe/Paris')::date - 2)::timestamp at time zone 'Europe/Paris';
+  perform pg_temp.centrale_ride('moussa@centrale-express.fr', v_day + interval '9 hours 10 minutes', 9, 2, 6200, null, 'cash', 'due', 'M. Omar Diallo');
+  perform pg_temp.centrale_ride('moussa@centrale-express.fr', v_day + interval '18 hours 40 minutes', 0, 7, 3800, null, 'cash', 'due', 'Mme Sarah Benoit');
+  perform pg_temp.centrale_ride('kevin@centrale-express.fr', v_day + interval '21 hours 15 minutes', 4, 5, 2500, null, 'cash', 'waived', 'M. Ryan Morel');
+  v_day := ((now() at time zone 'Europe/Paris')::date - 1)::timestamp at time zone 'Europe/Paris';
+  perform pg_temp.centrale_ride('walid@centrale-express.fr', v_day + interval '8 hours 30 minutes', 3, 4, 3000, null, 'cash', 'declared', 'Mme Eva Martin');
+  perform pg_temp.centrale_ride('bilal@centrale-express.fr', v_day + interval '11 hours', 4, 1, 7900, 1900, 'cash', 'disputed', 'M. Adam Perret');
+  perform pg_temp.centrale_ride('rachid@centrale-express.fr', v_day + interval '14 hours 20 minutes', 1, 0, 8900, null, 'online', 'due', 'Groupe Aurel — Mme Rossi');
+  perform pg_temp.centrale_ride('nordine@centrale-express.fr', v_day + interval '16 hours', 7, 3, 4600, null, 'cash', 'paid', 'Mme Lina Haddad');
+  perform pg_temp.centrale_ride('amine@centrale-express.fr', v_day + interval '20 hours 45 minutes', 5, 9, 5900, 1400, 'cash', 'due', 'Mme Maya Colin');
+
+  perform set_config('rydar.bypass_ride_rules', 'off', false);
+end;
+$$;
+
+-- Aujourd'hui : moteur réel (course terminée → commission due ; offre « Vous gagnez … » en cours ; banni signalé)
+do $$
+declare
+  c constant uuid := '10000000-0000-4000-a000-00000000000c';
+  r uuid;
+begin
+  if exists (select 1 from public.rides where organization_id = c and created_at > now() - interval '1 hour' and source <> 'booking_site') then
+    return;
+  end if;
+
+  -- Course terminée par Amine (espèces) : commission de 19 € à régler
+  perform pg_temp.reset_claims();
+  insert into public.rides (organization_id, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng,
+    pickup_at, customer_name, customer_phone, passengers, vehicle_category, price_cents, commission_cents, payment_method,
+    estimated_distance_m, estimated_duration_s)
+  values (c, 'dashboard', 'Opéra Garnier, Place de l''Opéra, 75009 Paris', 48.8720, 2.3316,
+    'Gare de Lyon, Place Louis-Armand, 75012 Paris', 48.8443, 2.3743, now(), 'Mme Lina Haddad', '+33 6 71 42 98 10', 1,
+    'standard', 5900, 1400, 'cash', 4300, 960)
+  returning id into r;
+  perform pg_temp.accept_as('amine@centrale-express.fr', r);
+  perform pg_temp.advance_as('amine@centrale-express.fr', r,
+    array['DRIVER_EN_ROUTE','DRIVER_ARRIVED','PASSENGER_ONBOARD','IN_PROGRESS','COMPLETED']::public.ride_status[]);
+
+  -- Course en cours : Nordine
+  r := pg_temp.new_ride(c, 'booking_site', '12 Avenue des Champs-Élysées, 75008 Paris', 48.8698, 2.3075,
+    'Aéroport Paris-Charles de Gaulle, Terminal 2E, 95700 Roissy-en-France', 49.0047, 2.5710, now(), 'M. Adam Perret', 2, 'business', 6900);
+  perform pg_temp.accept_as('nordine@centrale-express.fr', r);
+  perform pg_temp.advance_as('nordine@centrale-express.fr', r,
+    array['DRIVER_EN_ROUTE','DRIVER_ARRIVED','PASSENGER_ONBOARD','IN_PROGRESS']::public.ride_status[]);
+
+  -- Offre en cours près de l'Opéra : 59 € dont 14 € de commission et 5 € de frais → « Vous gagnez 40 € »
+  insert into public.rides (organization_id, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng,
+    pickup_at, customer_name, customer_phone, passengers, vehicle_category, price_cents, commission_cents, payment_method,
+    estimated_distance_m, estimated_duration_s)
+  values (c, 'booking_site', 'Place de l''Opéra, 75009 Paris', 48.8710, 2.3320,
+    'Aéroport de Paris-Orly, Terminal 1, 94390 Orly', 48.7262, 2.3652, now(), 'Mme Eva Martin', '+33 6 18 27 36 45', 1,
+    'standard', 5900, 1400, 'cash', 21400, 1860)
+  returning id into r;
+
+  -- Chauffeur banni pour commissions impayées + signalement au super admin
+  perform set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-a000-000000000005', 'role', 'authenticated')::text, false);
+  perform public.ban_driver((select id from public.drivers where email = 'fares@centrale-express.fr'),
+    'Encaisse les courses en espèces sans jamais régler la commission (5 courses)', 'unpaid', true, false);
   perform pg_temp.reset_claims();
 end;
 $$;

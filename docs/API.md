@@ -63,7 +63,7 @@ curl https://app.rydar.app/api/v1/rides \
 | `passengers` | 1–20 | non | Défaut 1 |
 | `luggage` | 0–30 | non | Défaut 0 |
 | `vehicle_category` | `standard` · `business` · `first` · `van` · `green` | non | Défaut `standard` |
-| `price_cents` | entier | non | Prix annoncé au client, affiché au chauffeur. Absent : calculé avec la grille de l'organisation (forfait reconnu, par ex. « Paris ↔ CDG », sinon tarif au km et à la minute) |
+| `price_cents` | entier | non | Prix annoncé au client, affiché au chauffeur. Absent : calculé avec la grille de l'organisation (forfait reconnu, par ex. « Paris ↔ CDG », sinon tarif au km et à la minute). Compte en mode centrale : la part chauffeur, la commission et les frais sont calculés automatiquement à partir de ce prix |
 | `payment_method` | `card` · `cash` · `online` · `invoice` · `account` | non | Défaut `card` |
 | `flight_number`, `comment`, `external_reference` | string | non | `external_reference` : votre identifiant de réservation (100 car. max) |
 

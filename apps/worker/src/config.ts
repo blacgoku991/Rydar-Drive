@@ -13,6 +13,8 @@ export const config = {
   watchRidesMs: num("WATCH_RIDES_MS", 30_000),
   /** Échéances des documents chauffeur (au démarrage puis toutes les 6 h) : private.document_reminders(). */
   documentRemindersMs: num("DOCUMENT_REMINDERS_MS", 6 * 3600_000),
+  /** Mode centrale : relance des commissions en retard (au démarrage puis toutes les 15 min) : private.settlement_reminders(). */
+  settlementRemindersMs: num("SETTLEMENT_REMINDERS_MS", 15 * 60_000),
   /** Suivi des vols (fournisseur : voir flights/index.ts, FLIGHT_PROVIDER). */
   flights: {
     pollMs: num("FLIGHT_POLL_MS", 60_000),

@@ -85,7 +85,7 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 
 - `DATABASE_URL` doit être une **connexion directe** (port 5432) et non le pooler transactionnel : le worker utilise `LISTEN/NOTIFY`.
 - Vous pouvez lancer plusieurs instances : les tâches sont réparties par `FOR UPDATE SKIP LOCKED` ou protégées par un verrou SQL.
-- Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ».
+- Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`, `settlements`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ».
 
 Tâches périodiques :
 
@@ -96,6 +96,7 @@ Tâches périodiques :
 | `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | ménage (dont messages de plus de 180 jours) |
 | `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |
 | `private.document_reminders()` | au démarrage puis 6 h (`DOCUMENT_REMINDERS_MS`) | documents échus, rappels d'échéance (30 j, 7 j, jour J), jamais avant 9 h locale |
+| `private.settlement_reminders()` | au démarrage puis 15 min (`SETTLEMENT_REMINDERS_MS`) | mode centrale : relance des commissions en retard (une par chauffeur toutes les 24 h, 3 au plus) |
 | vols : `private.flights_to_check(n)` → fournisseur → `private.apply_flight_status(...)` | 60 s (`FLIGHT_POLL_MS`) | horaires des vols, prise en charge recalée, notification au chauffeur |
 
 ### Suivi des vols

@@ -14,6 +14,8 @@
 | **Temps réel** | Canaux privés. Une policy RLS sur `realtime.messages` limite `org:{id}` aux membres de l'organisation et `driver:{id}` au chauffeur concerné. `fleet:{id}` (fil flotte, signalements) est ouvert aux chauffeurs de l'organisation, sans donnée client. |
 | **Messagerie** | Lecture par RLS uniquement : un chauffeur ne voit que son fil direct et le fil flotte de **son** organisation. Aucune écriture directe : tout passe par des RPC qui vérifient le tenant et limitent le débit (`PT429`). Le nom de l'auteur est dénormalisé, un chauffeur n'accède donc jamais à la fiche des autres. Les signalements exigent une position ; les votes sont uniques par votant. |
 | **Documents chauffeur** | Dépôt dans le stockage limité au dossier `<org>/<chauffeur>/` du chauffeur connecté (policy Storage). Validation par la centrale seulement (`review_driver_document`, auteur et date conservés). |
+| **Mode centrale : argent** | Modèle d'exploitation et frais plateforme modifiables par le seul super admin (aucun droit client). Répartition calculée en base, règlements écrits uniquement par RPC : le chauffeur ne peut que déclarer **ses** paiements, seule la centrale confirme, conteste ou annule (owner / admin). Prix et commission verrouillés dès qu'un règlement est déclaré ou encaissé. |
+| **Bannissement** | Identités stockées **hachées** (sha256 de la valeur normalisée) avec un simple indice masqué ; triggers en base sur `drivers`, `vehicles`, `driver_documents` et `driver_devices` (`IDENTITY_BANNED`, `DRIVER_BANNED`). Un bannissement vaut pour la centrale ; le bannissement de toute la plateforme n'est décidé que par le super admin, sur signalement, et peut être levé. Compte Auth banni en plus (`ban_duration`) et sessions révoquées. Les autres centrales ne voient jamais les bannissements d'une centrale. |
 
 ## Scénario obligatoire : A tente de récupérer une course de B
 
@@ -34,7 +36,7 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 
 ## Authentification et sessions
 
-- **Supabase Auth (JWT)**. Aucune inscription publique : les rattacheurs sont créés par le Super Admin, les chauffeurs par leur rattacheur (invitation ou mot de passe).
+- **Supabase Auth (JWT)**. Pas d'inscription libre : les rattacheurs et leurs accès sont créés par le Super Admin, les chauffeurs par leur rattacheur (invitation ou mot de passe). Seule exception, en mode centrale : le lien d'inscription `/rejoindre/{code}` (code aléatoire de 64 bits, désactivable et régénérable). La route serveur limite le débit, contrôle l'identité contre les bannissements avant de créer le compte, et la candidature reste « en attente » sans aucun accès aux courses jusqu'à la validation par la centrale (ou validation automatique choisie par elle).
 - **Anti brute force** : 6 tentatives par e-mail et 30 par IP sur 15 min, pour la connexion web comme pour la connexion chauffeur (`/api/auth/driver-login`). Compteurs partagés dans Redis.
 - **Révocation de session** : les refresh tokens sont supprimés en base, automatiquement, dans ces cas :
   - un chauffeur est désactivé, suspendu ou supprimé ;

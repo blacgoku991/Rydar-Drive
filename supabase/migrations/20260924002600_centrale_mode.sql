@@ -2410,9 +2410,10 @@ begin
 end;
 $$;
 
--- Worker : commissions en retard → un rappel par chauffeur toutes les ~24 h, 3 au plus
+-- Worker : commissions en retard → un rappel par chauffeur toutes les ~24 h, 3 au plus.
+-- Verrou consultatif : plusieurs workers ne relancent jamais deux fois le même chauffeur.
 create or replace function private.settlement_reminders()
-returns integer
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
@@ -2421,6 +2422,9 @@ declare
   v record;
   v_count integer := 0;
 begin
+  if not pg_try_advisory_xact_lock(hashtextextended('rydar.settlement_reminders', 0)) then
+    return jsonb_build_object('ok', false, 'code', 'BUSY', 'reminders', 0);
+  end if;
   for v in
     select x.driver_id, x.organization_id, o.name as org_name,
            sum(x.amount_cents)::integer as total, count(*) as n, array_agg(x.id) as ids
@@ -2445,7 +2449,7 @@ begin
      where id = any (v.ids);
     v_count := v_count + 1;
   end loop;
-  return v_count;
+  return jsonb_build_object('ok', true, 'reminders', v_count);
 end;
 $$;
 

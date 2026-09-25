@@ -13,6 +13,7 @@ const state = {
   flights: { provider: null as string | null, reason: "", lastRun: 0, runs: 0, checked: 0, updated: 0, shifted: 0, notFound: 0, errors: 0 },
   watch: { lastRun: 0, runs: 0, last: null as Record<string, unknown> | null },
   documents: { lastRun: 0, last: null as Record<string, unknown> | null },
+  settlements: { lastRun: 0, reminders: 0, last: null as Record<string, unknown> | null },
 };
 
 /** Travaux en cours (tick, envoi, accusés, ménage) : attendus à l'arrêt avant de fermer le pool. */
@@ -132,6 +133,24 @@ const documentReminders = single("documentReminders", async () => {
   }
 });
 
+/** Mode centrale, au démarrage puis toutes les 15 min : relance des commissions en retard (1 / chauffeur / 24 h, 3 au plus). */
+const settlementReminders = single("settlementReminders", async () => {
+  try {
+    const { rows } = await pool.query<{ r: SqlSummary }>("select private.settlement_reminders() as r");
+    const r = rows[0]?.r ?? {};
+    state.settlements.lastRun = Date.now();
+    state.settlements.last = r;
+    state.settlements.reminders += Number(r.reminders ?? 0);
+    if (r.reminders) {
+      log("info", "settlement reminders", r);
+      run(processNotifications);
+    }
+  } catch (error) {
+    state.errors++;
+    log("error", "settlement reminders failed", { error: (error as Error).message });
+  }
+});
+
 /** Attente d'un travail en cours pendant l'arrêt : 1 s (LISTEN) + 8 s (tick / lot) + 1 s (pool) ≈ grâce de `docker stop`. */
 const SHUTDOWN_TIMEOUT_MS = 8_000;
 const RECEIPT_POLL_MS = 5_000;
@@ -165,10 +184,12 @@ async function main() {
     setInterval(() => run(housekeeping), config.housekeepingMs),
     setInterval(() => run(watchRides), config.watchRidesMs),
     setInterval(() => run(documentReminders), config.documentRemindersMs),
+    setInterval(() => run(settlementReminders), config.settlementRemindersMs),
     ...(flights ? [setInterval(() => run(flightCheck), config.flights.pollMs)] : []),
   ];
   run(processNotifications);
   run(documentReminders);
+  run(settlementReminders);
   if (flights) run(flightCheck);
 
   const health = createServer((req, res) => {
