@@ -225,3 +225,64 @@ describe("push APNs direct", () => {
     expect(p.aps).toMatchObject({ category: "ride_offer", sound: "ride_offer.wav", "interruption-level": "active" });
   });
 });
+
+describe("nouveaux types (messagerie, signalements, vols, documents, retrait)", () => {
+  const n = (type: string, data: Record<string, unknown>, priority: "high" | "normal" = "high"): PushPayload => ({ title: "Titre", body: "Corps", type, data, priority });
+  const chat = n("chat_message", { message_id: "m1", channel: "driver", thread: "driver:d1", author_name: "Centrale" });
+  const report = n("fleet_report", { message_id: "m2", channel: "fleet", thread: "fleet", report_type: "police", expires_at: "2026-09-25T10:45:00Z", distance_m: 2300 }, "normal");
+  const flight = (event: string, extra: Record<string, unknown> = {}) =>
+    n("flight_update", { type: "flight_update", event, ride_id: "r9", flight_number: "AF1234", flight_status: "delayed", delay_minutes: 35, ...extra });
+
+  it("message de la centrale : canal « messages », time-sensitive, fil de discussion", () => {
+    expect(presentation(chat, NOW)).toMatchObject({ channelId: "messages", sound: "default", categoryId: undefined, interruptionLevel: "time-sensitive", threadId: "chat:driver:d1", ttlSeconds: 3600 });
+    expect(apnsPayload(chat, NOW).aps).toMatchObject({ "thread-id": "chat:driver:d1", "interruption-level": "time-sensitive" });
+    const m = fcmMessage("t", chat, NOW);
+    expect(m.notification).toEqual({ title: "Titre", body: "Corps" });
+    expect(m.android).toMatchObject({ priority: "HIGH", notification: { channel_id: "messages", sound: "default" } });
+  });
+
+  it("signalement flotte : canal « fleet-reports », niveau « active », TTL = jusqu'à l'expiration", () => {
+    expect(presentation(report, NOW)).toMatchObject({ channelId: "fleet-reports", interruptionLevel: "active", threadId: "fleet-reports", ttlSeconds: 45 * 60 });
+    expect(presentation({ ...report, data: { ...report.data, expires_at: "2026-09-25T09:00:00Z" } }, NOW).ttlSeconds).toBe(1);
+    expect(fcmMessage("t", report, NOW).android).toMatchObject({ priority: "NORMAL", ttl: "2700s", notification: { channel_id: "fleet-reports" } });
+  });
+
+  it("vol : « ride-updates » ; time-sensitive seulement si la prise en charge bouge ou si le vol est annulé / dérouté", () => {
+    for (const e of ["flight.delayed", "flight.early", "flight.updated", "flight.cancelled", "flight.diverted"]) {
+      expect(presentation(flight(e), NOW), e).toMatchObject({ channelId: "ride-updates", interruptionLevel: "time-sensitive", threadId: "r9" });
+    }
+    for (const e of ["flight.landed", "flight.terminal", "flight.departure_delayed"]) {
+      expect(presentation(flight(e), NOW), e).toMatchObject({ channelId: "ride-updates", interruptionLevel: "active" });
+    }
+    // sans « event » : d'après le statut / retard
+    expect(presentation(n("flight_update", { ride_id: "r9", flight_status: "cancelled" }), NOW).interruptionLevel).toBe("time-sensitive");
+    expect(presentation(n("flight_update", { ride_id: "r9", flight_status: "delayed", delay_minutes: 20 }), NOW).interruptionLevel).toBe("time-sensitive");
+    expect(presentation(n("flight_update", { ride_id: "r9", flight_status: "scheduled", delay_minutes: 3 }), NOW).interruptionLevel).toBe("active");
+    expect(apnsPayload(flight("flight.delayed"), NOW).aps["thread-id"]).toBe("r9");
+  });
+
+  it("documents : canal « default », niveau « active », TTL 24 h, regroupés", () => {
+    for (const type of ["document_expiring", "document_expired", "document_reviewed"]) {
+      expect(presentation(n(type, { document_id: "doc1", document_type: "vtc_card" }), NOW), type).toMatchObject({
+        channelId: "default",
+        interruptionLevel: "active",
+        threadId: "documents",
+        ttlSeconds: 86_400,
+      });
+    }
+  });
+
+  it("course retirée : « ride-updates », time-sensitive, regroupée avec la course", () => {
+    const p = presentation(n("ride_unassigned", { type: "ride_unassigned", ride_id: "r3", number: 12 }), NOW);
+    expect(p).toMatchObject({ channelId: "ride-updates", interruptionLevel: "time-sensitive", threadId: "r3", categoryId: undefined });
+  });
+
+  it("Expo : canal, fil et niveau transmis", async () => {
+    const { client } = fakeExpo();
+    await expoProvider(client).send([{ token: "ExponentPushToken[z]", provider: "expo", platform: "ios" }], chat);
+    const msg = client.sendPushNotificationsAsync.mock.calls[0]![0][0]!;
+    expect(msg).toMatchObject({ channelId: "messages", threadId: "chat:driver:d1", interruptionLevel: "time-sensitive", sound: "default", priority: "high" });
+    expect(msg.categoryId).toBeUndefined();
+    expect(msg.data).toMatchObject({ type: "chat_message", thread: "driver:d1" });
+  });
+});

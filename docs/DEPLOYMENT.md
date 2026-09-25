@@ -84,8 +84,44 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 ```
 
 - `DATABASE_URL` doit être une **connexion directe** (port 5432) et non le pooler transactionnel : le worker utilise `LISTEN/NOTIFY`.
-- Vous pouvez lancer plusieurs instances : les tâches sont réparties par `FOR UPDATE SKIP LOCKED`.
-- Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}`.
+- Vous pouvez lancer plusieurs instances : les tâches sont réparties par `FOR UPDATE SKIP LOCKED` ou protégées par un verrou SQL.
+- Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ».
+
+Tâches périodiques :
+
+| Tâche | Fréquence (variable) | Rôle |
+| --- | --- | --- |
+| `private.dispatch_tick()` | 2 s (`DISPATCH_TICK_MS`) | vagues, délais des offres, bascule des planifiées |
+| notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s |
+| `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | ménage (dont messages de plus de 180 jours) |
+| `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |
+| `private.document_reminders()` | au démarrage puis 6 h (`DOCUMENT_REMINDERS_MS`) | documents échus, rappels d'échéance (30 j, 7 j, jour J), jamais avant 9 h locale |
+| vols : `private.flights_to_check(n)` → fournisseur → `private.apply_flight_status(...)` | 60 s (`FLIGHT_POLL_MS`) | horaires des vols, prise en charge recalée, notification au chauffeur |
+
+### Suivi des vols
+
+Une course avec un numéro de vol est suivie de 24 h avant à 3 h après la prise en charge, tant que le vol n'est ni atterri ni annulé. Elle est vérifiée toutes les 30 min, puis toutes les 5 min à moins de 3 h de la prise en charge. Si le départ de la course est un aéroport (mode « arrivée »), la prise en charge suit le retard du vol. Sinon (le client part en avion), le retard est seulement signalé.
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `FLIGHT_PROVIDER` | auto | `aerodatabox`, `aviationstack`, `flightaware`, `mock` ou `off`. En auto, c'est le premier fournisseur dont la clé est définie, dans cet ordre. Sans clé, c'est `mock` en développement, et **le suivi est désactivé en production** (`NODE_ENV=production`), pour ne jamais inventer de retards sur de vraies courses |
+| `AERODATABOX_KEY` | | Clé AeroDataBox |
+| `AERODATABOX_MARKETPLACE` | `rapidapi` | `rapidapi` : `https://aerodatabox.p.rapidapi.com`, en-têtes `X-RapidAPI-Key` et `X-RapidAPI-Host`. `apimarket` : `https://prod.api.market/api/v1/aedbx/aerodatabox`, en-tête `x-api-market-key` |
+| `AERODATABOX_URL` | | Remplace l'URL de base (proxy) |
+| `AVIATIONSTACK_KEY` | | Clé aviationstack, passée en paramètre `access_key` |
+| `AVIATIONSTACK_URL` | `https://api.aviationstack.com/v1` | L'offre gratuite n'accepte pas le HTTPS : mettez alors `http://api.aviationstack.com/v1`, ou mieux, prenez une offre payante |
+| `AVIATIONSTACK_TIMES` | `local` | aviationstack renvoie l'heure locale de l'aéroport suffixée « +00:00 ». Le worker la convertit avec le fuseau `timezone` de la réponse. `utc` pour prendre les heures telles quelles |
+| `FLIGHTAWARE_KEY` | | Clé FlightAware AeroAPI v4 (`https://aeroapi.flightaware.com/aeroapi`, en-tête `x-apikey`) |
+| `FLIGHTAWARE_URL` | | Remplace l'URL de base |
+| `FLIGHT_MOCK_DELAYS` | | Mock seulement. Exemple : `AF1234=35,EK073=-10,BA304=cancelled` (minutes, avance si négatif, `cancelled` ou `diverted`). Les autres vols ont un retard fixe calculé d'après leur numéro, révélé à moins de 6 h du vol |
+| `FLIGHT_BATCH` | 30 | Courses réservées par passage |
+| `FLIGHT_CONCURRENCY` | 3 | Requêtes simultanées vers le fournisseur |
+| `FLIGHT_TIMEOUT_MS` | 5000 | Délai maximal par requête |
+| `FLIGHT_CACHE_MS` | 120000 | Cache par numéro, date et mode : plusieurs courses sur le même vol ne coûtent qu'une requête |
+
+- Une erreur du fournisseur (quota, clé, réseau, délai) est seulement journalisée (`flight lookup failed`). La course revient au créneau suivant, dans 5 ou 30 min. Un vol introuvable n'écrit rien (`flight not found`).
+- Volume : environ 40 requêtes par vol suivi dans les 3 h avant la prise en charge, et 2 par heure avant cela. L'offre gratuite d'aviationstack (100 requêtes par mois) ne suffit pas en production.
+- Pour choisir le bon tronçon d'un vol à escales, le worker compare les aéroports reconnus dans l'adresse (CDG, ORY, BVA, LBG, NCE…) et l'horaire le plus proche de l'heure demandée.
 - Pushs : l'app chauffeur enregistre des **jetons Expo**, donc **Expo Push est la voie supportée** (`EXPO_ACCESS_TOKEN`) :
   - Android : téléversez la clé de compte de service **FCM v1** dans EAS (`eas credentials`) ;
   - iOS : la **clé APNs** (.p8) dans EAS ;

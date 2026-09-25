@@ -24,6 +24,7 @@ export function expoProvider(expo: ExpoClient = new Expo()): PushProvider {
         priority: payload.priority === "high" ? "high" : "default",
         categoryId: p.categoryId,
         interruptionLevel: p.interruptionLevel,
+        threadId: p.threadId,
         ttl: p.ttlSeconds,
       }));
       for (const chunk of expo.chunkPushNotifications(messages)) {
