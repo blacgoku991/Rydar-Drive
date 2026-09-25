@@ -1,4 +1,8 @@
+import path from "node:path";
 import type { NextConfig } from "next";
+
+// Image Docker (VPS) : serveur autonome, dépendances tracées depuis la racine du monorepo
+const standalone = process.env.NEXT_OUTPUT === "standalone";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
@@ -31,6 +35,8 @@ const baseHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: standalone ? "standalone" : undefined,
+  outputFileTracingRoot: standalone ? path.join(process.cwd(), "..", "..") : undefined,
   transpilePackages: ["@rydar/shared"],
   poweredByHeader: false,
   reactStrictMode: true,

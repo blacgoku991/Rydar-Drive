@@ -9,6 +9,8 @@ Architecture cible :
 - **Stripe**.
 - **EAS** : builds de l'app chauffeur.
 
+> **Tout sur un VPS** (site + worker + Redis + HTTPS automatique, base chez Supabase) : kit clé en main dans [`deploy/`](../deploy/README.md) — `sudo bash deploy/install.sh`.
+
 ## 1. Supabase
 
 1. Créez un projet dans la région UE (par exemple `eu-west-3`, Paris).

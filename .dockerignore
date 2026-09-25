@@ -11,3 +11,5 @@
 .expo-export-check
 apps/web/public/vendor
 apps/web/public/dev-map
+.claude
+deploy/osrm

@@ -1,0 +1,110 @@
+# Rydar Drive sur un VPS : site (Next.js), worker (dispatch + notifications), Redis, Caddy (HTTPS
+# automatique). La base de données, l'authentification, le temps réel et le stockage des documents
+# sont chez Supabase (projet cloud, région Europe) : le VPS ne garde aucune donnée métier.
+#   sudo bash deploy/install.sh        (installation, migrations, construction, démarrage)
+#   cd deploy && docker compose logs -f web worker
+name: rydar
+
+x-service: &service
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  web:
+    <<: *service
+    image: rydar-web
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      # Intégrées au build (navigateur + CSP) : reconstruire l'image si elles changent
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?}
+        NEXT_PUBLIC_APP_URL: https://${DOMAIN:?}
+        NEXT_PUBLIC_ROOT_DOMAIN: ${DOMAIN:?}
+        NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:-}
+        NEXT_PUBLIC_MAP_TILES_URL: ${NEXT_PUBLIC_MAP_TILES_URL:-}
+        NEXT_PUBLIC_MAP_GLYPHS_URL: ${NEXT_PUBLIC_MAP_GLYPHS_URL:-}
+        NEXT_PUBLIC_MAP_CONNECT_ORIGINS: ${NEXT_PUBLIC_MAP_CONNECT_ORIGINS:-}
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      NEXT_PUBLIC_APP_URL: https://${DOMAIN}
+      NEXT_PUBLIC_ROOT_DOMAIN: ${DOMAIN}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?}
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?}
+      REDIS_URL: redis://redis:6379
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      GEOCODER_PROVIDER: ${GEOCODER_PROVIDER:-geopf}
+      GEOCODER_URL: ${GEOCODER_URL:-}
+      ROUTING_PROVIDER: ${ROUTING_PROVIDER:-osrm}
+      OSRM_URL: ${OSRM_URL:-https://router.project-osrm.org}
+      MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      DRIVER_APP_ORIGINS: ${DRIVER_APP_ORIGINS:-}
+    depends_on:
+      - redis
+
+  worker:
+    <<: *service
+    image: rydar-worker
+    build:
+      context: ..
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?}
+      OSRM_URL: ${OSRM_URL:-https://router.project-osrm.org}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+      FCM_SERVICE_ACCOUNT_B64: ${FCM_SERVICE_ACCOUNT_B64:-}
+      APNS_KEY_P8_B64: ${APNS_KEY_P8_B64:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+      FLIGHT_PROVIDER: ${FLIGHT_PROVIDER:-}
+      AERODATABOX_KEY: ${AERODATABOX_KEY:-}
+      AERODATABOX_MARKETPLACE: ${AERODATABOX_MARKETPLACE:-}
+      AVIATIONSTACK_KEY: ${AVIATIONSTACK_KEY:-}
+      FLIGHTAWARE_KEY: ${FLIGHTAWARE_KEY:-}
+
+  redis:
+    <<: *service
+    image: redis:7-alpine
+    # Compteurs d'anti brute force / limites de débit : rien à sauvegarder
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+
+  caddy:
+    <<: *service
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?}
+      ACME_EMAIL: ${ACME_EMAIL:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+  # Itinéraires auto-hébergés (optionnel) : bash deploy/osrm-prepare.sh, puis OSRM_URL=http://osrm:5000
+  # et docker compose --profile osrm up -d
+  osrm:
+    <<: *service
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    profiles: ["osrm"]
+    command: ["osrm-routed", "--algorithm", "mld", "--max-table-size", "1000", "/data/region.osrm"]
+    volumes:
+      - ./osrm:/data:ro
+
+volumes:
+  caddy_data:
+  caddy_config:

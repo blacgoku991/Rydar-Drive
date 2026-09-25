@@ -124,3 +124,44 @@ jobs:
           done
           docker logs worker
           exit 1
+
+  web-image:
+    name: Image Docker du site + kit VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build de l'image (Next.js standalone)
+        run: |
+          docker build -f apps/web/Dockerfile -t rydar-web:ci \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=ci-anon-key \
+            --build-arg NEXT_PUBLIC_APP_URL=https://rydar.example \
+            --build-arg NEXT_PUBLIC_ROOT_DOMAIN=rydar.example .
+      - name: Démarrage + healthcheck
+        run: |
+          docker run -d --name web -p 3000:3000 -e SUPABASE_SERVICE_ROLE_KEY=ci -e API_KEY_PEPPER=ci rydar-web:ci
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:3000/api/health | grep -q '"ok":true'; then
+              curl -fsS -o /dev/null -w "login %{http_code}\n" http://127.0.0.1:3000/login
+              docker logs web
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs web
+          exit 1
+      - name: Docker Compose et Caddy (deploy/)
+        run: |
+          cp deploy/.env.example deploy/.env
+          sed -i -e 's|^DOMAIN=.*|DOMAIN=rydar.example|' -e 's|^ACME_EMAIL=.*|ACME_EMAIL=ci@rydar.example|' \
+            -e 's|^NEXT_PUBLIC_SUPABASE_URL=.*|NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co|' \
+            -e 's|^NEXT_PUBLIC_SUPABASE_ANON_KEY=.*|NEXT_PUBLIC_SUPABASE_ANON_KEY=ci|' \
+            -e 's|^SUPABASE_SERVICE_ROLE_KEY=.*|SUPABASE_SERVICE_ROLE_KEY=ci|' \
+            -e 's|^DATABASE_URL=.*|DATABASE_URL=postgresql://ci:ci@127.0.0.1:5432/ci|' \
+            -e 's|^API_KEY_PEPPER=.*|API_KEY_PEPPER=ci|' deploy/.env
+          docker compose -f deploy/docker-compose.yml config -q
+          docker run --rm -e DOMAIN=rydar.example -e ACME_EMAIL=ci@rydar.example \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          bash -n deploy/install.sh && bash -n deploy/migrate.sh && bash -n deploy/osrm-prepare.sh

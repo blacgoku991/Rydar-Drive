@@ -1,0 +1,28 @@
+# Caddy : HTTPS automatique (Let's Encrypt) devant le site Rydar Drive.
+# Variables : DOMAIN (ex. rydardrive.fr), ACME_EMAIL (contact Let's Encrypt).
+{
+	email {$ACME_EMAIL}
+	# Mini-sites : certificat émis à la première visite, seulement pour un domaine connu
+	on_demand_tls {
+		ask http://web:3000/api/tls/allowed
+	}
+}
+
+# Plateforme : dashboard, super admin, API v1, inscription des chauffeurs (/rejoindre/…)
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}
+
+# Mini-sites de réservation : {centrale}.DOMAIN et domaines personnalisés des centrales
+https:// {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	reverse_proxy web:3000
+}

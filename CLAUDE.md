@@ -108,6 +108,9 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   - shared : `centrale.ts` (libellés, lien de paiement {montant}/{montant_centimes}/{reference}, message WhatsApp, schémas) ;
     seed « Centrale Express Paris » contact@centrale-express.fr (tous les états, candidatures, 1 banni signalé), lien express2026demo
 
+- [x] Kit VPS `deploy/` : docker-compose (web standalone `apps/web/Dockerfile`, worker, redis, Caddy HTTPS auto + TLS à la demande
+  via `/api/tls/allowed`), `install.sh` (Docker, ufw, swap, .env, migrations, build), `migrate.sh` (registre CLI Supabase), `osrm-prepare.sh`
+
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
