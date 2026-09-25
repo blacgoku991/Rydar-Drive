@@ -212,6 +212,14 @@ export const ERROR_MESSAGES: Record<string, string> = {
   PLAN_FEATURE_CUSTOM_DOMAIN: "Le domaine personnalisé n'est pas inclus dans votre offre.",
   PICKUP_IN_PAST: "La date de prise en charge est déjà passée.",
   PICKUP_TOO_FAR: "Date de prise en charge trop lointaine.",
+  // Mode centrale (20260924002600)
+  PRICE_REQUIRED: "Prix obligatoire : le chauffeur doit voir sa part avant d'accepter.",
+  COMMISSION_TOO_HIGH: "La commission et les frais dépassent le prix de la course.",
+  SETTLEMENT_LOCKED: "Paiement déjà déclaré ou encaissé : prix et commission ne sont plus modifiables.",
+  DRIVER_BLOCKED: "Commissions à régler : réglez-les pour accepter de nouvelles courses.",
+  DRIVER_BANNED: "Chauffeur banni : levez d'abord le bannissement.",
+  DRIVER_ON_RIDE: "Client à bord : attendez la fin de la course.",
+  IDENTITY_BANNED: "Identité bannie (téléphone, e-mail, carte VTC, plaque…) : ce chauffeur ne peut pas être ajouté.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */
