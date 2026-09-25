@@ -2,7 +2,9 @@ import { Redirect } from "expo-router";
 import { useDriver } from "@/hooks/driver-context";
 
 export default function Index() {
-  const { ready, session } = useDriver();
+  const { ready, session, canDrive } = useDriver();
   if (!ready) return null;
-  return <Redirect href={session ? "/home" : "/login"} />;
+  if (!session) return <Redirect href="/login" />;
+  // Candidature en attente, compte refusé / banni / suspendu : écran d'état du compte
+  return <Redirect href={canDrive ? "/home" : "/account"} />;
 }

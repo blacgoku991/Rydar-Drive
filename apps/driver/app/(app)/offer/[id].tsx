@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import {
-  PAYMENT_METHOD_LABELS, VEHICLE_CATEGORY_META, decodePolyline, flightBadge, formatDistance, formatDuration, formatPrice, formatRideDate, type DriverOffer,
+  PAYMENT_METHOD_LABELS, VEHICLE_CATEGORY_META, decodePolyline, driverCollects, flightBadge, formatDistance, formatDuration, formatPrice, formatRideDate,
+  type DriverOffer,
 } from "@rydar/shared";
 import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
@@ -8,6 +9,7 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, Vibration, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { blockerInfo, CollectNote, deductionCents } from "@/components/centrale";
 import { RydarMap } from "@/components/map/rydar-map";
 import { CountdownRing } from "@/components/radar";
 import { BigButton, Chip, RouteLine, Screen, Sheet } from "@/components/ui";
@@ -43,6 +45,11 @@ export default function OfferScreen() {
   const [message, setMessage] = useState<string | null>(null);
   // Ouverture directe (notification) : la liste des offres n'est peut-être pas encore chargée
   const [checked, setChecked] = useState(live != null);
+  // Mode centrale : acceptation refusée (DRIVER_BLOCKED) en attendant la relecture de l'offre (champ blocked)
+  const [blockedLocal, setBlockedLocal] = useState<{ reason: string; message?: string } | null>(null);
+  useEffect(() => setBlockedLocal(null), [offers]);
+  const block = blockerInfo(offer?.blocked ?? blockedLocal?.reason, offer?.blocked ? null : blockedLocal?.message);
+  const blockedReason = block?.reason ?? null;
   const ringtone = useAudioPlayer(require("../../../assets/sounds/ride_offer_v2.wav"));
   const chime = useAudioPlayer(require("../../../assets/sounds/ride_offer.wav"));
   const chimed = useRef(false);
@@ -87,9 +94,10 @@ export default function OfferScreen() {
     listAt.current = Date.now();
   }, [offers]);
 
-  // Sonnerie + vibration en boucle tant qu'une offre urgente est ouverte ; offre planifiée : un seul carillon
+  // Sonnerie + vibration en boucle tant qu'une offre urgente est ouverte ; offre planifiée : un seul carillon.
+  // Chauffeur bloqué (mode centrale) : pas de sonnerie, l'offre ne peut pas être acceptée.
   useEffect(() => {
-    if (state !== "open" || !loaded) return;
+    if (state !== "open" || !loaded || blockedReason) return;
     void setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: false, interruptionMode: "duckOthers" }).catch(() => null);
     if (!urgent) {
       if (chimed.current) return;
@@ -129,7 +137,7 @@ export default function OfferScreen() {
       clearTimeout(t);
       stop();
     };
-  }, [state, urgent, loaded, ringtone, chime]);
+  }, [state, urgent, loaded, ringtone, chime, blockedReason]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
@@ -204,6 +212,13 @@ export default function OfferScreen() {
           setMessage("Course planifiée ajoutée à votre planning.");
           setState("declined");
         }
+      } else if (res.code === "DRIVER_BLOCKED") {
+        // Mode centrale : commission en retard / contestée, plafond… L'offre reste ouverte : le chauffeur
+        // peut régler (ou signaler son paiement) puis accepter.
+        if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setBlockedLocal({ reason: res.reason ?? "unpaid", message: res.message });
+        setState("open");
+        void refresh();
       } else {
         if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         closedExpiry.current = offer.expires_at;
@@ -245,9 +260,15 @@ export default function OfferScreen() {
   const eta = approachSeconds(offer.distance_m);
   // Vol suivi : « AF1234 · +35 min », « AF1234 · atterri 14:52 · T2E »
   const flight = flightBadge(offer, home?.organization.timezone);
+  // Mode centrale : « Vous gagnez 40 € » (part chauffeur), course 59 € · commission 19 € (commission + frais)
+  const centrale = offer.dispatch_model === "centrale" && offer.driver_payout_cents != null;
+  const deduction = deductionCents(offer);
+  const collects = offer.driver_collects ?? driverCollects(offer.payment_method);
+  // Motif renvoyé par le serveur (mode centrale uniquement), même pour une course sans répartition (prix absent)
+  const blocked = block != null && !closed;
   return (
     <Screen>
-      <View style={styles.mapBox}>
+      <View style={[styles.mapBox, (centrale || blocked) && { height: blocked ? "27%" : "37%" }]}>
         <RydarMap
           me={me}
           pickup={{ lat: offer.pickup_lat, lng: offer.pickup_lng }}
@@ -269,12 +290,24 @@ export default function OfferScreen() {
       </View>
 
       <Sheet style={styles.sheet}>
-        <SafeAreaView edges={["bottom"]} style={{ flex: 1, gap: 16 }}>
+        <SafeAreaView edges={["bottom"]} style={{ flex: 1, gap: centrale ? 14 : 16 }}>
           <View style={styles.priceRow}>
-            <View>
-              <Text style={styles.price}>{formatPrice(offer.price_cents)}</Text>
-              <Text style={styles.priceSub}>{PAYMENT_METHOD_LABELS[offer.payment_method]}</Text>
-            </View>
+            {centrale ? (
+              <View style={{ flex: 1 }} accessibilityLabel={`Vous gagnez ${formatPrice(offer.driver_payout_cents, offer.currency)}`}>
+                <Text style={styles.gainLabel}>Vous gagnez</Text>
+                <Text style={[styles.price, styles.gain]} numberOfLines={1} adjustsFontSizeToFit>
+                  {formatPrice(offer.driver_payout_cents, offer.currency)}
+                </Text>
+                <Text style={styles.gainSub} numberOfLines={1}>
+                  Course {formatPrice(offer.price_cents, offer.currency)} · commission {formatPrice(deduction, offer.currency)}
+                </Text>
+              </View>
+            ) : (
+              <View>
+                <Text style={styles.price}>{formatPrice(offer.price_cents)}</Text>
+                <Text style={styles.priceSub}>{PAYMENT_METHOD_LABELS[offer.payment_method]}</Text>
+              </View>
+            )}
             <View style={{ alignItems: "flex-end" }}>
               {offer.ride_type === "scheduled" ? (
                 <Text style={styles.when}>{formatRideDate(offer.pickup_at, home?.organization.timezone)}</Text>
@@ -296,6 +329,10 @@ export default function OfferScreen() {
             {flight && <Chip icon="airplane-outline" text={flight.text} color={flight.tone === "neutral" ? colors.cyan : toneColor(flight.tone)} />}
           </View>
           {offer.comment && <Text style={styles.comment}>« {offer.comment} »</Text>}
+          {/* Qui encaisse le client : le chauffeur (il reverse la commission) ou la centrale (elle verse la part) */}
+          {centrale && !blocked && (
+            <CollectNote collects={collects} price={offer.price_cents} deduction={deduction} payout={offer.driver_payout_cents} currency={offer.currency} />
+          )}
 
           <View style={{ gap: 6, marginTop: "auto" }}>
             {closed ? (
@@ -303,6 +340,31 @@ export default function OfferScreen() {
                 <Ionicons name={state === "declined" && message ? "checkmark-circle" : "close-circle"} size={24} color={state === "declined" && message ? colors.brand : colors.amber} />
                 <Text style={styles.closedText}>{state === "expired" ? "Offre expirée." : message ?? (state === "declined" ? "Offre refusée." : "Course déjà attribuée.")}</Text>
               </View>
+            ) : blocked && block ? (
+              // Mode centrale : commission en retard / contestée, plafond d'encours… → acceptation impossible
+              <>
+                <View style={styles.blockBox} accessibilityRole="alert">
+                  <Ionicons name="lock-closed" size={22} color={colors.red} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.blockTitle}>Acceptation impossible</Text>
+                    <Text style={styles.blockText}>{block.message}</Text>
+                  </View>
+                </View>
+                <BigButton title="ACCEPTER" icon="lock-closed" variant="secondary" height={56} disabled onPress={() => undefined} />
+                {block.payable && (
+                  <BigButton title="Régler mes commissions" icon="wallet" height={64} onPress={() => router.push("/commissions")} style={{ marginTop: 4 }} />
+                )}
+                <View style={styles.secondary}>
+                  {!urgent && (
+                    <Pressable onPress={close} style={styles.decline} accessibilityRole="button">
+                      <Text style={styles.laterText}>Plus tard</Text>
+                    </Pressable>
+                  )}
+                  <Pressable onPress={decline} style={styles.decline} accessibilityRole="button">
+                    <Text style={styles.declineText}>Refuser</Text>
+                  </Pressable>
+                </View>
+              </>
             ) : (
               <>
                 <BigButton title="ACCEPTER" icon="checkmark-circle" height={80} onPress={accept} loading={state === "accepting"} />
@@ -337,6 +399,12 @@ const styles = StyleSheet.create({
   priceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
   price: { color: colors.fg, fontSize: 52, fontWeight: "900", letterSpacing: -1.5 },
   priceSub: { color: colors.subtle, fontSize: 13, marginTop: -2 },
+  gainLabel: { color: colors.muted, fontSize: 15, fontWeight: "800", marginBottom: -4 },
+  gain: { color: colors.brand, fontVariant: ["tabular-nums"] },
+  gainSub: { color: colors.muted, fontSize: 14.5, fontWeight: "700", marginTop: -2, fontVariant: ["tabular-nums"] },
+  blockBox: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 18, backgroundColor: "rgba(242,85,90,0.12)", borderWidth: 1, borderColor: "rgba(242,85,90,0.42)", marginBottom: 4 },
+  blockTitle: { color: colors.red, fontSize: 16, fontWeight: "900" },
+  blockText: { color: colors.fg, fontSize: 14, lineHeight: 19, marginTop: 2, fontWeight: "600" },
   eta: { color: colors.brand, fontSize: 28, fontWeight: "900", letterSpacing: -0.5 },
   etaSub: { color: colors.muted, fontSize: 13, fontWeight: "600" },
   when: { color: colors.violet, fontSize: 18, fontWeight: "800" },

@@ -6,6 +6,7 @@ import {
   ActivityIndicator, Animated, PanResponder, Platform, Pressable, StyleSheet, Text, View,
   type LayoutChangeEvent, type PressableProps, type StyleProp, type TextStyle, type ViewStyle,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { colors, radius } from "@/theme";
 
 const haptic = (style: Haptics.ImpactFeedbackStyle) => {
@@ -246,6 +247,40 @@ export function CountBadge({ count, color = colors.brand }: { count: number; col
   );
 }
 
+/**
+ * Feuille modale posée sur l'écran (fond assombri + panneau inférieur) : confirmation d'un paiement,
+ * récapitulatif de fin de course… Reste montée pendant l'animation de fermeture.
+ */
+export function BottomSheet({
+  visible, onClose, children, dismissable = true,
+}: { visible: boolean; onClose: () => void; children: React.ReactNode; dismissable?: boolean }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(visible);
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      Animated.spring(anim, { toValue: 1, useNativeDriver: true, friction: 9, tension: 70 }).start();
+    } else Animated.timing(anim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => setMounted(false));
+  }, [visible, anim]);
+  if (!mounted) return null;
+  return (
+    <View style={[StyleSheet.absoluteFill, { zIndex: 45 }]} pointerEvents="box-none">
+      <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, { opacity: anim }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={dismissable ? onClose : undefined} accessibilityLabel="Fermer" />
+      </Animated.View>
+      <Animated.View
+        style={[styles.sheetWrap, { transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [700, 0] }) }] }]}
+        pointerEvents="box-none"
+        accessibilityViewIsModal
+      >
+        <Sheet>
+          <SafeAreaView edges={["bottom"]} style={{ gap: 14, paddingBottom: 16 }}>{children}</SafeAreaView>
+        </Sheet>
+      </Animated.View>
+    </View>
+  );
+}
+
 type FlashTone = "success" | "error" | "info";
 /**
  * Bandeau de confirmation éphémère (« Signalé à la flotte ») : `node` à placer dans l'écran,
@@ -314,4 +349,6 @@ const styles = StyleSheet.create({
     shadowColor: "#000", shadowOpacity: 0.5, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 12,
   },
   flashText: { flex: 1, color: colors.fg, fontSize: 16, fontWeight: "800" },
+  backdrop: { backgroundColor: "rgba(4,5,7,0.66)" },
+  sheetWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
 });

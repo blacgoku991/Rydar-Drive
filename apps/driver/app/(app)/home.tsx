@@ -1,9 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
-import { DRIVER_FLOW, FLEET_REPORT_META, RIDE_STATUS_META, formatPrice, formatRideDate, shortAddress, type Ride, type RideStatus } from "@rydar/shared";
+import {
+  DRIVER_FLOW, FLEET_REPORT_META, RIDE_STATUS_META, TRUST_LEVEL_META, formatPrice, formatRideDate, shortAddress, type Ride, type RideStatus,
+} from "@rydar/shared";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SettlementBanner, TrustBadge } from "@/components/centrale";
 import { ReportCard, ReportSheet } from "@/components/fleet-report";
 import { RydarMap } from "@/components/map/rydar-map";
 import type { LatLng, MapReport } from "@/components/map/types";
@@ -30,6 +33,11 @@ export default function Home() {
   const online = presence !== "offline";
   const scheduledOffers = offers.filter((o) => o.mode === "fleet").length;
   const unread = chat?.unread_total ?? 0;
+  // Mode centrale : gains nets du jour (part chauffeur), commissions à régler / blocage, statut « Nouveau »
+  const centrale = (home?.model ?? home?.organization.dispatch_model) === "centrale";
+  const settlement = centrale ? home?.settlement ?? null : null;
+  const blockedOffers = Boolean(settlement?.blocked);
+  const isNew = centrale && home?.driver.trust_level === "new";
 
   useEffect(() => {
     const id = home?.driver.current_ride_id;
@@ -120,9 +128,9 @@ export default function Home() {
           <Text style={styles.avatarText}>{initials}</Text>
         </Pressable>
         <Pressable onPress={() => router.push("/earnings")} style={({ pressed }) => [styles.earnings, pressed && { opacity: 0.85 }]} accessibilityRole="button" accessibilityLabel="Mes gains">
-          <Text style={styles.earningsLabel}>Aujourd&apos;hui</Text>
+          <Text style={styles.earningsLabel}>{centrale ? "Vos gains du jour" : "Aujourd'hui"}</Text>
           <Text style={styles.earningsValue} numberOfLines={1} adjustsFontSizeToFit>
-            {formatPrice(home?.today.revenue_cents ?? 0)}
+            {formatPrice(centrale ? home?.today.net_cents ?? 0 : home?.today.revenue_cents ?? 0)}
             <Text style={styles.earningsSub}>  · {home?.today.rides ?? 0} course{(home?.today.rides ?? 0) > 1 ? "s" : ""}</Text>
           </Text>
         </Pressable>
@@ -187,7 +195,9 @@ export default function Home() {
                   <View style={styles.row}>
                     <View>
                       <Text style={styles.title}>Course en cours</Text>
-                      <Text style={styles.subtitle}>#{current.number} · {formatPrice(current.price_cents)}</Text>
+                      <Text style={styles.subtitle}>
+                        #{current.number} · {centrale && current.driver_payout_cents != null ? `vous gagnez ${formatPrice(current.driver_payout_cents)}` : formatPrice(current.price_cents)}
+                      </Text>
                     </View>
                     <Pill label={RIDE_STATUS_META[current.status as RideStatus].short} color={presenceColor[presence] ?? colors.cyan} />
                   </View>
@@ -200,16 +210,31 @@ export default function Home() {
                 </>
               ) : (
                 <>
+                  {/* Mode centrale : commissions à régler (rouge si les courses sont bloquées), paiement signalé, part à recevoir */}
+                  {settlement && (
+                    <SettlementBanner s={settlement} tz={home?.organization.timezone} now={now} onPress={() => router.push("/commissions")} />
+                  )}
                   <View style={styles.row}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.title}>{online ? "Vous êtes en ligne" : "Vous êtes hors ligne"}</Text>
-                      <Text style={styles.subtitle}>
-                        {online ? "Les courses proches vous sont proposées automatiquement." : "Passez en ligne pour recevoir les courses de votre centrale."}
+                      <Text style={[styles.subtitle, online && blockedOffers && { color: colors.red }]}>
+                        {online
+                          ? blockedOffers
+                            ? "Aucune course ne vous est proposée tant que vos commissions ne sont pas réglées."
+                            : "Les courses proches vous sont proposées automatiquement."
+                          : "Passez en ligne pour recevoir les courses de votre centrale."}
                       </Text>
                     </View>
-                    <View style={[styles.statusDot, { backgroundColor: online ? colors.brand : colors.subtle }]} />
+                    <View style={[styles.statusDot, { backgroundColor: online ? (blockedOffers ? colors.red : colors.brand) : colors.subtle }]} />
                   </View>
-  
+                  {/* Nouveau chauffeur (inscrit par lien) : courses plafonnées en prix jusqu'à la confirmation */}
+                  {isNew && (
+                    <View style={styles.trustRow}>
+                      <TrustBadge level="new" />
+                      <Text style={styles.trustText}>{TRUST_LEVEL_META.new.description}</Text>
+                    </View>
+                  )}
+
                   {home?.next_scheduled && (
                     <Pressable onPress={() => router.push({ pathname: "/ride/[id]", params: { id: home.next_scheduled!.id } })} style={styles.next}>
                       <Ionicons name="time-outline" size={20} color={colors.violet} />
@@ -219,7 +244,9 @@ export default function Home() {
                           {shortAddress(home.next_scheduled.pickup_address)} → {shortAddress(home.next_scheduled.dropoff_address)}
                         </Text>
                       </View>
-                      <Text style={styles.nextPrice}>{formatPrice(home.next_scheduled.price_cents)}</Text>
+                      <Text style={styles.nextPrice}>
+                        {formatPrice(centrale && home.next_scheduled.driver_payout_cents != null ? home.next_scheduled.driver_payout_cents : home.next_scheduled.price_cents)}
+                      </Text>
                     </Pressable>
                   )}
   
@@ -277,4 +304,6 @@ const styles = StyleSheet.create({
   nextWhen: { color: colors.violet, fontSize: 14, fontWeight: "700" },
   nextRoute: { color: colors.fg, fontSize: 14.5, marginTop: 2 },
   nextPrice: { color: colors.fg, fontSize: 16, fontWeight: "800" },
+  trustRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: -4 },
+  trustText: { flex: 1, color: colors.muted, fontSize: 13.5, lineHeight: 18 },
 });

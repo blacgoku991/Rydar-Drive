@@ -17,6 +17,7 @@ function Gate() {
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg }, animation: "fade" }}>
       <Stack.Screen name="login" />
+      <Stack.Screen name="account" />
       <Stack.Screen name="(app)" />
     </Stack>
   );
