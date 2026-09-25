@@ -143,6 +143,22 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     setOffers([]);
   }, [blockedAccount]);
 
+  // Candidat en attente : appareil enregistré dès maintenant (push « candidature acceptée », contrôle
+  // serveur « appareil déjà utilisé par un chauffeur banni »), puis relecture de l'état du compte
+  const pendingAccount = accountChecked && account?.state === "pending";
+  useEffect(() => {
+    if (!session || !pendingAccount) return;
+    let cancelled = false;
+    (async () => {
+      await setupNotificationChannels().catch(() => null);
+      await registerForPush().catch(() => null);
+      if (!cancelled) void checkAccount();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, pendingAccount, checkAccount]);
+
   // Retour au premier plan : candidature validée, compte suspendu ou banni entre-temps
   useEffect(() => {
     if (!userId) return;

@@ -497,8 +497,8 @@ create trigger driver_documents_identity_bans
   before insert or update of type, number on public.driver_documents
   for each row execute function private.enforce_identity_bans();
 
--- Appareil déjà utilisé par un compte banni : le nouveau compte est suspendu (vérification
--- par la centrale : un téléphone peut être partagé) et la centrale est alertée.
+-- Appareil déjà utilisé par un compte banni : le nouveau compte est suspendu, ou la candidature
+-- refusée (vérification par la centrale : un téléphone peut être partagé) ; la centrale est alertée.
 create or replace function private.flag_banned_device()
 returns trigger
 language plpgsql
@@ -518,7 +518,14 @@ begin
     return null;
   end if;
 
-  if d.status = 'active' and d.current_ride_id is null then
+  if d.status = 'inactive' and d.application_status = 'pending' then
+    -- Candidat inscrit par lien : candidature refusée d'office (motif neutre côté chauffeur) ;
+    -- la centrale est alertée et peut la reconsidérer (téléphone partagé…)
+    update public.drivers
+       set application_status = 'rejected', application_reviewed_at = now(), application_reviewed_by = null,
+           application_note = 'Candidature non retenue : contactez la centrale.'
+     where id = d.id;
+  elsif d.status = 'active' and d.current_ride_id is null then
     update public.drivers
        set status = 'suspended', presence = 'offline', online_since = null,
            suspended_reason = 'Appareil déjà utilisé par un compte banni — vérification requise'
@@ -531,6 +538,7 @@ begin
   insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
   values (d.organization_id, 'system', null, 'driver.banned_device', 'drivers', d.id::text, 'critical',
     jsonb_build_object('device_id', new.id, 'scope', v_scope, 'platform', new.platform, 'device_name', new.device_name,
+      'applicant', d.application_status = 'pending',
       'suspended', d.status = 'active' and d.current_ride_id is null));
   perform realtime.send(
     jsonb_build_object('driver_id', d.id, 'number', d.number, 'first_name', d.first_name, 'last_name', d.last_name,
@@ -3097,7 +3105,11 @@ begin
   end if;
   perform private.assert_org_member(d.organization_id, array['owner', 'admin']::public.org_role[]);
   perform private.set_actor('user', auth.uid());
-  if d.application_status is distinct from 'pending' then
+  if d.banned_at is not null then
+    return jsonb_build_object('ok', false, 'code', 'DRIVER_BANNED', 'message', 'Chauffeur banni : levez d''abord le bannissement.');
+  end if;
+  -- En attente, ou refusée puis reconsidérée
+  if d.application_status is null or d.application_status not in ('pending', 'rejected') or d.status <> 'inactive' then
     return jsonb_build_object('ok', false, 'code', 'NOT_PENDING', 'message', 'Cette candidature a déjà été traitée.');
   end if;
   if v_trust is not null and v_trust not in ('new', 'trusted') then
@@ -3110,6 +3122,7 @@ begin
          application_status = 'approved',
          application_reviewed_at = now(),
          application_reviewed_by = auth.uid(),
+         application_note = null,
          trust_level = coalesce(v_trust, trust_level)
    where id = d.id;
 
@@ -3118,7 +3131,8 @@ begin
     format('Bienvenue chez %s : passez en ligne pour recevoir vos premières courses.', v_name),
     jsonb_build_object('type', 'application_approved'), 'high', null);
   perform private.log_event(d.organization_id, null, 'driver.approved',
-    format('Candidature de %s %s (#%s) acceptée', d.first_name, d.last_name, d.number),
+    format('Candidature de %s %s (#%s) %s', d.first_name, d.last_name, d.number,
+      case when d.application_status = 'rejected' then 'reconsidérée et acceptée' else 'acceptée' end),
     'timeline', 'success', jsonb_build_object('driver_id', d.id, 'trust_level', coalesce(v_trust, d.trust_level)),
     'user', auth.uid());
   perform realtime.send(
@@ -3199,8 +3213,8 @@ begin
     'state', v_state,
     'driver', jsonb_build_object('id', d.id, 'number', d.number, 'first_name', d.first_name, 'last_name', d.last_name,
       'applied_at', d.applied_at, 'trust_level', d.trust_level),
-    'organization', jsonb_build_object('name', o.name, 'logo_url', o.logo_url, 'phone', o.phone, 'email', o.email,
-      'dispatch_model', o.dispatch_model),
+    'organization', jsonb_build_object('id', o.id, 'name', o.name, 'logo_url', o.logo_url, 'phone', o.phone, 'email', o.email,
+      'timezone', o.timezone, 'dispatch_model', o.dispatch_model),
     'reason', case v_state
       when 'banned' then d.ban_reason
       when 'rejected' then d.application_note
@@ -3244,6 +3258,65 @@ as $$
     and d.banned_at is null
     and (d.status = 'active' or (d.status = 'inactive' and d.application_status = 'pending'))
   limit 1;
+$$;
+
+-- ----------------------------------------------------------------- appareil du candidat
+-- Dernière définition : 20260924000400. Seul changement : un candidat en attente enregistre aussi
+-- son appareil (notification de validation ; appareil d'un banni détecté dès la candidature).
+create or replace function public.driver_register_device(
+  p_installation_id text,
+  p_platform public.device_platform,
+  p_push_token text default null,
+  p_provider public.push_provider default 'expo',
+  p_device_name text default null,
+  p_os_version text default null,
+  p_app_version text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  d record;
+  v_device uuid;
+begin
+  select x.id, x.organization_id into d from public.drivers x where x.id = private.current_driver_or_applicant_id();
+  if not found then
+    raise exception 'FORBIDDEN: compte chauffeur inactif ou inconnu' using errcode = '42501';
+  end if;
+  if p_installation_id is null or char_length(p_installation_id) not between 8 and 128 then
+    raise exception 'INVALID_INSTALLATION_ID' using errcode = '22023';
+  end if;
+
+  insert into public.driver_devices (organization_id, driver_id, installation_id, platform, device_name, os_version, app_version, last_seen_at)
+  values (d.organization_id, d.id, p_installation_id, p_platform, left(p_device_name, 120), left(p_os_version, 40), left(p_app_version, 40), now())
+  on conflict (driver_id, installation_id) do update
+    set platform = excluded.platform,
+        device_name = excluded.device_name,
+        os_version = excluded.os_version,
+        app_version = excluded.app_version,
+        last_seen_at = now(),
+        revoked_at = null
+  returning id into v_device;
+
+  if p_push_token is not null and char_length(p_push_token) between 10 and 512 then
+    -- Le token peut changer de compte (téléphone partagé) : on le réattribue.
+    delete from public.push_tokens where token = p_push_token and driver_id <> d.id;
+    update public.push_tokens set is_active = false
+     where device_id = v_device and token <> p_push_token and is_active;
+    insert into public.push_tokens (organization_id, driver_id, device_id, token, provider, platform, is_active)
+    values (d.organization_id, d.id, v_device, p_push_token, p_provider, p_platform, true)
+    on conflict (token) do update
+      set device_id = excluded.device_id,
+          provider = excluded.provider,
+          platform = excluded.platform,
+          is_active = true,
+          last_error = null;
+  end if;
+
+  return jsonb_build_object('ok', true, 'device_id', v_device);
+end;
 $$;
 
 -- ----------------------------------------------------------------- documents des candidats
@@ -3546,6 +3619,7 @@ revoke execute on function
   public.driver_settlements(integer),
   public.driver_declare_payment(uuid[], text, text),
   public.driver_account_state(),
+  public.driver_register_device(text, public.device_platform, text, public.push_provider, text, text, text),
   public.driver_offers(),
   public.driver_home(),
   public.driver_earnings(integer),
@@ -3572,6 +3646,7 @@ grant execute on function
   public.driver_settlements(integer),
   public.driver_declare_payment(uuid[], text, text),
   public.driver_account_state(),
+  public.driver_register_device(text, public.device_platform, text, public.push_provider, text, text, text),
   public.driver_offers(),
   public.driver_home(),
   public.driver_earnings(integer),

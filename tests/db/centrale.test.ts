@@ -565,11 +565,42 @@ describe("Inscription par lien (/rejoindre/{code})", () => {
     expect(welcome.body).toContain("Bienvenue chez Centrale Recrute");
     expect((await rpc(org.ownerId, "approve_driver_application", [applied.driver_id, null])).code).toBe("NOT_PENDING");
 
+    // Le candidat enregistre son appareil (notification de validation) et connaît sa centrale
+    const state = await rpc(userId, "driver_account_state");
+    expect(state.organization).toMatchObject({ id: org.id, timezone: "Europe/Paris" });
+
     // Refus
     const user3 = await createAuthUser(`ter-${randomUUID().slice(0, 6)}@test.dev`, "Ter");
     const other = await svc("svc_driver_apply", [org.id, user3, "Ter", "Candidat", uniquePhone(), `ter-${randomUUID().slice(0, 4)}@test.dev`, null, JSON.stringify({ model: "Classe V", plate: uniquePlate(), category: "van", seats: 7 }), null]);
     expect((await rpc(org.ownerId, "reject_driver_application", [other.driver_id, "Pas de carte VTC"])).code).toBe("REJECTED");
     expect(await rpc(user3, "driver_account_state")).toMatchObject({ state: "rejected", reason: "Pas de carte VTC" });
+    // La centrale change d'avis : candidature reconsidérée
+    expect((await rpc(org.ownerId, "approve_driver_application", [other.driver_id, "new"])).code).toBe("APPROVED");
+    expect((await rpc(user3, "driver_account_state")).state).toBe("active");
+  });
+
+  it("candidat sur l'appareil d'un banni : candidature refusée d'office, reconsidérable", async () => {
+    const org = await centrale("Centrale Appareil Candidat");
+    await rpc(org.ownerId, "set_join_link", [org.id, true, false, false]);
+    const tag = randomUUID().slice(0, 8);
+    const cheat = await driverIn(org);
+    await rpc(cheat.userId, "driver_register_device", [`install-${tag}`, "android"]);
+    expect((await rpc(org.ownerId, "ban_driver", [cheat.id, "Arnaque", "fraud", false, false])).code).toBe("BANNED");
+
+    const u = await createAuthUser(`retour-${randomUUID().slice(0, 6)}@test.dev`, "Retour");
+    const applied = await svc("svc_driver_apply", [org.id, u, "Nouveau", "Nom", uniquePhone(), `retour-${randomUUID().slice(0, 4)}@test.dev`, null, JSON.stringify({ model: "Clio", plate: uniquePlate() }), null]);
+    expect(applied.code).toBe("PENDING");
+    // Même téléphone (appareil) que le banni : candidature refusée dès l'enregistrement de l'appareil
+    expect((await rpc(u, "driver_register_device", [`install-${tag}`, "android", "ExponentPushToken[retour-123456]"])).ok).toBe(true);
+    const state = await rpc(u, "driver_account_state");
+    expect(state).toMatchObject({ state: "rejected", reason: "Candidature non retenue : contactez la centrale." });
+    const [audit] = await sql(`select metadata from public.audit_logs where action = 'driver.banned_device' and entity_id = $1`, [applied.driver_id]);
+    expect(audit.metadata.applicant).toBe(true);
+
+    // Un chauffeur banni ne se « valide » pas ; le candidat refusé peut être reconsidéré
+    expect((await rpc(org.ownerId, "approve_driver_application", [cheat.id, null])).code).toBe("DRIVER_BANNED");
+    expect((await rpc(org.ownerId, "approve_driver_application", [applied.driver_id, "new"])).code).toBe("APPROVED");
+    expect((await rpc(u, "driver_account_state")).state).toBe("active");
   });
 
   it("validation automatique, identité bannie refusée, lien coupé au retour en mode flotte", async () => {

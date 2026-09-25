@@ -12,6 +12,7 @@ import { BannedDriversCard, type BannedDriverRow } from "@/components/network/ba
 import { JoinLinkCard } from "@/components/network/join-link-card";
 import { REPORT_STATUS_FOR_ORG } from "@/components/network/labels";
 import { NetworkLive } from "@/components/network/network-live";
+import { ReconsiderButton } from "@/components/network/reconsider-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
@@ -105,7 +106,7 @@ export default async function NetworkPage() {
       : none,
     db
       .from("drivers")
-      .select("id, number, first_name, last_name, application_status, application_reviewed_at, application_note")
+      .select("id, number, first_name, last_name, application_status, application_reviewed_at, application_note, banned_at")
       .eq("organization_id", orgId)
       .eq("joined_via", "join_link")
       .in("application_status", ["approved", "rejected"])
@@ -146,7 +147,7 @@ export default async function NetworkPage() {
       report_status: lastReport.get(d.id) ?? null,
     } as BannedDriverRow;
   });
-  const decisions = (decisionsRes.data ?? []) as { id: string; number: number; first_name: string; last_name: string; application_status: string; application_reviewed_at: string; application_note: string | null }[];
+  const decisions = (decisionsRes.data ?? []) as { id: string; number: number; first_name: string; last_name: string; application_status: string; application_reviewed_at: string; application_note: string | null; banned_at: string | null }[];
   const settings = settingsRes.data as { new_driver_max_price_cents: number | null; trust_after_rides: number | null } | null;
 
   return (
@@ -234,7 +235,12 @@ export default async function NetworkPage() {
                           {d.application_status === "rejected" && d.application_note ? ` · ${d.application_note}` : ""}
                         </span>
                       </span>
-                      <Badge tone={d.application_status === "approved" ? "green" : "neutral"}>{d.application_status === "approved" ? "Validé" : "Refusé"}</Badge>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {canManage && d.application_status === "rejected" && !d.banned_at && (
+                          <ReconsiderButton driverId={d.id} name={`${d.first_name} ${d.last_name}`} />
+                        )}
+                        <Badge tone={d.application_status === "approved" ? "green" : "neutral"}>{d.application_status === "approved" ? "Validé" : "Refusé"}</Badge>
+                      </span>
                     </li>
                   ))}
                 </ul>
