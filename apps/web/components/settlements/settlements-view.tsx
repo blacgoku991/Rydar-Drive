@@ -344,7 +344,8 @@ function Kpi({ label, value, sub, tone, href: to, icon }: { label: string; value
   );
   const cls = "surface relative block min-w-0 rounded-xl px-4 py-3.5";
   return to ? (
-    <Link href={to} scroll={false} className={cn(cls, "transition-colors hover:border-line-strong hover:bg-ink-700")}>
+    // Défilement jusqu'à la liste filtrée (#reglements)
+    <Link href={to} className={cn(cls, "transition-colors hover:border-line-strong hover:bg-ink-700")}>
       {body}
     </Link>
   ) : (
@@ -353,7 +354,7 @@ function Kpi({ label, value, sub, tone, href: to, icon }: { label: string; value
 }
 
 // ---------------------------------------------------------------------------- solde d'un chauffeur
-const BALANCE_GRID = "xl:grid xl:grid-cols-[minmax(0,1.5fr)_minmax(150px,1fr)_repeat(4,minmax(0,0.62fr))_minmax(0,0.7fr)_268px] xl:items-center xl:gap-3";
+const BALANCE_GRID = "xl:grid xl:grid-cols-[minmax(0,1.5fr)_minmax(190px,1.2fr)_repeat(4,minmax(0,0.62fr))_minmax(0,0.7fr)_268px] xl:items-center xl:gap-3";
 function Money({ cents, currency, tone, className }: { cents: number; currency: string; tone?: KpiTone; className?: string }) {
   return (
     <span className={cn("mono text-[13.5px]", cents ? (tone ? cn("font-semibold", toneText[tone]) : "text-fg") : "text-fg-subtle", className)}>
@@ -367,29 +368,26 @@ function BalanceRow({ d, currency, now, whatsapp, active }: { d: OrgSettlementDr
   const trust = TRUST_LEVEL_META[d.trust_level];
   const recent = d.last_reminded_at ? now - Date.parse(d.last_reminded_at) < 30 * 60_000 : false;
   const canRemind = d.owed_cents > 0 && !recent;
-  const status = (
-    <div className="min-w-0 xl:w-full">
-      {d.banned ? (
-        <Badge tone="red">Banni</Badge>
-      ) : d.blocked ? (
-        <Badge tone="red" dot={false}>
-          <Lock className="size-3" /> Bloqué
-        </Badge>
-      ) : (
-        <Badge tone="green">
-          <span className="xl:hidden">Actif</span>
-          <span className="hidden xl:inline">Reçoit les courses</span>
-        </Badge>
-      )}
-      <p className="mt-1 truncate text-[11.5px] text-fg-subtle" title={d.blocked ? `${DRIVER_BLOCKER_META[d.blocked].message} (${trust?.label ?? d.trust_level})` : trust?.description}>
-        {d.blocked && !d.banned ? (
-          <span className="text-red">{DRIVER_BLOCKER_META[d.blocked].label}</span>
-        ) : (
-          <span className={d.trust_level === "new" ? "text-amber" : undefined}>{trust?.label ?? d.trust_level}</span>
-        )}
-      </p>
-    </div>
+  const badge = d.banned ? (
+    <Badge tone="red">Banni</Badge>
+  ) : d.blocked ? (
+    <Badge tone="red" dot={false}>
+      <Lock className="size-3" /> Bloqué
+    </Badge>
+  ) : (
+    <Badge tone="green">
+      <span className="xl:hidden">Actif</span>
+      <span className="hidden xl:inline">Reçoit les courses</span>
+    </Badge>
   );
+  // Niveau (Nouveau / Confirmé) + motif du blocage
+  const detail = (
+    <>
+      <span className={d.trust_level === "new" ? "text-amber" : undefined}>{trust?.label ?? d.trust_level}</span>
+      {d.blocked && !d.banned && <span className="text-red"> · {DRIVER_BLOCKER_META[d.blocked].label}</span>}
+    </>
+  );
+  const detailTitle = [trust?.description, d.blocked ? DRIVER_BLOCKER_META[d.blocked].message : null].filter(Boolean).join(" ");
   const actions = (
     <div className="flex flex-wrap items-center gap-1.5 xl:flex-nowrap xl:justify-end">
       <Tooltip content={d.owed_cents <= 0 ? "Rien à régler" : recent ? `Déjà relancé ${fromNow(d.last_reminded_at, now)} (1 rappel / 30 min)` : "Notification push au chauffeur"}>
@@ -422,8 +420,12 @@ function BalanceRow({ d, currency, now, whatsapp, active }: { d: OrgSettlementDr
               <a href={`tel:${d.phone}`} className="mono block truncate text-[12px] text-fg-subtle hover:text-fg">{formatPhone(d.phone)}</a>
             </div>
           </div>
-          <div className="shrink-0 text-right xl:shrink xl:text-left">{status}</div>
+          <div className="min-w-0 shrink-0 xl:shrink">
+            {badge}
+            <p className="mt-1 hidden truncate text-[11.5px] text-fg-subtle xl:block" title={detailTitle}>{detail}</p>
+          </div>
         </div>
+        <p className="-mt-1 text-[11.5px] text-fg-subtle xl:hidden" title={detailTitle}>{detail}</p>
         {/* montants : grille sur grand écran, encart compact sinon */}
         <div className="rounded-xl bg-white/[0.025] px-3 py-2 xl:contents">
           <div className="grid grid-cols-4 gap-2 xl:contents">
@@ -540,7 +542,6 @@ function SettlementList({
               checked={selected.has(s.id)}
               onToggle={isOpen(s) ? () => toggle(s.id) : undefined}
               whatsapp={whatsappFor(s)}
-              currency={currency}
               blockUnpaid={blockUnpaid}
             />
           ))}
@@ -610,7 +611,6 @@ function SettlementRow({
   checked,
   onToggle,
   whatsapp,
-  currency,
   blockUnpaid,
 }: {
   s: OrgSettlementItem;
@@ -620,7 +620,6 @@ function SettlementRow({
   checked: boolean;
   onToggle?: () => void;
   whatsapp: string | null;
-  currency: string;
   blockUnpaid: boolean;
 }) {
   const at = now;
@@ -739,7 +738,6 @@ function SettlementRow({
           {actions}
         </div>
       </div>
-      <span className="sr-only">{`Montant ${formatPrice(s.amount_cents, currency)}`}</span>
     </li>
   );
 }

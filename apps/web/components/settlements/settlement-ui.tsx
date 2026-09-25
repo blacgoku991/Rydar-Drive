@@ -145,31 +145,36 @@ export function SplitLegend({ split, currency = "EUR", className }: { split: Spl
 export type DriverContact = { id: string; phone: string | null; first_name: string; last_name: string; number: number };
 const contacts = new Map<string, Promise<DriverContact | null>>();
 
-/** Coordonnées d'un chauffeur de l'organisation (lecture RLS, mise en cache). */
-export function useDriverContact(driverId: string | null | undefined, known?: Partial<DriverContact> | null): DriverContact | null {
-  const complete = known?.id && known.phone !== undefined && known.first_name ? (known as DriverContact) : null;
-  const [value, setValue] = useState<DriverContact | null>(complete);
+/** Coordonnées d'un chauffeur de l'organisation (lecture RLS, mise en cache ; un échec sera retenté). */
+export function useDriverContact(driverId: string | null | undefined): DriverContact | null {
+  const [value, setValue] = useState<DriverContact | null>(null);
   useEffect(() => {
-    if (complete || !driverId) return;
+    if (!driverId) return;
     let p = contacts.get(driverId);
     if (!p) {
+      const id = driverId;
       p = Promise.resolve(
         getBrowserClient()
           .from("drivers")
           .select("id, phone, first_name, last_name, number")
-          .eq("id", driverId)
+          .eq("id", id)
           .maybeSingle()
           .then(({ data }: { data: DriverContact | null }) => data ?? null),
-      ).catch(() => null);
-      contacts.set(driverId, p);
+      )
+        .catch(() => null)
+        .then((v) => {
+          if (!v) contacts.delete(id);
+          return v;
+        });
+      contacts.set(id, p);
     }
     let alive = true;
     void p.then((v) => alive && setValue(v));
     return () => {
       alive = false;
     };
-  }, [driverId, complete]);
-  return complete ?? value;
+  }, [driverId]);
+  return driverId && value?.id === driverId ? value : null;
 }
 
 // ---------------------------------------------------------------------------- WhatsApp
@@ -424,7 +429,7 @@ export function SettlementDialogs({
               disabled={reason.trim().length < 3}
               onClick={() => run(() => waiveSettlement(s.id, reason), () => `Règlement ${s.reference} annulé`, close)}
             >
-              Annuler la dette
+              {owes ? "Annuler la dette" : "Annuler le versement"}
             </Button>
           </div>
         </DialogContent>
@@ -479,7 +484,7 @@ export function SettlementActions({
   const n = rideNumberOf(s);
   const computed = useSettlementWhatsApp(
     whatsapp === undefined && owes && (s.status === "due" || s.status === "disputed") && contact
-      ? { phone: contact.phone, firstName: contact.first_name, amountCents: s.amount_cents, currency: s.currency, rideNumbers: n ? [n] : [], reference: s.reference }
+      ? { phone: contact.phone, firstName: contact.first_name, amountCents: s.amount_cents, currency: s.currency, rideNumbers: [n ?? s.reference], reference: s.reference }
       : null,
   );
   const wa = whatsapp === undefined ? computed : whatsapp;
@@ -516,7 +521,7 @@ export function SettlementActions({
       {(menuRemind || menuWaive) && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size={size === "xs" ? "icon-sm" : "icon-sm"} aria-label="Plus d'actions" disabled={reminding}>
+            <Button variant="ghost" size="icon-sm" aria-label="Plus d'actions" disabled={reminding}>
               <EllipsisVertical />
             </Button>
           </DropdownMenuTrigger>
