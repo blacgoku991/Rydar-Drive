@@ -302,6 +302,7 @@ export interface FlightUpdateNotificationData {
   terminal: string | null;
   pickup_at: Iso;
   pickup_at_original: Iso | null;
+}
 
 // ---------------------------------------------------------------------------
 // Alertes de suivi des courses (migration 20260924002200_ride_alerts.sql)
@@ -310,7 +311,7 @@ export type RideAlertKind = "late" | "stalled" | "no_gps" | "not_started";
 export type RideAlertSeverity = "warning" | "critical";
 export type RideAlertStatus = "open" | "acknowledged" | "resolved";
 export type RideAlertResolution = "kept" | "reassigned" | "relaunched" | "auto_resolved";
-/** keep → acknowledge_ride_alert(alert_id) · reassign → assign_ride(ride_id, driver_id) · relaunch → reassign_ride(ride_id, reason) */
+/** keep → acknowledge_ride_alert(alert_id) · reassign → assign_ride(ride_id, driver_id) · relaunch → reassign_ride(ride_id, reason, expected_driver_id) (DRIVER_CHANGED si le chauffeur a changé ; UNASSIGNED si dispatch auto désactivé) */
 export type RideAlertAction = "keep" | "reassign" | "relaunch";
 
 export interface RideAlertData {

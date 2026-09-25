@@ -456,7 +456,7 @@ describe("reassign_ride — « Relancer » (retirer la course au chauffeur)", ()
       accepted_at: null, driver_en_route_at: null,
     });
     const marker = state.offers.find((o) => o.driver_id === x.id && o.closed_reason === "removed_by_dispatch");
-    expect(marker).toMatchObject({ status: "declined", mode: "geo", wave: 0 });
+    expect(marker).toMatchObject({ status: "closed", mode: "geo", wave: 0 });
     expect(state.offers.filter((o) => o.status === "pending").map((o) => [o.driver_id, o.wave, o.radius_m])).toEqual([[y.id, 1, 4000]]);
 
     const [dx] = await sql("select presence, current_ride_id from public.drivers where id = $1", [x.id]);
@@ -511,6 +511,40 @@ describe("reassign_ride — « Relancer » (retirer la course au chauffeur)", ()
     // L'ancienne alerte n'est pas rouverte, et la course (sans chauffeur) n'est plus surveillée
     await watch();
     expect((await alertsOf(ride.id)).filter((a) => a.status !== "resolved")).toHaveLength(0);
+  });
+
+  it("chauffeur changé entre-temps : DRIVER_CHANGED, rien n'est retiré", async () => {
+    const { org, x, y, ride } = await setup("Reassign CAS");
+    expect((await assign(org, ride.id, y.id)).ok).toBe(true);
+    const res = await rpc(org.ownerId, "reassign_ride", [ride.id, "Injoignable", x.id]);
+    expect(res).toMatchObject({ ok: false, code: "DRIVER_CHANGED", driver_id: y.id });
+    const [r] = await sql("select driver_id, status from public.rides where id = $1", [ride.id]);
+    expect(r).toEqual({ driver_id: y.id, status: "ACCEPTED" });
+    // chauffeur attendu = chauffeur actuel : retrait effectué
+    expect((await rpc(org.ownerId, "reassign_ride", [ride.id, null, y.id])).ok).toBe(true);
+  });
+
+  it("dispatch automatique désactivé : course retirée, en attente d'attribution manuelle, sans relance", async () => {
+    const { org, x, ride } = await setup("Reassign manual");
+    await sql("update public.organization_settings set auto_dispatch = false where organization_id = $1", [org.id]);
+    const res = await rpc(org.ownerId, "reassign_ride", [ride.id, null]);
+    expect(res).toMatchObject({ ok: true, code: "UNASSIGNED", status: "CREATED", notified: 0 });
+    const state = await rideState(ride.id);
+    expect(state.ride).toMatchObject({ status: "CREATED", driver_id: null, dispatch_started_at: null });
+    expect(state.offers.filter((o) => o.status === "pending")).toHaveLength(0);
+    const [ev] = await eventsOf(ride.id, "ride.reassigned");
+    expect(ev.message).toContain("à attribuer manuellement");
+    const [dx] = await sql("select presence from public.drivers where id = $1", [x.id]);
+    expect(dx.presence).toBe("available");
+  });
+
+  it("le retrait ne compte pas comme un refus du chauffeur (taux d'acceptation intact)", async () => {
+    const { org, x, ride } = await setup("Reassign stats");
+    await rpc(org.ownerId, "reassign_ride", [ride.id, null]);
+    const metrics = await as({ sub: org.ownerId }, (q) => q("select * from public.org_driver_metrics($1, 30)", [org.id]));
+    const mx = metrics.find((m) => m.driver_id === x.id)!;
+    expect(mx).toMatchObject({ declined: "0" });
+    expect(Number(mx.acceptance_rate)).toBe(1);
   });
 
   it("planifiée : remise à toute la flotte, sauf le chauffeur retiré", async () => {

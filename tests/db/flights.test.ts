@@ -410,15 +410,31 @@ describe("apply_flight_status — prise en charge à l'aéroport", () => {
     expect(state.offers.filter((o) => o.mode === "fleet").every((o) => o.status !== "pending")).toBe(true);
   });
 
+  it("client qui a prévu plus que la marge : vol à l'heure = heure inchangée, retard = même décalage", async () => {
+    const T0 = minuteFromNow(3 * HOUR);
+    const S = plus(T0, -40 * MIN); // le client a demandé 40 min après l'atterrissage (marge 15 min)
+    const ride = await airportRide(A, T0);
+    const onTime = await apply(ride.id, { status: "scheduled", scheduled: S, estimated: S });
+    expect(onTime).toMatchObject({ pickup_changed: false });
+    expect(new Date((await rideState(ride.id)).ride.pickup_at).getTime()).toBe(T0.getTime());
+    const late = await apply(ride.id, { status: "delayed", scheduled: S, estimated: plus(S, 25 * MIN) });
+    expect(late).toMatchObject({ pickup_changed: true, delay_minutes: 25 });
+    expect(new Date(late.pickup_at).getTime()).toBe(plus(T0, 25 * MIN).getTime());
+    // Le retard se résorbe : retour vers l'heure demandée (référence = heure d'origine, pas l'heure décalée)
+    const back = await apply(ride.id, { status: "delayed", scheduled: S, estimated: plus(S, 5 * MIN) });
+    expect(new Date(back.pickup_at).getTime()).toBe(plus(T0, 5 * MIN).getTime());
+    expect(new Date(back.pickup_at_original).getTime()).toBe(T0.getTime());
+  });
+
   it("heure idéale déjà passée : prise en charge à maintenant, jamais dans le passé, sans recalage répété", async () => {
     const T0 = minuteFromNow(20 * MIN);
     const ride = await airportRide(A, T0);
     expect(ride.type).toBe("instant");
-    const S = minuteFromNow(-50 * MIN);
-    const actual = plus(S, -10 * MIN); // atterri il y a ~1 h → idéal ≈ il y a 45 min
+    const S = plus(T0, -15 * MIN);
+    const actual = plus(S, -45 * MIN); // atterri il y a ~40 min, 45 min d'avance → idéal ≈ il y a 25 min
     const before = Date.now();
     const res = await apply(ride.id, { status: "landed", scheduled: S, actual });
-    expect(res).toMatchObject({ pickup_changed: true, events: ["flight.early", "flight.landed"], delay_minutes: -10 });
+    expect(res).toMatchObject({ pickup_changed: true, events: ["flight.early", "flight.landed"], delay_minutes: -45 });
     const { ride: row } = await rideState(ride.id);
     const pickup = new Date(row.pickup_at).getTime();
     expect(pickup).toBeGreaterThanOrEqual(before - 1000);
@@ -506,7 +522,7 @@ describe("apply_flight_status — prise en charge à l'aéroport", () => {
     expect(await apply("00000000-0000-0000-0000-000000000000", { status: "landed" })).toMatchObject({ ok: false, code: "RIDE_NOT_FOUND" });
   });
 
-  it("marge configurable : 0 min → prise en charge à l'arrivée du vol", async () => {
+  it("réservation avant l'atterrissage : prise en charge à l'arrivée + marge (0 min ici)", async () => {
     const org = await createOrg("Vols Marge", { settings: { flight_pickup_buffer_minutes: 0 } });
     const T0 = minuteFromNow(3 * HOUR);
     const ride = await airportRide(org, T0);

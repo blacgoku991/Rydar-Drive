@@ -245,6 +245,7 @@ declare
   v_reference timestamptz;
   v_lead interval;
   v_shift boolean := false;
+  v_relative boolean := false;
   v_incoherent boolean := false;
   v_fleet boolean := false;
   v_changed boolean;
@@ -337,15 +338,24 @@ begin
   v_eta := coalesce(v_actual, v_estimated, v_scheduled);
   v_reference := coalesce(r.pickup_at_original, r.pickup_at);
 
-  -- Mode arrivée : prise en charge = arrivée (réelle | estimée | prévue) + marge, jamais dans le passé
+  -- Mode arrivée : la prise en charge suit le RETARD du vol, à partir de l'heure demandée
+  --   (heure demandée + (arrivée réelle | estimée − arrivée prévue)) : un vol à l'heure ne déplace
+  --   jamais l'heure choisie par le client, même s'il a prévu plus (ou moins) que la marge.
+  --   Sans horaire prévu, ou heure demandée AVANT l'arrivée prévue (réservation incohérente) :
+  --   arrivée + marge bagages. Jamais dans le passé.
   if v_mode = 'arrival'
      and v_eta is not null
      and v_status not in ('cancelled', 'diverted')
      and r.status in ('CREATED', 'SEARCHING_DRIVER', 'OFFERED', 'ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'NO_DRIVER_FOUND')
   then
-    v_ideal := date_trunc('minute', v_eta) + make_interval(mins => coalesce(s.flight_pickup_buffer_minutes, 15));
-    if abs(extract(epoch from (v_ideal - v_reference))) > 86400 then
-      -- Plus de 24 h d'écart avec l'heure demandée : mauvais vol / mauvaise date → pas de recalage
+    v_relative := v_scheduled is not null and v_reference >= v_scheduled;
+    v_ideal := case
+      when v_relative then date_trunc('minute', v_reference + (v_eta - v_scheduled))
+      else date_trunc('minute', v_eta) + make_interval(mins => coalesce(s.flight_pickup_buffer_minutes, 15))
+    end;
+    if abs(extract(epoch from (v_eta - v_reference))) > 86400
+       or abs(extract(epoch from (v_ideal - v_reference))) > 12 * 3600 then
+      -- Vol à plus de 24 h de l'heure demandée (mauvais vol / mauvaise date) ou décalage > 12 h : pas de recalage
       v_incoherent := true;
     else
       v_target := greatest(v_ideal, now());
@@ -403,8 +413,8 @@ begin
       v_shift_msg := format('Vol %s en avance de %s — prise en charge à %s', v_flight, private.fmt_minutes(v_delay), v_at_label);
     else
       v_shift_type := 'flight.updated';
-      v_shift_msg := format('Vol %s — prise en charge ajustée à %s (arrivée %s + %s min)', v_flight, v_at_label, v_eta_label,
-        coalesce(s.flight_pickup_buffer_minutes, 15));
+      v_shift_msg := format('Vol %s — prise en charge ajustée à %s (arrivée %s%s)', v_flight, v_at_label, v_eta_label,
+        case when v_relative then '' else format(' + %s min', coalesce(s.flight_pickup_buffer_minutes, 15)) end);
     end if;
     perform private.log_event(r.organization_id, r.id, v_shift_type, v_shift_msg, 'timeline',
       case when v_shift_type = 'flight.delayed' and v_delay >= 15 then 'warning' else 'info' end::public.event_level,
