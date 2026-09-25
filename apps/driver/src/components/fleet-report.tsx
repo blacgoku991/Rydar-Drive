@@ -208,7 +208,7 @@ export function ReportCard({
       if (!res.ok) {
         hapticResult(false);
         onFlash(res.message ?? "Ce signalement a expiré.", "info");
-        onExpired?.();
+        if (res.code === "REPORT_EXPIRED") onExpired?.();
       } else {
         hapticResult(true);
         setVote(still);
@@ -255,6 +255,8 @@ export function ReportCard({
       {feed && report.body && report.body !== DEFAULT_BODY[report.report_type ?? "other"] ? <Text style={styles.cardBody}>{report.body}</Text> : null}
       {active && (
         <View style={styles.votes}>
+          {/* L'auteur ne confirme pas son propre signalement (refusé par le serveur) : il peut seulement le retirer */}
+          {!mine && (
           <Pressable
             onPress={() => void doVote(true)}
             disabled={busy != null}
@@ -265,6 +267,7 @@ export function ReportCard({
             {busy === "yes" ? <ActivityIndicator color={colors.brand} /> : <Ionicons name="checkmark-circle" size={feed ? 18 : 20} color={vote === true ? colors.brandFg : colors.brand} />}
             <Text style={[styles.voteText, vote === true && { color: colors.brandFg }]}>Toujours là</Text>
           </Pressable>
+          )}
           <Pressable
             onPress={() => void doVote(false)}
             disabled={busy != null}

@@ -60,7 +60,8 @@ export function DriverDocuments({
   const [busy, setBusy] = useState<string | null>(null);
   const [reject, setReject] = useState<DocumentView | null>(null);
   const [note, setNote] = useState("");
-  const [fixDate, setFixDate] = useState<{ doc: DocumentView; date: string } | null>(null);
+  // Date à saisir avant validation : échéance passée (DOCUMENT_EXPIRED) ou manquante sur une pièce à échéance (EXPIRY_REQUIRED)
+  const [fixDate, setFixDate] = useState<{ doc: DocumentView; date: string; reason: "expired" | "missing" } | null>(null);
   const timer = useRef<number | null>(null);
 
   useRealtimeEvent("driver.document", (e: DriverDocumentEvent) => {
@@ -75,8 +76,8 @@ export function DriverDocuments({
       const res = await reviewDriverDocument({ documentId: doc.id, approve, note: opts.note, expiresAt: opts.expiresAt });
       setBusy(null);
       if (!res.ok) {
-        if (res.code === "DOCUMENT_EXPIRED") {
-          setFixDate({ doc, date: "" });
+        if (res.code === "DOCUMENT_EXPIRED" || res.code === "EXPIRY_REQUIRED") {
+          setFixDate({ doc, date: "", reason: res.code === "EXPIRY_REQUIRED" ? "missing" : "expired" });
           return;
         }
         toast.error(res.error);
@@ -222,11 +223,17 @@ export function DriverDocuments({
 
       <Dialog open={!!fixDate} onOpenChange={(o) => !o && setFixDate(null)}>
         <DialogContent
-          title="Document expiré"
-          description={fixDate ? `L'échéance saisie pour ${fixDate.doc.label} est déjà passée. Corrigez-la d'après la photo, ou refusez le document.` : undefined}
+          title={fixDate?.reason === "missing" ? "Date d'échéance requise" : "Document expiré"}
+          description={
+            fixDate
+              ? fixDate.reason === "missing"
+                ? `Indiquez la date d'expiration de ${fixDate.doc.label} (lisible sur la photo) : elle déclenche les rappels et remplace l'ancien document.`
+                : `L'échéance saisie pour ${fixDate.doc.label} est déjà passée. Corrigez-la d'après la photo, ou refusez le document.`
+              : undefined
+          }
           size="sm"
         >
-          <Field label="Nouvelle échéance">
+          <Field label={fixDate?.reason === "missing" ? "Date d'échéance" : "Nouvelle échéance"}>
             <Input
               type="date"
               className="[color-scheme:dark]"

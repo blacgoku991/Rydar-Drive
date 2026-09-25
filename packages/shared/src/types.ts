@@ -289,6 +289,9 @@ export interface ApplyFlightStatusResult {
   pickup_at_original?: Iso | null;
   events?: FlightEventTag[];
   notified?: boolean;
+  /** Instantanée repoussée au-delà du seuil : repassée en planifiée ('fleet' = proposée à la flotte,
+   *  'assigned' = chauffeur gardé et libéré d'ici là), sinon null */
+  requalified?: "fleet" | "assigned" | null;
 }
 
 /** `data` des notifications push de type `flight_update` (chauffeur). */
@@ -458,7 +461,8 @@ export interface MarkChatReadResult {
 
 export interface FleetReportVoteResult {
   ok: boolean;
-  code: "VOTED" | "ALREADY_VOTED" | "REPORT_EXPIRED";
+  /** OWN_REPORT : l'auteur ne confirme pas son propre signalement (il peut le retirer) */
+  code: "VOTED" | "ALREADY_VOTED" | "REPORT_EXPIRED" | "OWN_REPORT";
   message?: string;
   report: ChatMessage;
   my_vote?: boolean;
