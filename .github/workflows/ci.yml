@@ -81,8 +81,11 @@ jobs:
           PGPASSWORD: postgres
         run: |
           bash scripts/db-local.sh --reset --seed
-          test "$(psql -d rydar_demo -tAc 'select count(*) from public.drivers')" = "19"
-          test "$(psql -d rydar_demo -tAc 'select count(*) from public.organizations')" = "2"
+          test "$(psql -d rydar_demo -tAc 'select count(*) from public.drivers')" = "29"
+          test "$(psql -d rydar_demo -tAc 'select count(*) from public.organizations')" = "3"
+          # Centrale de démonstration (option 2) : un banni signalé, des commissions à encaisser
+          test "$(psql -d rydar_demo -tAc 'select count(*) from public.fraud_reports where status = $$open$$')" = "1"
+          test "$(psql -d rydar_demo -tAc 'select count(*) > 0 from public.ride_settlements where status = $$due$$')" = "t"
 
   worker-image:
     name: Image Docker du worker
