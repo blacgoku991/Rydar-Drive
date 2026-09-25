@@ -264,15 +264,20 @@ export function CommandCenter({
   // Ouverture d'une course depuis une alerte (toast, cloche, notification du navigateur) ou ?ride=
   const selectRideRef = useRef(selectRide);
   selectRideRef.current = selectRide;
+  const ridesRef = useRef(state.rides);
+  ridesRef.current = state.rides;
   useEffect(() => {
+    // Course hors du direct (terminée, trop ancienne) : sa fiche complète
+    const open = (id: string) => (ridesRef.current[id] ? selectRideRef.current(id) : window.location.assign(`/dashboard/rides/${id}`));
     const onFocus = (e: Event) => {
       const id = (e as CustomEvent<string>).detail;
-      if (id) selectRideRef.current(id);
+      if (id) open(id);
     };
     window.addEventListener("rydar:focus-ride", onFocus);
     const fromUrl = new URLSearchParams(window.location.search).get("ride");
     if (fromUrl) {
-      window.setTimeout(() => selectRideRef.current(fromUrl), 400);
+      // après le cadrage initial de la carte sur la flotte
+      window.setTimeout(() => open(fromUrl), 1500);
       window.history.replaceState(null, "", window.location.pathname);
     }
     return () => window.removeEventListener("rydar:focus-ride", onFocus);

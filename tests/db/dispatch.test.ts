@@ -201,6 +201,33 @@ describe("Dispatch instantané (PostGIS)", () => {
     expect(state.offers.filter((o) => o.status === "pending")).toHaveLength(2);
   });
 
+  it("tick : l'offre d'un chauffeur parti sur une autre course est fermée, pas prolongée", async () => {
+    const org = await createOrg("Busy elsewhere");
+    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 800) });
+    const x = await createRideAsOwner(org);
+    const offerX = (await rideState(x.id)).offers[0];
+    // Le chauffeur est parti sur une autre course (attribuée par le rattacheur)
+    await sql("update public.drivers set presence = 'en_route' where id = $1", [d.id]);
+    await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [x.id]);
+    await sql("select private.dispatch_tick()");
+    const [o] = await sql("select status, closed_reason from public.ride_offers where id = $1", [offerX.id]);
+    expect(o).toEqual({ status: "expired", closed_reason: "driver_unavailable" });
+  });
+
+  it("réglages absents : rayons par défaut, pas de boucle infinie", async () => {
+    const org = await createOrg("No settings");
+    await createDriver(org, { at: north(CHAMPS_ELYSEES, 6000) });
+    await sql("delete from public.organization_settings where organization_id = $1", [org.id]);
+    await sql("set statement_timeout = '5s'");
+    try {
+      const ride = await createRideAsOwner(org);
+      const { ride: r } = await rideState(ride.id);
+      expect(r.dispatch_radius_m).toBe(8000);
+    } finally {
+      await sql("set statement_timeout = 0");
+    }
+  });
+
   it("une offre expirée ne peut plus être acceptée", async () => {
     const org = await createOrg("Expired accept");
     const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 800) });

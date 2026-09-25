@@ -40,7 +40,7 @@ function fromBanFeature(f: any): Place | null {
   if (type === "municipality" || type === "locality") kind = "city";
   if (type === "poi") kind = categories.map((c) => POI_KIND[c.toLowerCase()]).find(Boolean) ?? "poi";
   const score = typeof p.score === "number" ? p.score : undefined;
-  return { label: type === "poi" && name ? name : label, address: label, lat, lng, kind, score, postcode };
+  return { label: type === "poi" && name ? name : label, address: label, lat, lng, kind, score, postcode, precision: type || undefined };
 }
 
 async function ban(q: string, near: Near, base: string, autocomplete = true): Promise<Place[]> {
@@ -119,12 +119,15 @@ export async function searchPlaces(q: string, near?: Near): Promise<Place[]> {
 
 const MIN_SCORE = 0.5;
 const POSTCODE = /\b(\d{5})\b/;
+const HOUSENUMBER = /(^|,\s*)\d{1,4}\s?(bis|ter|[a-d])?\s+\D/i;
 
 /** Résultat assez sûr pour placer une course sans validation humaine. */
 function confident(p: Place | undefined, input: string, precise: boolean): p is Place {
   if (!p) return false;
   if (p.score != null && p.score < MIN_SCORE) return false;
   if (precise && p.kind === "city") return false;
+  // « 25 avenue X » : un résultat au niveau de la rue placerait le client au milieu de l'avenue
+  if (precise && p.precision === "street" && HOUSENUMBER.test(input)) return false;
   const wanted = POSTCODE.exec(input)?.[1];
   if (wanted && p.postcode && p.postcode !== wanted) return false;
   return true;

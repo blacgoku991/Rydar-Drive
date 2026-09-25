@@ -1,41 +1,13 @@
 -- =============================================================================
--- Dispatch : vagues CUMULATIVES 4 → 8 → 12 → 16 km (audit géoloc / dispatch).
---
---  * Élargir = « tous les chauffeurs à moins de 8 km », pas un anneau 4–8 km :
---    les offres encore en attente des vagues précédentes sont PROLONGÉES (sans
---    nouvelle sonnerie) au lieu d'expirer, et la vague ajoute les nouveaux.
---  * Après la dernière vague : plus de re-sonnerie toutes les 30 s pour les mêmes
---    chauffeurs ; seules les nouvelles arrivées dans la zone sont notifiées.
---  * L'exclusion « déjà sollicité » ne vaut que pour la recherche en cours :
---    bascule planifiée → GPS et « Relancer » repartent bien de 4 km.
---  * Une offre expirée ne peut plus être acceptée (notification restée à l'écran).
---  * Positions trop imprécises (> 1,5 km) ignorées : la règle « 4 km d'abord »
---    n'a de sens qu'avec une position fiable.
---  * Rayons strictement croissants imposés en base.
---  * Notifications restées « sending » (worker arrêté en plein envoi) : reprises.
+-- Revue du dispatch (vagues cumulatives, flotte) :
+--  * accept_ride_offer relit l'offre sous verrou (offre retirée au même instant) ;
+--  * run_geo_wave : rayons par défaut si les réglages manquent (plus de boucle infinie) ;
+--  * tick : les offres de chauffeurs devenus indisponibles sont fermées, pas prolongées ;
+--  * offer_to_fleet : échéance des offres flotte recalée sur le délai de bascule ;
+--  * index pour la reprise des notifications « sending » ;
+--  * les planifiées déjà en cours profitent du re-balayage de la flotte toutes les 5 min.
 -- =============================================================================
 
--- ----------------------------------------------------------------- rayons
-create or replace function private.is_strictly_increasing(p integer[])
-returns boolean
-language sql
-immutable
-set search_path = ''
-as $$
-  select coalesce(bool_and(p[i] > p[i - 1]), true)
-  from generate_subscripts(p, 1) as i
-  where i > array_lower(p, 1);
-$$;
-
--- Données existantes non conformes (écrites hors de l'interface) : triées et dédoublonnées d'abord
-update public.organization_settings
-   set dispatch_radii_m = (select array_agg(distinct x order by x) from unnest(dispatch_radii_m) as x)
- where not private.is_strictly_increasing(dispatch_radii_m);
-
-alter table public.organization_settings
-  add constraint organization_settings_radii_increasing check (private.is_strictly_increasing(dispatch_radii_m));
-
--- ----------------------------------------------------------------- vague GPS
 create or replace function private.run_geo_wave(p_ride_id uuid)
 returns integer
 language plpgsql
@@ -66,8 +38,8 @@ begin
   end if;
 
   select * into s from public.organization_settings where organization_id = r.organization_id;
-  v_radii := s.dispatch_radii_m;
-  v_n := cardinality(v_radii);
+  v_radii := coalesce(s.dispatch_radii_m, '{4000,8000,12000,16000}');
+  v_n := greatest(1, coalesce(cardinality(v_radii), 1));
   v_timeout := make_interval(secs => coalesce(s.offer_timeout_seconds, 30));
   v_max_age := make_interval(secs => coalesce(s.location_max_age_seconds, 180));
   v_from := coalesce(private.short_address(r.pickup_address), r.pickup_address);
@@ -215,85 +187,6 @@ begin
 end;
 $$;
 
--- ----------------------------------------------------------------- tick
-create or replace function private.dispatch_tick(p_limit integer default 200)
-returns jsonb
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_ride record;
-  r public.rides;
-  s public.organization_settings;
-  v_expired uuid[];
-  v_extended integer;
-  v_waves integer := 0;
-  v_escalated integer := 0;
-  v_failed integer := 0;
-  v_expired_count integer := 0;
-begin
-  perform private.set_actor('system', null);
-
-  for v_ride in
-    select id from public.rides
-    where status in ('SEARCHING_DRIVER', 'OFFERED')
-      and next_dispatch_at <= now()
-    order by next_dispatch_at
-    limit p_limit
-    for update skip locked
-  loop
-    select * into r from public.rides where id = v_ride.id;
-    select * into s from public.organization_settings where organization_id = r.organization_id;
-
-    if r.dispatch_mode = 'fleet' then
-      v_expired := private.close_pending_offers(r.id, 'expired', 'fleet_window_elapsed');
-      update public.rides
-         set dispatch_mode = 'geo', dispatch_wave = 0, dispatch_started_at = now()
-       where id = r.id;
-      perform private.log_event(r.organization_id, r.id, 'dispatch.escalated',
-        format('Course planifiée toujours sans chauffeur à T-%s min — bascule en recherche GPS', s.scheduled_dispatch_lead_minutes),
-        'timeline', 'warning', jsonb_build_object('closed_offers', cardinality(v_expired)), 'system', null);
-      perform private.run_geo_wave(r.id);
-      v_escalated := v_escalated + 1;
-      continue;
-    end if;
-
-    if r.dispatch_started_at < now() - make_interval(secs => coalesce(s.max_search_seconds, 300)) then
-      v_expired := private.close_pending_offers(r.id, 'expired', 'timeout');
-      v_expired_count := v_expired_count + cardinality(v_expired);
-      update public.rides
-         set status = 'NO_DRIVER_FOUND', no_driver_at = now(), next_dispatch_at = null
-       where id = r.id;
-      perform private.log_event(r.organization_id, r.id, 'dispatch.no_driver',
-        format('Aucun chauffeur trouvé — recherche arrêtée après %s min', round(coalesce(s.max_search_seconds, 300) / 60.0)),
-        'timeline', 'error', jsonb_build_object('waves', r.dispatch_wave, 'last_radius_m', r.dispatch_radius_m,
-          'closed_offers', cardinality(v_expired)), 'system', null);
-      v_failed := v_failed + 1;
-      continue;
-    end if;
-
-    -- Vague suivante : les chauffeurs déjà sollicités gardent leur offre (prolongée, sans re-sonnerie)
-    update public.ride_offers
-       set expires_at = now() + make_interval(secs => coalesce(s.offer_timeout_seconds, 30))
-     where ride_id = r.id and status = 'pending' and mode = 'geo';
-    get diagnostics v_extended = row_count;
-    if v_extended > 0 then
-      perform private.log_event(r.organization_id, r.id, 'dispatch.extended',
-        format('%s %s sans réponse — %s', v_extended, private.pl(v_extended, 'offre toujours ouverte', 'offres toujours ouvertes'),
-          case when r.dispatch_wave < cardinality(s.dispatch_radii_m) then 'on élargit le rayon' else 'recherche de nouveaux chauffeurs' end),
-        'dispatch', 'info', jsonb_build_object('pending', v_extended, 'wave', r.dispatch_wave), 'system', null);
-    end if;
-
-    perform private.run_geo_wave(r.id);
-    v_waves := v_waves + 1;
-  end loop;
-
-  return jsonb_build_object('waves', v_waves, 'escalated', v_escalated, 'no_driver', v_failed, 'expired_offers', v_expired_count);
-end;
-$$;
-
--- ----------------------------------------------------------------- accept : refuse les offres expirées
 create or replace function public.accept_ride_offer(p_offer_id uuid)
 returns jsonb
 language plpgsql
@@ -320,6 +213,8 @@ begin
 
   -- Point de sérialisation : verrou exclusif sur la ligne de la course.
   select * into r from public.rides where id = o.ride_id for update;
+  -- Relecture sous verrou : l'offre a pu être retirée entre-temps (hors ligne, fin de recherche…)
+  select * into o from public.ride_offers where id = p_offer_id for update;
   v_latency := (extract(epoch from (clock_timestamp() - o.sent_at)) * 1000)::bigint;
 
   if r.driver_id is not null or r.status not in ('SEARCHING_DRIVER', 'OFFERED') then
@@ -409,89 +304,211 @@ begin
 end;
 $$;
 
--- ----------------------------------------------------------------- temps réel : la prolongation est diffusée
-drop trigger if exists ride_offers_broadcast on public.ride_offers;
-create trigger ride_offers_broadcast
-  after insert or update of status, expires_at on public.ride_offers
-  for each row execute function private.broadcast_offer();
-
--- ----------------------------------------------------------------- notifications bloquées en « sending »
-alter table public.notifications add column if not exists claimed_at timestamptz;
-
-create or replace function private.claim_notifications(p_limit integer default 100)
-returns table (
-  id uuid,
-  organization_id uuid,
-  driver_id uuid,
-  ride_id uuid,
-  type text,
-  title text,
-  body text,
-  data jsonb,
-  priority text,
-  attempts smallint,
-  tokens jsonb
-)
-language sql
+create or replace function private.dispatch_tick(p_limit integer default 200)
+returns jsonb
+language plpgsql
 security definer
 set search_path = ''
 as $$
-  -- worker arrêté en plein envoi : on remet en file après 2 min
-  update public.notifications n
-     set status = 'queued', last_error = 'worker_interrupted'
-   where n.status = 'sending'
-     and coalesce(n.claimed_at, n.created_at) < now() - interval '2 minutes';
+declare
+  v_ride record;
+  r public.rides;
+  s public.organization_settings;
+  v_expired uuid[];
+  v_extended integer;
+  v_waves integer := 0;
+  v_escalated integer := 0;
+  v_refreshed integer := 0;
+  v_failed integer := 0;
+  v_expired_count integer := 0;
+begin
+  perform private.set_actor('system', null);
 
-  with stale as (
-    update public.notifications n
-       set status = 'cancelled', last_error = 'offer_closed'
-      from public.ride_offers o
-     where n.status = 'queued'
-       and n.offer_id = o.id
-       and n.type in ('ride_offer', 'ride_offer_scheduled')
-       and o.status <> 'pending'
-    returning n.id
-  ),
-  due as (
-    select n.id
-    from public.notifications n
-    where n.status = 'queued'
-      and n.channel = 'push'
-      and n.scheduled_for <= now()
-      and not exists (select 1 from stale s where s.id = n.id)
-    order by n.priority = 'high' desc, n.scheduled_for
+  for v_ride in
+    select id from public.rides
+    where status in ('SEARCHING_DRIVER', 'OFFERED')
+      and next_dispatch_at <= now()
+    order by next_dispatch_at
     limit p_limit
     for update skip locked
-  ),
-  claimed as (
-    update public.notifications n
-       set status = 'sending', attempts = n.attempts + 1, claimed_at = now()
-      from due
-     where n.id = due.id
-    returning n.*
-  )
-  select c.id, c.organization_id, c.driver_id, c.ride_id, c.type, c.title, c.body, c.data, c.priority, c.attempts,
-         coalesce((
-           select jsonb_agg(jsonb_build_object('token', t.token, 'provider', t.provider, 'platform', t.platform))
-           from public.push_tokens t
-           where t.driver_id = c.driver_id and t.is_active
-         ), '[]'::jsonb) as tokens
-  from claimed c;
+  loop
+    select * into r from public.rides where id = v_ride.id;
+    select * into s from public.organization_settings where organization_id = r.organization_id;
+
+    if r.dispatch_mode = 'fleet' then
+      -- Fenêtre flotte encore ouverte : on propose aux chauffeurs devenus éligibles
+      if now() < r.pickup_at - make_interval(mins => coalesce(s.scheduled_dispatch_lead_minutes, 60)) then
+        perform private.offer_to_fleet(r.id);
+        v_refreshed := v_refreshed + 1;
+        continue;
+      end if;
+      v_expired := private.close_pending_offers(r.id, 'expired', 'fleet_window_elapsed');
+      update public.rides
+         set dispatch_mode = 'geo', dispatch_wave = 0, dispatch_started_at = now()
+       where id = r.id;
+      perform private.log_event(r.organization_id, r.id, 'dispatch.escalated',
+        format('Course planifiée toujours sans chauffeur à T-%s min — bascule en recherche GPS', s.scheduled_dispatch_lead_minutes),
+        'timeline', 'warning', jsonb_build_object('closed_offers', cardinality(v_expired)), 'system', null);
+      perform private.run_geo_wave(r.id);
+      v_escalated := v_escalated + 1;
+      continue;
+    end if;
+
+    if r.dispatch_started_at < now() - make_interval(secs => coalesce(s.max_search_seconds, 300)) then
+      v_expired := private.close_pending_offers(r.id, 'expired', 'timeout');
+      v_expired_count := v_expired_count + cardinality(v_expired);
+      update public.rides
+         set status = 'NO_DRIVER_FOUND', no_driver_at = now(), next_dispatch_at = null
+       where id = r.id;
+      perform private.log_event(r.organization_id, r.id, 'dispatch.no_driver',
+        format('Aucun chauffeur trouvé — recherche arrêtée après %s min', round(coalesce(s.max_search_seconds, 300) / 60.0)),
+        'timeline', 'error', jsonb_build_object('waves', r.dispatch_wave, 'last_radius_m', r.dispatch_radius_m,
+          'closed_offers', cardinality(v_expired)), 'system', null);
+      v_failed := v_failed + 1;
+      continue;
+    end if;
+
+    -- Offres de chauffeurs devenus indisponibles (autre course, suspendus) : fermées, pas prolongées
+    with gone as (
+      update public.ride_offers o
+         set status = 'expired', closed_reason = 'driver_unavailable', responded_at = coalesce(o.responded_at, now())
+        from public.drivers d
+       where o.ride_id = r.id and o.status = 'pending' and o.mode = 'geo'
+         and d.id = o.driver_id
+         and (d.status <> 'active' or d.presence not in ('available', 'offered'))
+      returning o.driver_id
+    )
+    select coalesce(array_agg(driver_id), '{}') into v_expired from gone;
+    perform private.release_offered_drivers(v_expired);
+
+    -- Vague suivante : les chauffeurs déjà sollicités gardent leur offre (prolongée, sans re-sonnerie)
+    update public.ride_offers
+       set expires_at = now() + make_interval(secs => coalesce(s.offer_timeout_seconds, 30))
+     where ride_id = r.id and status = 'pending' and mode = 'geo';
+    get diagnostics v_extended = row_count;
+    if v_extended > 0 then
+      perform private.log_event(r.organization_id, r.id, 'dispatch.extended',
+        format('%s %s sans réponse — %s', v_extended, private.pl(v_extended, 'offre toujours ouverte', 'offres toujours ouvertes'),
+          case when r.dispatch_wave < cardinality(s.dispatch_radii_m) then 'on élargit le rayon' else 'recherche de nouveaux chauffeurs' end),
+        'dispatch', 'info', jsonb_build_object('pending', v_extended, 'wave', r.dispatch_wave), 'system', null);
+    end if;
+
+    perform private.run_geo_wave(r.id);
+    v_waves := v_waves + 1;
+  end loop;
+
+  return jsonb_build_object('waves', v_waves, 'escalated', v_escalated, 'fleet_refreshed', v_refreshed,
+    'no_driver', v_failed, 'expired_offers', v_expired_count);
+end;
 $$;
 
--- Accusés de réception Expo : échec constaté après coup (identifiants, jeton mort…)
-create or replace function private.fail_notification_delivery(p_id uuid, p_error text)
-returns void
-language sql
+create or replace function private.offer_to_fleet(p_ride_id uuid)
+returns integer
+language plpgsql
 security definer
 set search_path = ''
 as $$
-  update public.notifications
-     set status = 'failed', last_error = left(p_error, 500)
-   where id = p_id and status = 'sent';
+declare
+  r public.rides;
+  s public.organization_settings;
+  v_tz text;
+  v_when text;
+  v_expires timestamptz;
+  v_count integer := 0;
+  v_pending integer := 0;
+  v_first boolean;
+  v_from text;
+  v_to text;
+begin
+  select * into r from public.rides where id = p_ride_id for update;
+  if not found or r.status not in ('SEARCHING_DRIVER', 'OFFERED') or r.driver_id is not null then
+    return 0;
+  end if;
+
+  select * into s from public.organization_settings where organization_id = r.organization_id;
+  select timezone into v_tz from public.organizations where id = r.organization_id;
+  v_when := to_char(r.pickup_at at time zone coalesce(v_tz, 'Europe/Paris'), 'DD/MM HH24:MI');
+  v_expires := greatest(
+    r.pickup_at - make_interval(mins => coalesce(s.scheduled_dispatch_lead_minutes, 60)),
+    now() + make_interval(secs => coalesce(s.offer_timeout_seconds, 30))
+  );
+  v_from := coalesce(private.short_address(r.pickup_address), r.pickup_address);
+  v_to := coalesce(private.short_address(r.dropoff_address), r.dropoff_address);
+  v_first := r.dispatch_wave = 0;
+
+  with candidates as (
+    select d.id as driver_id,
+           case when l.driver_id is null then null
+                else round(extensions.st_distance(l.location, r.pickup_location))::integer end as distance_m
+    from public.drivers d
+    left join public.driver_locations l on l.driver_id = d.id
+    left join public.vehicles v on v.id = d.vehicle_id
+    where d.organization_id = r.organization_id
+      and d.status = 'active'
+      and private.category_compatible(r.vehicle_category, v.category, s.allow_category_upgrade)
+      and coalesce(v.seats, 0) >= r.passengers
+      and not exists (
+        select 1 from public.ride_offers o
+        where o.ride_id = r.id and o.driver_id = d.id and o.status in ('pending', 'declined')
+      )
+  ),
+  ins as (
+    insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, distance_m, expires_at)
+    select r.organization_id, r.id, c.driver_id, 'pending', 'fleet', 1, c.distance_m, v_expires
+    from candidates c
+    returning id, driver_id
+  ),
+  notif as (
+    insert into public.notifications (organization_id, driver_id, ride_id, offer_id, type, title, body, data, priority)
+    select r.organization_id, i.driver_id, r.id, i.id, 'ride_offer_scheduled', 'NOUVELLE COURSE PLANIFIÉE',
+           format('%s · %s → %s · %s', v_when, v_from, v_to, private.fmt_eur(r.price_cents)),
+           jsonb_build_object(
+             'type', 'ride_offer_scheduled', 'offer_id', i.id, 'ride_id', r.id, 'ride_type', r.type,
+             'pickup', r.pickup_address, 'dropoff', r.dropoff_address, 'pickup_at', r.pickup_at,
+             'price_cents', r.price_cents, 'passengers', r.passengers, 'expires_at', v_expires),
+           'high'
+    from ins i
+    returning 1
+  )
+  select count(*)::integer into v_count from ins;
+
+  -- échéance recalculée (délai de bascule modifié dans les réglages)
+  update public.ride_offers
+     set expires_at = v_expires
+   where ride_id = r.id and status = 'pending' and mode = 'fleet' and expires_at is distinct from v_expires;
+
+  select count(*) into v_pending from public.ride_offers o where o.ride_id = r.id and o.status = 'pending' and o.mode = 'fleet';
+
+  update public.rides
+     set status = case when v_pending > 0 then 'OFFERED' else 'SEARCHING_DRIVER' end::public.ride_status,
+         offered_at = case when v_pending > 0 then coalesce(offered_at, now()) else offered_at end,
+         dispatch_wave = 1,
+         -- nouveau passage dans 5 min (nouveaux chauffeurs), au plus tard à T-lead (bascule GPS)
+         next_dispatch_at = least(v_expires, now() + interval '5 minutes')
+   where id = r.id;
+
+  if v_count > 0 then
+    perform private.log_event(r.organization_id, r.id, 'dispatch.fleet',
+      case when v_first
+           then format('Course proposée à la flotte — %s %s', v_count, private.pl(v_count, 'chauffeur notifié', 'chauffeurs notifiés'))
+           else format('Course proposée à %s %s de la flotte', v_count, private.pl(v_count, 'nouveau chauffeur', 'nouveaux chauffeurs'))
+      end,
+      'timeline', 'success', jsonb_build_object('count', v_count, 'pending', v_pending, 'open_until', v_expires), 'system', null);
+    perform pg_notify('rydar_notifications', r.id::text);
+  elsif v_first then
+    perform private.log_event(r.organization_id, r.id, 'dispatch.fleet_empty',
+      'Aucun chauffeur compatible dans la flotte pour l''instant — nouvel essai toutes les 5 min, puis recherche GPS avant la prise en charge',
+      'timeline', 'warning', jsonb_build_object('open_until', v_expires), 'system', null);
+  end if;
+
+  return v_count;
+end;
 $$;
 
-revoke execute on function private.claim_notifications(integer), private.fail_notification_delivery(uuid, text),
-  private.is_strictly_increasing(integer[]) from public, anon, authenticated;
-grant execute on function private.claim_notifications(integer), private.fail_notification_delivery(uuid, text) to service_role;
-grant execute on function private.is_strictly_increasing(integer[]) to authenticated, service_role;
+create index if not exists notifications_sending_idx on public.notifications (claimed_at) where status = 'sending';
+
+update public.rides
+   set next_dispatch_at = least(next_dispatch_at, now() + interval '5 minutes')
+ where dispatch_mode = 'fleet'
+   and status in ('SEARCHING_DRIVER', 'OFFERED')
+   and next_dispatch_at is not null;

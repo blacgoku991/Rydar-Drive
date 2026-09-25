@@ -10,6 +10,8 @@ export type Place = {
   /** Confiance du géocodeur (0–1, formats BAN / Géoplateforme). */
   score?: number;
   postcode?: string;
+  /** Précision BAN/Géoplateforme : housenumber | street | locality | municipality | poi. */
+  precision?: string;
 };
 
 export const FAVORITE_PLACES: Place[] = [

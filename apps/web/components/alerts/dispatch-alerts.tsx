@@ -75,6 +75,16 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
   const seen = useRef(new Set<string>());
   const soundRef = useRef(sound);
   soundRef.current = sound;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  // Enregistré à chaque modification (jamais depuis un effet : pas d'écrasement avant la relecture)
+  const update = useCallback((fn: (list: AlertItem[]) => AlertItem[]) => {
+    setItems((list) => {
+      const next = fn(list);
+      if (next !== list) write(() => window.sessionStorage, STORE_KEY + scopeRef.current, next.slice(0, 40));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     setItems(read(() => window.sessionStorage, STORE_KEY + scope, [] as AlertItem[]));
@@ -97,7 +107,6 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
       window.removeEventListener("keydown", unlock);
     };
   }, []);
-  useEffect(() => write(() => window.sessionStorage, STORE_KEY + scope, items.slice(0, 40)), [items, scope]);
 
   const focusRide = useCallback(
     (id: string) => {
@@ -113,7 +122,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     if (seen.current.has(item.id)) return;
     seen.current.add(item.id);
     const full: AlertItem = { ...item, at: new Date().toISOString(), read: false };
-    setItems((list) => [full, ...list].slice(0, 40));
+    update((list) => [full, ...list].slice(0, 40));
     const meta = META[item.kind];
     if (meta.sound && soundRef.current) playSound(meta.sound);
     toast.custom((t) => <AlertToast item={full} onClose={() => toast.dismiss(t)} onOpen={(id) => (focusRef.current(id), toast.dismiss(t))} />, {
@@ -133,7 +142,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
         /* notifications indisponibles (iframe, politique du navigateur) */
       }
     }
-  }, []);
+  }, [update]);
 
   useRealtimeEvent("ride.updated", (p) => {
     if (!p?.id || p.number == null) return;
@@ -219,8 +228,8 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
       if (typeof Notification === "undefined") return;
       void Notification.requestPermission().then(setDesktop);
     },
-    markAllRead: () => setItems((l) => (l.some((i) => !i.read) ? l.map((i) => ({ ...i, read: true })) : l)),
-    clear: () => setItems([]),
+    markAllRead: () => update((l) => (l.some((i) => !i.read) ? l.map((i) => ({ ...i, read: true })) : l)),
+    clear: () => update(() => []),
     focusRide,
   };
   return <AlertsContext.Provider value={ctx}>{children}</AlertsContext.Provider>;
