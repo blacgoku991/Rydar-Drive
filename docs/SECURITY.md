@@ -11,7 +11,9 @@
 | **Intégrité inter-tenant** | Clés étrangères composites `(organization_id, id)` : une course de A ne peut pas référencer un chauffeur ou un véhicule de B. Le trigger `forbid_org_change` rend `organization_id` **immuable**, même pour un superutilisateur. |
 | **Fonctions RPC** | Chaque RPC vérifie explicitement le tenant et le rôle (`assert_org_member`) avant d'agir. `EXECUTE` est révoqué par défaut puis accordé fonction par fonction. |
 | **Serveur Next.js** | Validation zod de chaque entrée, contrôle du rôle dans chaque server action. La clé *service role* n'est utilisée que côté serveur (`server-only`), après authentification. |
-| **Temps réel** | Canaux privés. Une policy RLS sur `realtime.messages` limite `org:{id}` aux membres de l'organisation et `driver:{id}` au chauffeur concerné. |
+| **Temps réel** | Canaux privés. Une policy RLS sur `realtime.messages` limite `org:{id}` aux membres de l'organisation et `driver:{id}` au chauffeur concerné. `fleet:{id}` (fil flotte, signalements) est ouvert aux chauffeurs de l'organisation, sans donnée client. |
+| **Messagerie** | Lecture par RLS uniquement : un chauffeur ne voit que son fil direct et le fil flotte de **son** organisation. Aucune écriture directe : tout passe par des RPC qui vérifient le tenant et limitent le débit (`PT429`). Le nom de l'auteur est dénormalisé, un chauffeur n'accède donc jamais à la fiche des autres. Les signalements exigent une position ; les votes sont uniques par votant. |
+| **Documents chauffeur** | Dépôt dans le stockage limité au dossier `<org>/<chauffeur>/` du chauffeur connecté (policy Storage). Validation par la centrale seulement (`review_driver_document`, auteur et date conservés). |
 
 ## Scénario obligatoire : A tente de récupérer une course de B
 

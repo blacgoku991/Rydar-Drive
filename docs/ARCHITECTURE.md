@@ -23,6 +23,7 @@ Toutes les tables métier portent `organization_id`. Les relations entre tables 
 | Flotte | `drivers`, `vehicles`, `driver_documents`, `driver_devices`, `push_tokens`, `driver_locations` (dernière position, `geography` + GiST), `driver_location_history` |
 | Courses | `rides`, `ride_offers`, `ride_assignments`, `ride_events` (timeline + journal du dispatch), `ride_status_history`, `pricing_rules` |
 | Intégrations | `api_keys` (métadonnées), `api_key_secrets` (hash HMAC, service role uniquement), `api_logs`, `notifications` (outbox) |
+| Suivi & échanges | `ride_alerts` (alertes de suivi), `chat_messages` (fils direct / flotte, signalements géolocalisés), `chat_reads` (accusés de lecture), `chat_report_votes` |
 
 Les paramètres de dispatch sont réglables par organisation (`organization_settings`) :
 
@@ -37,6 +38,11 @@ Les paramètres de dispatch sont réglables par organisation (`organization_sett
 | `reminder_offsets_minutes` | `{1440, 180, 60, 30}` | Rappels au chauffeur attribué |
 | `allow_category_upgrade` | true | Un véhicule de catégorie supérieure peut prendre une course inférieure |
 | `location_max_age_seconds` | 180 | Position plus ancienne : chauffeur ignoré |
+| `flight_tracking_enabled` | true | Suivi des vols des courses au départ d'un aéroport |
+| `flight_pickup_buffer_minutes` | 15 | Marge après l'atterrissage, utilisée seulement sans horaire prévu ou si l'heure demandée précède l'arrivée |
+| `late_alert_tolerance_minutes` | 5 | Retard toléré avant alerte « chauffeur en retard » |
+| `stalled_alert_minutes` | 4 | Immobilité (en route, loin du départ) avant alerte |
+| `driver_commission_percent` | — | Commission de la centrale : net estimé dans les gains du chauffeur |
 
 ## Moteur de dispatch
 
@@ -96,16 +102,48 @@ ACCEPTED → DRIVER_EN_ROUTE → DRIVER_ARRIVED → PASSENGER_ONBOARD → IN_PRO
 
 Le rattacheur dispose de `cancel_ride`, `assign_ride` (attribution manuelle) et `redispatch_ride`. Chaque changement est historisé (`ride_status_history`) et raconté dans la timeline (`ride_events`).
 
+### 6. Suivi des vols
+
+La colonne générée `rides.flight_mode` vaut `arrival` quand le départ de la course est un aéroport (le client arrive par ce vol) et `departure` sinon (information seulement). Toutes les minutes, le worker réserve les courses à vérifier avec `private.flights_to_check` (`SKIP LOCKED`, toutes les 5 min à moins de 3 h de la prise en charge, sinon toutes les 30 min). Il interroge le fournisseur, puis appelle `private.apply_flight_status`. Le décalage est **relatif au retard** : nouvelle prise en charge = heure demandée + (arrivée estimée − arrivée prévue). Il n'est appliqué qu'au-delà de 5 min d'écart, jamais dans le passé, et plafonné à 12 h. L'heure demandée est conservée dans `pickup_at_original`. Une course planifiée proposée à la flotte voit sa bascule GPS et ses offres recalées ; au chauffeur attribué, on recalcule les rappels et on envoie une notification `flight_update`. Une simple vérification sans changement ne modifie rien, donc ne déclenche aucune diffusion.
+
+### 7. Alertes de suivi (la centrale décide)
+
+Toutes les 30 s, `private.watch_rides()` (verrou consultatif, un seul worker à la fois) examine les courses attribuées :
+
+- **late** : arrivée estimée au départ au-delà de l'heure promise + tolérance. La référence d'une course instantanée est l'heure promise à l'acceptation.
+- **stalled** : chauffeur en route qui ne bouge plus, loin du départ.
+- **no_gps** : aucune position depuis plus de 3 min.
+- **not_started** : planifiée imminente, chauffeur hors ligne ou sans position.
+
+Une alerte reste unique par course et par type (index partiel), se met à jour et se ferme seule quand le problème disparaît. Aucune action automatique n'est prise. La centrale choisit :
+
+| Action | RPC | Effet |
+| --- | --- | --- |
+| Garder | `acknowledge_ride_alert` | Sourdine 15 min |
+| Réattribuer | `assign_ride` | Attribue à un chauffeur choisi, y compris depuis « en route » |
+| Relancer | `reassign_ride(ride, motif, chauffeur attendu)` | Retire la course et relance la recherche à 4 km, ou à la flotte si elle est planifiée |
+
+Pour « Relancer » : `DRIVER_CHANGED` est renvoyé si la course a changé de chauffeur entre-temps. Si le dispatch automatique est désactivé, la course passe simplement en attente d'attribution manuelle. Le chauffeur retiré est marqué par une offre `closed / removed_by_dispatch` : il n'est plus sollicité pour cette course, sans que cela compte comme un refus.
+
+### 8. Messagerie et signalements
+
+`chat_messages` porte deux types de fils : `driver` (centrale ⇄ un chauffeur) et `fleet` (toute l'organisation). Un signalement (`report_type` police, control, accident, traffic, danger) est un message de flotte avec position obligatoire et expiration. Chaque vote « toujours là » le prolonge ; des votes « plus là » majoritaires l'expirent. Un vote est idempotent par votant. Les envois passent par `send_chat_message`, avec une limite de débit en base (`PT429`). Les signalements notifient les chauffeurs proches (`fleet_report`), les messages directs notifient le chauffeur (`chat_message`). Les accusés de lecture sont stockés dans `chat_reads`.
+
+### 9. Gains et documents
+
+`driver_earnings(p_days)` agrège les courses terminées du chauffeur : jour, semaine du lundi et mois dans le fuseau de l'organisation, série sur 7 jours, net estimé si une commission est réglée. Le chauffeur dépose ses documents avec `driver_submit_document` ; ils restent « en attente » jusqu'à `review_driver_document` par la centrale. `private.document_reminders()` (worker, toutes les 6 h) passe les documents échus en « expiré » et envoie des rappels à J-30, J-7 et J-0, sans doublon.
+
 ## Temps réel
 
 Des triggers publient les changements avec `realtime.send` (Supabase Realtime, canaux **privés**) :
 
 | Topic | Événements | Abonnés |
 | --- | --- | --- |
-| `org:{organization_id}` | `driver.location`, `driver.updated`, `ride.updated`, `ride.event`, `offer.updated` | Dashboard (carte, listes, timeline) |
-| `driver:{driver_id}` | `offer.updated`, `ride.updated`, `ride.unassigned` | App chauffeur |
+| `org:{organization_id}` | `driver.location`, `driver.updated`, `ride.updated`, `ride.event`, `offer.updated`, `ride.alert`, `chat.message`, `chat.report`, `chat.read`, `driver.document` | Dashboard (carte, listes, timeline, alertes, messagerie) |
+| `driver:{driver_id}` | `offer.updated`, `ride.updated`, `ride.unassigned`, `chat.message`, `chat.read`, `driver.document` | App chauffeur |
+| `fleet:{organization_id}` | `chat.message` (fil flotte), `chat.report` | Chauffeurs et membres de l'organisation |
 
-La policy RLS sur `realtime.messages` n'autorise l'écoute d'un topic qu'aux membres de l'organisation, ou au chauffeur concerné. Le dashboard garde un rafraîchissement de secours toutes les 6 s en cas de coupure du WebSocket.
+La policy RLS sur `realtime.messages` n'autorise l'écoute d'un topic qu'aux membres de l'organisation, ou au chauffeur concerné. `fleet:{org}` est ouvert aux chauffeurs de l'organisation, mais **jamais** `org:{org}` : ce topic transporte les données clients. Le dashboard garde un rafraîchissement de secours toutes les 6 s en cas de coupure du WebSocket.
 
 ## Notifications (outbox)
 
