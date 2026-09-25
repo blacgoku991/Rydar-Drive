@@ -228,6 +228,24 @@ describe("Dispatch instantané (PostGIS)", () => {
     }
   });
 
+  it("sans réponse pendant deux délais : offre fermée « ignorée », chauffeur libéré et pas re-sollicité", async () => {
+    const org = await createOrg("Ignored");
+    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 900) });
+    const ride = await createRideAsOwner(org);
+    const offer = (await rideState(ride.id)).offers[0];
+    await sql("update public.ride_offers set sent_at = now() - interval '61 seconds' where id = $1", [offer.id]);
+    await sql("update public.rides set next_dispatch_at = now() - interval '1 second', dispatch_started_at = now() - interval '62 seconds' where id = $1", [ride.id]);
+    await sql("select private.dispatch_tick()");
+    const [o] = await sql("select status, closed_reason from public.ride_offers where id = $1", [offer.id]);
+    expect(o).toEqual({ status: "expired", closed_reason: "ignored" });
+    const [p] = await sql("select presence from public.drivers where id = $1", [d.id]);
+    expect(p.presence).toBe("available");
+    await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [ride.id]);
+    await sql("select private.dispatch_tick()");
+    const offers = await sql("select id from public.ride_offers where ride_id = $1 and driver_id = $2", [ride.id, d.id]);
+    expect(offers).toHaveLength(1);
+  });
+
   it("une offre expirée ne peut plus être acceptée", async () => {
     const org = await createOrg("Expired accept");
     const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 800) });
