@@ -15,11 +15,13 @@ export async function createRide(input: RideFormInput): Promise<Result<{ id: str
   if (!parsed.success) return { ok: false, error: "Vérifiez les champs du formulaire.", fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt!;
-  // Destination tapée sans choisir de suggestion : géocodée ici (trajet, durée et prix restent calculés)
+  // Destination tapée sans choisir de suggestion (« Sur place », « À définir »…) : placée seulement si le
+  // résultat est sans ambiguïté, et jamais tarifée au compteur sur un point que personne n'a vu
   let dropoff = { ...v.dropoff };
+  let guessedDropoff = false;
   if ((dropoff.lat == null || dropoff.lng == null) && dropoff.address.trim()) {
-    const g = await geocodeOne(dropoff.address, { lat: v.pickup.lat, lng: v.pickup.lng }, { precise: false }).catch(() => null);
-    if (g) dropoff = { ...dropoff, lat: g.lat, lng: g.lng };
+    const g = await geocodeOne(dropoff.address, { lat: v.pickup.lat, lng: v.pickup.lng }, { precise: false, minScore: 0.7 }).catch(() => null);
+    if (g) (dropoff = { ...dropoff, lat: g.lat, lng: g.lng }), (guessedDropoff = true);
   }
   const route = await rideRouteColumns({ lat: v.pickup.lat, lng: v.pickup.lng }, dropoff);
   // Prix non saisi : grille de l'organisation (forfait reconnu, sinon compteur), comme l'API
@@ -34,7 +36,7 @@ export async function createRide(input: RideFormInput): Promise<Result<{ id: str
       .maybeSingle();
     if (rule) {
       const fixed = matchFixedFare(rule as PricingRule, v.pickup.address, dropoff.address);
-      priceCents = fixed?.price_cents ?? (route.estimated_distance_m != null ? estimatePrice(rule as PricingRule, route.estimated_distance_m, route.estimated_duration_s ?? 0, pickupAt, ctx.org.timezone ?? "Europe/Paris") : null);
+      priceCents = fixed?.price_cents ?? (route.estimated_distance_m != null && !guessedDropoff ? estimatePrice(rule as PricingRule, route.estimated_distance_m, route.estimated_duration_s ?? 0, pickupAt, ctx.org.timezone ?? "Europe/Paris") : null);
     }
   }
 

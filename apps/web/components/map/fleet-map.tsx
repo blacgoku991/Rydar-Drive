@@ -153,10 +153,17 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   }, [ready, mapRef]);
 
   // ---------------------------------------------------------------- cadrage
+  // Cadrage demandé avant que la carte existe (lien « Voir sur la carte ») : appliqué à la place du cadrage flotte
+  const pendingFit = useRef<Coord[] | null>(null);
   const fitPoints = useCallback((pts: Coord[]) => {
     const map = mapRef.current;
     const lib = libRef.current;
-    if (!map || !lib || !pts.length) return;
+    if (!pts.length) return;
+    if (!map || !lib) {
+      pendingFit.current = pts;
+      return;
+    }
+    fitted.current = true;
     const bounds = pts.reduce((b, p) => b.extend(p), new lib.LngLatBounds(pts[0]!, pts[0]!));
     map.fitBounds(bounds, { padding: paddingRef.current, maxZoom: 14.5, duration: 900 });
   }, [mapRef, libRef]);
@@ -236,11 +243,14 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         cars.current.delete(id);
       }
     }
-    if (!fitted.current && (drivers.length || rides.length)) {
+    if (!fitted.current && (pendingFit.current || drivers.length || rides.length)) {
+      const pending = pendingFit.current;
+      pendingFit.current = null;
+      if (pending) fitPoints(pending);
+      else fitAll();
       fitted.current = true;
-      fitAll();
     }
-  }, [drivers, ready, showOffline, selectedDriverId, selectedRideId, rides, offers, offeredDrivers, fitAll, mapRef, libRef, staleMs]);
+  }, [drivers, ready, showOffline, selectedDriverId, selectedRideId, rides, offers, offeredDrivers, fitAll, fitPoints, mapRef, libRef, staleMs]);
 
   // ---------------------------------------------------------------- courses & tracés
   useEffect(() => {

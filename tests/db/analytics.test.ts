@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  ago, as, CHAMPS_ELYSEES, createDriver, createOrg, createRideAsOwner, expectPgError, insertRideBypass, north, pool, rideState,
+  ago, as, CHAMPS_ELYSEES, createDriver, createOrg, createRideAsOwner, expectPgError, insertRideBypass, north, pool, rideState, sql,
 } from "./helpers";
 
 afterAll(async () => {
@@ -73,6 +73,38 @@ describe("Indicateurs du dashboard", () => {
 
     expect(m(slow.id)).toMatchObject({ offers: "2", accepted: "0", declined: "1", completed: "0", cancelled: "1", revenue_cents: "0" });
     expect(Number(m(slow.id).acceptance_rate)).toBe(0);
+  });
+
+  it("offre ignorée puis prise par un collègue : comptée « manquée » (pas un 100 % d'acceptation)", async () => {
+    const org = await createOrg("Missed");
+    const near = await createDriver(org, { firstName: "Near", at: north(CHAMPS_ELYSEES, 1000) });
+    const mid = await createDriver(org, { firstName: "Mid", at: north(CHAMPS_ELYSEES, 6000) });
+    const ride = await createRideAsOwner(org);
+    // Near laisse passer sa fenêtre : l'offre est prolongée à la vague suivante, Mid est sollicité
+    await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [ride.id]);
+    await sql("select private.dispatch_tick()");
+    const offers = (await rideState(ride.id)).offers;
+    const midOffer = offers.find((o) => o.driver_id === mid.id)!;
+    await as({ sub: mid.userId }, (q) => q("select public.accept_ride_offer($1)", [midOffer.id]));
+
+    const rows = await sql("select driver_id, status, closed_reason, missed_at from public.ride_offers where ride_id = $1", [ride.id]);
+    const byDriver = Object.fromEntries(rows.map((r) => [r.driver_id, r]));
+    expect(byDriver[near.id]).toMatchObject({ status: "closed", closed_reason: "assigned_to_other" });
+    expect(byDriver[near.id].missed_at).not.toBeNull();
+    expect(byDriver[mid.id].missed_at).toBeNull(); // acceptée dans sa fenêtre
+
+    const metrics = await as({ sub: org.ownerId }, (q) => q("select * from public.org_driver_metrics($1, 30)", [org.id]));
+    const m = (id: string) => metrics.find((r) => r.driver_id === id)!;
+    expect(m(near.id)).toMatchObject({ offers: "1", accepted: "0", expired: "1" });
+    expect(Number(m(near.id).acceptance_rate)).toBe(0);
+    expect(Number(m(mid.id).acceptance_rate)).toBe(1);
+
+    const [ds] = await as({ sub: org.ownerId }, (q) => q("select public.driver_stats($1, 30) as s", [near.id]));
+    expect(ds.s.offers).toMatchObject({ offers: 1, accepted: 0, expired: 1, acceptance_rate: 0 });
+    const [os] = await as({ sub: org.ownerId }, (q) =>
+      q("select public.org_stats($1, now() - interval '1 day', now() + interval '1 day') as s", [org.id]),
+    );
+    expect(os.s.offers).toMatchObject({ offers_sent: 2, accepted: 1, expired: 1, acceptance_rate: 0.5 });
   });
 
   it("org_kpis : temps d'attribution moyen calculé sur les seules courses instantanées", async () => {

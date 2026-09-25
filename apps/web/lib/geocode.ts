@@ -121,11 +121,25 @@ const MIN_SCORE = 0.5;
 const POSTCODE = /\b(\d{5})\b/;
 const HOUSENUMBER = /(^|,\s*)\d{1,4}\s?(bis|ter|[a-d])?\s+\D/i;
 
+const fold = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const STOP = new Set(["les", "des", "une", "sur", "aux", "rue", "avenue", "place", "boulevard"]);
+
+/** Lieu nommé (hôtel, restaurant…) : tous ses mots significatifs doivent figurer dans la saisie
+ *  (« Paris, France » ne doit pas devenir l'hôtel « Paris France Hotel », ni « Sur place » la Concorde). */
+function poiMatchesInput(p: Place, input: string): boolean {
+  const words = new Set(fold(input).split(/[^a-z0-9]+/));
+  return fold(p.label)
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !STOP.has(w))
+    .every((w) => words.has(w));
+}
+
 /** Résultat assez sûr pour placer une course sans validation humaine. */
-function confident(p: Place | undefined, input: string, precise: boolean): p is Place {
+function confident(p: Place | undefined, input: string, precise: boolean, minScore = MIN_SCORE): p is Place {
   if (!p) return false;
-  if (p.score != null && p.score < MIN_SCORE) return false;
+  if (p.score != null && p.score < minScore) return false;
   if (precise && p.kind === "city") return false;
+  if (p.kind === "poi" && !poiMatchesInput(p, input)) return false;
   // « 25 avenue X » : un résultat au niveau de la rue placerait le client au milieu de l'avenue
   if (precise && p.precision === "street" && HOUSENUMBER.test(input)) return false;
   const wanted = POSTCODE.exec(input)?.[1];
@@ -139,7 +153,7 @@ function confident(p: Place | undefined, input: string, precise: boolean): p is 
  * et second essai sans le nom du lieu (« Hôtel X, 25 avenue … » → « 25 avenue … »).
  * Renvoie null si l'adresse est introuvable ou ambiguë : l'appelant répond 422.
  */
-export async function geocodeOne(address: string, near?: Near, opts: { precise?: boolean } = {}): Promise<Place | null> {
+export async function geocodeOne(address: string, near?: Near, opts: { precise?: boolean; minScore?: number } = {}): Promise<Place | null> {
   const input = address.trim().replace(/\s+/g, " ").slice(0, 250);
   if (input.length < 3) return null;
   const precise = opts.precise ?? true;
@@ -148,7 +162,7 @@ export async function geocodeOne(address: string, near?: Near, opts: { precise?:
   if (parts.length > 1 && !/\d/.test(parts[0]!)) attempts.push(parts.slice(1).join(", "));
   for (const q of attempts) {
     const best = (await remoteSearch(q, near, false))[0];
-    if (confident(best, input, precise)) return best;
+    if (confident(best, input, precise, opts.minScore)) return best;
   }
   return exactFavorite(input);
 }

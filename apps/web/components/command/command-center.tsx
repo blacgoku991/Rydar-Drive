@@ -276,8 +276,8 @@ export function CommandCenter({
     window.addEventListener("rydar:focus-ride", onFocus);
     const fromUrl = new URLSearchParams(window.location.search).get("ride");
     if (fromUrl) {
-      // après le cadrage initial de la carte sur la flotte
-      window.setTimeout(() => open(fromUrl), 1500);
+      // la carte applique ce cadrage à la place du cadrage initial sur la flotte, même si elle charge encore
+      window.setTimeout(() => open(fromUrl), 0);
       window.history.replaceState(null, "", window.location.pathname);
     }
     return () => window.removeEventListener("rydar:focus-ride", onFocus);
