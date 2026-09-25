@@ -1,5 +1,5 @@
 import { formatTime } from "./format";
-import type { FleetReportType, FlightStatus, RideAlertKind, RideAlertSeverity } from "./types";
+import type { DocumentState, FleetReportType, FlightStatus, RideAlertKind, RideAlertSeverity } from "./types";
 
 // -----------------------------------------------------------------------------
 // Libellés communs dashboard ⇄ app chauffeur : signalements, vols, alertes de suivi.
@@ -100,7 +100,8 @@ export const ALERT_SEVERITY_TONE: Record<RideAlertSeverity, "amber" | "red"> = {
 // -----------------------------------------------------------------------------
 // Documents chauffeur (migration 20260924002400) : statut calculé côté serveur
 // -----------------------------------------------------------------------------
-export type DocumentState = "valid" | "expiring" | "expired" | "pending" | "rejected" | "missing";
+/** Statut affiché (serveur) + « missing » pour un type exigé jamais déposé. */
+export type DocumentDisplayState = DocumentState | "missing";
 
 export const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   vtc_card: "Carte VTC",
@@ -112,7 +113,7 @@ export const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   other: "Document",
 };
 
-export const DOCUMENT_STATE_META: Record<DocumentState, { label: string; tone: "green" | "amber" | "red" | "blue" | "neutral" }> = {
+export const DOCUMENT_STATE_META: Record<DocumentDisplayState, { label: string; tone: "green" | "amber" | "red" | "blue" | "neutral" }> = {
   valid: { label: "Valide", tone: "green" },
   expiring: { label: "Expire bientôt", tone: "amber" },
   expired: { label: "Expiré", tone: "red" },
@@ -122,7 +123,7 @@ export const DOCUMENT_STATE_META: Record<DocumentState, { label: string; tone: "
 };
 
 /** « Expire dans 12 j », « Expire aujourd'hui », « Expiré depuis 3 j », sinon le libellé du statut. */
-export function documentStateLabel(state: DocumentState, daysLeft?: number | null): string {
+export function documentStateLabel(state: DocumentDisplayState, daysLeft?: number | null): string {
   if (state === "expiring" && daysLeft != null) return daysLeft <= 0 ? "Expire aujourd'hui" : `Expire dans ${daysLeft} j`;
   if (state === "expired" && daysLeft != null && daysLeft < 0) return `Expiré depuis ${-daysLeft} j`;
   return DOCUMENT_STATE_META[state].label;
