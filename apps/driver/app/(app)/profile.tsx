@@ -5,6 +5,7 @@ import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { TrustBadge } from "@/components/centrale";
 import { BigButton, Card, Label, Screen } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
@@ -43,6 +44,21 @@ export default function Profile() {
   }, []);
   useFocusEffect(useCallback(() => loadDocs(), [loadDocs]));
   useAppEvent("documents", loadDocs);
+  // Mode centrale : gains nets (part chauffeur) et commissions à régler / à recevoir
+  const centrale = (home?.model ?? home?.organization.dispatch_model) === "centrale";
+  const s = centrale ? home?.settlement ?? null : null;
+  const commissionsDetail = !s
+    ? undefined
+    : s.blocked
+      ? `Courses bloquées · ${formatPrice(s.owed_cents)} à régler`
+      : s.owed_cents > 0
+        ? `${formatPrice(s.owed_cents)} à régler`
+        : s.declared_cents > 0
+          ? `${formatPrice(s.declared_cents)} en attente de confirmation`
+          : s.to_receive_cents > 0
+            ? `${formatPrice(s.to_receive_cents)} à recevoir`
+            : "À jour";
+  const commissionsColor = !s ? undefined : s.blocked ? colors.red : s.owed_cents > 0 ? colors.amber : s.declared_cents > 0 ? colors.blue : colors.green;
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }}>
@@ -56,15 +72,28 @@ export default function Profile() {
             <View style={styles.avatar}><Text style={styles.avatarText}>{home?.driver.first_name?.charAt(0)}{home?.driver.last_name?.charAt(0)}</Text></View>
             <Text style={styles.name}>{home?.driver.first_name} {home?.driver.last_name}</Text>
             <Text style={styles.sub}>Chauffeur #{home?.driver.number} · {home?.organization.name}</Text>
+            {centrale && <TrustBadge level={home?.driver.trust_level} style={{ alignSelf: "center", marginTop: 4 }} />}
           </Card>
           <Card style={{ padding: 6 }}>
             <Row
               icon="wallet-outline"
               title="Mes gains"
-              detail={`${formatPrice(home?.today.revenue_cents ?? 0)} aujourd'hui`}
+              detail={`${formatPrice(centrale ? home?.today.net_cents ?? 0 : home?.today.revenue_cents ?? 0)} aujourd'hui`}
               onPress={() => router.push("/earnings")}
             />
             <View style={styles.sep} />
+            {centrale && (
+              <>
+                <Row
+                  icon={s?.blocked ? "lock-closed-outline" : "cash-outline"}
+                  title="Commissions"
+                  detail={commissionsDetail}
+                  detailColor={commissionsColor}
+                  onPress={() => router.push("/commissions")}
+                />
+                <View style={styles.sep} />
+              </>
+            )}
             <Row
               icon="folder-open-outline"
               title="Mes documents"

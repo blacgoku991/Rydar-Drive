@@ -1,21 +1,25 @@
-import { formatDistance, type DriverChatOverview, type DriverHome, type DriverOffer } from "@rydar/shared";
+import {
+  DRIVER_BLOCKER_META, formatDistance, type DriverAccountState, type DriverChatOverview, type DriverHome, type DriverOffer, type SettlementEvent,
+} from "@rydar/shared";
 import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Platform, Vibration } from "react-native";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
 import { locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking, type TrackingResult } from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
+import { settlementSession } from "@/lib/settlement-session";
 import { supabase } from "@/lib/supabase";
 
 export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "imprecise" };
 
 type Ctx = {
   session: Session | null;
+  /** Session lue et, si connecté, état du compte déterminé (le splash reste affiché jusque-là). */
   ready: boolean;
   home: DriverHome | null;
   offers: DriverOffer[];
@@ -27,10 +31,25 @@ type Ctx = {
   chat: DriverChatOverview | null;
   /** Relecture immédiate de la messagerie (après un envoi, un vote, une lecture). */
   refreshChat: () => Promise<void>;
+  /**
+   * État du compte (driver_account_state) : actif, candidature en attente, refusé, banni, suspendu…
+   * null tant qu'il n'a pas pu être lu (hors ligne : le chauffeur n'est pas bloqué pour autant).
+   */
+  account: DriverAccountState | null;
+  /** Compte utilisable pour rouler (accueil, offres, courses) ; sinon écran d'état du compte. */
+  canDrive: boolean;
+  /** Relit l'état du compte (écran d'attente, retour au premier plan, accès refusé par le serveur). */
+  checkAccount: () => Promise<DriverAccountState | null>;
 };
 
 /** Valeur numérique d'une donnée de notification (FCM/APNs transportent des chaînes). */
 const num = (v: unknown) => (v == null || v === "" ? undefined : Number.isFinite(Number(v)) ? Number(v) : undefined);
+
+/** Compte devenu inactif, banni ou suspendu en cours d'usage : les RPC chauffeur répondent FORBIDDEN (42501). */
+const isForbidden = (e: unknown) => e instanceof ApiError && (e.code ?? "").startsWith("FORBIDDEN");
+
+/** Relecture périodique de l'état du compte (suspension, bannissement) quand l'app est au premier plan. */
+const ACCOUNT_CHECK_MS = 60_000;
 
 /** Fenêtre (s) en deçà de laquelle une offre est traitée comme urgente (sonnerie, compte à rebours). */
 export const URGENT_OFFER_S = 120;
@@ -46,11 +65,30 @@ export function isUrgentOffer(o: Pick<DriverOffer, "mode" | "sent_at" | "expires
 const COARSE_MESSAGE =
   "Les courses sont proposées aux chauffeurs situés à 4 km, puis 8 km du client : avec une position approximative, vous ne pouvez pas en recevoir. Dans les réglages de Rydar Drive › Position, activez la position exacte.";
 
+/** Écran Commissions : rafraîchi s'il est déjà affiché, sinon ouvert. */
+function openCommissions() {
+  appEvents.emit("settlements", undefined);
+  if (!settlementSession.open) router.push("/commissions");
+}
+
+/** Acceptation refusée (mode centrale) : commission en retard, plafond d'encours… → accès direct au règlement. */
+export function alertDriverBlocked(res: { reason?: string | null; message?: string }) {
+  const meta = res.reason ? DRIVER_BLOCKER_META[res.reason as keyof typeof DRIVER_BLOCKER_META] : undefined;
+  const payable = res.reason !== "new_driver";
+  Alert.alert("Acceptation impossible", res.message ?? meta?.message ?? "Réglez vos commissions pour accepter des courses.", [
+    { text: payable ? "Plus tard" : "OK", style: "cancel" },
+    ...(payable ? [{ text: "Régler mes commissions", onPress: () => router.push("/commissions") }] : []),
+  ]);
+}
+
 const DriverContext = createContext<Ctx | null>(null);
 
 export function DriverProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [ready, setReady] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [account, setAccount] = useState<DriverAccountState | null>(null);
+  /** Utilisateur pour lequel l'état du compte a été déterminé (lu, ou lecture impossible). */
+  const [accountFor, setAccountFor] = useState<string | null>(null);
   const [home, setHome] = useState<DriverHome | null>(null);
   const [offers, setOffers] = useState<DriverOffer[]>([]);
   const [busy, setBusy] = useState(false);
@@ -60,16 +98,67 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   const channelRef = useRef<RealtimeChannel | null>(null);
   const fleetChannelRef = useRef<RealtimeChannel | null>(null);
   const chatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userId = session?.user.id ?? null;
+  const userIdRef = useRef<string | null>(null);
+  userIdRef.current = userId;
 
   // Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      setReady(true);
+      setSessionReady(true);
     });
     const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => data.subscription.unsubscribe();
   }, []);
+
+  // État du compte (actif, candidature, refus, bannissement…) — driver_account_state fonctionne même compte inactif
+  const checkAccount = useCallback(async (): Promise<DriverAccountState | null> => {
+    const uid = userIdRef.current;
+    if (!uid) return null;
+    const state = await api.accountState().catch(() => undefined); // undefined : réseau, on garde le dernier état connu
+    if (uid !== userIdRef.current) return null;
+    if (state !== undefined) setAccount(state);
+    setAccountFor(uid);
+    return state ?? null;
+  }, []);
+
+  useEffect(() => {
+    setAccount(null);
+    setAccountFor(null);
+    if (userId) void checkAccount();
+  }, [userId, checkAccount]);
+
+  const accountChecked = userId != null && accountFor === userId;
+  const ready = sessionReady && (!userId || accountChecked);
+  // État illisible (hors ligne) : comportement historique, l'app reste utilisable
+  const canDrive = session != null && accountChecked && (account == null || account.state === "active");
+  const blockedAccount = accountChecked && account != null && account.state !== "active";
+
+  // Compte bloqué (banni, suspendu, candidature…) : plus de suivi GPS ni de données de course
+  useEffect(() => {
+    if (!blockedAccount) return;
+    void stopTracking().catch(() => null);
+    setHome(null);
+    setOffers([]);
+  }, [blockedAccount]);
+
+  // Retour au premier plan : candidature validée, compte suspendu ou banni entre-temps
+  useEffect(() => {
+    if (!userId) return;
+    const sub = AppState.addEventListener("change", (s) => s === "active" && void checkAccount());
+    return () => sub.remove();
+  }, [userId, checkAccount]);
+
+  // Chauffeur actif : le canal driver:{id} n'est plus lisible dès la suspension (RLS realtime.messages →
+  // current_driver_id()), le dernier « driver.updated » n'arrive donc pas. Relecture légère de l'état du compte.
+  useEffect(() => {
+    if (!canDrive) return;
+    const id = setInterval(() => {
+      if (AppState.currentState === "active") void checkAccount();
+    }, ACCOUNT_CHECK_MS);
+    return () => clearInterval(id);
+  }, [canDrive, checkAccount]);
 
   const openOffer = useCallback((offer: DriverOffer) => {
     if (seenOffers.current.has(offer.offer_id)) return;
@@ -83,7 +172,19 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     if (!session) return;
     // Relevé des notifications AVANT la lecture des offres (cf. dismissClosedOfferNotifications)
     const presented = await presentedOfferNotifications();
-    const [h, o] = await Promise.all([api.home().catch(() => null), api.offers().catch(() => null)]);
+    let forbidden = false;
+    const [h, o] = await Promise.all([
+      api.home().catch((e: unknown) => {
+        forbidden = isForbidden(e);
+        return null;
+      }),
+      api.offers().catch(() => null),
+    ]);
+    // Compte devenu inactif en cours d'usage (banni, suspendu, désactivé) : écran d'état du compte
+    if (forbidden) {
+      void checkAccount();
+      return;
+    }
     if (h) setHome(h);
     if (o) {
       setOffers(o);
@@ -93,7 +194,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       if (fresh) openOffer(fresh);
       void dismissClosedOfferNotifications(presented, new Set(o.map((x) => x.offer_id)));
     }
-  }, [session, openOffer]);
+  }, [session, openOffer, checkAccount]);
 
   // Messagerie : une lecture complète (30 derniers messages par fil + signalements actifs) par rafale d'événements
   const refreshChat = useCallback(async () => {
@@ -109,9 +210,9 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     }, 250);
   }, [refreshChat]);
 
-  // Initialisation après connexion : canaux, push, données, temps réel
+  // Initialisation après connexion (compte actif) : canaux, push, données, temps réel
   useEffect(() => {
-    if (!session) return;
+    if (!session || !canDrive) return;
     let cancelled = false;
     (async () => {
       await setupNotificationChannels().catch(() => null);
@@ -152,6 +253,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         .on("broadcast", { event: "chat.read" }, scheduleChat)
         // Documents : validation, refus, échéance
         .on("broadcast", { event: "driver.document" }, () => appEvents.emit("documents"))
+        // Mode centrale : commission créée, déclarée, confirmée, contestée… (bandeau d'accueil, blocage, écran Commissions)
+        .on("broadcast", { event: "settlement.updated" }, (m) => {
+          void refresh();
+          appEvents.emit("settlements", m.payload as SettlementEvent | undefined);
+        })
         .subscribe();
       channelRef.current = ch;
       // Fil de la flotte (messages + signalements, votes « toujours là ») : topic privé fleet:<org>
@@ -169,11 +275,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       channelRef.current = null;
       fleetChannelRef.current = null;
     };
-  }, [session, refresh, refreshChat, scheduleChat]);
+  }, [session, canDrive, refresh, refreshChat, scheduleChat]);
 
   // Messagerie : repli périodique (le temps réel peut manquer un message) et relecture au retour au premier plan
   useEffect(() => {
-    if (!session) return;
+    if (!session || !canDrive) return;
     const id = setInterval(() => {
       if (AppState.currentState === "active") void refreshChat();
     }, 30_000);
@@ -184,11 +290,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       if (chatTimer.current) clearTimeout(chatTimer.current);
       chatTimer.current = null;
     };
-  }, [session, refreshChat]);
+  }, [session, canDrive, refreshChat]);
 
   // Repli : rafraîchissement périodique quand l'app est active et le chauffeur en ligne
   useEffect(() => {
-    if (!session) return;
+    if (!session || !canDrive) return;
     const id = setInterval(() => {
       if (AppState.currentState === "active" && home?.driver.presence !== "offline") void refresh();
     }, 8000);
@@ -197,7 +303,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       clearInterval(id);
       sub.remove();
     };
-  }, [session, home?.driver.presence, refresh]);
+  }, [session, canDrive, home?.driver.presence, refresh]);
 
   // Réponse à une notification (ACCEPTER / Refuser / ouverture) — écouteur ou démarrage à froid
   const handleResponse = useCallback(async (r: Notifications.NotificationResponse) => {
@@ -215,7 +321,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     const offerId = data.offer_id ? String(data.offer_id) : null;
     if (offerId) seenOffers.current.add(offerId); // pas de seconde ouverture par refresh()
     const type = typeof data.type === "string" ? data.type : "";
-    // Messagerie, signalements, vols, documents, course retirée : chaque notification ouvre son écran
+    // Messagerie, signalements, vols, documents, commissions, course retirée : chaque notification ouvre son écran
     if (!offerId) {
       if (type === "chat_message") {
         void refreshChat();
@@ -241,6 +347,27 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         router.push("/documents");
         return;
       }
+      // Mode centrale : commission à régler, relance, contestation, paiement confirmé, versement… (data.ride_id présent)
+      if (type.startsWith("settlement_")) {
+        void refresh();
+        openCommissions();
+        return;
+      }
+      // Candidature validée par la centrale : état du compte relu, direction l'accueil
+      if (type === "application_approved") {
+        const state = await checkAccount();
+        if (!state || state.state === "active") {
+          await refresh();
+          router.replace("/home");
+        }
+        return;
+      }
+      // Chauffeur confirmé : toutes les courses de la centrale lui sont proposées
+      if (type === "driver_trusted") {
+        await refresh();
+        router.dismissTo("/home");
+        return;
+      }
       if (type === "ride_unassigned") {
         await refresh();
         router.dismissTo("/home");
@@ -252,6 +379,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       if (res?.ok) offerSession.accepted.add(offerId);
       await refresh();
       if (!res) router.push({ pathname: "/offer/[id]", params: { id: offerId } }); // réseau : réessai depuis l'offre
+      else if (!res.ok && res.code === "DRIVER_BLOCKED") alertDriverBlocked(res);
       else if (!res.ok) Alert.alert(res.code === "OFFER_EXPIRED" ? "Offre expirée" : "Course indisponible", res.message ?? "Course déjà attribuée.");
       else if (data.ride_type === "instant" && res.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(res.ride_id) } });
       else {
@@ -271,7 +399,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       // Bannière touchée alors que l'offre est déjà à l'écran : rien à ouvrir
       if (offerSession.openId !== offerId) router.push({ pathname: "/offer/[id]", params: { id: offerId } });
     } else if (data.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(data.ride_id) } });
-  }, [refresh, refreshChat]);
+  }, [refresh, refreshChat, checkAccount]);
 
   // Notifications : réception au premier plan + actions
   useEffect(() => {
@@ -288,6 +416,13 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         appEvents.emit("ride", data?.ride_id ? String(data.ride_id) : undefined);
       }
       if (type.startsWith("document_")) appEvents.emit("documents");
+      // Mode centrale : bandeau d'accueil et écran Commissions à jour ; candidature validée ; chauffeur confirmé
+      if (type.startsWith("settlement_")) {
+        void refresh();
+        appEvents.emit("settlements", undefined);
+      }
+      if (type === "application_approved") void checkAccount();
+      if (type === "driver_trusted") void refresh();
     });
     const response = Notifications.addNotificationResponseReceivedListener((r) => void handleResponse(r).catch(() => null));
     // Démarrage à froid (tap sur ACCEPTER, app fermée) : la réponse précède l'écouteur
@@ -303,7 +438,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       received.remove();
       response.remove();
     };
-  }, [session, refresh, handleResponse, scheduleChat]);
+  }, [session, refresh, handleResponse, scheduleChat, checkAccount]);
 
   const setOnline = useCallback(async (online: boolean): Promise<OnlineResult> => {
     setBusy(true);
@@ -343,11 +478,12 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       await refresh();
       return { ok: res.ok, message: res.message };
     } catch (e) {
+      if (isForbidden(e)) void checkAccount();
       return { ok: false, message: (e as Error).message };
     } finally {
       setBusy(false);
     }
-  }, [refresh]);
+  }, [refresh, checkAccount]);
 
   const signOut = useCallback(async () => {
     await api.setOnline(false).catch(() => null);
@@ -357,12 +493,14 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     setHome(null);
     setOffers([]);
     setChat(null);
+    setAccount(null);
+    setAccountFor(null);
     seenOffers.current.clear();
   }, []);
 
   const value = useMemo(
-    () => ({ session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat }),
-    [session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat],
+    () => ({ session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat, account, canDrive, checkAccount }),
+    [session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat, account, canDrive, checkAccount],
   );
   return <DriverContext.Provider value={value}>{children}</DriverContext.Provider>;
 }

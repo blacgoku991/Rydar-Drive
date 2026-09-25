@@ -1,15 +1,20 @@
 // Gains du chauffeur : jour / semaine / mois, histogramme 7 jours, dernières courses (driver_earnings).
+// Mode centrale : « Votre part » (part chauffeur réelle), commission et statut du règlement par course.
 import { Ionicons } from "@expo/vector-icons";
 import {
-  PAYMENT_METHOD_LABELS, formatDistance, formatDuration, formatPrice, formatRideDate, type DriverEarnings, type EarningsPeriod, type PaymentMethod,
+  PAYMENT_METHOD_LABELS, SETTLEMENT_STATUS_META, formatDistance, formatDuration, formatPrice, formatRideDate,
+  type DriverEarnings, type EarningsPeriod, type EarningsRide, type PaymentMethod,
 } from "@rydar/shared";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { driverSettlementLabel } from "@/components/centrale";
 import { Card, Label, Screen, ScreenHeader, Segmented } from "@/components/ui";
+import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
-import { colors, mono } from "@/theme";
+import { useAppEvent } from "@/lib/events";
+import { colors, mono, toneColor } from "@/theme";
 
 type Period = "today" | "week" | "month";
 
@@ -34,6 +39,7 @@ function periodTitle(p: Period, e: DriverEarnings) {
 }
 
 export default function Earnings() {
+  const { home } = useDriver();
   const [data, setData] = useState<DriverEarnings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("today");
@@ -49,16 +55,22 @@ export default function Earnings() {
     }
   }, []);
   useFocusEffect(useCallback(() => void load(), [load]));
+  // Statut des règlements (mode centrale) : commission déclarée, confirmée, contestée…
+  useAppEvent("settlements", () => void load());
 
   const p: EarningsPeriod | null = data ? data[period] : null;
   const currency = data?.currency ?? "EUR";
   const commission = data?.commission_percent ?? null;
+  // Mode centrale : la part chauffeur (driver_payout_cents) est le montant qui compte
+  const centrale = data?.model === "centrale";
+  const dayValue = useCallback((d: { revenue_cents: number; net_cents: number | null }) => (centrale ? d.net_cents ?? 0 : d.revenue_cents), [centrale]);
   const series = data?.series ?? [];
-  const max = useMemo(() => Math.max(1, ...series.map((d) => d.revenue_cents)), [series]);
+  const max = useMemo(() => Math.max(1, ...series.map(dayValue)), [series, dayValue]);
   const today = series.length - 1;
   const sel = selectedDay ?? today;
   const selDay = series[sel];
-  const weekTotal = series.reduce((s, d) => s + d.revenue_cents, 0);
+  const weekTotal = series.reduce((s, d) => s + dayValue(d), 0);
+  const settlement = centrale ? home?.settlement ?? null : null;
 
   return (
     <Screen>
@@ -96,10 +108,16 @@ export default function Earnings() {
             <>
               {/* Montant de la période */}
               <View style={styles.hero}>
-                <Text style={styles.heroLabel}>{periodTitle(period, data)}</Text>
-                <Text style={styles.amount} numberOfLines={1} adjustsFontSizeToFit accessibilityLabel={`Chiffre d'affaires ${formatPrice(p.revenue_cents, currency)}`}>
-                  {formatPrice(p.revenue_cents, currency)}
-                </Text>
+                <Text style={styles.heroLabel}>{periodTitle(period, data)}{centrale ? " · votre part" : ""}</Text>
+                {centrale ? (
+                  <Text style={styles.amount} numberOfLines={1} adjustsFontSizeToFit accessibilityLabel={`Votre part ${formatPrice(p.net_cents ?? 0, currency)}`}>
+                    {formatPrice(p.net_cents ?? 0, currency)}
+                  </Text>
+                ) : (
+                  <Text style={styles.amount} numberOfLines={1} adjustsFontSizeToFit accessibilityLabel={`Chiffre d'affaires ${formatPrice(p.revenue_cents, currency)}`}>
+                    {formatPrice(p.revenue_cents, currency)}
+                  </Text>
+                )}
                 <View style={styles.stats}>
                   <Stat icon="car-sport-outline" value={`${p.rides}`} label={p.rides > 1 ? "courses" : "course"} />
                   <View style={styles.statSep} />
@@ -107,7 +125,15 @@ export default function Earnings() {
                   <View style={styles.statSep} />
                   <Stat icon="time-outline" value={formatDuration(p.duration_s)} label="en course" />
                 </View>
-                {commission != null && p.net_cents != null && (
+                {centrale ? (
+                  <View style={styles.net}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.netLabel}>Courses {formatPrice(p.revenue_cents, currency)}</Text>
+                      <Text style={styles.netHint}>moins commission et frais de la centrale</Text>
+                    </View>
+                    <Text style={[styles.netValue, { color: colors.amber }]}>−{formatPrice(p.commission_cents ?? 0, currency)}</Text>
+                  </View>
+                ) : commission != null && p.net_cents != null && (
                   <View style={styles.net}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.netLabel}>Net estimé</Text>
@@ -134,39 +160,69 @@ export default function Earnings() {
                 )}
               </View>
 
+              {/* Mode centrale : accès aux commissions (à régler, signalées, à recevoir) */}
+              {centrale && (
+                <Pressable
+                  onPress={() => router.push("/commissions")}
+                  style={({ pressed }) => [styles.commissions, settlement?.blocked && { borderColor: "rgba(242,85,90,0.45)" }, pressed && { opacity: 0.85 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Commissions"
+                >
+                  <View style={[styles.upIcon, { backgroundColor: settlement?.blocked ? "rgba(242,85,90,0.14)" : "rgba(245,181,68,0.14)" }]}>
+                    <Ionicons name={settlement?.blocked ? "lock-closed" : "wallet"} size={18} color={settlement?.blocked ? colors.red : colors.amber} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.upTitle}>Commissions</Text>
+                    <Text style={[styles.upSub, settlement?.blocked && { color: colors.red }]} numberOfLines={1}>
+                      {settlement?.blocked
+                        ? "Courses bloquées : réglez vos commissions"
+                        : settlement && settlement.owed_cents > 0
+                          ? `${formatPrice(settlement.owed_cents, currency)} à régler à la centrale`
+                          : settlement && settlement.declared_cents > 0
+                            ? `${formatPrice(settlement.declared_cents, currency)} signalé payé, à confirmer`
+                            : settlement && settlement.to_receive_cents > 0
+                              ? `${formatPrice(settlement.to_receive_cents, currency)} à recevoir`
+                              : "Tout est réglé"}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.subtle} />
+                </Pressable>
+              )}
+
               {/* Histogramme 7 jours */}
               <Card style={{ gap: 14 }}>
                 <View style={styles.chartHead}>
                   <View style={{ flex: 1 }}>
-                    <Label>7 derniers jours</Label>
+                    <Label>{centrale ? "7 derniers jours · votre part" : "7 derniers jours"}</Label>
                     <Text style={styles.chartTotal}>{formatPrice(weekTotal, currency)}</Text>
                   </View>
                   {selDay && (
                     <View style={{ alignItems: "flex-end" }}>
                       <Text style={styles.selDay}>{sel === today ? "Aujourd'hui" : dayLong(selDay.date)}</Text>
                       <Text style={styles.selValue}>
-                        {formatPrice(selDay.revenue_cents, currency)} · {selDay.rides} course{selDay.rides > 1 ? "s" : ""}
+                        {formatPrice(dayValue(selDay), currency)} · {selDay.rides} course{selDay.rides > 1 ? "s" : ""}
                       </Text>
                     </View>
                   )}
                 </View>
                 <View style={styles.chart} accessibilityRole="image" accessibilityLabel={`Gains des 7 derniers jours : ${formatPrice(weekTotal, currency)}`}>
                   {series.map((d, i) => {
-                    const h = d.revenue_cents > 0 ? Math.max(6, Math.round((d.revenue_cents / max) * 120)) : 4;
+                    const v = dayValue(d);
+                    const h = v > 0 ? Math.max(6, Math.round((v / max) * 120)) : 4;
                     const isToday = i === today;
                     const isSel = i === sel;
                     return (
-                      <Pressable key={d.date} style={styles.col} onPress={() => setSelectedDay(i)} accessibilityLabel={`${dayLong(d.date)} : ${formatPrice(d.revenue_cents, currency)}`}>
+                      <Pressable key={d.date} style={styles.col} onPress={() => setSelectedDay(i)} accessibilityLabel={`${dayLong(d.date)} : ${formatPrice(v, currency)}`}>
                         <View style={styles.barTrack}>
                           <View
                             style={[
                               styles.bar,
                               {
                                 height: h,
-                                backgroundColor: d.revenue_cents === 0 ? colors.surface3 : colors.brand,
-                                opacity: d.revenue_cents === 0 ? 1 : isSel || isToday ? 1 : 0.32,
+                                backgroundColor: v === 0 ? colors.surface3 : colors.brand,
+                                opacity: v === 0 ? 1 : isSel || isToday ? 1 : 0.32,
                               },
-                              isSel && d.revenue_cents > 0 && styles.barSel,
+                              isSel && v > 0 && styles.barSel,
                             ]}
                           />
                         </View>
@@ -186,7 +242,7 @@ export default function Earnings() {
                     <Text style={styles.upTitle}>À venir</Text>
                     <Text style={styles.upSub}>{data.upcoming.rides} course{data.upcoming.rides > 1 ? "s" : ""} acceptée{data.upcoming.rides > 1 ? "s" : ""}</Text>
                   </View>
-                  <Text style={styles.upValue}>{formatPrice(data.upcoming.revenue_cents, currency)}</Text>
+                  <Text style={styles.upValue}>{formatPrice(centrale ? data.upcoming.net_cents ?? 0 : data.upcoming.revenue_cents, currency)}</Text>
                 </Card>
               )}
 
@@ -205,11 +261,19 @@ export default function Earnings() {
                         <Text style={styles.rideMeta} numberOfLines={1}>
                           #{r.number} · {formatRideDate(r.completed_at, data.timezone)} · {PAYMENT_METHOD_LABELS[r.payment_method] ?? ""}
                         </Text>
+                        {centrale && <RideSettlement r={r} />}
                       </View>
-                      <View style={{ alignItems: "flex-end" }}>
-                        <Text style={styles.ridePrice}>{formatPrice(r.price_cents, r.currency)}</Text>
-                        {r.net_cents != null && <Text style={styles.rideNet}>net {formatPrice(r.net_cents, r.currency)}</Text>}
-                      </View>
+                      {centrale ? (
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={[styles.ridePrice, { color: colors.brand }]}>{formatPrice(r.net_cents, r.currency)}</Text>
+                          <Text style={styles.rideNet}>sur {formatPrice(r.price_cents, r.currency)}</Text>
+                        </View>
+                      ) : (
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={styles.ridePrice}>{formatPrice(r.price_cents, r.currency)}</Text>
+                          {r.net_cents != null && <Text style={styles.rideNet}>net {formatPrice(r.net_cents, r.currency)}</Text>}
+                        </View>
+                      )}
                     </View>
                   ))}
                 </Card>
@@ -219,6 +283,27 @@ export default function Earnings() {
         </ScrollView>
       </SafeAreaView>
     </Screen>
+  );
+}
+
+/** Mode centrale : commission de la course et statut du règlement (« À régler », « Encaissé », « À verser »…). */
+function RideSettlement({ r }: { r: EarningsRide }) {
+  const deduction = (r.commission_cents ?? 0) + (r.platform_fee_cents ?? 0);
+  const status = r.settlement_status ?? null;
+  const direction = r.settlement_direction ?? (r.payment_method === "cash" || r.payment_method === "card" ? "driver_owes" : "centrale_owes");
+  const tone = status ? toneColor(SETTLEMENT_STATUS_META[status].tone) : colors.subtle;
+  return (
+    <View style={styles.settle}>
+      {status ? (
+        <View style={[styles.settlePill, { backgroundColor: `${tone}1F` }]}>
+          <View style={[styles.settleDot, { backgroundColor: tone }]} />
+          <Text style={[styles.settlePillText, { color: tone }]}>{driverSettlementLabel(status, direction)}</Text>
+        </View>
+      ) : null}
+      <Text style={styles.settleText}>
+        {direction === "driver_owes" ? `commission ${formatPrice(deduction, r.currency)}` : "part versée par la centrale"}
+      </Text>
+    </View>
   );
 }
 
@@ -275,4 +360,10 @@ const styles = StyleSheet.create({
   rideMeta: { color: colors.subtle, fontSize: 12.5 },
   ridePrice: { color: colors.fg, fontSize: 16, fontWeight: "900", ...mono },
   rideNet: { color: colors.subtle, fontSize: 12, marginTop: 1, ...mono },
+  commissions: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 1, borderColor: "rgba(245,181,68,0.3)" },
+  settle: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 8, rowGap: 3, marginTop: 3 },
+  settlePill: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
+  settleDot: { width: 6, height: 6, borderRadius: 3 },
+  settlePillText: { fontSize: 11.5, fontWeight: "900" },
+  settleText: { color: colors.subtle, fontSize: 12, fontWeight: "600", ...mono },
 });
