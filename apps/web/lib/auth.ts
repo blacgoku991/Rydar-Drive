@@ -1,5 +1,5 @@
 import "server-only";
-import type { OrgRole } from "@rydar/shared";
+import type { DispatchModel, OrgRole } from "@rydar/shared";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
@@ -15,6 +15,8 @@ export type OrgSummary = {
   logo_url: string | null;
   timezone: string;
   plan_id: string | null;
+  /** Modèle d'exploitation choisi par le super admin : flotte (option 1) ou centrale à commission (option 2) */
+  dispatch_model: DispatchModel;
 };
 
 export type SessionContext = Awaited<ReturnType<typeof loadSession>>;
@@ -30,7 +32,7 @@ async function loadSession() {
     supabase.from("users").select("id, email, full_name, avatar_url, is_super_admin, last_active_org_id").eq("id", user.id).maybeSingle(),
     supabase
       .from("organization_users")
-      .select("organization_id, role, organization:organizations(id, name, slug, status, logo_url, timezone, plan_id)")
+      .select("organization_id, role, organization:organizations(id, name, slug, status, logo_url, timezone, plan_id, dispatch_model)")
       .eq("user_id", user.id)
       .eq("status", "active"),
     supabase.from("drivers").select("id, first_name").eq("user_id", user.id).maybeSingle(),
