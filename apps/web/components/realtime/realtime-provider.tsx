@@ -12,6 +12,8 @@ const EVENTS = [
   "driver.location", "driver.updated", "ride.updated", "offer.updated", "ride.event",
   // alertes de suivi (002200), messagerie et signalements (002300), documents chauffeur (002400)
   "ride.alert", "chat.message", "chat.report", "chat.read", "driver.document",
+  // mode centrale (002600) : candidatures par lien d'inscription (page Réseau)
+  "driver.application",
 ] as const;
 
 /** Canal privé org:{id} (Broadcast from database, autorisé par la RLS sur realtime.messages). */

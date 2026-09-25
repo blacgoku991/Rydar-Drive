@@ -35,8 +35,9 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 1) Mini-sites de réservation sur sous-domaine / domaine personnalisé
+  //    (/rejoindre/{code} : inscription chauffeur publique, jamais réécrite vers le mini-site)
   const isPlatformHost = host === APP_HOST || host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}` || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host);
-  if (!isPlatformHost && host && !pathname.startsWith("/api/") && !pathname.startsWith("/book/")) {
+  if (!isPlatformHost && host && !pathname.startsWith("/api/") && !pathname.startsWith("/book/") && !pathname.startsWith("/rejoindre/")) {
     const slug = await resolveBookingSlug(host);
     if (slug) {
       const url = request.nextUrl.clone();

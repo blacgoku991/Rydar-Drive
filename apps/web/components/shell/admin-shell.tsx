@@ -3,7 +3,16 @@ import { useTransition } from "react";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { signOut } from "@/app/login/actions";
 
-export function AdminShell({ children, user }: { children: React.ReactNode; user: { name: string; email: string } }) {
+export function AdminShell({
+  children,
+  user,
+  openReports = 0,
+}: {
+  children: React.ReactNode;
+  user: { name: string; email: string };
+  /** Signalements de fraude à examiner (pastille « Centrales ») */
+  openReports?: number;
+}) {
   const [, start] = useTransition();
   const sections: NavSection[] = [
     {
@@ -11,6 +20,14 @@ export function AdminShell({ children, user }: { children: React.ReactNode; user
       items: [
         { href: "/admin", label: "Vue d'ensemble", icon: "dashboard", exact: true },
         { href: "/admin/organizations", label: "Rattacheurs", icon: "building" },
+        {
+          href: "/admin/centrales",
+          label: "Centrales",
+          icon: "users",
+          badge: openReports,
+          badgeTone: "red",
+          badgeLabel: `${openReports} signalement${openReports > 1 ? "s" : ""} de fraude à examiner`,
+        },
         { href: "/admin/plans", label: "Offres & limites", icon: "card" },
       ],
     },

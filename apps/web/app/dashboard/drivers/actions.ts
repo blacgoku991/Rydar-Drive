@@ -1,7 +1,7 @@
 "use server";
 import {
-  driverCreateSchema, driverStatusChangeSchema, driverUpdateSchema, fieldErrors, humanizeError,
-  type DriverCreateInput,
+  banDriverSchema, driverCreateSchema, driverStatusChangeSchema, driverUpdateSchema, fieldErrors, humanizeError,
+  type BanDriverResult, type DriverCreateInput, type TrustLevel,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -19,6 +19,17 @@ async function fleetManager() {
   if (!ctx || !isAdminRole(ctx.role)) return null;
   return ctx;
 }
+
+/** Erreurs de triggers liées au bannissement (réactivation, identité refusée) → message lisible. */
+function banAwareError(error: { code?: string; message?: string } | null) {
+  const msg = error?.message ?? "";
+  if (/DRIVER_BANNED/.test(msg)) return "Chauffeur banni : levez d'abord le bannissement.";
+  if (/IDENTITY_BANNED/.test(msg)) return `Identité bannie${msg.includes("plateforme") ? " par la plateforme Rydar" : " dans votre centrale"} : modification refusée.`;
+  return humanizeError(msg, actionError(error));
+}
+
+/** Ban « définitif » (100 ans) au niveau du compte Auth. */
+const BAN_FOREVER = "876000h";
 
 /** Crée le compte chauffeur (Supabase Auth) + véhicule + fiche, de manière compensée. */
 export async function createDriver(input: z.input<typeof driverCreateSchema>): Promise<Result<{ id: string }>> {
@@ -112,14 +123,14 @@ export async function updateDriver(driverId: string, input: z.input<typeof drive
     .eq("organization_id", ctx.org.id)
     .select("id, vehicle_id")
     .maybeSingle();
-  if (error || !driver) return { ok: false, error: error ? actionError(error) : "Accès refusé." };
+  if (error || !driver) return { ok: false, error: error ? banAwareError(error) : "Accès refusé." };
   const vehicle = {
     brand: v.vehicle.brand ?? null, model: v.vehicle.model, color: v.vehicle.color ?? null, plate: v.vehicle.plate,
     category: v.vehicle.category, seats: v.vehicle.seats, luggage_capacity: v.vehicle.luggageCapacity,
   };
   if (driver.vehicle_id) {
     const { error: vErr } = await ctx.supabase.from("vehicles").update(vehicle).eq("id", driver.vehicle_id);
-    if (vErr) return { ok: false, error: actionError(vErr) };
+    if (vErr) return { ok: false, error: banAwareError(vErr) };
   } else {
     const { data: created, error: vErr } = await ctx.supabase.from("vehicles").insert({ ...vehicle, organization_id: ctx.org.id }).select("id").single();
     if (vErr || !created) return { ok: false, error: actionError(vErr) };
@@ -143,12 +154,12 @@ export async function setDriverStatus(driverId: string, input: z.input<typeof dr
     .eq("organization_id", ctx.org.id)
     .select("id, user_id, current_ride_id")
     .maybeSingle();
-  if (error || !driver) return { ok: false, error: error ? humanizeError(error.message, actionError(error)) : "Accès refusé." };
+  if (error || !driver) return { ok: false, error: error ? banAwareError(error) : "Accès refusé." };
 
   const admin = createAdminClient();
   if (status !== "active") {
     await admin.from("drivers").update({ presence: "offline", online_since: null } as never).eq("id", driverId);
-    if (driver.user_id) await admin.auth.admin.updateUserById(driver.user_id, { ban_duration: "876000h" });
+    if (driver.user_id) await admin.auth.admin.updateUserById(driver.user_id, { ban_duration: BAN_FOREVER });
   } else if (driver.user_id) {
     await admin.auth.admin.updateUserById(driver.user_id, { ban_duration: "none" });
   }
@@ -244,4 +255,115 @@ export async function reviewDriverDocument(
   if (res.document?.driver_id) revalidatePath(`/dashboard/drivers/${res.document.driver_id}`);
   revalidatePath("/dashboard/drivers");
   return { ok: true, code: res.code };
+}
+
+// -----------------------------------------------------------------------------
+// Confiance et bannissement définitif (modes flotte et centrale)
+// -----------------------------------------------------------------------------
+
+/** Niveau de confiance : « Nouveau » (courses plafonnées en prix) ou « Confirmé » — owner / admin. */
+export async function setDriverTrustLevel(driverId: string, trustLevel: TrustLevel): Promise<Result> {
+  const ctx = await fleetManager();
+  if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent modifier le niveau de confiance." };
+  if (!z.string().uuid().safeParse(driverId).success || !["new", "trusted"].includes(trustLevel)) return { ok: false, error: "Demande invalide." };
+  const { data, error } = await ctx.supabase
+    .from("drivers")
+    .update({ trust_level: trustLevel })
+    .eq("id", driverId)
+    .eq("organization_id", ctx.org.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) return { ok: false, error: error ? actionError(error) : "Chauffeur introuvable." };
+  await audit({
+    organizationId: ctx.org.id,
+    actorUserId: ctx.user.id,
+    action: "driver.trust_level_changed",
+    entityType: "drivers",
+    entityId: driverId,
+    metadata: { trust_level: trustLevel },
+  });
+  revalidatePath(`/dashboard/drivers/${driverId}`);
+  return { ok: true };
+}
+
+type BanOutcome = { message: string; identities: number; reassignedRides: number; reported: boolean };
+
+/**
+ * « Bannir définitivement » : ban_driver (identités hachées refusées, courses non commencées remises en
+ * recherche, signalement éventuel à Rydar) puis blocage du compte Auth.
+ */
+export async function banDriver(
+  driverId: string,
+  input: z.input<typeof banDriverSchema>,
+): Promise<Result<BanOutcome> | { ok: false; error: string; code?: string; fieldErrors?: Record<string, string> }> {
+  const ctx = await fleetManager();
+  if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent bannir un chauffeur." };
+  if (!z.string().uuid().safeParse(driverId).success) return { ok: false, error: "Chauffeur introuvable." };
+  const parsed = banDriverSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Vérifiez le formulaire.", fieldErrors: fieldErrors(parsed.error) };
+  const v = parsed.data;
+  const { data, error } = await ctx.supabase.rpc("ban_driver", {
+    p_driver_id: driverId,
+    p_reason: v.reason,
+    p_category: v.category,
+    p_report_to_platform: v.reportToPlatform,
+    p_ban_vehicle: v.banVehicle,
+  });
+  if (error || !data) return { ok: false, error: actionError(error, "Bannissement impossible.") };
+  const res = data as BanDriverResult;
+  if (!res.ok) {
+    return {
+      ok: false,
+      code: res.code,
+      error: res.message ?? "Bannissement impossible.",
+      fieldErrors: res.code === "REASON_REQUIRED" ? { reason: res.message ?? "Indiquez le motif" } : undefined,
+    };
+  }
+
+  // Connexion bloquée au niveau du compte (sessions déjà révoquées par trigger SQL)
+  let authBanned = false;
+  if (res.user_id) {
+    const { error: banError } = await createAdminClient().auth.admin.updateUserById(res.user_id, { ban_duration: BAN_FOREVER });
+    authBanned = !banError;
+  }
+  // ban_driver journalise déjà « driver.banned » en base ; ici : verrou du compte Auth (+ IP / navigateur)
+  await audit({
+    organizationId: ctx.org.id,
+    actorUserId: ctx.user.id,
+    action: "driver.account_locked",
+    entityType: "drivers",
+    entityId: driverId,
+    severity: "critical",
+    metadata: {
+      reason: v.reason, category: v.category, report_to_platform: v.reportToPlatform, ban_vehicle: v.banVehicle,
+      identities: res.identities ?? 0, reassigned_rides: res.reassigned_rides ?? 0, report_id: res.report_id ?? null, auth_banned: authBanned,
+    },
+  });
+  revalidatePath(`/dashboard/drivers/${driverId}`);
+  revalidatePath("/dashboard/drivers");
+  revalidatePath("/dashboard/network");
+  return {
+    ok: true,
+    message: res.message ?? "Chauffeur banni.",
+    identities: res.identities ?? 0,
+    reassignedRides: res.reassigned_rides ?? 0,
+    reported: !!res.report_id,
+  };
+}
+
+/** Lever un bannissement décidé par la centrale : le chauffeur reste suspendu (réactivation manuelle). */
+export async function liftDriverBan(driverId: string, reason?: string): Promise<Result<{ message: string }> | { ok: false; error: string; code?: string }> {
+  const ctx = await fleetManager();
+  if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent lever un bannissement." };
+  if (!z.string().uuid().safeParse(driverId).success) return { ok: false, error: "Chauffeur introuvable." };
+  const motive = reason?.trim().slice(0, 500) || null;
+  const { data, error } = await ctx.supabase.rpc("lift_driver_ban", { p_driver_id: driverId, p_reason: motive });
+  if (error || !data) return { ok: false, error: actionError(error, "Levée impossible.") };
+  const res = data as { ok: boolean; code: string; message?: string; identities?: number };
+  if (!res.ok) return { ok: false, code: res.code, error: res.message ?? "Levée impossible." };
+  // Journal : « driver.ban_lifted » écrit par lift_driver_ban. Compte Auth débloqué à la réactivation (setDriverStatus).
+  revalidatePath(`/dashboard/drivers/${driverId}`);
+  revalidatePath("/dashboard/drivers");
+  revalidatePath("/dashboard/network");
+  return { ok: true, message: res.message ?? "Bannissement levé." };
 }
