@@ -5,14 +5,16 @@ import {
 } from "@rydar/shared";
 import { useKeepAwake } from "expo-keep-awake";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { FlightCard, PickupShiftBanner } from "@/components/flight";
 import { RydarMap } from "@/components/map/rydar-map";
 import { BigButton, Chip, Pill, Screen, Sheet, SlideToConfirm, StepDots } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { api } from "@/lib/api";
+import { useAppEvent } from "@/lib/events";
 import { setHighAccuracy } from "@/lib/location";
 import { approachSeconds, colors } from "@/theme";
 
@@ -45,8 +47,18 @@ export default function RideScreen() {
   const [ride, setRide] = useState<Ride | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const hadRide = useRef(false);
   const load = useCallback(async () => {
-    const r = await api.ride(String(id)).catch(() => null);
+    const r = await api.ride(String(id)).catch(() => undefined); // undefined : réseau, on garde l'affichage
+    if (r === undefined) return;
+    if (r === null && hadRide.current) {
+      // Course retirée par la centrale (réattribuée) : plus visible pour ce chauffeur
+      hadRide.current = false;
+      Alert.alert("Course retirée", "La centrale a réattribué cette course.");
+      router.replace("/home");
+      return;
+    }
+    if (r) hadRide.current = true;
     setRide(r);
   }, [id]);
 
@@ -55,6 +67,10 @@ export default function RideScreen() {
     const t = setInterval(load, 10_000);
     return () => clearInterval(t);
   }, [load]);
+  // Vol retardé, prise en charge décalée, course retirée : relecture immédiate
+  useAppEvent("ride", (rideId) => {
+    if (!rideId || rideId === String(id)) void load();
+  });
 
   useEffect(() => {
     void setHighAccuracy(true).catch(() => null);
@@ -126,6 +142,7 @@ export default function RideScreen() {
 
       <Sheet style={styles.sheet}>
         <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 150 }} showsVerticalScrollIndicator={false}>
+          {toPickup && <PickupShiftBanner ride={ride} tz={home?.organization.timezone} />}
           {step && <StepDots steps={STEPS.map((s) => s.label)} current={stepIndex} />}
 
           <View style={styles.targetRow}>
@@ -154,11 +171,13 @@ export default function RideScreen() {
             </Pressable>
           </View>
 
+          {/* Vol suivi (prise en charge à l'aéroport ou dépôt pour un vol) */}
+          {ride.flight_number ? <FlightCard ride={ride} tz={home?.organization.timezone} /> : null}
+
           <View style={styles.chips}>
             <Chip icon="people-outline" text={`${ride.passengers} passager${ride.passengers > 1 ? "s" : ""}`} />
             <Chip icon="briefcase-outline" text={`${ride.luggage}`} />
             <Chip icon="card-outline" text={PAYMENT_METHOD_LABELS[ride.payment_method]} />
-            {ride.flight_number && <Chip icon="airplane-outline" text={ride.flight_number} color={colors.cyan} />}
           </View>
           {ride.comment ? (
             <View style={styles.note}>

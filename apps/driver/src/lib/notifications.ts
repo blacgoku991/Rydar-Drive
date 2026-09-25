@@ -3,22 +3,26 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { api } from "./api";
+import { isChatNotificationMuted } from "./chat-session";
 import { appConfig } from "./config";
 import { installationId } from "./device";
 
-// Affichage des notifications même application ouverte (le modal d'offre prend ensuite le relais).
+// Affichage des notifications même application ouverte (le modal d'offre prend ensuite le relais),
+// sauf un message ou un signalement qui s'affiche déjà dans le fil ouvert de l'écran Messages.
 if (Platform.OS !== "web") Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (n) => {
+    const muted = isChatNotificationMuted((n.request.content.data as Record<string, unknown> | undefined)?.type);
+    return { shouldShowBanner: !muted, shouldShowList: !muted, shouldPlaySound: !muted, shouldSetBadge: false };
+  },
 });
 
 /** Canal Android des offres instantanées (worker : channelId « ride-offers-v2 », son « ride_offer_v2 ») ;
  *  les planifiées arrivent sur « ride-offers-scheduled » (son « ride_offer »). */
 const RIDE_OFFER_CHANNEL = "ride-offers-v2";
+/** Messages de la centrale (worker : type chat_message → channelId « messages »). */
+export const MESSAGES_CHANNEL = "messages";
+/** Signalements de la flotte (worker : type fleet_report → channelId « fleet-reports »). */
+export const FLEET_REPORTS_CHANNEL = "fleet-reports";
 
 export async function setupNotificationChannels() {
   if (Platform.OS === "web") return;
@@ -51,6 +55,25 @@ export async function setupNotificationChannels() {
       name: "Mises à jour des courses",
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 150, 250],
+    });
+    // Messagerie : son par défaut du téléphone (sound non renseigné), priorité haute
+    await Notifications.setNotificationChannelAsync(MESSAGES_CHANNEL, {
+      name: "Messages de la centrale",
+      description: "Messages envoyés par votre centrale",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 180, 120, 180],
+      enableVibrate: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+      lightColor: "#C8F03C",
+    });
+    await Notifications.setNotificationChannelAsync(FLEET_REPORTS_CHANNEL, {
+      name: "Signalements de la flotte",
+      description: "Police, contrôles, accidents et bouchons signalés par vos collègues à proximité",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 150, 250],
+      enableVibrate: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      lightColor: "#F5B544",
     });
     await Notifications.setNotificationChannelAsync("default", { name: "Général", importance: Notifications.AndroidImportance.DEFAULT });
   }

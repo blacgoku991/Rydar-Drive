@@ -32,6 +32,31 @@ export const presenceColor: Record<string, string> = {
 export const radius = { sm: 10, md: 14, lg: 20, xl: 28 };
 export const mono = { fontVariant: ["tabular-nums"] as "tabular-nums"[] };
 
+/** Tons des libellés partagés (@rydar/shared : vols, documents) → couleurs de l'app. */
+export function toneColor(tone: string | null | undefined) {
+  switch (tone) {
+    case "green": return colors.green;
+    case "amber": return colors.amber;
+    case "red": return colors.red;
+    case "blue": return colors.blue;
+    case "violet": return colors.violet;
+    case "cyan": return colors.cyan;
+    default: return colors.muted;
+  }
+}
+
+/** « à l'instant », « il y a 6 min », « il y a 2 h », « il y a 3 j » (sans Intl.RelativeTimeFormat, absent de Hermes). */
+export function ago(date: string | number | Date | null | undefined, now = Date.now()) {
+  if (date == null) return "";
+  const s = Math.max(0, Math.round((now - new Date(date).getTime()) / 1000));
+  if (s < 45) return "à l'instant";
+  const m = Math.round(s / 60);
+  if (m < 60) return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h} h`;
+  return `il y a ${Math.floor(h / 24)} j`;
+}
+
 /** Estimation d'approche (voiture en ville) à partir d'une distance à vol d'oiseau. */
 export function approachSeconds(distanceM: number | null | undefined) {
   if (distanceM == null) return null;

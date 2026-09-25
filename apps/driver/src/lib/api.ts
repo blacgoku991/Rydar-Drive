@@ -1,13 +1,46 @@
-import type { DriverHome, DriverOffer, Ride, RideStatus, RpcResult } from "@rydar/shared";
-import { humanizeError } from "@rydar/shared";
+import type {
+  ChatThreadKey, DocumentType, DriverChatOverview, DriverDocumentItem, DriverDocuments, DriverEarnings, DriverHome, DriverOffer,
+  FleetReportType, FleetReportVoteResult, MarkChatReadResult, Ride, RideStatus, RpcResult, SendChatMessageResult,
+} from "@rydar/shared";
+import { extractErrorCode, humanizeError } from "@rydar/shared";
 import { appConfig } from "./config";
 import { supabase } from "./supabase";
 
+/** Erreur d'appel serveur : message FR prêt à afficher + code métier (ex. RATE_LIMITED). */
+export class ApiError extends Error {
+  code: string | null;
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/**
+ * Message lisible : code connu (@rydar/shared), sinon texte « CODE: texte » renvoyé par la base
+ * (ex. « RATE_LIMITED: trop de signalements, patientez quelques minutes »), sinon repli.
+ */
+export function errorText(raw: string | null | undefined, fallback: string) {
+  const known = humanizeError(raw, "");
+  if (known) return known;
+  const m = /^([A-Z][A-Z_]{3,}[A-Z]):\s*([\s\S]+)$/.exec((raw ?? "").trim());
+  if (m?.[2]) {
+    const t = m[2].trim();
+    return `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?…]$/.test(t) ? "" : "."}`;
+  }
+  return fallback;
+}
+
 async function rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.rpc(fn, args ?? {});
-  if (error) throw new Error(humanizeError(error.message, "Connexion impossible. Réessayez."));
+  if (error) throw new ApiError(errorText(error.message, "Connexion impossible. Réessayez."), extractErrorCode(error.message));
   return data as T;
 }
+
+/** Bucket privé des justificatifs ; chemin imposé <org>/<chauffeur>/<type>-<horodatage>.<ext> (politique storage). */
+export const DOCUMENTS_BUCKET = "driver-documents";
+export const STORAGE_UNAVAILABLE = "Envoi de fichiers indisponible sur ce serveur.";
+
+export type SubmitDocumentResult = RpcResult & { replaced_id?: string | null; document?: DriverDocumentItem };
 
 /** Connexion via l'API web (anti brute force), repli direct Supabase. */
 export async function signIn(email: string, password: string): Promise<void> {
@@ -61,6 +94,52 @@ export const api = {
     const { data, error } = await supabase.from("rides").select("*").eq("id", id).maybeSingle();
     if (error) throw new Error("Course indisponible.");
     return data as Ride | null;
+  },
+  // --- Messagerie + signalements (migration 002300) ------------------------------------------
+  chatOverview: () => rpc<DriverChatOverview>("driver_chat_overview"),
+  /** Message « Centrale » (fil direct) ou « Flotte » ; signalement = fil flotte + type (+ position, sinon dernière connue). */
+  sendMessage: (p: { channel: "driver" | "fleet"; body?: string; reportType?: FleetReportType | null; lat?: number | null; lng?: number | null }) =>
+    rpc<SendChatMessageResult>("send_chat_message", {
+      p_org: null,
+      p_channel: p.channel,
+      p_driver_id: null,
+      p_body: p.body ?? "",
+      p_report_type: p.reportType ?? null,
+      p_lat: p.lat ?? null,
+      p_lng: p.lng ?? null,
+    }),
+  markRead: (thread: ChatThreadKey) => rpc<MarkChatReadResult>("mark_chat_read", { p_org: null, p_thread: thread }),
+  voteReport: (id: string, stillThere: boolean) => rpc<FleetReportVoteResult>("vote_fleet_report", { p_message_id: id, p_still_there: stillThere }),
+  // --- Gains + documents (migration 002400) ----------------------------------------------------
+  earnings: (days = 7) => rpc<DriverEarnings>("driver_earnings", { p_days: days }),
+  documents: () => rpc<DriverDocuments>("driver_documents"),
+  submitDocument: (p: { type: DocumentType; filePath: string; expiresAt?: string | null; number?: string | null }) =>
+    rpc<SubmitDocumentResult>("driver_submit_document", {
+      p_type: p.type,
+      p_number: p.number ?? null,
+      p_expires_at: p.expiresAt ?? null,
+      p_file_path: p.filePath,
+      p_issued_at: null,
+      p_label: null,
+    }),
+  /** Dépôt du fichier dans le stockage (INSERT seul : pas d'écrasement d'un justificatif). */
+  uploadDocument: async (path: string, body: ArrayBuffer, contentType: string) => {
+    const res = await supabase.storage
+      .from(DOCUMENTS_BUCKET)
+      .upload(path, body, { contentType, upsert: false })
+      .catch((e: unknown) => ({ data: null, error: e }));
+    if (!res.error) return;
+    const e = res.error as { message?: string; status?: number | string; statusCode?: number | string; name?: string };
+    const status = Number(e.status ?? e.statusCode ?? 0);
+    const msg = String(e.message ?? "");
+    // Pas de service Storage (stack locale), bucket absent, réponse non JSON ou réseau coupé vers /storage
+    if (
+      status === 404 || status === 502 || status === 503 || e.name === "StorageUnknownError" ||
+      /not found|failed to fetch|network|bucket|unexpected token|json/i.test(msg)
+    ) throw new ApiError(STORAGE_UNAVAILABLE, "STORAGE_UNAVAILABLE");
+    if (status === 413 || /too large|payload/i.test(msg)) throw new ApiError("Fichier trop lourd : reprenez la photo.", "FILE_TOO_LARGE");
+    if (status === 401 || status === 403 || /row-level security|unauthorized/i.test(msg)) throw new ApiError("Envoi refusé par le serveur.", "FORBIDDEN");
+    throw new ApiError("Envoi du fichier impossible. Réessayez.", "UPLOAD_FAILED");
   },
   upcoming: async () => {
     const { data } = await supabase
