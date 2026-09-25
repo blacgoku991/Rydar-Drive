@@ -1,14 +1,56 @@
 "use client";
-import { circlePolygon, decodePolyline, initials, shortAddress, type Coord, type DriverPresence } from "@rydar/shared";
+import { FLEET_REPORT_META, circlePolygon, decodePolyline, initials, shortAddress, type Coord, type DriverPresence } from "@rydar/shared";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import type { LiveDriver, LiveOffer, LiveRide } from "@/lib/queries/live";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import type { LiveDriver, LiveOffer, LiveReport, LiveRide } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
 import { PRESENCE_COLOR, ROUTE_COLOR, rideColor } from "./map-theme";
-import { carElement, stopElement, updateCar } from "./markers";
+import { carElement, reportElement, stopElement, updateCar, updateReport } from "./markers";
 import { EMPTY, setData, useMapLibre } from "./use-maplibre";
 
 type MLMarker = import("maplibre-gl").Marker;
+type MLPopup = import("maplibre-gl").Popup;
+
+/** Signalement affiché sur la carte (sous-ensemble de LiveReport). */
+export type MapReport = Pick<LiveReport, "id" | "report_type" | "body" | "lat" | "lng" | "expires_at" | "confirmations" | "author_name" | "created_at">;
+
+const minutesSince = (iso: string, now: number) => Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000));
+const agoShort = (m: number) => (m < 1 ? "à l'instant" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h`);
+const DEFAULT_REPORT_BODIES = new Set([
+  "Contrôle de police signalé", "Contrôle VTC signalé", "Accident signalé", "Bouchon signalé", "Danger sur la route", "Signalement de la flotte",
+]);
+
+/** Contenu du popover d'un signalement (DOM + textContent : le texte vient des chauffeurs). */
+function reportPopup(r: MapReport, now: number) {
+  const meta = FLEET_REPORT_META[r.report_type] ?? FLEET_REPORT_META.other;
+  const el = document.createElement("div");
+  el.className = "rd-popup__inner";
+  el.style.setProperty("--c", meta.color);
+  const head = el.appendChild(document.createElement("div"));
+  head.className = "rd-popup__head";
+  const icon = head.appendChild(document.createElement("span"));
+  icon.className = "rd-popup__icon";
+  icon.textContent = meta.emoji;
+  const txt = head.appendChild(document.createElement("div"));
+  const title = txt.appendChild(document.createElement("p"));
+  title.className = "rd-popup__title";
+  title.textContent = meta.label;
+  const sub = txt.appendChild(document.createElement("p"));
+  sub.className = "rd-popup__sub";
+  const who = (r.author_name ?? "").trim().split(/\s+/)[0] || "la flotte";
+  const age = minutesSince(r.created_at, now);
+  sub.textContent = [`signalé par ${who}`, age < 1 ? "à l'instant" : `il y a ${agoShort(age)}`, r.confirmations > 0 ? `confirmé ${r.confirmations}×` : null].filter(Boolean).join(" · ");
+  if (r.body && !DEFAULT_REPORT_BODIES.has(r.body.trim())) {
+    const body = el.appendChild(document.createElement("p"));
+    body.className = "rd-popup__body";
+    body.textContent = `« ${r.body} »`;
+  }
+  const left = Math.max(0, Math.ceil((Date.parse(r.expires_at) - now) / 60_000));
+  const foot = el.appendChild(document.createElement("p"));
+  foot.className = "rd-popup__foot";
+  foot.textContent = left <= 1 ? "Expire dans moins d'une minute" : `Visible encore ${agoShort(left)}`;
+  return el;
+}
 
 export type FleetMapHandle = {
   flyTo: (lng: number, lat: number, zoom?: number) => void;
@@ -39,6 +81,11 @@ type Props = {
   theme?: "night" | "day";
   /** Âge au-delà duquel une position est « ancienne » (location_max_age_seconds de l'organisation). */
   staleMs?: number;
+  /** Signalements actifs de la flotte (police, contrôle…). Absent : aucun marqueur. */
+  reports?: MapReport[];
+  /** Signalement dont le popover est ouvert. */
+  selectedReportId?: string | null;
+  onSelectReport?: (id: string | null) => void;
 };
 
 const SEARCHING = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED"]);
@@ -80,6 +127,9 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     approach,
     theme = "night",
     staleMs = 3 * 60_000,
+    reports,
+    selectedReportId,
+    onSelectReport,
   },
   ref,
 ) {
@@ -87,9 +137,12 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   const cars = useRef(new Map<string, CarMarker>());
   const stops = useRef(new Map<string, { marker: MLMarker; el: HTMLDivElement }>());
   const ends = useRef(new Map<string, MLMarker>());
+  const reportMarkers = useRef(new Map<string, { marker: MLMarker; el: HTMLButtonElement }>());
+  const popup = useRef<{ popup: MLPopup; id: string } | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const fitted = useRef(false);
-  const callbacks = useRef({ onSelectDriver, onSelectRide });
-  callbacks.current = { onSelectDriver, onSelectRide };
+  const callbacks = useRef({ onSelectDriver, onSelectRide, onSelectReport });
+  callbacks.current = { onSelectDriver, onSelectRide, onSelectReport };
   const paddingRef = useRef(padding);
   paddingRef.current = padding;
   const dataRef = useRef({ drivers, rides, focus });
@@ -140,15 +193,27 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     });
     map.on("click", () => {
       callbacks.current.onSelectDriver?.(null);
+      callbacks.current.onSelectReport?.(null);
     });
+    // Étiquettes des signalements : visibles de près (sinon au survol), pour ne pas encombrer la vue d'ensemble
+    const onZoom = () => {
+      if (wrapRef.current) wrapRef.current.dataset.zoomed = String(map.getZoom() >= 12.5);
+    };
+    onZoom();
+    map.on("zoomend", onZoom);
     const carsMap = cars.current;
     const stopsMap = stops.current;
     const endsMap = ends.current;
+    const reportsMap = reportMarkers.current;
     return () => {
       carsMap.forEach((m) => cancelAnimationFrame(m.anim ?? 0));
       carsMap.clear();
       stopsMap.clear();
       endsMap.clear();
+      reportsMap.clear();
+      const p = popup.current;
+      popup.current = null; // avant remove() : la fermeture programmée ne désélectionne pas
+      p?.popup.remove();
     };
   }, [ready, mapRef]);
 
@@ -346,9 +411,79 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     setData(map, "rd-routes", features);
   }, [rides, offers, drivers, ready, selectedRideId, approach, mapRef, libRef]);
 
+  // ---------------------------------------------------------------- signalements de la flotte
+  // Âges et durées restantes rafraîchis toutes les 30 s ; un signalement expiré disparaît sans attendre le serveur.
+  const [clock, setClock] = useState(0);
+  useEffect(() => {
+    if (!reports?.length) return;
+    const id = window.setInterval(() => setClock((c) => c + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, [reports?.length]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const lib = libRef.current;
+    if (!ready || !map || !lib) return;
+    const now = Date.now();
+    const seen = new Set<string>();
+    const active = (reports ?? []).filter((r) => Date.parse(r.expires_at) > now);
+    for (const r of active) {
+      seen.add(r.id);
+      const meta = FLEET_REPORT_META[r.report_type] ?? FLEET_REPORT_META.other;
+      let m = reportMarkers.current.get(r.id);
+      if (!m) {
+        const el = reportElement();
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          callbacks.current.onSelectReport?.(el.dataset.selected === "true" ? null : r.id);
+        });
+        const marker = new lib.Marker({ element: el, anchor: "center" }).setLngLat([r.lng, r.lat]).addTo(map);
+        m = { marker, el };
+        reportMarkers.current.set(r.id, m);
+      }
+      m.marker.setLngLat([r.lng, r.lat]);
+      const age = minutesSince(r.created_at, now);
+      const left = (Date.parse(r.expires_at) - now) / 60_000;
+      updateReport(m.el, {
+        color: meta.color,
+        emoji: meta.emoji,
+        label: `${meta.short} · ${agoShort(age)}`,
+        title: `${meta.label} signalé${age >= 1 ? ` il y a ${agoShort(age)}` : " à l'instant"}`,
+        fresh: age < 3,
+        fading: left < 5,
+        selected: r.id === selectedReportId,
+      });
+      m.el.style.zIndex = r.id === selectedReportId ? "7" : "4";
+    }
+    for (const [id, m] of reportMarkers.current) if (!seen.has(id)) (m.marker.remove(), reportMarkers.current.delete(id));
+
+    // Popover du signalement sélectionné
+    const sel = selectedReportId ? active.find((r) => r.id === selectedReportId) : undefined;
+    if (!sel) {
+      const p = popup.current;
+      popup.current = null;
+      p?.popup.remove();
+      return;
+    }
+    if (!popup.current) {
+      const p = new lib.Popup({ closeButton: true, closeOnClick: false, offset: 22, maxWidth: "300px", className: "rd-popup", focusAfterOpen: false });
+      p.on("close", () => {
+        // fermeture par l'utilisateur (croix) : désélection ; fermeture programmée : popup.current a déjà changé
+        if (popup.current?.popup === p) {
+          popup.current = null;
+          callbacks.current.onSelectReport?.(null);
+        }
+      });
+      popup.current = { popup: p, id: sel.id };
+    }
+    popup.current.id = sel.id;
+    popup.current.popup.setLngLat([sel.lng, sel.lat]).setDOMContent(reportPopup(sel, now));
+    if (!popup.current.popup.isOpen()) popup.current.popup.addTo(map);
+  }, [reports, selectedReportId, ready, clock, mapRef, libRef]);
+
   // MapLibre force `position: relative` sur son conteneur : on l'enveloppe.
   return (
-    <div data-labels={showLabels} className={cn("rd-map absolute inset-0 bg-ink-900", className)}>
+    <div ref={wrapRef} data-labels={showLabels} className={cn("rd-map absolute inset-0 bg-ink-900", className)}>
       <div ref={containerRef} className="size-full" />
     </div>
   );

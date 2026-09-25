@@ -1,5 +1,5 @@
 import "server-only";
-import type { OrgKpis } from "@rydar/shared";
+import type { FleetReportType, FlightMode, FlightStatus, OrgKpis, RideAlertData, RideAlertKind, RideAlertResolution, RideAlertSeverity, RideAlertStatus } from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type LiveDriver = {
@@ -49,6 +49,18 @@ export type LiveRide = {
   accepted_at?: string | null;
   created_at: string;
   updated_at: string;
+  // Suivi de vol (migration 002100) — aussi diffusés par « ride.updated »
+  flight_mode?: FlightMode | null;
+  flight_status?: FlightStatus | null;
+  flight_scheduled_arrival?: string | null;
+  flight_estimated_arrival?: string | null;
+  flight_actual_arrival?: string | null;
+  flight_delay_minutes?: number | null;
+  flight_terminal?: string | null;
+  flight_origin?: string | null;
+  flight_checked_at?: string | null;
+  /** Heure demandée par le client, conservée au premier décalage automatique (sinon null). */
+  pickup_at_original?: string | null;
 };
 
 export type LiveOffer = {
@@ -62,16 +74,53 @@ export type LiveOffer = {
   expires_at: string | null;
 };
 
+/** Alerte de suivi non résolue (ride_alerts, statut open ou acknowledged). */
+export type LiveAlert = {
+  id: string;
+  ride_id: string;
+  driver_id: string | null;
+  kind: RideAlertKind;
+  severity: RideAlertSeverity;
+  message: string;
+  data: Partial<RideAlertData>;
+  status: RideAlertStatus;
+  resolution: RideAlertResolution | null;
+  muted_until: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Signalement actif de la flotte (chat_messages avec report_type, non expiré). */
+export type LiveReport = {
+  id: string;
+  report_type: FleetReportType;
+  body: string;
+  lat: number;
+  lng: number;
+  expires_at: string;
+  confirmations: number;
+  dismissals: number;
+  author_name: string;
+  author_type: "user" | "driver" | "system";
+  author_driver_id: string | null;
+  created_at: string;
+};
+
 export type LiveSnapshot = {
   drivers: LiveDriver[];
   rides: LiveRide[];
   offers: LiveOffer[];
+  alerts: LiveAlert[];
+  reports: LiveReport[];
   kpis: OrgKpis | null;
   serverTime: string;
 };
 
+// (une seule chaîne littérale : supabase-js en déduit le type des lignes)
 const RIDE_FIELDS =
-  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, estimated_distance_m, estimated_duration_s, route_polyline, payment_method, accepted_at, created_at, updated_at";
+  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, estimated_distance_m, estimated_duration_s, route_polyline, payment_method, accepted_at, created_at, updated_at, flight_mode, flight_status, flight_scheduled_arrival, flight_estimated_arrival, flight_actual_arrival, flight_delay_minutes, flight_terminal, flight_origin, flight_checked_at, pickup_at_original";
+export const ALERT_FIELDS = "id, ride_id, driver_id, kind, severity, message, data, status, resolution, muted_until, created_at, updated_at";
+const REPORT_FIELDS = "id, report_type, body, lat, lng, expires_at, confirmations, dismissals, author_name, author_type, author_driver_id, created_at";
 
 export async function getKpis(supabase: SupabaseClient, orgId: string): Promise<OrgKpis | null> {
   const { data } = await supabase.rpc("org_kpis", { p_org: orgId });
@@ -83,7 +132,7 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
   const recent = new Date(Date.now() - 30 * 60_000).toISOString();
   const horizon = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
-  const [drivers, active, finished, kpis] = await Promise.all([
+  const [drivers, active, finished, kpis, alerts, reports] = await Promise.all([
     supabase
       .from("drivers")
       .select(
@@ -112,6 +161,18 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
       .order("updated_at", { ascending: false })
       .limit(30),
     getKpis(supabase, orgId),
+    // Alertes de suivi non résolues (ouvertes ou en sourdine)
+    supabase.from("ride_alerts").select(ALERT_FIELDS).eq("organization_id", orgId).in("status", ["open", "acknowledged"]).order("created_at", { ascending: false }).limit(200),
+    // Signalements actifs de la flotte (police, contrôle…)
+    supabase
+      .from("chat_messages")
+      .select(REPORT_FIELDS)
+      .eq("organization_id", orgId)
+      .eq("channel", "fleet")
+      .not("report_type", "is", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false })
+      .limit(200),
   ]);
 
   const rideRows = [...((active.data ?? []) as LiveRide[]), ...((finished.data ?? []) as LiveRide[])];
@@ -132,6 +193,8 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
     })) as LiveDriver[],
     rides: rideRows,
     offers: (offers.data ?? []) as LiveOffer[],
+    alerts: (alerts.data ?? []) as LiveAlert[],
+    reports: ((reports.data ?? []) as LiveReport[]).filter((r) => r.lat != null && r.lng != null),
     kpis,
     serverTime: new Date().toISOString(),
   };

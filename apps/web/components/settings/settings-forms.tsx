@@ -3,9 +3,9 @@ import {
   PAYMENT_METHOD_LABELS, PAYMENT_METHODS, VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, formatDistance, formatPrice,
   type OrgSettings, type VehicleCategory,
 } from "@rydar/shared";
-import { Plus, Trash2, UserPlus } from "lucide-react";
+import { BellRing, Percent, Plane, Plus, Trash2, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { inviteMember, savePricingRule, updateDispatchSettings, updateMember, updateOrganization } from "@/app/dashboard/settings/actions";
 import { Badge } from "@/components/ui/badge";
@@ -91,14 +91,72 @@ function RadiiPreview({ radii }: { radii: number[] }) {
   );
 }
 
+/** Réglages ajoutés par les migrations 002100 / 002200 / 002400 : valeurs par défaut si la ligne est ancienne. */
+const SETTINGS_DEFAULTS = {
+  flight_tracking_enabled: true,
+  flight_pickup_buffer_minutes: 15,
+  late_alert_tolerance_minutes: 5,
+  stalled_alert_minutes: 4,
+  driver_commission_percent: null,
+} satisfies Partial<OrgSettings>;
+
+/** Entrée numérique avec unité à droite (« min », « % »). */
+function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
+  return (
+    <div className="relative">
+      <Input
+        inputMode="decimal"
+        {...props}
+        className={cn("num pr-12 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none", className)}
+      />
+      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-fg-subtle">{unit}</span>
+    </div>
+  );
+}
+
+function SwitchRow({ title, hint, checked, onChange, disabled }: { title: string; hint: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <label className="flex items-center justify-between gap-4 rounded-xl border border-line bg-white/[0.02] px-4 py-3">
+      <span>
+        <span className="block text-[13.5px] font-medium">{title}</span>
+        <span className="block text-[12px] text-fg-subtle">{hint}</span>
+      </span>
+      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
+    </label>
+  );
+}
+
+const num = (v: string) => (v.trim() === "" ? Number.NaN : Number(v.replace(",", ".")));
+
 export function DispatchSettingsForm({ settings, readOnly }: { settings: OrgSettings; readOnly: boolean }) {
-  const { pending, save } = useSave();
-  const [s, setS] = useState<OrgSettings>(settings);
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const initial = useMemo<OrgSettings>(() => ({ ...SETTINGS_DEFAULTS, ...settings }), [settings]);
+  const [baseline, setBaseline] = useState<OrgSettings>(initial);
+  const [s, setS] = useState<OrgSettings>(initial);
+  const [commission, setCommission] = useState(initial.driver_commission_percent == null ? "" : String(initial.driver_commission_percent).replace(".", ","));
   const set = <K extends keyof OrgSettings>(k: K, v: OrgSettings[K]) => setS((cur) => ({ ...cur, [k]: v }));
   const radiiKm = s.dispatch_radii_m.map((m) => m / 1000);
+  const dirty = JSON.stringify(s) !== JSON.stringify(baseline);
+  const pct = s.driver_commission_percent;
+  const sample = 5000;
+
+  const save = () =>
+    start(async () => {
+      const res = await updateDispatchSettings(s);
+      if (!res.ok) return void toast.error(res.error ?? "Erreur");
+      toast.success("Réglages enregistrés");
+      setBaseline(s);
+      router.refresh();
+    });
+  const reset = () => {
+    setS(baseline);
+    setCommission(baseline.driver_commission_percent == null ? "" : String(baseline.driver_commission_percent).replace(".", ","));
+  };
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+      <div className="min-w-0 space-y-6">
       <Card>
         <CardHeader title="Moteur de dispatch" description="Recherche GPS par vagues successives — premier chauffeur qui accepte." />
         <CardBody className="space-y-7">
@@ -196,15 +254,142 @@ export function DispatchSettingsForm({ settings, readOnly }: { settings: OrgSett
             </Field>
           </div>
 
-          {!readOnly && (
-            <div className="flex justify-end">
-              <Button variant="primary" loading={pending} onClick={() => save(() => updateDispatchSettings(s), "Paramètres de dispatch enregistrés")}>
-                Enregistrer
-              </Button>
-            </div>
-          )}
         </CardBody>
       </Card>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader
+            icon={<Plane />}
+            title="Suivi des vols"
+            description="Courses au départ d'un aéroport avec un numéro de vol : l'heure de prise en charge suit l'arrivée réelle."
+          />
+          <CardBody className="space-y-5">
+            <SwitchRow
+              title="Suivre les vols"
+              hint="Retard, avance, atterrissage, annulation : la centrale et le chauffeur sont prévenus."
+              checked={s.flight_tracking_enabled}
+              onChange={(v) => set("flight_tracking_enabled", v)}
+              disabled={readOnly}
+            />
+            <Field
+              label="Marge après l'atterrissage"
+              hint="Marge appliquée si l'heure demandée précède l'atterrissage ou si l'horaire prévu est inconnu ; sinon la prise en charge suit le retard du vol."
+            >
+              <UnitInput
+                unit="min"
+                type="number"
+                min={0}
+                max={120}
+                value={Number.isNaN(s.flight_pickup_buffer_minutes) ? "" : s.flight_pickup_buffer_minutes}
+                disabled={readOnly || !s.flight_tracking_enabled}
+                onChange={(e) => set("flight_pickup_buffer_minutes", num(e.target.value))}
+              />
+            </Field>
+            <div className="rounded-xl bg-white/[0.03] px-3.5 py-3 text-[12.5px] leading-[19px] text-fg-muted">
+              <p className="mb-1 text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Exemple</p>
+              Vol prévu à <span className="num text-fg">14:45</span>, client attendu à <span className="num text-fg">15:00</span>. Le vol a{" "}
+              <span className="num text-amber">35 min</span> de retard : prise en charge décalée à <span className="num font-semibold text-fg">15:35</span>, chauffeur prévenu.
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader
+            icon={<BellRing />}
+            title="Alertes de suivi"
+            description="Son + alerte au dashboard ; la centrale décide : relancer, réattribuer ou garder le chauffeur."
+          />
+          <CardBody className="space-y-5">
+            <Field
+              label="Tolérance de retard"
+              hint={`Alerte si le chauffeur arrivera au départ avec plus de ${Number.isNaN(s.late_alert_tolerance_minutes) ? "…" : s.late_alert_tolerance_minutes} min de retard (urgente au-delà de 15 min).`}
+            >
+              <UnitInput
+                unit="min"
+                type="number"
+                min={1}
+                max={60}
+                value={Number.isNaN(s.late_alert_tolerance_minutes) ? "" : s.late_alert_tolerance_minutes}
+                disabled={readOnly}
+                onChange={(e) => set("late_alert_tolerance_minutes", num(e.target.value))}
+              />
+            </Field>
+            <Field label="Chauffeur immobile depuis" hint="En route, à plus de 800 m du départ, sans avancer (bouchons compris).">
+              <UnitInput
+                unit="min"
+                type="number"
+                min={2}
+                max={30}
+                value={Number.isNaN(s.stalled_alert_minutes) ? "" : s.stalled_alert_minutes}
+                disabled={readOnly}
+                onChange={(e) => set("stalled_alert_minutes", num(e.target.value))}
+              />
+            </Field>
+            <p className="rounded-xl bg-white/[0.03] px-3.5 py-3 text-[12.5px] leading-[19px] text-fg-muted">
+              <span className="font-medium text-fg">Aussi surveillés :</span> GPS muet pendant une course, chauffeur pas parti moins de 30 min avant une planifiée.
+            </p>
+          </CardBody>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader icon={<Percent />} title="Commission chauffeur" description="Part de la centrale sur le prix de chaque course : l'app chauffeur affiche les gains nets." />
+        <CardBody className="grid gap-5 sm:grid-cols-[220px_1fr] sm:items-start">
+          <Field label="Commission chauffeur (%)" hint="Vide = aucune commission.">
+            <UnitInput
+              unit="%"
+              type="text"
+              placeholder="Aucune"
+              value={commission}
+              disabled={readOnly}
+              onChange={(e) => {
+                const v = e.target.value.replace(/[^\d.,]/g, "").slice(0, 6);
+                setCommission(v);
+                set("driver_commission_percent", v.trim() === "" ? null : Math.round(num(v) * 100) / 100);
+              }}
+            />
+          </Field>
+          <div className="rounded-xl bg-white/[0.03] px-4 py-3.5 sm:mt-[26px]">
+            {pct == null || Number.isNaN(pct) ? (
+              <p className="text-[12.5px] text-fg-muted">Sans commission, le chauffeur voit le prix des courses (chiffre d&apos;affaires brut).</p>
+            ) : (
+              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5 text-[12.5px] text-fg-muted">
+                <span>
+                  Course à <span className="num text-fg">{formatPrice(sample)}</span>
+                </span>
+                <span>
+                  Centrale <span className="num text-fg">{formatPrice(Math.round((sample * pct) / 100))}</span>
+                </span>
+                <span>
+                  Net chauffeur <span className="num text-[14px] font-semibold text-brand">{formatPrice(sample - Math.round((sample * pct) / 100))}</span>
+                </span>
+              </div>
+            )}
+          </div>
+        </CardBody>
+      </Card>
+
+      {!readOnly && (
+        <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] px-4 py-3 shadow-float backdrop-blur-xl">
+          <p className="flex items-center gap-2 text-[12.5px] text-fg-muted">
+            <span className={cn("size-1.5 rounded-full", dirty ? "bg-amber" : "bg-green")} />
+            {dirty ? "Modifications non enregistrées" : "Tout est enregistré"}
+          </p>
+          <div className="flex gap-2">
+            {dirty && (
+              <Button variant="ghost" size="sm" onClick={reset} disabled={pending}>
+                Annuler
+              </Button>
+            )}
+            <Button variant="primary" size="sm" loading={pending} disabled={!dirty} onClick={save}>
+              Enregistrer
+            </Button>
+          </div>
+        </div>
+      )}
+      </div>
+
       <Card className="h-fit">
         <CardHeader title="Aperçu des vagues" description="Chaque cercle = une vague de notifications." />
         <CardBody className="space-y-4">

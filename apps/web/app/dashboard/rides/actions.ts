@@ -92,3 +92,43 @@ export async function assignRide(rideId: string, driverId: string) {
 export async function redispatchRide(rideId: string) {
   return rpc("redispatch_ride", { p_ride_id: rideId });
 }
+
+// ---------------------------------------------------------------- alertes de suivi (migration 002200)
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type RelaunchResult =
+  | { ok: true; code: "RELAUNCHED" | "UNASSIGNED"; message: string }
+  | { ok: false; code: "DRIVER_CHANGED" | "RIDE_NOT_REASSIGNABLE" | "RIDE_NOT_FOUND" | "ERROR"; error: string };
+
+/**
+ * « Relancer » : retire la course au chauffeur affiché par l'alerte (p_expected_driver) et relance la recherche
+ * (il n'est plus sollicité pour cette course). Dispatch automatique désactivé → UNASSIGNED (à attribuer à la main).
+ */
+export async function relaunchRide(rideId: string, expectedDriverId: string | null, reason?: string): Promise<RelaunchResult> {
+  const ctx = await getOrgContext();
+  if (!ctx) return { ok: false, code: "ERROR", error: "Accès refusé." };
+  if (!UUID.test(rideId) || (expectedDriverId && !UUID.test(expectedDriverId))) return { ok: false, code: "RIDE_NOT_FOUND", error: "Course introuvable." };
+  const { data, error } = await ctx.supabase.rpc("reassign_ride", {
+    p_ride_id: rideId,
+    p_reason: reason?.trim() || null,
+    p_expected_driver: expectedDriverId,
+  });
+  if (error) return { ok: false, code: "ERROR", error: actionError(error) };
+  const res = data as { ok: boolean; code: string; message?: string };
+  revalidatePath("/dashboard/rides");
+  if (res?.ok && (res.code === "RELAUNCHED" || res.code === "UNASSIGNED")) return { ok: true, code: res.code, message: res.message ?? "" };
+  const code = (["DRIVER_CHANGED", "RIDE_NOT_REASSIGNABLE", "RIDE_NOT_FOUND"] as const).find((c) => c === res?.code) ?? "ERROR";
+  return { ok: false, code, error: res?.message ?? "Action impossible." };
+}
+
+/** « Garder » : l'alerte est mise en sourdine 15 min (pas de nouvelle alerte du même type entre-temps). */
+export async function acknowledgeRideAlert(alertId: string): Promise<Result<{ message: string }>> {
+  const ctx = await getOrgContext();
+  if (!ctx) return { ok: false, error: "Accès refusé." };
+  if (!UUID.test(alertId)) return { ok: false, error: "Alerte introuvable." };
+  const { data, error } = await ctx.supabase.rpc("acknowledge_ride_alert", { p_alert_id: alertId });
+  if (error) return { ok: false, error: actionError(error) };
+  const res = data as { ok: boolean; code: string; message?: string };
+  if (!res?.ok) return { ok: false, error: res?.message ?? "Alerte déjà traitée." };
+  return { ok: true, message: res.message ?? "Alerte mise en sourdine 15 min." };
+}

@@ -1,13 +1,15 @@
 import {
   OFFER_STATUS_META, PAYMENT_METHOD_LABELS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, canAssign, canCancel, canRedispatch,
-  formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate, formatTime, haversine,
+  formatDistance, formatDuration, formatPhone, formatPrice, formatTime, haversine,
   type OfferStatus, type PaymentMethod, type RideSource, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowLeft, Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
+import { ArrowLeft, BellRing, Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageBody } from "@/components/layout/page-header";
+import { RideAlertList, type RideAlertRow } from "@/components/rides/ride-alert-list";
+import { FlightChip, FlightDetails, PickupTime } from "@/components/rides/flight-info";
 import { LiveRefresh } from "@/components/rides/live-refresh";
 import { RideActions, type AssignableDriver } from "@/components/rides/ride-actions";
 import { RideMap } from "@/components/rides/ride-map";
@@ -18,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/misc";
 import { requireOrg } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 import type { LiveDriver, LiveOffer, LiveRide } from "@/lib/queries/live";
 
 export const metadata: Metadata = { title: "Course" };
@@ -43,7 +46,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const { data: ride } = await ctx.supabase.from("rides").select("*").eq("id", id).eq("organization_id", ctx.org.id).maybeSingle();
   if (!ride) notFound();
 
-  const [events, offers, drivers] = await Promise.all([
+  const [events, offers, drivers, alerts] = await Promise.all([
     ctx.supabase.from("ride_events").select("id, category, level, type, message, actor_type, data, created_at").eq("ride_id", id).order("id"),
     ctx.supabase
       .from("ride_offers")
@@ -55,6 +58,14 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
       .select("id, number, first_name, last_name, phone, photo_url, presence, status, current_ride_id, online_since, vehicle:vehicles(brand, model, plate, color, category, seats), location:driver_locations(lat, lng, heading, speed_mps, updated_at)")
       .eq("organization_id", ctx.org.id)
       .eq("status", "active"),
+    // Alertes de suivi (retard, immobile, GPS muet, pas démarrée), les plus récentes d'abord
+    ctx.supabase
+      .from("ride_alerts")
+      .select("id, ride_id, driver_id, kind, severity, message, data, status, resolution, muted_until, created_at, updated_at, resolved_at")
+      .eq("ride_id", id)
+      .eq("organization_id", ctx.org.id)
+      .order("created_at", { ascending: false })
+      .limit(12),
   ]);
 
   const allDrivers = ((drivers.data ?? []) as any[]).map((d) => ({
@@ -71,6 +82,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const tz = ctx.org.timezone;
 
   const assignable: AssignableDriver[] = allDrivers
+    .filter((d) => d.id !== ride.driver_id)
     .map((d) => ({
       id: d.id,
       name: `${d.first_name} ${d.last_name}`,
@@ -83,7 +95,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
 
   return (
     <>
-      <LiveRefresh rideId={id} />
+      <LiveRefresh rideId={id} events={["ride.updated", "ride.event", "offer.updated", "ride.alert"]} />
       <div className="border-b border-line">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
           <div>
@@ -94,10 +106,11 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               <h1 className="text-[26px] font-semibold tracking-tight">Course #{ride.number}</h1>
               <RideStatusBadge status={status} />
               <RideTypeTag type={ride.type} />
+              {ride.flight_number && <FlightChip ride={ride} timeZone={tz} className="h-[22px] rounded-full px-2 text-[11.5px]" />}
               <Badge tone="neutral" dot={false}>{RIDE_SOURCE_LABELS[ride.source as RideSource]}</Badge>
             </div>
             <p className="mt-2 text-[14px] text-fg-muted">
-              {formatRideDate(ride.pickup_at, tz)} · {ride.customer_name}
+              <PickupTime ride={ride} timeZone={tz} withDate /> · {ride.customer_name}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -106,15 +119,17 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               number={ride.number}
               canCancel={canCancel(status)}
               canRedispatch={canRedispatch(status) && !ride.driver_id}
-              canAssign={canAssign(status)}
+              canAssign={canAssign(status) || status === "DRIVER_EN_ROUTE" || status === "DRIVER_ARRIVED"}
+              assignLabel={ride.driver_id ? "Réattribuer" : "Attribuer"}
               drivers={assignable}
             />
           </div>
         </div>
       </div>
 
-      <PageBody className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
-        <div className="space-y-6">
+      {/* Mobile : alertes et vol d'abord ; grand écran : colonne de droite (alertes, vol, puis timeline) */}
+      <PageBody className="grid gap-6 xl:grid-cols-[1.35fr_1fr] xl:grid-rows-[auto_1fr]">
+        <div className="min-w-0 space-y-6 xl:col-start-1 xl:row-span-2 xl:row-start-1">
           <Card className="overflow-hidden">
             <div className="border-b border-line px-5 py-4">
               <RideProgress ride={ride} timeZone={tz} />
@@ -141,7 +156,9 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <Info icon={<Clock />} label="Prise en charge">{formatRideDate(ride.pickup_at, tz)}</Info>
+                <Info icon={<Clock />} label="Prise en charge">
+                  <PickupTime ride={ride} timeZone={tz} withDate />
+                </Info>
                 <Info icon={<Radar />} label="Trajet estimé">
                   {formatDistance(ride.estimated_distance_m)} · {formatDuration(ride.estimated_duration_s)}
                 </Info>
@@ -164,7 +181,13 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                 </Info>
                 <Info icon={<Users />} label="Passagers">{ride.passengers}</Info>
                 <Info icon={<Luggage />} label="Bagages">{ride.luggage}</Info>
-                {ride.flight_number && <Info icon={<Plane />} label="Vol">{ride.flight_number}</Info>}
+                {ride.flight_number && (
+                  <div className="col-span-2">
+                    <Info icon={<Plane />} label="Vol">
+                      <FlightChip ride={ride} timeZone={tz} className="mt-0.5" />
+                    </Info>
+                  </div>
+                )}
                 {ride.comment && (
                   <div className="col-span-2">
                     <Info icon={<MessageSquareText />} label="Commentaire">{ride.comment}</Info>
@@ -240,7 +263,40 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
           </Card>
         </div>
 
-        <Card className="h-fit xl:sticky xl:top-6">
+        <div className="order-first min-w-0 space-y-6 empty:hidden xl:order-none xl:col-start-2 xl:row-start-1">
+          {(alerts.data ?? []).length > 0 && (
+            <Card>
+              <CardHeader
+                title="Alertes de suivi"
+                description="Retard, immobilité, GPS muet, départ tardif : la centrale décide."
+                icon={<BellRing />}
+              />
+              <CardBody className="pt-1">
+                <RideAlertList
+                  alerts={(alerts.data ?? []) as RideAlertRow[]}
+                  rideNumber={ride.number}
+                  driverPhone={driver?.phone ?? null}
+                  currentDriverId={ride.driver_id}
+                  timeZone={tz}
+                />
+              </CardBody>
+            </Card>
+          )}
+          {ride.flight_number && (
+            <Card>
+              <CardHeader title="Vol suivi" description="Horaires mis à jour automatiquement ; la prise en charge suit l'arrivée." icon={<Plane />} />
+              <CardBody className="pt-1">
+                <FlightDetails ride={ride} timeZone={tz} />
+              </CardBody>
+            </Card>
+          )}
+        </div>
+        <Card
+          className={cn(
+            "h-fit min-w-0 xl:sticky xl:top-6 xl:col-start-2",
+            (alerts.data ?? []).length > 0 || ride.flight_number ? "xl:row-start-2" : "xl:row-span-2 xl:row-start-1",
+          )}
+        >
           <CardHeader title="Timeline" description="Chaque étape du dispatch, horodatée à la seconde." icon={<Radar />} />
           <CardBody>
             <RideTimeline events={(events.data ?? []) as TimelineEvent[]} timeZone={tz} />

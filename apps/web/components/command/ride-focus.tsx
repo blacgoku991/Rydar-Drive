@@ -3,21 +3,70 @@ import {
   DEFAULT_DISPATCH_RADII_M, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, VEHICLE_CATEGORY_META, formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate,
   formatTime, haversine, initials, type DriverPresence, type PaymentMethod, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowLeft, ExternalLink, Luggage, Phone, Plane, Users } from "lucide-react";
+import { ArrowLeft, BellOff, ExternalLink, Luggage, MessageSquareText, Phone, Users } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
 import { PRESENCE_COLOR } from "@/components/map/map-theme";
+import { FlightDetails, PickupTime } from "@/components/rides/flight-info";
 import { RideActions, type AssignableDriver } from "@/components/rides/ride-actions";
 import { toneDot, toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { LiveDriver, LiveRide } from "@/lib/queries/live";
+import type { LiveAlert, LiveDriver, LiveRide } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
 import { SEARCHING, TERMINAL } from "./ride-row";
 
 type Event = { id: number; level: string; message: string; created_at: string; category: string };
 
 const ETA_STATUSES = new Set(["ACCEPTED", "DRIVER_EN_ROUTE"]);
+/** Statuts où la centrale peut encore changer de chauffeur (assign_ride, migration 002200). */
+const ASSIGNABLE = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED", "NO_DRIVER_FOUND", "ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED"]);
 const LEVEL_DOT: Record<string, string> = { success: "bg-brand", warning: "bg-amber", error: "bg-red", info: "bg-fg-subtle", debug: "bg-fg-subtle" };
+
+/** Bandeau d'alerte de suivi : type, message du serveur, âge + Relancer / Réattribuer / Garder / Appeler. */
+function AlertBanner({ alert, ride, driver, now, onAssign }: { alert: LiveAlert; ride: LiveRide; driver?: LiveDriver; now: number; onAssign: () => void }) {
+  const Icon = ALERT_ICON[alert.kind];
+  if (alert.status !== "open") {
+    return (
+      <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.035] px-3.5 py-2.5 text-[12.5px] text-fg-muted">
+        <BellOff className="size-4 shrink-0 text-fg-subtle" />
+        <span className="min-w-0 flex-1">
+          <span className="font-medium text-fg">{alertLabel(alert.kind)}</span> · gardé par la centrale
+          {alert.muted_until ? `, sourdine jusqu'à ${formatTime(alert.muted_until)}` : ""}
+        </span>
+      </div>
+    );
+  }
+  const color = severityColor(alert.severity);
+  return (
+    <div
+      className="animate-rise overflow-hidden rounded-xl border px-3.5 py-3"
+      style={{ borderColor: `color-mix(in oklab, ${color} 38%, transparent)`, background: `color-mix(in oklab, ${color} 9%, transparent)` }}
+      role="alert"
+    >
+      <div className="flex items-start gap-3">
+        <span className="relative grid size-9 shrink-0 place-items-center rounded-xl" style={{ background: `color-mix(in oklab, ${color} 18%, transparent)`, color }}>
+          {alert.severity === "critical" && <span className="absolute inset-0 animate-ping rounded-xl opacity-25" style={{ background: color }} />}
+          <Icon className="relative size-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="flex items-baseline gap-2 text-[13.5px] font-semibold" style={{ color }}>
+            <span className="truncate">{alertLabel(alert.kind)}</span>
+            {alert.severity === "critical" && <span className="shrink-0 rounded bg-red/15 px-1.5 py-px text-[10.5px] font-semibold uppercase tracking-wide text-red">urgent</span>}
+            <span className="ml-auto shrink-0 text-[11.5px] font-normal text-fg-subtle">{agoFr(alert.created_at, now)}</span>
+          </p>
+          <p className="mt-0.5 text-[12.5px] leading-[18px] text-fg">{alert.message}</p>
+        </div>
+      </div>
+      <AlertActionBar
+        className="mt-3"
+        alert={{ id: alert.id, ride_id: ride.id, driver_id: alert.driver_id, driverName: alert.data?.driver_name ?? driver?.first_name, rideNumber: ride.number }}
+        phone={driver && driver.id === alert.driver_id ? driver.phone : undefined}
+        onAssign={onAssign}
+      />
+    </div>
+  );
+}
 
 /** Détail d'une course dans le panneau du command center (sans quitter la carte). */
 export function RideFocus({
@@ -27,6 +76,10 @@ export function RideFocus({
   offers,
   approachS,
   liveEvents,
+  alert,
+  now,
+  assignOpen,
+  onAssignOpenChange,
   onBack,
   onSelectDriver,
 }: {
@@ -36,6 +89,10 @@ export function RideFocus({
   offers: number;
   approachS: number | null;
   liveEvents: Event[];
+  alert?: LiveAlert;
+  now: number;
+  assignOpen?: boolean;
+  onAssignOpenChange?: (open: boolean) => void;
   onBack: () => void;
   onSelectDriver: (id: string) => void;
 }) {
@@ -52,14 +109,14 @@ export function RideFocus({
     return () => {
       cancelled = true;
     };
-  }, [ride.id, ride.status]);
+  }, [ride.id, ride.status, ride.pickup_at, alert?.id]);
 
   const timeline = [...liveEvents.filter((e) => !events.some((x) => x.id === e.id) && e.category === "timeline"), ...events]
     .sort((a, b) => b.id - a.id)
     .slice(0, 8);
 
   const assignable: AssignableDriver[] = drivers
-    .filter((d) => d.status === "active" && d.presence !== "offline")
+    .filter((d) => d.status === "active" && d.presence !== "offline" && d.id !== ride.driver_id)
     .map((d) => ({
       id: d.id,
       name: `${d.first_name} ${d.last_name}`,
@@ -71,6 +128,7 @@ export function RideFocus({
     .sort((a, b) => (a.distance_m ?? 1e9) - (b.distance_m ?? 1e9));
 
   const eta = ETA_STATUSES.has(status) && approachS != null ? approachS : null;
+  const openAssign = () => onAssignOpenChange?.(true);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -90,6 +148,8 @@ export function RideFocus({
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4">
+        {alert && !TERMINAL.has(status) && <AlertBanner alert={alert} ride={ride} driver={driver} now={now} onAssign={openAssign} />}
+
         {/* Statut + ETA */}
         <div className={cn("rounded-xl px-3.5 py-3", status === "NO_DRIVER_FOUND" ? "bg-red/[0.08]" : "bg-white/[0.04]")}>
           <p className={cn("flex items-center gap-2 text-[13.5px] font-semibold", toneText[meta.tone])}>
@@ -109,7 +169,9 @@ export function RideFocus({
                     ? `Trajet estimé ${formatDuration(ride.estimated_duration_s)}`
                     : status === "NO_DRIVER_FOUND"
                       ? "Aucun chauffeur n'a accepté : relancez ou attribuez manuellement."
-                      : "—"}
+                      : status === "CREATED"
+                        ? "En attente d'attribution manuelle."
+                        : "—"}
           </p>
         </div>
 
@@ -122,7 +184,9 @@ export function RideFocus({
           </div>
           <div className="min-w-0 flex-1 space-y-3">
             <div>
-              <p className="text-[11.5px] text-fg-subtle">Départ · {formatTime(ride.pickup_at)}</p>
+              <p className="text-[11.5px] text-fg-subtle">
+                Départ · <PickupTime ride={ride} />
+              </p>
               <p className="text-[13.5px] leading-snug text-fg">{ride.pickup_address}</p>
             </div>
             <div>
@@ -131,6 +195,9 @@ export function RideFocus({
             </div>
           </div>
         </div>
+
+        {/* Vol suivi */}
+        {ride.flight_number && <FlightDetails ride={ride} now={now} />}
 
         <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-line">
           {[
@@ -153,7 +220,6 @@ export function RideFocus({
               <span className="flex items-center gap-1"><Users className="size-3" /> {ride.passengers}</span>
               <span className="flex items-center gap-1"><Luggage className="size-3" /> {ride.luggage ?? 0}</span>
               <span>{VEHICLE_CATEGORY_META[ride.vehicle_category as VehicleCategory]?.label ?? ride.vehicle_category}</span>
-              {ride.flight_number && <span className="flex items-center gap-1 text-cyan"><Plane className="size-3" /> {ride.flight_number}</span>}
             </p>
           </div>
           {ride.customer_phone && (
@@ -165,24 +231,30 @@ export function RideFocus({
 
         {/* Chauffeur */}
         {driver && (
-          <button
-            type="button"
-            onClick={() => onSelectDriver(driver.id)}
-            className="flex w-full items-center gap-3 rounded-xl border border-line px-3 py-2.5 text-left hover:border-line-strong"
-          >
-            <span className="grid size-9 place-items-center rounded-full bg-ink-600 text-[12px] font-semibold" style={{ boxShadow: `0 0 0 2px ${PRESENCE_COLOR[driver.presence]}` }}>
-              {initials(driver.first_name, driver.last_name)}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13.5px] font-medium">{driver.first_name} {driver.last_name}</span>
-              <span className="block truncate text-[12px] text-fg-subtle">
-                {driver.vehicle ? `${driver.vehicle.brand ?? ""} ${driver.vehicle.model} · ${driver.vehicle.plate}` : "—"}
+          <div className="flex w-full items-center gap-3 rounded-xl border border-line px-3 py-2.5 hover:border-line-strong">
+            <button type="button" onClick={() => onSelectDriver(driver.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-ink-600 text-[12px] font-semibold" style={{ boxShadow: `0 0 0 2px ${PRESENCE_COLOR[driver.presence]}` }}>
+                {initials(driver.first_name, driver.last_name)}
               </span>
-            </span>
-            <a href={`tel:${driver.phone}`} onClick={(e) => e.stopPropagation()} className="grid size-8 place-items-center rounded-lg text-fg-muted hover:bg-white/5 hover:text-fg" aria-label={`Appeler ${formatPhone(driver.phone)}`}>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13.5px] font-medium">{driver.first_name} {driver.last_name}</span>
+                <span className="block truncate text-[12px] text-fg-subtle">
+                  {driver.vehicle ? `${driver.vehicle.brand ?? ""} ${driver.vehicle.model} · ${driver.vehicle.plate}` : "—"}
+                </span>
+              </span>
+            </button>
+            <Link
+              href={`/dashboard/messages?driver=${driver.id}`}
+              className="grid size-8 shrink-0 place-items-center rounded-lg text-fg-muted hover:bg-white/5 hover:text-fg"
+              aria-label={`Écrire à ${driver.first_name}`}
+              title={`Écrire à ${driver.first_name}`}
+            >
+              <MessageSquareText className="size-4" />
+            </Link>
+            <a href={`tel:${driver.phone}`} className="grid size-8 shrink-0 place-items-center rounded-lg text-fg-muted hover:bg-white/5 hover:text-fg" aria-label={`Appeler ${formatPhone(driver.phone)}`}>
               <Phone className="size-4" />
             </a>
-          </button>
+          </div>
         )}
 
         {!TERMINAL.has(status) || status === "NO_DRIVER_FOUND" ? (
@@ -193,7 +265,10 @@ export function RideFocus({
               number={ride.number}
               canCancel={!TERMINAL.has(status)}
               canRedispatch={status === "NO_DRIVER_FOUND" || SEARCHING.has(status)}
-              canAssign={SEARCHING.has(status) || status === "NO_DRIVER_FOUND" || status === "ACCEPTED"}
+              canAssign={ASSIGNABLE.has(status)}
+              assignLabel={ride.driver_id ? "Réattribuer" : "Attribuer"}
+              assignOpen={assignOpen}
+              onAssignOpenChange={onAssignOpenChange}
               drivers={assignable}
             />
           </div>
