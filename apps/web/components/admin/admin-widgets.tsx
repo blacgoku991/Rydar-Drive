@@ -1,10 +1,12 @@
 "use client";
-import { slugify } from "@rydar/shared";
+import { slugify, type DispatchModel } from "@rydar/shared";
 import { Building2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createOrganization, savePlan, setOrganizationStatus, updateOrganizationPlan } from "@/app/admin/actions";
+import { DispatchModelPicker, FeeFields } from "@/components/admin/dispatch-model";
+import { readFees } from "@/components/admin/fees";
 import { Columns, DataTable } from "@/components/charts/charts";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
@@ -32,6 +34,10 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [touched, setTouched] = useState(false);
+  const [model, setModel] = useState<DispatchModel>("fleet");
+  const [feePercent, setFeePercent] = useState("0");
+  const [feeFixed, setFeeFixed] = useState("0");
+  const [feeErrors, setFeeErrors] = useState<{ percent?: string; fixed?: string }>({});
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <Button variant="primary" onClick={() => setOpen(true)}>
@@ -42,10 +48,16 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
           action={(f) =>
             start(async () => {
               const g = (k: string) => String(f.get(k) ?? "");
-              const res = await createOrganization({
-                name, slug, planCode: g("plan"), email: g("email"), phone: g("phone"), city: g("city"),
-                ownerName: g("ownerName"), ownerEmail: g("ownerEmail"), ownerPassword: g("ownerPassword"),
-              });
+              const fees = model === "centrale" ? readFees(feePercent, feeFixed) : readFees("0", "0");
+              if (!fees.valid) return void setFeeErrors(fees.errors);
+              setFeeErrors({});
+              const res = await createOrganization(
+                {
+                  name, slug, planCode: g("plan"), email: g("email"), phone: g("phone"), city: g("city"),
+                  ownerName: g("ownerName"), ownerEmail: g("ownerEmail"), ownerPassword: g("ownerPassword"),
+                },
+                { dispatchModel: model, platformFeePercent: fees.percent, platformFeeFixedCents: fees.fixedCents },
+              );
               if (!res.ok) return void toast.error(res.error);
               toast.success("Rattacheur créé");
               setOpen(false);
@@ -69,6 +81,15 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
             <Field label="E-mail de la centrale"><Input name="email" type="email" required /></Field>
             <Field label="Téléphone" optional><Input name="phone" /></Field>
             <Field label="Ville" optional className="sm:col-span-2"><Input name="city" /></Field>
+          </div>
+          <div className="space-y-3">
+            <p className="text-[13px] font-medium text-fg-muted">Modèle d&apos;exploitation</p>
+            <DispatchModelPicker value={model} onChange={setModel} disabled={pending} />
+            {model === "centrale" && (
+              <div className="rounded-xl border border-line bg-white/[0.02] p-4">
+                <FeeFields percent={feePercent} fixed={feeFixed} onPercent={setFeePercent} onFixed={setFeeFixed} errors={feeErrors} disabled={pending} />
+              </div>
+            )}
           </div>
           <div className="grid gap-4 rounded-xl border border-line bg-white/[0.02] p-4 sm:grid-cols-2">
             <p className="text-[13px] font-medium text-fg-muted sm:col-span-2">Compte propriétaire</p>
