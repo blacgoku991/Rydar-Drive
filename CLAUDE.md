@@ -66,10 +66,22 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   - worker : simulateur sur itinéraires OSRM, `backfill-routes`
   - dev-geo : `scripts/dev-geo/` (tuiles OMT Overture, router :5001, géocodeur :5002) ; env dev dans apps/web/.env.local
 - [x] docs/DEPLOYMENT.md + captures docs/screenshots/*.jpg
+- [ ] M12 NOUVEAUTÉS (choix utilisateur 3/6/7/10) — SQL fait (mig 002050→002400), écrans en cours
+  - vols 002100 : rides.flight_*, pickup_at_original ; décalage RELATIF (heure demandée + retard), « arrivée + marge » seulement
+    sans horaire prévu ou si l'heure demandée précède l'atterrissage ; worker : flights_to_check / apply_flight_status
+  - alertes 002200 : ride_alerts (late|stalled|no_gps|not_started), private.watch_rides() 30 s ; la CENTRALE décide :
+    acknowledge_ride_alert (Garder), assign_ride (Réattribuer), reassign_ride(ride, reason, expected_driver) (Relancer ;
+    DRIVER_CHANGED / UNASSIGNED si dispatch auto off) ; chauffeur retiré = offre closed/removed_by_dispatch (exclu, pas un refus)
+  - messagerie 002300 : chat_messages (fil driver:<id> + flotte), signalements (report_type, position, expiration, votes),
+    topic realtime fleet:<org> ; send_chat_message, mark_chat_read, chat_overview, driver_chat_overview, vote_fleet_report
+  - gains/documents 002400 : driver_earnings, driver_documents, driver_submit_document, review_driver_document,
+    org_document_alerts, private.document_reminders() ; commission organization_settings.driver_commission_percent
+  - stats 002050 : ride_offers.missed_at (offre géo prolongée/expirée sans réponse = manquée)
+  - libellés communs : `@rydar/shared` features.ts (flightBadge, FLEET_REPORT_META, RIDE_ALERT_META, documents)
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
 - RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_register_device, driver_home, driver_offers.
-- RPC dashboard : cancel_ride, assign_ride, redispatch_ride, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
-- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping() ; LISTEN rydar_notifications.
+- RPC dashboard : cancel_ride, assign_ride, redispatch_ride, reassign_ride, acknowledge_ride_alert, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
+- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders() ; LISTEN rydar_notifications.
