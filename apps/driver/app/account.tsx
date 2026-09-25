@@ -7,7 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { TRUST_LEVEL_META, formatDate, formatTime, type DriverAccountState, type DriverAccountStateKind } from "@rydar/shared";
 import { Redirect, router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { buildDocEntries, DocCard, DocumentsSummary, isTodo, UploadSheet, useDriverDocuments, type DocEntry } from "@/components/documents";
 import { frTypo } from "@/components/centrale";
