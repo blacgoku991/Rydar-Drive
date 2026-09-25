@@ -43,3 +43,6 @@ dump.rdb
 
 # Copies de travail temporaires des agents (git worktree)
 .claude/worktrees/
+
+# Kit VPS : données OSRM préparées sur le serveur
+deploy/osrm/
