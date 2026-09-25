@@ -86,9 +86,34 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   - worker : `src/flights/` (aerodatabox|aviationstack|flightaware|mock, FLIGHT_MOCK_DELAYS), watch_rides 30 s,
     document_reminders 6 h, simulateur SIM_REPORTS=1
 
+- [x] M13 OPTION 2 « CENTRALE À COMMISSION » (réseaux WhatsApp/Telegram) — mig 002600, 200 tests DB, 77 unitaires
+  - `organizations.dispatch_model` fleet|centrale + `platform_fee_percent/fixed_cents` : super admin seul (service role + audit) ;
+    lien d'inscription `join_code/join_enabled/join_auto_approve` via RPC set_join_link (owner/admin)
+  - répartition trigger `rides_centrale_split` (commission % + fixe ou saisie `commission_cents`, frais plateforme, `driver_payout_cents`) ;
+    PRICE_REQUIRED (dashboard), COMMISSION_TOO_HIGH ; offre + push « Vous gagnez 40 € »
+  - `ride_settlements` (trigger `rides_d_settlement` à COMPLETED) : driver_owes (cash/card) | centrale_owes (online/invoice/account) ;
+    due→declared→paid | disputed | waived (+ reopen) ; SETTLEMENT_LOCKED ; relances manuelle (30 min) et worker (24 h, 3 max)
+  - blocages `private.centrale_blocker` (unpaid | credit_limit | new_driver) dans run_geo_wave / offer_to_fleet / accept (DRIVER_BLOCKED) ;
+    trust new→trusted auto (`trust_after_rides`)
+  - bans : `banned_identities` (sha256 normalisé, org|platform), `fraud_reports` ; triggers IDENTITY_BANNED / DRIVER_BANNED ;
+    appareil d'un banni → compte suspendu / candidature refusée ; ban_driver, lift_driver_ban, svc_platform_ban/unban/dismiss
+  - inscription `/rejoindre/{code}` : svc_join_info → svc_identity_check → compte Auth → svc_driver_apply (inactive+pending) →
+    approve (aussi « reconsidérer » un refus) / reject ; `driver_account_state()` ; candidat : documents + appareil (current_driver_or_applicant_id)
+  - web : `/admin/centrales` (frais, signalements), fiche org (modèle, « Donner un accès »), `/dashboard/settlements` (Encaissements),
+    `/dashboard/network` (lien, candidatures, bannis), réglages « Commission & encaissement », répartition dans nouvelle course / fiche /
+    command center (`components/settlements/*`, `components/network/*`, `components/admin/*`), alertes temps réel (settlement.updated,
+    driver.application, driver.flagged) ; route `api/auth/driver-login` : state active|pending, 403 BANNED|REJECTED|INACTIVE…
+  - app : `app/account.tsx` (en attente / refusé / banni / suspendu), `app/(app)/commissions.tsx`, offre « Vous gagnez », fin de course,
+    gains « Votre part » ; device id Android = `and-` + ANDROID_ID (bannissement)
+  - shared : `centrale.ts` (libellés, lien de paiement {montant}/{montant_centimes}/{reference}, message WhatsApp, schémas) ;
+    seed « Centrale Express Paris » contact@centrale-express.fr (tous les états, candidatures, 1 banni signalé), lien express2026demo
+
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
-- RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_register_device, driver_home, driver_offers.
+- RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_register_device, driver_home, driver_offers ; centrale : driver_settlements, driver_declare_payment, driver_account_state.
 - RPC dashboard : cancel_ride, assign_ride, redispatch_ride, reassign_ride, acknowledge_ride_alert, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
-- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders() ; LISTEN rydar_notifications.
+  Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
+  ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application, admin_centrale_overview ;
+  service role : svc_join_info, svc_identity_check, svc_driver_apply, svc_platform_ban/unban/dismiss_report.
+- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.
