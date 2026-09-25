@@ -215,3 +215,33 @@ export async function addDriverDocument(driverId: string, input: z.input<typeof 
   revalidatePath(`/dashboard/drivers/${driverId}`);
   return { ok: true };
 }
+
+const reviewSchema = z.object({
+  documentId: z.string().uuid(),
+  approve: z.boolean(),
+  note: z.string().trim().max(500).optional(),
+  expiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
+});
+
+/** Validation / refus d'un document déposé par le chauffeur (review_driver_document : push + journal + temps réel). */
+export async function reviewDriverDocument(
+  input: z.input<typeof reviewSchema>,
+): Promise<{ ok: true; code: string } | { ok: false; error: string; code?: string }> {
+  const ctx = await getOrgContext();
+  if (!ctx) return { ok: false, error: "Accès refusé." };
+  const parsed = reviewSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Demande invalide." };
+  const { documentId, approve, note, expiresAt } = parsed.data;
+  const { data, error } = await ctx.supabase.rpc("review_driver_document", {
+    p_document_id: documentId,
+    p_approve: approve,
+    p_note: note || null,
+    p_expires_at: expiresAt || null,
+  });
+  if (error || !data) return { ok: false, error: actionError(error) };
+  const res = data as { ok: boolean; code: string; message?: string; document?: { driver_id: string } };
+  if (!res.ok) return { ok: false, code: res.code, error: res.message ?? "Action impossible." };
+  if (res.document?.driver_id) revalidatePath(`/dashboard/drivers/${res.document.driver_id}`);
+  revalidatePath("/dashboard/drivers");
+  return { ok: true, code: res.code };
+}

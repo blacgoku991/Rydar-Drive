@@ -1,10 +1,11 @@
 import {
   DRIVER_STATUS_META, VEHICLE_CATEGORY_META, formatPercent, formatPhone, formatPrice, formatRelative,
-  type DriverStatus, type VehicleCategory,
+  type DriverStatus, type OrgDocumentAlerts, type VehicleCategory,
 } from "@rydar/shared";
 import { Search, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { DocumentAlertsCard } from "@/components/drivers/document-alerts";
 import { DriverFormSheet } from "@/components/drivers/driver-form-sheet";
 import { FleetOverviewMap } from "@/components/drivers/fleet-overview-map";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
@@ -34,13 +35,14 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
   const filter = FILTERS.some((f) => f.key === sp.filter) ? sp.filter! : "all";
   const q = (sp.q ?? "").trim().toLowerCase();
 
-  const [{ data: drivers }, { data: metrics }] = await Promise.all([
+  const [{ data: drivers }, { data: metrics }, { data: docAlerts }] = await Promise.all([
     ctx.supabase
       .from("drivers")
       .select("id, number, first_name, last_name, phone, email, photo_url, status, presence, current_ride_id, online_since, last_seen_at, vehicle:vehicles(model, brand, plate, category, color, seats), location:driver_locations(lat, lng, heading, speed_mps, updated_at)")
       .eq("organization_id", ctx.org.id)
       .order("number"),
     ctx.supabase.rpc("org_driver_metrics", { p_org: ctx.org.id, p_days: 30 }),
+    ctx.supabase.rpc("org_document_alerts", { p_org: ctx.org.id }),
   ]);
   const m = new Map(((metrics ?? []) as any[]).map((x) => [x.driver_id, x]));
   const all = (drivers ?? []) as any[];
@@ -74,6 +76,8 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
           <StatCard label="En course" value={active.filter((d) => busy.has(d.presence)).length} tone="cyan" />
           <StatCard label="Suspendus" value={all.filter((d) => d.status === "suspended").length} tone={all.some((d) => d.status === "suspended") ? "red" : undefined} />
         </div>
+
+        {docAlerts && <DocumentAlertsCard alerts={docAlerts as OrgDocumentAlerts} />}
 
         <Card className="relative h-[320px] overflow-hidden">
           <FleetOverviewMap

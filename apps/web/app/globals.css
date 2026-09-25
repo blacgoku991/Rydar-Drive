@@ -594,3 +594,21 @@
   font-size: 11.5px;
   color: var(--color-fg-subtle);
 }
+
+/* ==========================================================================
+   web-messages — messagerie centrale ⇄ chauffeurs, documents et gains chauffeur
+   ========================================================================== */
+/* Bulle « moi » : lime sombre */
+.chat-bubble--me {
+  background: linear-gradient(180deg, rgb(200 240 60 / 0.17), rgb(200 240 60 / 0.115));
+  border: 1px solid rgb(200 240 60 / 0.22);
+  color: #f3f8e2;
+}
+.chat-scroll {
+  overscroll-behavior: contain;
+}
+/* Mini histogramme des gains (fiche chauffeur) */
+.earn-bar {
+  background: linear-gradient(180deg, var(--color-brand), rgb(200 240 60 / 0.5));
+  box-shadow: 0 0 14px -4px rgb(200 240 60 / 0.45);
+}
