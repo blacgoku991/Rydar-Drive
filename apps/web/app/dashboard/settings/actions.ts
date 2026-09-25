@@ -1,9 +1,10 @@
 "use server";
 import {
-  emailSchema, humanizeError, orgSettingsSchema, organizationUpdateSchema, VEHICLE_CATEGORIES,
+  centraleSettingsSchema, emailSchema, humanizeError, orgSettingsSchema, organizationUpdateSchema, VEHICLE_CATEGORIES,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { centraleIssues } from "@/components/settlements/settings-schema";
 import { audit } from "@/lib/audit";
 import { isAdminRole } from "@/lib/auth";
 import { env } from "@/lib/env";
@@ -41,9 +42,44 @@ export async function updateDispatchSettings(input: z.input<typeof orgSettingsSc
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = orgSettingsSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Paramètres invalides." };
-  const { error } = await ctx.supabase.from("organization_settings").update(parsed.data).eq("organization_id", ctx.org.id);
+  // Mode centrale : la commission se règle dans « Commission & encaissement » (jamais écrasée d'ici)
+  const { driver_commission_percent: _commission, ...dispatch } = parsed.data;
+  const patch = ctx.org.dispatch_model === "centrale" ? dispatch : parsed.data;
+  const { error } = await ctx.supabase.from("organization_settings").update(patch).eq("organization_id", ctx.org.id);
   if (error) return { ok: false, error: actionError(error) };
   revalidatePath("/dashboard/settings");
+  return { ok: true };
+}
+
+/** Mode centrale : commission, délai de règlement, blocages, moyens et lien de paiement (owner / admin). */
+export async function updateCentraleSettings(input: z.input<typeof centraleSettingsSchema>): Promise<Result<{ fieldErrors?: Record<string, string> }>> {
+  const ctx = await adminCtx();
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  if (ctx.org.dispatch_model !== "centrale") return { ok: false, error: "Réservé au mode centrale." };
+  const parsed = centraleSettingsSchema.safeParse(input);
+  if (!parsed.success) {
+    const issues = centraleIssues(parsed.error);
+    return { ok: false, error: Object.values(issues)[0] ?? "Réglages invalides." };
+  }
+  const v = parsed.data;
+  const { error } = await ctx.supabase
+    .from("organization_settings")
+    .update({
+      driver_commission_percent: v.commissionPercent,
+      driver_commission_fixed_cents: v.commissionFixedCents,
+      settlement_grace_hours: v.graceHours,
+      settlement_credit_limit_cents: v.creditLimitCents,
+      block_unpaid: v.blockUnpaid,
+      new_driver_max_price_cents: v.newDriverMaxPriceCents,
+      trust_after_rides: v.trustAfterRides,
+      settlement_methods: v.methods,
+      settlement_link: v.link,
+      settlement_instructions: v.instructions,
+    })
+    .eq("organization_id", ctx.org.id);
+  if (error) return { ok: false, error: actionError(error, "Enregistrement impossible.") };
+  // Lien et instructions servent aussi aux réclamations WhatsApp (alertes, fiches) : mise en page relue
+  revalidatePath("/dashboard", "layout");
   return { ok: true };
 }
 

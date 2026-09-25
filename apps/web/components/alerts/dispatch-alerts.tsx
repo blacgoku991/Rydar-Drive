@@ -4,25 +4,36 @@
 //  - `ride.updated` (nouvelles courses) et `ride.event` (acceptation, aucun chauffeur, bascule GPS, annulation, vols) ;
 //  - `ride.alert` (retard, immobile, GPS muet, pas démarrée : la centrale décide — Relancer, Réattribuer, Garder) ;
 //  - `chat.message` (message ou signalement d'un chauffeur) ; `driver.document` (document déposé à valider).
+// Mode centrale (002600) :
+//  - `settlement.updated` : course terminée (commission à encaisser / part à verser), « J'ai payé » à confirmer ;
+//  - `driver.application` (candidature par le lien d'inscription) ; `driver.flagged` (appareil d'un compte banni).
 import {
-  DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, fleetReportTitle, formatPrice, formatRideDate, formatTime, shortAddress,
-  type ChatMessage, type DriverDocumentEvent, type RideAlertBroadcast, type RideAlertKind, type RideAlertSeverity,
+  DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatPhone, formatPrice, formatRideDate, formatTime,
+  shortAddress,
+  type ChatMessage, type DriverApplicationEvent, type DriverDocumentEvent, type DriverFlaggedEvent, type PaymentMethod, type RideAlertBroadcast,
+  type RideAlertKind, type RideAlertSeverity, type SettlementDirection, type SettlementEvent,
 } from "@rydar/shared";
 import {
-  AlertTriangle, Bell, BellOff, BellRing, CheckCircle2, CircleSlash, Clock3, FileText, Globe, KeyRound, MessageSquareText, Monitor, Plane,
-  PlaneLanding, Reply, RotateCw, Volume2, VolumeX, X, type LucideIcon,
+  AlertTriangle, ArrowUpRight, Bell, BellOff, BellRing, Check, CheckCheck, CheckCircle2, CircleSlash, Clock3, FileText, Globe, HandCoins, KeyRound,
+  MessageSquareText, Monitor, Plane, PlaneLanding, Reply, RotateCw, ShieldAlert, UserPlus, Volume2, VolumeX, X, type LucideIcon,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { Popover as P } from "radix-ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { redispatchRide } from "@/app/dashboard/rides/actions";
+import { confirmSettlements } from "@/app/dashboard/settlements/actions";
 import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
+import { useCentrale, type CentraleInfo } from "@/components/settlements/centrale-context";
+import { buildSettlementWhatsApp, methodLabel, parseDriverLabel, rideNumberOf, useDriverContact } from "@/components/settlements/settlement-ui";
 import { playSound, unlockAudio, type SoundKind } from "@/lib/sounds";
 import { cn } from "@/lib/utils";
 
-export type AlertKind = "new" | "accepted" | "no_driver" | "escalated" | "cancelled" | "ride_alert" | "flight" | "message" | "report" | "document";
+export type AlertKind =
+  | "new" | "accepted" | "no_driver" | "escalated" | "cancelled" | "ride_alert" | "flight" | "message" | "report" | "document"
+  // mode centrale
+  | "settlement" | "application" | "flagged";
 type Level = "info" | "success" | "warning" | "critical";
 export type AlertItem = {
   id: string;
@@ -45,6 +56,18 @@ export type AlertItem = {
   alert?: { id: string; kind: RideAlertKind; severity: RideAlertSeverity; driverId: string | null; driverName?: string; rideNumber?: number };
   /** Alerte traitée ou résolue (historique de la cloche). */
   done?: boolean;
+  /** Mode centrale : règlement de fin de course (à encaisser, à verser, « J'ai payé » à confirmer). */
+  settlement?: {
+    id: string;
+    action: "created" | "declared";
+    direction: SettlementDirection;
+    amountCents: number;
+    currency: string;
+    reference: string;
+    rideNumber: number | null;
+    driverId: string | null;
+    firstName: string;
+  };
 };
 
 type RideInfo = { number: number; pickup: string; dropoff: string; price: number | null; type: string; pickupAt: string; source: string };
@@ -60,6 +83,9 @@ const BASE: Record<AlertKind, { icon: LucideIcon; color: string }> = {
   message: { icon: MessageSquareText, color: "var(--color-blue)" },
   report: { icon: AlertTriangle, color: "var(--color-amber)" },
   document: { icon: FileText, color: "var(--color-violet)" },
+  settlement: { icon: HandCoins, color: "var(--color-amber)" },
+  application: { icon: UserPlus, color: "var(--color-brand)" },
+  flagged: { icon: ShieldAlert, color: "var(--color-red)" },
 };
 
 const LEVEL_COLOR: Record<Level, string> = {
@@ -74,6 +100,10 @@ function visual(i: AlertItem): { icon: LucideIcon; color: string; emoji?: string
   if (i.kind === "ride_alert" && i.alert) return { icon: ALERT_ICON[i.alert.kind] ?? AlertTriangle, color: severityColor(i.alert.severity) };
   if (i.kind === "flight") return { icon: i.level === "success" ? PlaneLanding : Plane, color: LEVEL_COLOR[i.level ?? "info"] };
   if (i.kind === "report") return { icon: AlertTriangle, color: i.color ?? BASE.report.color, emoji: i.emoji };
+  if (i.kind === "settlement" && i.settlement) {
+    if (i.settlement.action === "declared") return { icon: CheckCheck, color: "var(--color-blue)" };
+    if (i.settlement.direction === "centrale_owes") return { icon: ArrowUpRight, color: "var(--color-violet)" };
+  }
   return BASE[i.kind];
 }
 
@@ -102,7 +132,31 @@ function behavior(i: AlertItem): { sound: SoundKind | null; desktop: boolean; du
       return { sound: "notice", desktop: true, duration: 10_000 };
     case "document":
       return { sound: "notice", desktop: false, duration: 10_000 };
+    case "settlement":
+      // « J'ai payé » attend une décision : reste plus longtemps à l'écran
+      return i.settlement?.action === "declared"
+        ? { sound: "notice", desktop: true, duration: 20_000 }
+        : { sound: "notice", desktop: i.settlement?.direction === "driver_owes", duration: 12_000 };
+    case "application":
+      return { sound: "notice", desktop: true, duration: 12_000 };
+    case "flagged":
+      return { sound: "alert", desktop: true, duration: Infinity };
   }
+}
+
+/** Course payée à la centrale : la centrale doit la part chauffeur. */
+const PAID_TO_CENTRALE: Record<string, string> = {
+  online: "payée en ligne à la centrale",
+  invoice: "payée sur facture à la centrale",
+  account: "réglée sur compte entreprise",
+};
+
+/** « maintenant », « avant 14:32 », « avant demain 06:30 » */
+function dueWhen(iso: string, timeZone?: string) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t) || t <= Date.now() + 2 * 60_000) return "maintenant";
+  const label = formatRideDate(iso, timeZone);
+  return `avant ${label.startsWith("Aujourd'hui ") ? label.slice(12) : label.charAt(0).toLowerCase() + label.slice(1)}`;
 }
 
 const SOURCE: Record<string, { label: string; icon: typeof Globe }> = {
@@ -132,6 +186,8 @@ type Api = {
   focusRide: (id: string) => void;
   assignRide: (id: string) => void;
   navigate: (href: string) => void;
+  /** Organisation (mode centrale) : lien de paiement, instructions — pour les réclamations WhatsApp */
+  centrale: () => CentraleInfo | null;
 };
 
 type Ctx = {
@@ -241,13 +297,17 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     },
     [pathname, router],
   );
-  const apiRef = useRef<Api>({ focusRide, assignRide, navigate });
-  apiRef.current = { focusRide, assignRide, navigate };
+  const centrale = useCentrale();
+  const centraleRef = useRef(centrale);
+  centraleRef.current = centrale;
+  const apiRef = useRef<Api>({ focusRide, assignRide, navigate, centrale: () => centraleRef.current });
+  apiRef.current = { focusRide, assignRide, navigate, centrale: () => centraleRef.current };
   const api: Api = useMemo(
     () => ({
       focusRide: (id) => apiRef.current.focusRide(id),
       assignRide: (id) => apiRef.current.assignRide(id),
       navigate: (href) => apiRef.current.navigate(href),
+      centrale: () => apiRef.current.centrale(),
     }),
     [],
   );
@@ -453,6 +513,119 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     });
   });
 
+  // ---------------------------------------------------------------- mode centrale : encaissements (002600)
+  /** Alertes d'un règlement traité (ici ou par un autre membre) : toast fermé, historique « traitée ». */
+  const settleDone = (settlementId: string) => {
+    for (const i of itemsRef.current) {
+      if (i.settlement?.id !== settlementId) continue;
+      toast.dismiss(i.id);
+      shown.current.delete(i.id);
+    }
+    update((list) =>
+      list.some((i) => i.settlement?.id === settlementId && !i.done) ? list.map((i) => (i.settlement?.id === settlementId ? { ...i, done: true } : i)) : list,
+    );
+  };
+
+  useRealtimeEvent("settlement.updated", (e: SettlementEvent) => {
+    const s = e?.settlement;
+    if (!s?.id) return;
+    if (e.action === "paid" || e.action === "waived" || e.action === "disputed" || e.action === "reopened") {
+      settleDone(s.id);
+      return;
+    }
+    if (e.action !== "created" && e.action !== "declared") return; // « updated » : montant recalculé après correction
+    const who = parseDriverLabel(s.driver_label);
+    const tag = `${who.firstName}${who.number ? ` #${who.number}` : ""}`;
+    const n = rideLine(s.ride_id).number ?? rideNumberOf(s);
+    const amount = formatPrice(s.amount_cents, s.currency);
+    const tz = centraleRef.current?.timeZone;
+    const settlement = {
+      id: s.id, action: e.action, direction: s.direction, amountCents: s.amount_cents, currency: s.currency, reference: s.reference,
+      rideNumber: n, driverId: s.driver_id, firstName: who.firstName,
+    } satisfies AlertItem["settlement"];
+    if (e.action === "declared") {
+      push({
+        id: `set:${s.id}:declared:${s.declared_at ?? ""}`,
+        kind: "settlement",
+        rideId: null,
+        title: `${who.firstName} signale avoir payé ${amount} — à confirmer`,
+        body: [n ? `Course #${n}` : null, methodLabel(s.declared_method), s.declared_note ? `« ${s.declared_note} »` : null, `réf. ${s.reference}`]
+          .filter(Boolean)
+          .join(" · "),
+        href: "/dashboard/settlements?filter=declared",
+        cta: "Encaissements",
+        settlement,
+      });
+    } else if (s.direction === "driver_owes") {
+      push({
+        id: `set:${s.id}:created`,
+        kind: "settlement",
+        rideId: null,
+        title: `Course ${n ? `#${n} ` : ""}terminée · ${amount} à encaisser — ${tag}`,
+        body: [
+          `Encaissée par le chauffeur (${(PAYMENT_METHOD_LABELS[s.payment_method as PaymentMethod] ?? "à bord").toLowerCase()})`,
+          `à régler ${dueWhen(s.due_at, tz)}`,
+          `réf. ${s.reference}`,
+        ].join(" · "),
+        href: "/dashboard/settlements",
+        cta: "Encaissements",
+        settlement,
+      });
+    } else {
+      push({
+        id: `set:${s.id}:created`,
+        kind: "settlement",
+        rideId: null,
+        title: `${amount} à verser à ${tag}`,
+        body: [`Course ${n ? `#${n} ` : ""}terminée`, PAID_TO_CENTRALE[s.payment_method] ?? "payée à la centrale", `réf. ${s.reference}`].join(" · "),
+        href: "/dashboard/settlements?filter=to_pay",
+        cta: "Encaissements",
+        settlement,
+      });
+    }
+  });
+
+  useRealtimeEvent("driver.application", (e: DriverApplicationEvent) => {
+    const d = e?.driver;
+    if (!d?.id) return;
+    const name = `${d.first_name} ${d.last_name}`.trim();
+    if (e.action === "applied" || (e.action === "approved" && d.applied_at)) {
+      // approved + applied_at : validation automatique à l'inscription (réglage de la centrale)
+      const applied = e.action === "applied";
+      push({
+        id: `app:${d.id}:${e.action}`,
+        kind: "application",
+        rideId: null,
+        title: applied ? `Nouvelle candidature : ${name}` : `${name} a rejoint la centrale`,
+        body: [`Chauffeur #${d.number}`, d.phone ? formatPhone(d.phone) : null, applied ? "via le lien d'inscription · à valider" : "validation automatique"]
+          .filter(Boolean)
+          .join(" · "),
+        href: "/dashboard/network",
+        cta: applied ? "Voir la candidature" : "Voir le réseau",
+      });
+    } else {
+      // validée ou refusée depuis le tableau de bord : la candidature est traitée
+      const id = `app:${d.id}:applied`;
+      toast.dismiss(id);
+      shown.current.delete(id);
+      update((list) => (list.some((i) => i.id === id && !i.done) ? list.map((i) => (i.id === id ? { ...i, done: true } : i)) : list));
+    }
+  });
+
+  useRealtimeEvent("driver.flagged", (e: DriverFlaggedEvent) => {
+    if (!e?.driver_id) return;
+    push({
+      id: `flag:${e.driver_id}`,
+      kind: "flagged",
+      rideId: null,
+      level: "critical",
+      title: "Compte suspendu : appareil déjà utilisé par un chauffeur banni",
+      body: `${e.first_name} ${e.last_name} (#${e.number}) · vérifiez son identité avant de le réactiver`,
+      href: `/dashboard/drivers/${e.driver_id}`,
+      cta: "Vérifier la fiche",
+    });
+  });
+
   const unread = useMemo(() => items.filter((i) => !i.read).length, [items]);
 
   // Compteur dans l'onglet du navigateur
@@ -569,12 +742,23 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
             </button>
           )}
         </div>
+      ) : item.kind === "settlement" && item.settlement ? (
+        <SettlementToastActions item={item} api={api} onClose={onClose} btn={btn} />
       ) : item.href ? (
         <div className="ml-12 mt-2.5 flex gap-1.5">
           <button
             type="button"
             onClick={() => (api.navigate(item.href!), onClose())}
-            className={cn(btn, item.kind === "message" ? "bg-blue font-semibold text-ink-950 hover:opacity-90" : "bg-white/[0.08] text-fg hover:bg-white/[0.13]")}
+            className={cn(
+              btn,
+              item.kind === "message"
+                ? "bg-blue font-semibold text-ink-950 hover:opacity-90"
+                : item.kind === "flagged"
+                  ? "bg-red font-semibold text-white hover:bg-red/90"
+                  : item.kind === "application"
+                    ? "bg-brand font-semibold text-brand-fg hover:opacity-90"
+                    : "bg-white/[0.08] text-fg hover:bg-white/[0.13]",
+            )}
           >
             {item.kind === "message" && <Reply className="size-3.5" />}
             {item.cta ?? "Voir"}
@@ -589,9 +773,60 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
   );
 }
 
+/** Toast de règlement : « Reçu » (paiement signalé), « WhatsApp » (réclamation préremplie), « Encaissements ». */
+function SettlementToastActions({ item, api, onClose, btn }: { item: AlertItem; api: Api; onClose: () => void; btn: string }) {
+  const s = item.settlement!;
+  const claim = s.action === "created" && s.direction === "driver_owes";
+  const contact = useDriverContact(claim ? s.driverId : null);
+  const org = api.centrale();
+  const whatsapp =
+    claim && contact && org
+      ? buildSettlementWhatsApp(
+          {
+            phone: contact.phone,
+            firstName: contact.first_name,
+            amountCents: s.amountCents,
+            currency: s.currency,
+            rideNumbers: s.rideNumber ? [s.rideNumber] : [s.reference],
+            reference: s.reference,
+          },
+          org,
+        )
+      : null;
+  const [busy, setBusy] = useState(false);
+  const received = async () => {
+    setBusy(true);
+    const res = await confirmSettlements([s.id], null);
+    setBusy(false);
+    if (res.ok) {
+      toast.success(`${formatPrice(s.amountCents, s.currency)} reçus de ${s.firstName}`, { description: `Règlement ${s.reference} soldé.` });
+      onClose();
+    } else toast.error(res.error);
+  };
+  const open = () => (api.navigate(item.href ?? "/dashboard/settlements"), onClose());
+  return (
+    <div className="ml-12 mt-2.5 flex flex-wrap gap-1.5">
+      {s.action === "declared" && (
+        <button type="button" disabled={busy} onClick={received} className={cn(btn, "bg-brand font-semibold text-brand-fg hover:opacity-90 disabled:opacity-60")}>
+          <Check className="size-3.5" /> Reçu
+        </button>
+      )}
+      <button type="button" onClick={open} className={cn(btn, "bg-white/[0.08] text-fg hover:bg-white/[0.13]")}>
+        <HandCoins className="size-3.5" /> Encaissements
+      </button>
+      {whatsapp && (
+        <a href={whatsapp} target="_blank" rel="noopener noreferrer" onClick={onClose} className={cn(btn, "border border-green/30 text-green hover:bg-green/10")}>
+          <MessageSquareText className="size-3.5" /> WhatsApp
+        </a>
+      )}
+    </div>
+  );
+}
+
 /** Cloche : historique des alertes, son, notifications du navigateur. */
 export function AlertsBell({ className }: { className?: string }) {
   const a = useAlerts();
+  const centrale = useCentrale();
   const [open, setOpen] = useState(false);
   if (!a) return null;
   return (
@@ -645,7 +880,9 @@ export function AlertsBell({ className }: { className?: string }) {
               <div className="px-6 py-10 text-center">
                 <Bell className="mx-auto mb-2 size-5 text-fg-subtle" />
                 <p className="text-[13px] font-medium">Rien de neuf</p>
-                <p className="mt-1 text-[12px] text-fg-subtle">Courses, retards, vols, messages et signalements apparaîtront ici, avec un son.</p>
+                <p className="mt-1 text-[12px] text-fg-subtle">
+                  Courses, retards, vols, messages{centrale?.model === "centrale" ? ", paiements, candidatures" : ""} et signalements apparaîtront ici, avec un son.
+                </p>
               </div>
             ) : (
               a.items.map((i) => {

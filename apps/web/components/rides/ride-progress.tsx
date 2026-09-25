@@ -33,7 +33,8 @@ export function RideProgress({ ride, timeZone }: { ride: RideTimes; timeZone?: s
     if (ride[s.key]) lastDone = i;
   });
   return (
-    <ol className="grid grid-cols-6 gap-1.5">
+    // Mobile : deux rangées de trois étapes (libellés entiers) ; à partir de 640 px, une seule rangée
+    <ol className="grid grid-cols-3 gap-x-1.5 gap-y-3 sm:grid-cols-6 sm:gap-y-0">
       {STEPS.map((s, i) => {
         const at = ride[s.key] as string | null | undefined;
         const done = !!at;
