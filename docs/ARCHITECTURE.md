@@ -127,7 +127,7 @@ Pour « Relancer » : `DRIVER_CHANGED` est renvoyé si la course a changé de ch
 
 ### 8. Messagerie et signalements
 
-`chat_messages` porte deux types de fils : `driver` (centrale ⇄ un chauffeur) et `fleet` (toute l'organisation). Un signalement (`report_type` police, control, accident, traffic, danger) est un message de flotte avec position obligatoire et expiration. Chaque vote « toujours là » le prolonge ; des votes « plus là » majoritaires l'expirent. Un vote est idempotent par votant. Les envois passent par `send_chat_message`, avec une limite de débit en base (`PT429`). Les signalements notifient les chauffeurs proches (`fleet_report`), les messages directs notifient le chauffeur (`chat_message`). Les accusés de lecture sont stockés dans `chat_reads`.
+`chat_messages` porte deux types de fils : `driver` (centrale ⇄ un chauffeur) et `fleet` (toute l'organisation). Un signalement (`report_type` police, control, accident, traffic, danger) est un message de flotte avec position obligatoire et expiration. Chaque vote « toujours là » le prolonge d'au moins 30 min. Deux votes « plus là » l'expirent, de même qu'un seul vote de son auteur ou de la centrale. Chaque votant n'a qu'un vote, qu'il peut changer. Les envois passent par `send_chat_message`, avec une limite de débit en base (`PT429`). Un signalement notifie les chauffeurs en ligne à moins de 25 km (`fleet_report`) ; un message direct de la centrale notifie le chauffeur (`chat_message`). Les accusés de lecture sont stockés dans `chat_reads`.
 
 ### 9. Gains et documents
 
