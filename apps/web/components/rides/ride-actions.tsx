@@ -28,6 +28,9 @@ export function RideActions({
   canAssign,
   drivers,
   compact,
+  assignOpen: assignOpenProp,
+  onAssignOpenChange,
+  assignLabel = "Attribuer",
 }: {
   compact?: boolean;
   rideId: string;
@@ -36,11 +39,17 @@ export function RideActions({
   canRedispatch: boolean;
   canAssign: boolean;
   drivers: AssignableDriver[];
+  /** Fenêtre d'attribution pilotée de l'extérieur (bandeau d'alerte, toast « Réattribuer »). */
+  assignOpen?: boolean;
+  onAssignOpenChange?: (open: boolean) => void;
+  assignLabel?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [cancelOpen, setCancelOpen] = useState(false);
-  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignOpenState, setAssignOpenState] = useState(false);
+  const assignOpen = assignOpenProp ?? assignOpenState;
+  const setAssignOpen = (o: boolean) => (onAssignOpenChange ? onAssignOpenChange(o) : setAssignOpenState(o));
   const [reason, setReason] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
 
@@ -64,7 +73,7 @@ export function RideActions({
       )}
       {canAssign && (
         <Button variant="secondary" size={compact ? "sm" : "md"} disabled={pending} onClick={() => setAssignOpen(true)}>
-          <UserCheck /> Attribuer
+          <UserCheck /> {assignLabel}
         </Button>
       )}
       {canCancel && (
@@ -88,8 +97,17 @@ export function RideActions({
       </Dialog>
 
       <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
-        <DialogContent title="Attribution manuelle" description="Le chauffeur reçoit immédiatement une notification. Les offres en cours sont fermées." size="lg">
+        <DialogContent
+          title={assignLabel === "Réattribuer" ? `Réattribuer la course #${number}` : "Attribution manuelle"}
+          description={
+            assignLabel === "Réattribuer"
+              ? "Le chauffeur actuel est prévenu que la course lui est retirée ; le nouveau reçoit immédiatement une notification."
+              : "Le chauffeur reçoit immédiatement une notification. Les offres en cours sont fermées."
+          }
+          size="lg"
+        >
           <div className="max-h-[50vh] space-y-1 overflow-y-auto rounded-xl border border-line p-1.5">
+            {drivers.length === 0 && <p className="px-3 py-6 text-center text-[13px] text-fg-subtle">Aucun autre chauffeur en ligne pour le moment.</p>}
             {drivers.map((d) => (
               <button
                 key={d.id}

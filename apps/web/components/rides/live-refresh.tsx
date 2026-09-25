@@ -12,7 +12,7 @@ export function LiveRefresh({ rideId, events = ["ride.updated", "ride.event", "o
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => router.refresh(), 400);
   };
-  for (const ev of ["ride.updated", "ride.event", "offer.updated", "driver.updated"]) {
+  for (const ev of ["ride.updated", "ride.event", "offer.updated", "driver.updated", "ride.alert"]) {
     // eslint-disable-next-line react-hooks/rules-of-hooks
     useRealtimeEvent(ev, (p: any) => {
       if (!events.includes(ev)) return;

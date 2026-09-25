@@ -1,7 +1,11 @@
 // Sons du dashboard, synthétisés (Web Audio) : aucun fichier, latence nulle.
 // Les navigateurs bloquent l'audio avant la première interaction : unlockAudio() au premier clic.
 
-export type SoundKind = "new" | "accepted" | "alert";
+/**
+ * new : nouvelle course · accepted : attribuée · alert : problème à traiter (aucun chauffeur, retard, GPS muet…)
+ * message : message d'un chauffeur (bulle feutrée) · notice : information utile (vol retardé, signalement, document)
+ */
+export type SoundKind = "new" | "accepted" | "alert" | "message" | "notice";
 
 let ctx: AudioContext | null = null;
 
@@ -33,6 +37,21 @@ function note(c: AudioContext, out: AudioNode, freq: number, at: number, dur: nu
   o.stop(at + dur + 0.05);
 }
 
+/** Note glissée à attaque ronde (sans clic) : sons de messagerie. */
+function bubble(c: AudioContext, out: AudioNode, from: number, to: number, at: number, dur: number, gain: number) {
+  const o = c.createOscillator();
+  const g = c.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(from, at);
+  o.frequency.exponentialRampToValueAtTime(to, at + dur * 0.45);
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(gain, at + 0.025);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g).connect(out);
+  o.start(at);
+  o.stop(at + dur + 0.05);
+}
+
 export function playSound(kind: SoundKind, volume = 1) {
   const c = audio();
   if (!c || c.state !== "running") return;
@@ -54,6 +73,15 @@ export function playSound(kind: SoundKind, volume = 1) {
     // Ding bref et doux : « attribuée »
     note(c, master, 1046.5, t, 0.35, 0.12);
     note(c, master, 1568, t + 0.05, 0.4, 0.09);
+  } else if (kind === "message") {
+    // Double bulle feutrée (glissando montant, sinus pur) : « un chauffeur vous écrit »
+    bubble(c, master, 587.3, 783.99, t, 0.16, 0.1);
+    bubble(c, master, 880, 1174.7, t + 0.13, 0.22, 0.085);
+  } else if (kind === "notice") {
+    // Carillon descendant très doux : « une information à regarder »
+    note(c, master, 1318.5, t, 0.45, 0.07);
+    note(c, master, 987.77, t + 0.11, 0.6, 0.075);
+    note(c, master, 1975.5, t + 0.11, 0.25, 0.012, "triangle");
   } else {
     // Trois impulsions : « personne n'a pris la course »
     for (let i = 0; i < 3; i++) {

@@ -1,8 +1,10 @@
 "use client";
 import { DEFAULT_DISPATCH_RADII_M, RIDE_STATUS_META, formatDistance, formatPrice, formatTime, shortAddress, type RideStatus } from "@rydar/shared";
-import { CalendarClock } from "lucide-react";
+import { BellOff, CalendarClock } from "lucide-react";
+import { ALERT_ICON, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
+import { FlightChip, pickupShiftMinutes } from "@/components/rides/flight-info";
 import { toneDot, toneText } from "@/components/ui/badge";
-import type { LiveDriver, LiveRide } from "@/lib/queries/live";
+import type { LiveAlert, LiveDriver, LiveRide } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
 
 export const SEARCHING = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED"]);
@@ -20,7 +22,7 @@ function dayLabel(iso: string, now: number) {
   return new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", timeZone: TZ }).format(new Date(t));
 }
 
-/** Ligne de course : heure, trajet, statut en clair, prix — rien de superflu. */
+/** Ligne de course : heure, trajet, statut en clair, prix — plus le vol suivi et l'alerte de suivi s'il y en a. */
 export function RideRow({
   ride,
   driver,
@@ -29,6 +31,7 @@ export function RideRow({
   onSelect,
   now,
   timeout,
+  alert,
 }: {
   ride: LiveRide;
   driver?: LiveDriver;
@@ -37,6 +40,7 @@ export function RideRow({
   onSelect: () => void;
   now: number;
   timeout: number;
+  alert?: LiveAlert;
 }) {
   const status = ride.status as RideStatus;
   const meta = RIDE_STATUS_META[status] ?? { label: status, tone: "neutral" as const };
@@ -45,6 +49,10 @@ export function RideRow({
   const remaining = ride.next_dispatch_at ? Math.max(0, (new Date(ride.next_dispatch_at).getTime() - now) / 1000) : 0;
   const pct = searching && geo ? Math.min(100, (remaining / timeout) * 100) : 0;
   const day = dayLabel(ride.pickup_at, now);
+  const shifted = pickupShiftMinutes(ride) != null;
+  const openAlert = alert?.status === "open" ? alert : null;
+  const alertColor = openAlert ? severityColor(openAlert.severity) : null;
+  const AlertIcon = alert ? ALERT_ICON[alert.kind] : null;
 
   let detail: string | null = null;
   if (searching) {
@@ -63,15 +71,25 @@ export function RideRow({
       onClick={onSelect}
       className={cn(
         "group relative w-full overflow-hidden rounded-xl px-3 py-3 text-left transition-colors",
-        selected ? "bg-white/[0.07]" : "hover:bg-white/[0.035]",
+        selected ? "bg-white/[0.07]" : openAlert ? "bg-white/[0.025] hover:bg-white/[0.045]" : "hover:bg-white/[0.035]",
       )}
     >
+      {alertColor && <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-full" style={{ background: alertColor }} />}
       <div className="flex gap-3">
         <div className="w-11 shrink-0 pt-px">
-          <p className="text-[14px] font-semibold tabular-nums tracking-tight text-fg">{formatTime(ride.pickup_at)}</p>
+          {shifted ? (
+            <>
+              <p className="text-[14px] font-semibold tabular-nums tracking-tight text-amber">{formatTime(ride.pickup_at)}</p>
+              <p className="text-[11px] tabular-nums text-fg-subtle line-through decoration-fg-subtle/80" title="Heure demandée, décalée par le vol">
+                {formatTime(ride.pickup_at_original)}
+              </p>
+            </>
+          ) : (
+            <p className="text-[14px] font-semibold tabular-nums tracking-tight text-fg">{formatTime(ride.pickup_at)}</p>
+          )}
           {day ? (
             <p className="text-[11px] text-violet">{day}</p>
-          ) : ride.type === "scheduled" ? (
+          ) : ride.type === "scheduled" && !shifted ? (
             <CalendarClock className="mt-0.5 size-3 text-violet" />
           ) : null}
         </div>
@@ -83,6 +101,21 @@ export function RideRow({
             <span className="shrink-0 font-medium">{meta.label}</span>
             {detail && <span className="truncate text-fg-subtle">· {detail}</span>}
           </p>
+          {ride.flight_number && (
+            <div className="mt-1.5 flex min-w-0">
+              <FlightChip ride={ride} />
+            </div>
+          )}
+          {alert && AlertIcon && (
+            <p
+              className={cn("mt-1.5 flex min-w-0 items-center gap-1.5 text-[12px] font-medium", !openAlert && "text-fg-subtle")}
+              style={openAlert ? { color: alertColor! } : undefined}
+              title={alert.message}
+            >
+              {openAlert ? <AlertIcon className="size-3.5 shrink-0" /> : <BellOff className="size-3 shrink-0" />}
+              <span className="truncate">{openAlert ? alert.message || alertLabel(alert.kind) : `${alertLabel(alert.kind)} · chauffeur gardé`}</span>
+            </p>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <p className="text-[14px] font-semibold tabular-nums text-fg">{formatPrice(ride.price_cents)}</p>

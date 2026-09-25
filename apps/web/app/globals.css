@@ -442,3 +442,155 @@
     opacity: 0;
   }
 }
+
+/* ==========================================================================
+   web-ops — signalements de la flotte sur la carte (marqueurs + popover)
+   ========================================================================== */
+.rd-report {
+  --c: var(--color-amber);
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.rd-report__dot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 15px;
+  line-height: 1;
+  background: color-mix(in srgb, var(--c) 24%, #0b0d10);
+  border: 2px solid var(--c);
+  box-shadow: 0 0 0 3px rgb(11 13 16 / 0.7), 0 6px 16px rgb(0 0 0 / 0.55);
+  transition: transform 0.15s ease;
+}
+.rd-report__pulse {
+  position: absolute;
+  inset: -10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 32%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.rd-report[data-fresh="true"] .rd-report__pulse {
+  animation: rd-pulse 1.8s ease-out infinite;
+}
+.rd-report__label {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 5px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #eef0f3;
+  background: rgb(14 16 20 / 0.92);
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+/* Vue d'ensemble (zoom < 12,5) : étiquette au survol ou sur sélection, ou avec « Afficher les noms » */
+.rd-map:not([data-zoomed="true"]):not([data-labels="true"]) .rd-report:not(:hover):not([data-selected="true"]) .rd-report__label {
+  opacity: 0;
+}
+.rd-report:hover .rd-report__dot,
+.rd-report:focus-visible .rd-report__dot,
+.rd-report[data-selected="true"] .rd-report__dot {
+  transform: scale(1.15);
+}
+.rd-report[data-selected="true"] .rd-report__dot {
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 0.9), 0 6px 18px rgb(0 0 0 / 0.6);
+}
+.rd-report:focus-visible {
+  outline: none;
+}
+.rd-report[data-fading="true"]:not([data-selected="true"]) {
+  opacity: 0.55;
+}
+
+.rd-popup .maplibregl-popup-content {
+  padding: 12px 14px 11px;
+  border-radius: 14px;
+  background: rgb(22 25 31 / 0.97);
+  color: var(--color-fg);
+  border: 1px solid rgb(255 255 255 / 0.1);
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.9);
+  font-family: var(--font-sans);
+}
+.rd-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.rd-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.rd-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: rgb(22 25 31 / 0.97);
+}
+.rd-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.rd-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.rd-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: rgb(22 25 31 / 0.97);
+}
+.rd-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: rgb(22 25 31 / 0.97);
+}
+.rd-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: rgb(22 25 31 / 0.97);
+}
+.rd-popup .maplibregl-popup-close-button {
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 20px;
+  color: var(--color-fg-subtle);
+}
+.rd-popup .maplibregl-popup-close-button:hover {
+  background: rgb(255 255 255 / 0.06);
+  color: var(--color-fg);
+}
+.rd-popup__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 22px;
+}
+.rd-popup__icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  font-size: 16px;
+  background: color-mix(in srgb, var(--c) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent);
+}
+.rd-popup__title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--c);
+}
+.rd-popup__sub {
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+}
+.rd-popup__body {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-fg);
+}
+.rd-popup__foot {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--color-line);
+  font-size: 11.5px;
+  color: var(--color-fg-subtle);
+}

@@ -2,13 +2,14 @@
 import { formatCompactPrice, formatDuration, formatNumber, type OrgKpis } from "@rydar/shared";
 import { cn } from "@/lib/utils";
 
-function Stat({ label, value, sub, tone }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "brand" | "amber" | "red" }) {
+// Sous 1600 px, la bande reste compacte (sans détails ni délai d'attribution) pour ne pas passer sous le panneau des courses.
+function Stat({ label, value, sub, tone, className }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "brand" | "amber" | "red"; className?: string }) {
   return (
-    <div className="flex min-w-0 flex-col justify-center px-4 py-2">
+    <div className={cn("flex min-w-0 flex-col justify-center px-4 py-2", className)}>
       <span className="truncate text-[11.5px] text-fg-subtle">{label}</span>
-      <span className={cn("text-[17px] font-semibold leading-tight tracking-tight", tone === "brand" ? "text-brand" : tone === "amber" ? "text-amber" : tone === "red" ? "text-red" : "text-fg")}>
+      <span className={cn("whitespace-nowrap text-[17px] font-semibold leading-tight tracking-tight", tone === "brand" ? "text-brand" : tone === "amber" ? "text-amber" : tone === "red" ? "text-red" : "text-fg")}>
         {value}
-        {sub != null && <span className="ml-1.5 text-[12px] font-normal text-fg-subtle">{sub}</span>}
+        {sub != null && <span className="ml-1.5 hidden text-[12px] font-normal text-fg-subtle min-[1600px]:inline">{sub}</span>}
       </span>
     </div>
   );
@@ -23,7 +24,7 @@ export function KpiStrip({ kpis: k, className }: { kpis: OrgKpis | null; classNa
       <Stat label="Chiffre d'affaires" value={formatCompactPrice(k?.revenue_today_cents)} sub={`/ ${formatCompactPrice(k?.expected_revenue_today_cents)} prévus`} tone="brand" />
       <Stat label="Chauffeurs en ligne" value={<>{formatNumber(k?.drivers_online)}<span className="text-fg-subtle">/{formatNumber(k?.drivers_total)}</span></>} sub={`${formatNumber(k?.drivers_available)} libres`} />
       <Stat label="En recherche" value={formatNumber(searching)} tone={searching > 0 ? "amber" : undefined} sub={k?.no_driver_today ? `${k.no_driver_today} sans chauffeur` : undefined} />
-      <Stat label="Attribution moyenne" value={k?.avg_assign_seconds_today != null ? formatDuration(k.avg_assign_seconds_today) : "—"} />
+      <Stat label="Attribution moyenne" value={k?.avg_assign_seconds_today != null ? formatDuration(k.avg_assign_seconds_today) : "—"} className="hidden min-[1600px]:flex" />
     </div>
   );
 }

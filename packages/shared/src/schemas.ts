@@ -270,6 +270,14 @@ export const orgSettingsSchema = z.object({
   allow_category_upgrade: z.boolean(),
   location_max_age_seconds: z.number().int().min(30).max(3600),
   default_payment_method: paymentMethodSchema,
+  // Suivi des vols (migration 002100)
+  flight_tracking_enabled: z.boolean(),
+  flight_pickup_buffer_minutes: z.number({ error: "Marge : nombre de minutes" }).int("Marge : minutes entières").min(0, "Marge : 0 min au minimum").max(120, "Marge : 120 min au maximum"),
+  // Alertes de suivi (migration 002200)
+  late_alert_tolerance_minutes: z.number({ error: "Tolérance de retard : nombre de minutes" }).int("Tolérance de retard : minutes entières").min(1, "Tolérance de retard : 1 min au minimum").max(60, "Tolérance de retard : 60 min au maximum"),
+  stalled_alert_minutes: z.number({ error: "Immobilité : nombre de minutes" }).int("Immobilité : minutes entières").min(2, "Immobilité : 2 min au minimum").max(30, "Immobilité : 30 min au maximum"),
+  // Commission de la centrale sur le prix de la course, pour le « net chauffeur » (migration 002400) ; null = aucune
+  driver_commission_percent: z.number({ error: "Commission : pourcentage" }).min(0, "Commission : 0 % au minimum").max(100, "Commission : 100 % au maximum").nullable(),
 }).superRefine((v, ctx) => {
   // La recherche doit laisser à chaque vague (4 → 8 → 12 → 16 km) son délai de réponse complet
   const min = v.dispatch_radii_m.length * v.offer_timeout_seconds;

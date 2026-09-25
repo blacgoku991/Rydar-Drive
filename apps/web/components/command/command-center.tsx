@@ -1,11 +1,12 @@
 "use client";
 import {
   PRESENCE_META, RIDE_STATUS_META, decodePolyline, formatPhone, formatTime, haversine, initials, shortAddress,
-  type Coord, type OrgKpis, type PricingRule, type RideStatus,
+  type ChatMessage, type Coord, type FleetReportUpdate, type OrgKpis, type PricingRule, type RideAlertBroadcast, type RideStatus,
 } from "@rydar/shared";
-import { Crosshair, Eye, EyeOff, Moon, Phone, Plus, Radar, Search, Sun, Tag, X } from "lucide-react";
+import { Crosshair, Eye, EyeOff, MessageSquareText, Moon, Phone, Plus, Radar, Search, Siren, Sun, Tag, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { toast } from "sonner";
 import { FleetPanel } from "@/components/command/fleet-panel";
 import { KpiStrip } from "@/components/command/kpi-strip";
 import { RideFocus } from "@/components/command/ride-focus";
@@ -17,25 +18,42 @@ import { NewRideSheet } from "@/components/rides/new-ride-sheet";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/misc";
 import { useNow } from "@/hooks/use-now";
-import type { LiveDriver, LiveOffer, LiveRide, LiveSnapshot } from "@/lib/queries/live";
+import type { LiveAlert, LiveDriver, LiveOffer, LiveReport, LiveRide, LiveSnapshot } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------- état
-type State = { drivers: Record<string, LiveDriver>; rides: Record<string, LiveRide>; offers: Record<string, LiveOffer>; kpis: OrgKpis | null };
+type State = {
+  drivers: Record<string, LiveDriver>;
+  rides: Record<string, LiveRide>;
+  offers: Record<string, LiveOffer>;
+  alerts: Record<string, LiveAlert>;
+  reports: Record<string, LiveReport>;
+  kpis: OrgKpis | null;
+};
 type Action =
   | { type: "snapshot"; snapshot: LiveSnapshot }
   | { type: "kpis"; kpis: OrgKpis }
   | { type: "location"; payload: any }
   | { type: "driver"; payload: any }
   | { type: "ride"; payload: any }
-  | { type: "offer"; payload: any };
+  | { type: "offer"; payload: any }
+  | { type: "alert"; payload: RideAlertBroadcast }
+  | { type: "report"; payload: ChatMessage }
+  | { type: "report-update"; payload: FleetReportUpdate };
 
 const byId = <T extends { id: string }>(list: T[]) => Object.fromEntries(list.map((x) => [x.id, x]));
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "snapshot":
-      return { drivers: byId(action.snapshot.drivers), rides: byId(action.snapshot.rides), offers: byId(action.snapshot.offers), kpis: action.snapshot.kpis };
+      return {
+        drivers: byId(action.snapshot.drivers),
+        rides: byId(action.snapshot.rides),
+        offers: byId(action.snapshot.offers),
+        alerts: byId(action.snapshot.alerts ?? []),
+        reports: byId(action.snapshot.reports ?? []),
+        kpis: action.snapshot.kpis,
+      };
     case "kpis":
       return { ...state, kpis: action.kpis };
     case "location": {
@@ -67,15 +85,65 @@ function reducer(state: State, action: Action): State {
       else delete offers[p.id];
       return { ...state, offers };
     }
+    case "alert": {
+      const a = action.payload;
+      const alerts = { ...state.alerts };
+      if (a.status === "resolved") delete alerts[a.id];
+      else {
+        const { op: _op, ...rest } = a;
+        alerts[a.id] = { ...(alerts[a.id] ?? {}), ...rest } as LiveAlert;
+      }
+      return { ...state, alerts };
+    }
+    case "report": {
+      const m = action.payload;
+      if (!m.report_type || m.lat == null || m.lng == null || !m.expires_at) return state;
+      return {
+        ...state,
+        reports: {
+          ...state.reports,
+          [m.id]: {
+            id: m.id, report_type: m.report_type, body: m.body, lat: m.lat, lng: m.lng, expires_at: m.expires_at, confirmations: m.confirmations,
+            dismissals: m.dismissals, author_name: m.author_name, author_type: m.author_type, author_driver_id: m.author_driver_id, created_at: m.created_at,
+          },
+        },
+      };
+    }
+    case "report-update": {
+      const u = action.payload;
+      const prev = state.reports[u.id];
+      if (!prev) return state;
+      const reports = { ...state.reports };
+      if (!u.active) delete reports[u.id];
+      else reports[u.id] = { ...prev, expires_at: u.expires_at, confirmations: u.confirmations, dismissals: u.dismissals };
+      return { ...state, reports };
+    }
   }
 }
 
 type FeedEvent = { id: number; message: string; level: string; created_at: string; ride_id: string | null; category: string };
 type Tab = "live" | "upcoming" | "alerts";
 
+const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1 };
+
 function LiveClock() {
   const now = useNow(1000);
   return <span className="text-[12.5px] tabular-nums text-fg-subtle">{now ? formatTime(new Date(now), undefined, true) : "--:--:--"}</span>;
+}
+
+function stored(key: string, fallback: string) {
+  try {
+    return window.localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+function store(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* stockage indisponible */
+  }
 }
 
 // ---------------------------------------------------------------------------- composant
@@ -95,31 +163,56 @@ export function CommandCenter({
   locationMaxAgeS?: number;
   defaultPayment: string;
 }) {
-  const [state, dispatch] = useReducer(reducer, initial, (s) => reducer({ drivers: {}, rides: {}, offers: {}, kpis: null }, { type: "snapshot", snapshot: s }));
+  const [state, dispatch] = useReducer(reducer, initial, (s) =>
+    reducer({ drivers: {}, rides: {}, offers: {}, alerts: {}, reports: {}, kpis: null }, { type: "snapshot", snapshot: s }),
+  );
   const [selectedRide, setSelectedRide] = useState<string | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<string | null>(null);
+  const [selectedReport, setSelectedReport] = useState<string | null>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("live");
   const [query, setQuery] = useState("");
   const [showOffline, setShowOffline] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
+  const [showReports, setShowReports] = useState(true);
   const [mapTheme, setMapTheme] = useState<"night" | "day">("night");
   useEffect(() => {
-    try {
-      if (window.localStorage.getItem("rydar.mapTheme") === "day") setMapTheme("day");
-    } catch {
-      /* stockage indisponible */
-    }
+    if (stored("rydar.mapTheme", "night") === "day") setMapTheme("day");
+    if (stored("rydar.mapReports", "on") === "off") setShowReports(false);
   }, []);
   const toggleTheme = () =>
     setMapTheme((t) => {
       const next = t === "night" ? "day" : "night";
-      try {
-        window.localStorage.setItem("rydar.mapTheme", next);
-      } catch {
-        /* stockage indisponible */
-      }
+      store("rydar.mapTheme", next);
       return next;
     });
+  const toggleReports = () =>
+    setShowReports((v) => {
+      store("rydar.mapReports", v ? "off" : "on");
+      if (v) setSelectedReport(null);
+      return !v;
+    });
+  // Marges de cadrage de la carte selon la mise en page (panneaux flottants sur grand écran, carte seule sur mobile)
+  const [layout, setLayout] = useState<"mobile" | "lg" | "xl">("xl");
+  useEffect(() => {
+    const lg = window.matchMedia("(min-width: 1024px)");
+    const xl = window.matchMedia("(min-width: 1280px)");
+    const apply = () => setLayout(xl.matches ? "xl" : lg.matches ? "lg" : "mobile");
+    apply();
+    lg.addEventListener("change", apply);
+    xl.addEventListener("change", apply);
+    return () => {
+      lg.removeEventListener("change", apply);
+      xl.removeEventListener("change", apply);
+    };
+  }, []);
+  const mapPadding = useMemo(
+    () =>
+      layout === "mobile"
+        ? { top: 64, bottom: 36, left: 36, right: 36 }
+        : { top: 110, bottom: 60, left: 420, right: layout === "xl" ? 360 : 60 },
+    [layout],
+  );
   const [newRideOpen, setNewRideOpen] = useState(false);
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [approach, setApproach] = useState<{ rideId: string; coordinates: Coord[]; durationS: number; from: { lat: number; lng: number } } | null>(null);
@@ -157,6 +250,9 @@ export function CommandCenter({
     if (p.category === "system") return;
     setFeed((f) => [p, ...f].slice(0, 40));
   });
+  useRealtimeEvent("ride.alert", (p: RideAlertBroadcast) => p?.id && dispatch({ type: "alert", payload: p }));
+  useRealtimeEvent("chat.message", (m: ChatMessage) => m?.report_type && dispatch({ type: "report", payload: m }));
+  useRealtimeEvent("chat.report", (u: FleetReportUpdate) => u?.id && dispatch({ type: "report-update", payload: u }));
 
   // Repli : synchronisation périodique si le temps réel n'est pas disponible
   useEffect(() => {
@@ -177,6 +273,7 @@ export function CommandCenter({
       if (e.key === "Escape") {
         setSelectedRide(null);
         setSelectedDriver(null);
+        setSelectedReport(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -192,27 +289,60 @@ export function CommandCenter({
     return m;
   }, [offers]);
 
+  // Alerte la plus grave de chaque course (ouverte avant « en sourdine », critique avant avertissement)
+  const alertByRide = useMemo(() => {
+    const m: Record<string, LiveAlert> = {};
+    for (const a of Object.values(state.alerts)) {
+      if (a.status === "resolved") continue;
+      const cur = m[a.ride_id];
+      const score = (x: LiveAlert) => (x.status === "open" ? 0 : 10) + (SEVERITY_RANK[x.severity] ?? 5);
+      if (!cur || score(a) < score(cur)) m[a.ride_id] = a;
+    }
+    return m;
+  }, [state.alerts]);
+
+  // Signalements encore actifs (retirés à l'expiration, vérifié toutes les 15 s)
+  const tick = Math.floor(now / 15_000);
+  const reports = useMemo(() => {
+    const t = tick * 15_000;
+    return Object.values(state.reports).filter((r) => Date.parse(r.expires_at) > t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.reports, tick]);
+  useEffect(() => {
+    if (selectedReport && !reports.some((r) => r.id === selectedReport)) setSelectedReport(null);
+  }, [reports, selectedReport]);
+
   const lists = useMemo(() => {
     const horizon = now + 2 * 3600_000;
     const soon = (r: LiveRide) => new Date(r.pickup_at).getTime() < horizon;
-    const live = rides.filter((r) => !TERMINAL.has(r.status) && (r.type === "instant" || soon(r) || (!SEARCHING.has(r.status) && r.status !== "ACCEPTED")));
+    const openAlert = (r: LiveRide) => alertByRide[r.id]?.status === "open";
+    const live = rides.filter((r) => !TERMINAL.has(r.status) && (r.type === "instant" || soon(r) || openAlert(r) || (!SEARCHING.has(r.status) && r.status !== "ACCEPTED")));
     const liveIds = new Set(live.map((r) => r.id));
     const upcoming = rides.filter((r) => !TERMINAL.has(r.status) && !liveIds.has(r.id));
+    const flightProblem = (r: LiveRide) => !TERMINAL.has(r.status) && (r.flight_status === "cancelled" || r.flight_status === "diverted");
     const alerts = rides.filter(
-      (r) => r.status === "NO_DRIVER_FOUND" || (r.type === "scheduled" && SEARCHING.has(r.status) && new Date(r.pickup_at).getTime() < now + 24 * 3600_000),
+      (r) =>
+        openAlert(r) ||
+        flightProblem(r) ||
+        r.status === "NO_DRIVER_FOUND" ||
+        (r.type === "scheduled" && SEARCHING.has(r.status) && new Date(r.pickup_at).getTime() < now + 24 * 3600_000),
     );
-    const rank = (s: string) =>
-      s === "NO_DRIVER_FOUND" ? 0 : SEARCHING.has(s) ? 1 : s === "DRIVER_ARRIVED" ? 2 : s === "DRIVER_EN_ROUTE" ? 3 : s === "ACCEPTED" ? 4 : 5;
-    live.sort((a, b) => rank(a.status) - rank(b.status) || a.pickup_at.localeCompare(b.pickup_at));
+    const alertRank = (r: LiveRide) => (openAlert(r) ? (SEVERITY_RANK[alertByRide[r.id]!.severity] ?? 1) - 3 : 0);
+    alerts.sort((a, b) => alertRank(a) - alertRank(b) || a.pickup_at.localeCompare(b.pickup_at));
+    const rank = (r: LiveRide) => {
+      const s = r.status;
+      return alertRank(r) || (s === "NO_DRIVER_FOUND" ? 0 : SEARCHING.has(s) ? 1 : s === "DRIVER_ARRIVED" ? 2 : s === "DRIVER_EN_ROUTE" ? 3 : s === "ACCEPTED" ? 4 : 5);
+    };
+    live.sort((a, b) => rank(a) - rank(b) || a.pickup_at.localeCompare(b.pickup_at));
     const recent = rides.filter((r) => r.status === "COMPLETED").slice(-3).reverse();
     return { live: [...live, ...recent], upcoming, alerts };
-  }, [rides, now]);
+  }, [rides, now, alertByRide]);
 
   const visibleList = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = lists[tab];
     if (!q) return list;
-    return list.filter((r) => `#${r.number} ${r.number} ${r.customer_name} ${r.pickup_address} ${r.dropoff_address}`.toLowerCase().includes(q));
+    return list.filter((r) => `#${r.number} ${r.number} ${r.customer_name} ${r.pickup_address} ${r.dropoff_address} ${r.flight_number ?? ""}`.toLowerCase().includes(q));
   }, [lists, tab, query]);
 
   const ride = selectedRide ? state.rides[selectedRide] : null;
@@ -246,6 +376,8 @@ export function CommandCenter({
   const selectRide = (id: string | null) => {
     setSelectedRide(id);
     setSelectedDriver(null);
+    setSelectedReport(null);
+    setAssignOpen(false);
     const r = id ? state.rides[id] : null;
     if (!r) return;
     const pts: Coord[] = [[r.pickup_lng, r.pickup_lat]];
@@ -257,30 +389,69 @@ export function CommandCenter({
   };
   const selectDriver = (id: string | null) => {
     setSelectedDriver(id);
+    if (id) setSelectedReport(null);
     const d = id ? state.drivers[id] : null;
     if (d?.location) mapRef.current?.flyTo(d.location.lng, d.location.lat, 14.5);
   };
+  const selectReport = (id: string | null) => {
+    setSelectedReport(id);
+    if (id) setSelectedDriver(null);
+  };
 
-  // Ouverture d'une course depuis une alerte (toast, cloche, notification du navigateur) ou ?ride=
+  // Ouverture d'une course / d'un signalement depuis une alerte (toast, cloche, notification) ou l'URL
   const selectRideRef = useRef(selectRide);
   selectRideRef.current = selectRide;
   const ridesRef = useRef(state.rides);
   ridesRef.current = state.rides;
+  const reportsRef = useRef(state.reports);
+  reportsRef.current = state.reports;
   useEffect(() => {
     // Course hors du direct (terminée, trop ancienne) : sa fiche complète
-    const open = (id: string) => (ridesRef.current[id] ? selectRideRef.current(id) : window.location.assign(`/dashboard/rides/${id}`));
+    const open = (id: string, assign = false) => {
+      if (!ridesRef.current[id]) return window.location.assign(`/dashboard/rides/${id}`);
+      selectRideRef.current(id);
+      if (assign) window.setTimeout(() => setAssignOpen(true), 0);
+    };
+    const openReport = (id: string) => {
+      const r = reportsRef.current[id];
+      if (!r || Date.parse(r.expires_at) <= Date.now()) {
+        toast.info("Ce signalement a expiré", { description: "Il n'est plus affiché sur la carte." });
+        return;
+      }
+      setShowReports(true);
+      setSelectedRide(null);
+      setSelectedDriver(null);
+      setSelectedReport(id);
+      mapRef.current?.fitPoints([[r.lng, r.lat]]);
+    };
     const onFocus = (e: Event) => {
       const id = (e as CustomEvent<string>).detail;
       if (id) open(id);
     };
+    const onAssign = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) open(id, true);
+    };
+    const onReport = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) openReport(id);
+    };
     window.addEventListener("rydar:focus-ride", onFocus);
-    const fromUrl = new URLSearchParams(window.location.search).get("ride");
-    if (fromUrl) {
+    window.addEventListener("rydar:assign-ride", onAssign);
+    window.addEventListener("rydar:focus-report", onReport);
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("ride");
+    const reportFromUrl = params.get("report");
+    if (fromUrl || reportFromUrl) {
       // la carte applique ce cadrage à la place du cadrage initial sur la flotte, même si elle charge encore
-      window.setTimeout(() => open(fromUrl), 0);
+      window.setTimeout(() => (fromUrl ? open(fromUrl, params.get("assign") === "1") : openReport(reportFromUrl!)), 0);
       window.history.replaceState(null, "", window.location.pathname);
     }
-    return () => window.removeEventListener("rydar:focus-ride", onFocus);
+    return () => {
+      window.removeEventListener("rydar:focus-ride", onFocus);
+      window.removeEventListener("rydar:assign-ride", onAssign);
+      window.removeEventListener("rydar:focus-report", onReport);
+    };
   }, []);
 
   const driver = selectedDriver ? state.drivers[selectedDriver] : null;
@@ -291,6 +462,7 @@ export function CommandCenter({
     return { lat: pts.reduce((s, p) => s + p.lat, 0) / pts.length, lng: pts.reduce((s, p) => s + p.lng, 0) / pts.length };
   }, [drivers]);
   const rideFeed = useMemo(() => (ride ? feed.filter((e) => e.ride_id === ride.id) : []), [feed, ride]);
+  const alertCount = lists.alerts.length;
 
   return (
     <div className="relative flex h-[calc(100dvh-56px)] flex-col overflow-hidden lg:h-dvh">
@@ -310,29 +482,44 @@ export function CommandCenter({
           approach={approach}
           theme={mapTheme}
           staleMs={locationMaxAgeS * 1000}
-          padding={{ top: 110, bottom: 60, left: 420, right: 360 }}
+          padding={mapPadding}
+          reports={showReports ? reports : undefined}
+          selectedReportId={selectedReport}
+          onSelectReport={selectReport}
         />
       </div>
 
       {/* Indicateurs + outils (haut droite) */}
-      <div className="pointer-events-none absolute right-3 top-3 z-20 hidden items-start gap-2 lg:flex">
-        <KpiStrip kpis={state.kpis} className="pointer-events-auto hidden xl:flex" />
-        <div className="glass pointer-events-auto flex items-center gap-0.5 rounded-2xl p-1.5">
-          <Tooltip content={showLabels ? "Masquer les noms" : "Afficher les noms"}>
-            <Button variant="ghost" size="icon-sm" onClick={() => setShowLabels((v) => !v)} aria-label="Noms des chauffeurs">
-              <Tag className={cn(showLabels && "text-brand")} />
+      <div className="pointer-events-none absolute right-3 top-3 z-20 flex items-start gap-2">
+        <KpiStrip kpis={state.kpis} className="pointer-events-auto hidden min-[1400px]:flex" />
+        <div className="glass pointer-events-auto flex items-center gap-0.5 rounded-2xl p-1 lg:p-1.5">
+          <Tooltip content={showReports ? "Masquer les signalements" : "Afficher les signalements"}>
+            <Button variant="ghost" size="icon-sm" onClick={toggleReports} aria-label="Signalements de la flotte" aria-pressed={showReports} className="relative">
+              <Siren className={cn(showReports && "text-amber")} />
+              {showReports && reports.length > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-amber px-0.5 text-[9.5px] font-bold tabular-nums text-ink-950">
+                  {reports.length}
+                </span>
+              )}
             </Button>
           </Tooltip>
-          <Tooltip content={showOffline ? "Masquer les hors ligne" : "Afficher les hors ligne"}>
-            <Button variant="ghost" size="icon-sm" onClick={() => setShowOffline((v) => !v)} aria-label="Chauffeurs hors ligne">
-              {showOffline ? <Eye className="text-brand" /> : <EyeOff />}
-            </Button>
-          </Tooltip>
-          <Tooltip content={mapTheme === "night" ? "Carte claire" : "Carte sombre"}>
-            <Button variant="ghost" size="icon-sm" onClick={toggleTheme} aria-label="Thème de la carte">
-              {mapTheme === "night" ? <Sun /> : <Moon />}
-            </Button>
-          </Tooltip>
+          <span className="hidden lg:contents">
+            <Tooltip content={showLabels ? "Masquer les noms" : "Afficher les noms"}>
+              <Button variant="ghost" size="icon-sm" onClick={() => setShowLabels((v) => !v)} aria-label="Noms des chauffeurs">
+                <Tag className={cn(showLabels && "text-brand")} />
+              </Button>
+            </Tooltip>
+            <Tooltip content={showOffline ? "Masquer les hors ligne" : "Afficher les hors ligne"}>
+              <Button variant="ghost" size="icon-sm" onClick={() => setShowOffline((v) => !v)} aria-label="Chauffeurs hors ligne">
+                {showOffline ? <Eye className="text-brand" /> : <EyeOff />}
+              </Button>
+            </Tooltip>
+            <Tooltip content={mapTheme === "night" ? "Carte claire" : "Carte sombre"}>
+              <Button variant="ghost" size="icon-sm" onClick={toggleTheme} aria-label="Thème de la carte">
+                {mapTheme === "night" ? <Sun /> : <Moon />}
+              </Button>
+            </Tooltip>
+          </span>
           <Tooltip content="Recentrer sur la flotte">
             <Button variant="ghost" size="icon-sm" onClick={() => mapRef.current?.fitAll()} aria-label="Recentrer">
               <Crosshair />
@@ -368,6 +555,10 @@ export function CommandCenter({
             offers={offersByRide[ride.id] ?? 0}
             approachS={approach?.rideId === ride.id ? approach.durationS : null}
             liveEvents={rideFeed}
+            alert={alertByRide[ride.id]}
+            now={now}
+            assignOpen={assignOpen}
+            onAssignOpenChange={setAssignOpen}
             onBack={() => setSelectedRide(null)}
             onSelectDriver={selectDriver}
           />
@@ -379,7 +570,7 @@ export function CommandCenter({
                   [
                     { k: "live", label: "En cours", n: lists.live.filter((r) => !TERMINAL.has(r.status)).length },
                     { k: "upcoming", label: "À venir", n: lists.upcoming.length },
-                    { k: "alerts", label: "Alertes", n: lists.alerts.length },
+                    { k: "alerts", label: "Alertes", n: alertCount },
                   ] as const
                 ).map(({ k, label, n }) => (
                   <button
@@ -389,7 +580,11 @@ export function CommandCenter({
                     className={cn("flex h-8 items-center justify-center gap-1.5 rounded-lg text-[12.5px] font-medium transition-colors", tab === k ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg")}
                   >
                     {label}
-                    <span className={cn("tabular-nums", k === "alerts" && n > 0 ? "text-red" : "text-fg-subtle")}>{n}</span>
+                    {k === "alerts" && n > 0 ? (
+                      <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-red/15 px-1 text-[11px] font-semibold tabular-nums text-red">{n}</span>
+                    ) : (
+                      <span className="tabular-nums text-fg-subtle">{n}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -398,7 +593,7 @@ export function CommandCenter({
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="N° de course, client, adresse"
+                  placeholder="N° de course, client, adresse, vol"
                   className="h-8 w-full rounded-lg bg-white/[0.04] pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:bg-white/[0.06]"
                 />
               </div>
@@ -408,10 +603,14 @@ export function CommandCenter({
                 <div className="flex flex-col items-center px-6 py-14 text-center">
                   <Radar className="mb-3 size-6 text-fg-subtle" />
                   <p className="text-[13px] font-medium">Aucune course {tab === "alerts" ? "en alerte" : tab === "upcoming" ? "à venir" : "en cours"}</p>
-                  <p className="mt-1 text-[12px] text-fg-subtle">Les nouvelles courses apparaissent ici instantanément.</p>
-                  <Button variant="secondary" size="sm" className="mt-4" onClick={() => setNewRideOpen(true)}>
-                    <Plus /> Nouvelle course <kbd className="kbd ml-1">N</kbd>
-                  </Button>
+                  <p className="mt-1 text-[12px] text-fg-subtle">
+                    {tab === "alerts" ? "Retards, GPS muets, vols annulés et courses sans chauffeur s'afficheront ici." : "Les nouvelles courses apparaissent ici instantanément."}
+                  </p>
+                  {tab !== "alerts" && (
+                    <Button variant="secondary" size="sm" className="mt-4" onClick={() => setNewRideOpen(true)}>
+                      <Plus /> Nouvelle course <kbd className="kbd ml-1">N</kbd>
+                    </Button>
+                  )}
                 </div>
               ) : (
                 visibleList.map((r) => (
@@ -424,6 +623,7 @@ export function CommandCenter({
                     onSelect={() => selectRide(r.id)}
                     now={now}
                     timeout={offerTimeout}
+                    alert={alertByRide[r.id]}
                   />
                 ))
               )}
@@ -439,7 +639,7 @@ export function CommandCenter({
 
       {/* Fiche chauffeur sélectionné */}
       {driver && (
-        <div className="glass absolute bottom-3 left-1/2 z-30 w-[340px] -translate-x-1/2 animate-rise rounded-2xl p-4 lg:left-[calc(50%+40px)]">
+        <div className="glass absolute bottom-3 left-1/2 z-30 w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 animate-rise rounded-2xl p-4 lg:left-[calc(50%+40px)]">
           <div className="flex items-start gap-3">
             <span className="grid size-11 shrink-0 place-items-center rounded-full bg-ink-600 text-[13px] font-semibold" style={{ boxShadow: `0 0 0 2px ${PRESENCE_COLOR[driver.presence]}` }}>
               {initials(driver.first_name, driver.last_name)}
@@ -471,11 +671,16 @@ export function CommandCenter({
               </span>
             </button>
           )}
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <Button asChild variant="secondary" size="sm">
               <a href={`tel:${driver.phone}`} title={formatPhone(driver.phone)}>
                 <Phone /> Appeler
               </a>
+            </Button>
+            <Button asChild variant="secondary" size="sm">
+              <Link href={`/dashboard/messages?driver=${driver.id}`}>
+                <MessageSquareText /> Message
+              </Link>
             </Button>
             <Button asChild variant="outline" size="sm">
               <Link href={`/dashboard/drivers/${driver.id}`}>Profil</Link>
