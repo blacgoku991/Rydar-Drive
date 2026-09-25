@@ -87,6 +87,23 @@ function taskOptions(ride: boolean): Location.LocationTaskOptions {
 
 export type PermissionState = "granted" | "foreground-only" | "coarse" | "denied";
 
+/** État actuel, sans rien demander (redémarrage de l'app alors que le chauffeur est déjà en ligne). */
+export async function locationPermissionState(): Promise<"ok" | "coarse" | "denied"> {
+  const fg = await Location.getForegroundPermissionsAsync().catch(() => null);
+  if (!fg || fg.status !== "granted") return "denied";
+  if (fg.android?.accuracy === "coarse" || fg.ios?.accuracy === "reduced") return "coarse";
+  return "ok";
+}
+
+/** Premier point GPS (haute précision), borné dans le temps ; repli sur un point réseau/Wi-Fi. */
+async function firstFix(): Promise<Location.LocationObject | null> {
+  const high = await Promise.race([
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 12_000)),
+  ]);
+  return high ?? Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
+}
+
 /**
  * Autorisations avant de passer EN LIGNE. « Pendant l'utilisation » suffit (service de premier plan
  * Android, indicateur iOS) ; « Toujours » est demandé mais facultatif. Position exacte obligatoire.
@@ -120,7 +137,7 @@ export type TrackingResult = {
 export async function startTracking(): Promise<TrackingResult> {
   const fg = await Location.requestForegroundPermissionsAsync().catch(() => null);
   if (fg?.status !== "granted") throw new Error("Autorisez la localisation pour passer en ligne.");
-  const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
+  const current = await firstFix();
   if (current) await pushLocation(current, true);
   const accuracyM = current?.coords.accuracy ?? null;
   if (isWeb) {

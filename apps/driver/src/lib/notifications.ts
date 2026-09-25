@@ -16,7 +16,8 @@ if (Platform.OS !== "web") Notifications.setNotificationHandler({
   }),
 });
 
-/** Canal Android des offres (le worker envoie channelId « ride-offers-v2 », son « ride_offer_v2 »). */
+/** Canal Android des offres instantanées (worker : channelId « ride-offers-v2 », son « ride_offer_v2 ») ;
+ *  les planifiées arrivent sur « ride-offers-scheduled » (son « ride_offer »). */
 const RIDE_OFFER_CHANNEL = "ride-offers-v2";
 
 export async function setupNotificationChannels() {
@@ -32,6 +33,17 @@ export async function setupNotificationChannels() {
       vibrationPattern: [0, 500, 250, 500, 250, 900],
       enableVibrate: true,
       bypassDnd: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      lightColor: "#C8F03C",
+    });
+    // Offres planifiées : son court, sans percer « Ne pas déranger » (elles peuvent attendre)
+    await Notifications.setNotificationChannelAsync("ride-offers-scheduled", {
+      name: "Courses planifiées",
+      description: "Réservations à venir proposées à la flotte",
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: "ride_offer.wav",
+      vibrationPattern: [0, 300, 200, 300],
+      enableVibrate: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       lightColor: "#C8F03C",
     });

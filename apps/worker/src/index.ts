@@ -71,12 +71,16 @@ async function main() {
     res.end(JSON.stringify({ healthy, ...state }));
   }).listen(config.healthPort);
 
+  let stoppingAt = 0;
   const shutdown = async (signal: string) => {
     if (stopping) {
+      // `tsx watch` relaie Ctrl-C : deux SIGINT arrivent presque ensemble — seul un second appui force la sortie
+      if (Date.now() - stoppingAt < 1_000) return;
       log("warn", "forced exit", { signal });
       process.exit(1);
     }
     stopping = true;
+    stoppingAt = Date.now();
     log("info", "shutting down", { signal, inflight: inflight.size });
     timers.forEach(clearInterval);
     stopNotifications();

@@ -23,6 +23,10 @@ export interface PushProvider {
 export const RIDE_OFFER_CHANNEL = "ride-offers-v2";
 export const RIDE_OFFER_SOUND_IOS = "ride_offer_v2.wav";
 export const RIDE_OFFER_SOUND_ANDROID = "ride_offer_v2";
+/** Offres planifiées : canal distinct (importance HIGH, sans « Ne pas déranger ») et son court. */
+export const SCHEDULED_OFFER_CHANNEL = "ride-offers-scheduled";
+export const SCHEDULED_OFFER_SOUND_IOS = "ride_offer.wav";
+export const SCHEDULED_OFFER_SOUND_ANDROID = "ride_offer";
 
 /**
  * TTL push d'une offre : jusqu'à son expiration (data.expires_at), au moins 1 s, au plus
@@ -36,24 +40,31 @@ export function offerTtlSeconds(expiresAt: unknown, now = Date.now(), max = 600,
 }
 
 function ttlSeconds(payload: PushPayload, now: number) {
-  if (payload.type === "ride_offer") return offerTtlSeconds(payload.data.expires_at, now);
+  // offre instantanée : sans réponse elle reste ouverte deux délais (prolongée à la vague suivante,
+  // puis fermée « ignorée ») → TTL = 2 × temps restant, 600 s max
+  if (payload.type === "ride_offer") {
+    const left = offerTtlSeconds(payload.data.expires_at, now, 600, Number.NaN);
+    return Number.isNaN(left) ? 60 : Math.min(600, 2 * left);
+  }
   // offre planifiée : fenêtre longue (jusqu'à T-lead), 1 h max comme les autres notifications
   if (payload.type === "ride_offer_scheduled") return offerTtlSeconds(payload.data.expires_at, now, 3600, 3600);
   return 3600;
 }
 
 /**
- * Réglages de présentation communs : son + canal + catégorie actionnable (ACCEPTER / Refuser)
- * pour toutes les offres, instantanées comme planifiées. Seule l'offre instantanée perce le
- * mode Concentration iOS (time-sensitive) ; une offre planifiée peut attendre.
+ * Réglages de présentation communs : catégorie actionnable (ACCEPTER / Refuser) pour toutes les
+ * offres. L'offre instantanée sonne 10 s sur le canal MAX et perce le mode Concentration iOS
+ * (time-sensitive) ; l'offre planifiée a son canal et un son court : elle peut attendre.
  */
 export function presentation(payload: PushPayload, now = Date.now()) {
-  const isOffer = payload.type === "ride_offer" || payload.type === "ride_offer_scheduled";
-  const urgent = payload.type === "ride_offer" || payload.type === "ride_cancelled" || payload.type === "ride_assigned";
+  const instant = payload.type === "ride_offer";
+  const scheduled = payload.type === "ride_offer_scheduled";
+  const isOffer = instant || scheduled;
+  const urgent = instant || payload.type === "ride_cancelled" || payload.type === "ride_assigned";
   return {
-    sound: isOffer ? RIDE_OFFER_SOUND_IOS : "default",
-    androidSound: isOffer ? RIDE_OFFER_SOUND_ANDROID : "default",
-    channelId: isOffer ? RIDE_OFFER_CHANNEL : urgent ? "ride-updates" : "default",
+    sound: instant ? RIDE_OFFER_SOUND_IOS : scheduled ? SCHEDULED_OFFER_SOUND_IOS : "default",
+    androidSound: instant ? RIDE_OFFER_SOUND_ANDROID : scheduled ? SCHEDULED_OFFER_SOUND_ANDROID : "default",
+    channelId: instant ? RIDE_OFFER_CHANNEL : scheduled ? SCHEDULED_OFFER_CHANNEL : urgent ? "ride-updates" : "default",
     categoryId: isOffer ? "ride_offer" : undefined,
     interruptionLevel: urgent ? ("time-sensitive" as const) : ("active" as const),
     ttlSeconds: ttlSeconds(payload, now),

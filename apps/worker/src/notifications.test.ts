@@ -39,12 +39,12 @@ describe("worker — présentation des notifications", () => {
     });
     expect(stringifyData({ a: 1, b: "x", c: { d: true } })).toEqual({ a: "1", b: "x", c: '{"d":true}' });
   });
-  it("offre planifiée : mêmes canal, son et boutons ACCEPTER / Refuser, sans percer la Concentration", () => {
+  it("offre planifiée : canal dédié, son court, boutons ACCEPTER / Refuser, sans percer la Concentration", () => {
     const p = presentation(offer("ride_offer_scheduled"));
     expect(p).toMatchObject({
-      sound: "ride_offer_v2.wav",
-      androidSound: "ride_offer_v2",
-      channelId: "ride-offers-v2",
+      sound: "ride_offer.wav",
+      androidSound: "ride_offer",
+      channelId: "ride-offers-scheduled",
       categoryId: "ride_offer",
       interruptionLevel: "active",
       ttlSeconds: 3600,
@@ -61,7 +61,9 @@ describe("worker — durée de vie push d'une offre", () => {
   it("jusqu'à expires_at (arrondi au-dessus)", () => {
     expect(offerTtlSeconds("2026-09-25T10:00:30+00:00", now)).toBe(30);
     expect(offerTtlSeconds("2026-09-25T10:00:29.200123+00:00", now)).toBe(30);
-    expect(presentation(offer("ride_offer", { expires_at: "2026-09-25T10:00:45Z" }), now).ttlSeconds).toBe(45);
+    // instantanée : ouverte deux délais (prolongée puis « ignorée ») → 2 × temps restant, 600 s max
+    expect(presentation(offer("ride_offer", { expires_at: "2026-09-25T10:00:45Z" }), now).ttlSeconds).toBe(90);
+    expect(presentation(offer("ride_offer", { expires_at: "2026-09-25T10:08:00Z" }), now).ttlSeconds).toBe(600);
   });
   it("bornée à [1 s, 600 s]", () => {
     expect(offerTtlSeconds("2026-09-25T09:59:00Z", now)).toBe(1);

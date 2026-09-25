@@ -5,8 +5,9 @@ import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Platform, Vibration } from "react-native";
 import { api } from "@/lib/api";
-import { MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking, type TrackingResult } from "@/lib/location";
+import { locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking, type TrackingResult } from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
+import { offerSession } from "@/lib/offer-session";
 import { supabase } from "@/lib/supabase";
 
 export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "imprecise" };
@@ -31,6 +32,10 @@ export function isUrgentOffer(o: Pick<DriverOffer, "mode" | "sent_at" | "expires
   if (!o.expires_at) return false;
   return new Date(o.expires_at).getTime() - new Date(o.sent_at).getTime() <= URGENT_OFFER_S * 1000;
 }
+
+/** Pourquoi la position approximative empêche de recevoir des courses (passage en ligne et redémarrage). */
+const COARSE_MESSAGE =
+  "Les courses sont proposées aux chauffeurs situés à 4 km, puis 8 km du client : avec une position approximative, vous ne pouvez pas en recevoir. Dans les réglages de Rydar Drive › Position, activez la position exacte.";
 
 const DriverContext = createContext<Ctx | null>(null);
 
@@ -57,6 +62,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   const openOffer = useCallback((offer: DriverOffer) => {
     if (seenOffers.current.has(offer.offer_id)) return;
     seenOffers.current.add(offer.offer_id);
+    if (offerSession.openId === offer.offer_id) return;
     if (isUrgentOffer(offer)) router.push({ pathname: "/offer/[id]", params: { id: offer.offer_id } });
     else Vibration.vibrate([0, 200, 120, 200]);
   }, []);
@@ -87,7 +93,19 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       await refresh();
       const h = await api.home().catch(() => null);
       if (cancelled || !h) return;
-      if (h.driver.presence !== "offline") startTracking().catch(() => null);
+      if (h.driver.presence !== "offline") {
+        // Déjà en ligne au redémarrage : la position exacte a pu être retirée entre-temps dans les réglages
+        const perm = await locationPermissionState();
+        if (perm === "ok") startTracking().catch(() => null);
+        else {
+          await api.setOnline(false).catch(() => null);
+          await refresh();
+          Alert.alert(
+            perm === "coarse" ? "Position exacte désactivée" : "Localisation désactivée",
+            perm === "coarse" ? `Vous êtes passé hors ligne. ${COARSE_MESSAGE}` : "Vous êtes passé hors ligne : autorisez la localisation pour recevoir des courses.",
+          );
+        }
+      }
       await supabase.realtime.setAuth(session.access_token);
       const ch = supabase.channel(`driver:${h.driver.id}`, { config: { private: true } });
       ch.on("broadcast", { event: "offer.updated" }, () => void refresh())
@@ -134,6 +152,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     if (offerId) seenOffers.current.add(offerId); // pas de seconde ouverture par refresh()
     if (r.actionIdentifier === "ACCEPT" && offerId) {
       const res = await api.accept(offerId).catch(() => null);
+      if (res?.ok) offerSession.accepted.add(offerId);
       await refresh();
       if (!res) router.push({ pathname: "/offer/[id]", params: { id: offerId } }); // réseau : réessai depuis l'offre
       else if (!res.ok) Alert.alert(res.code === "OFFER_EXPIRED" ? "Offre expirée" : "Course indisponible", res.message ?? "Course déjà attribuée.");
@@ -152,7 +171,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     }
     if (offerId) {
       await refresh();
-      router.push({ pathname: "/offer/[id]", params: { id: offerId } });
+      // Bannière touchée alors que l'offre est déjà à l'écran : rien à ouvrir
+      if (offerSession.openId !== offerId) router.push({ pathname: "/offer/[id]", params: { id: offerId } });
     } else if (data.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(data.ride_id) } });
   }, [refresh]);
 
@@ -187,14 +207,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         // 1. autorisations (position exacte exigée) → 2. EN LIGNE serveur → 3. suivi, premier point forcé
         const perm = await requestLocationPermissions();
         if (perm === "denied") return { ok: false, message: "Autorisez la localisation pour passer en ligne." };
-        if (perm === "coarse") {
-          return {
-            ok: false,
-            code: "coarse",
-            message:
-              "Les courses sont proposées aux chauffeurs situés à 4 km, puis 8 km du client : avec une position approximative, vous ne pouvez pas en recevoir. Dans les réglages de Rydar Drive › Position, activez la position exacte.",
-          };
-        }
+        if (perm === "coarse") return { ok: false, code: "coarse", message: COARSE_MESSAGE };
         const res = await api.setOnline(true);
         if (!res.ok) {
           await refresh();

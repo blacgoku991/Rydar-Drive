@@ -14,9 +14,14 @@ import { BigButton, Chip, RouteLine, Screen, Sheet } from "@/components/ui";
 import { URGENT_OFFER_S, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { api } from "@/lib/api";
+import { offerSession } from "@/lib/offer-session";
 import { approachSeconds, colors } from "@/theme";
 
 const RING_PATTERN = [0, 600, 300, 600, 300, 1000];
+/** La sonnerie boucle pendant les 35 premières secondes de l'offre (puis silence, le compte à rebours continue). */
+const RING_S = 35;
+/** Durée minimale de sonnerie à l'ouverture d'une offre récente (écart d'horloge téléphone / serveur). */
+const MIN_RING_S = 8;
 const CHIME_PATTERN = [0, 200, 120, 200];
 /** Échéance dépassée : sans liste à jour depuis ce délai (réseau), fermeture locale. */
 const STALE_LIST_S = 20;
@@ -68,6 +73,14 @@ export default function OfferScreen() {
     if (!checked) void refresh().finally(() => setChecked(true));
   }, []);
 
+  // Une seule fenêtre d'offre : la bannière touchée ensuite ne rouvre pas un second écran
+  useEffect(() => {
+    offerSession.openId = id;
+    return () => {
+      if (offerSession.openId === id) offerSession.openId = null;
+    };
+  }, [id]);
+
   // Dernière lecture réussie de la liste (chaque rafraîchissement réussi remplace le tableau)
   const listAt = useRef(Date.now());
   useEffect(() => {
@@ -90,6 +103,11 @@ export default function OfferScreen() {
       if (Platform.OS !== "web") Vibration.vibrate(CHIME_PATTERN);
       return;
     }
+    // Sonnerie limitée aux 35 premières secondes après l'envoi : l'offre, prolongée à la vague suivante,
+    // peut rester ouverte plus longtemps, sans sonner indéfiniment
+    const age = (Date.now() - new Date(snapshot.current?.sent_at ?? Date.now()).getTime()) / 1000;
+    const ringS = age < 60 ? Math.min(RING_S, Math.max(MIN_RING_S, RING_S - age)) : 0;
+    if (ringS <= 0) return;
     try {
       ringtone.loop = true;
       ringtone.volume = 1;
@@ -98,13 +116,18 @@ export default function OfferScreen() {
       /* navigateur sans interaction : pas de son */
     }
     if (Platform.OS !== "web") Vibration.vibrate(RING_PATTERN, true);
-    return () => {
+    const stop = () => {
       try {
         ringtone.pause();
       } catch {
         /* lecteur libéré */
       }
       if (Platform.OS !== "web") Vibration.cancel();
+    };
+    const t = setTimeout(stop, ringS * 1000);
+    return () => {
+      clearTimeout(t);
+      stop();
     };
   }, [state, urgent, loaded, ringtone, chime]);
 
@@ -117,8 +140,9 @@ export default function OfferScreen() {
   useEffect(() => {
     if (state !== "open" || live || !snapshot.current) return;
     closedExpiry.current = snapshot.current.expires_at;
-    if (home?.driver.current_ride_id === snapshot.current.ride_id) {
-      setMessage("Course acceptée."); // ACCEPTER depuis la notification
+    // ACCEPTER depuis la notification : instantanée → course en cours ; planifiée → planning
+    if (home?.driver.current_ride_id === snapshot.current.ride_id || offerSession.accepted.has(snapshot.current.offer_id)) {
+      setMessage(snapshot.current.ride_type === "instant" ? "Course acceptée." : "Course attribuée — ajoutée à votre planning.");
       setState("declined");
       return;
     }

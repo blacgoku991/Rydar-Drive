@@ -4,15 +4,19 @@ import { appData, presentation, stringifyData, type PushPayload, type PushProvid
 type ServiceAccount = { project_id: string; client_email: string; private_key: string };
 
 /**
- * Message FCM HTTP v1 « data only », haute priorité, au format lu par expo-notifications Android
- * (NotificationData.kt : title, message, body = JSON des données, channelId, categoryId, sound).
- * Sans bloc « notification », c'est expo-notifications qui affiche la notification, avec le canal
- * et les boutons ACCEPTER / Refuser (catégorie).
+ * Message FCM HTTP v1 au format lu par expo-notifications Android (NotificationData.kt : title,
+ * message, body = JSON des données, channelId, categoryId, sound).
+ * - Offres : « data only » — en arrière-plan expo-notifications affiche la notification avec le canal
+ *   et les boutons ACCEPTER / Refuser ; au premier plan l'app ouvre l'écran d'offre (temps réel + sonnerie).
+ * - Autres types : bloc « notification » en plus, sinon expo-notifications ignore le message au premier
+ *   plan (isDataOnly) et l'annulation / l'attribution passerait sans bannière ni son.
  */
 export function fcmMessage(token: string, payload: PushPayload, now = Date.now()) {
   const p = presentation(payload, now);
+  const dataOnly = !!p.categoryId;
   return {
     token,
+    ...(dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
     data: stringifyData({
       title: payload.title,
       message: payload.body,
@@ -24,6 +28,7 @@ export function fcmMessage(token: string, payload: PushPayload, now = Date.now()
     android: {
       priority: payload.priority === "high" ? "HIGH" : "NORMAL",
       ttl: `${p.ttlSeconds}s`,
+      ...(dataOnly ? {} : { notification: { channel_id: p.channelId, sound: p.androidSound } }),
     },
   };
 }

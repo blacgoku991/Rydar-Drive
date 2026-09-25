@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { apnsPayload } from "./apns";
 import { expoProvider, expoReceiptTracker, type ExpoClient } from "./expo";
 import { fcmFailure, fcmMessage } from "./fcm";
-import type { PushPayload } from "./types";
+import { presentation, type PushPayload } from "./types";
 
 const NOW = Date.parse("2026-09-25T10:00:00Z");
 const rideOffer: PushPayload = {
@@ -163,7 +163,8 @@ describe("push FCM direct", () => {
   it("message data-only haute priorité au format expo-notifications", () => {
     const m = fcmMessage("fcm-token", rideOffer, NOW);
     expect(m).not.toHaveProperty("notification");
-    expect(m.android).toEqual({ priority: "HIGH", ttl: "30s" });
+    // ouverte deux délais (prolongée puis fermée « ignorée ») : 2 × 30 s restantes
+    expect(m.android).toEqual({ priority: "HIGH", ttl: "60s" });
     expect(Object.keys(m.data).sort()).toEqual(["body", "categoryId", "channelId", "message", "sound", "title"]);
     expect(m.data).toMatchObject({ title: "NOUVELLE COURSE", message: rideOffer.body, channelId: "ride-offers-v2", categoryId: "ride_offer", sound: "ride_offer_v2" });
     expect(Object.values(m.data).every((v) => typeof v === "string")).toBe(true);
@@ -175,7 +176,16 @@ describe("push FCM direct", () => {
     const m = fcmMessage("fcm-token", { ...rideOffer, type: "ride_cancelled", data: { ride_id: "r1" }, priority: "normal" }, NOW);
     expect(m.data).not.toHaveProperty("categoryId");
     expect(m.data).toMatchObject({ channelId: "ride-updates", sound: "default" });
-    expect(m.android).toEqual({ priority: "NORMAL", ttl: "3600s" });
+    // bloc notification : sinon expo-notifications ne montre rien au premier plan (message data-only)
+    expect(m.notification).toEqual({ title: rideOffer.title, body: rideOffer.body });
+    expect(m.android).toEqual({ priority: "NORMAL", ttl: "3600s", notification: { channel_id: "ride-updates", sound: "default" } });
+  });
+
+  it("offre planifiée : canal dédié et son court (pas la sonnerie 10 s des instantanées)", () => {
+    const m = fcmMessage("fcm-token", { ...rideOffer, type: "ride_offer_scheduled", priority: "normal" }, NOW);
+    expect(m).not.toHaveProperty("notification");
+    expect(m.data).toMatchObject({ channelId: "ride-offers-scheduled", categoryId: "ride_offer", sound: "ride_offer" });
+    expect(presentation({ ...rideOffer, type: "ride_offer_scheduled" }, NOW)).toMatchObject({ sound: "ride_offer.wav", interruptionLevel: "active" });
   });
 
   it("désactive le jeton seulement sur UNREGISTERED / NOT_FOUND", () => {
@@ -212,6 +222,6 @@ describe("push APNs direct", () => {
 
   it("offre planifiée : boutons ACCEPTER / Refuser, niveau « active »", () => {
     const p = apnsPayload({ ...rideOffer, type: "ride_offer_scheduled" }, NOW);
-    expect(p.aps).toMatchObject({ category: "ride_offer", sound: "ride_offer_v2.wav", "interruption-level": "active" });
+    expect(p.aps).toMatchObject({ category: "ride_offer", sound: "ride_offer.wav", "interruption-level": "active" });
   });
 });
