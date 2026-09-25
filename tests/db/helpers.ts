@@ -205,3 +205,13 @@ export async function insertRideBypass(org: Org, fields: Record<string, unknown>
 }
 
 export const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
+
+/** Membre supplémentaire d'une organisation (dispatcher, admin…). Renvoie l'id utilisateur. */
+export async function createMember(org: Org, role: "owner" | "admin" | "dispatcher", name = `Membre ${role}`): Promise<string> {
+  const userId = await createAuthUser(`${role}-${randomUUID().slice(0, 8)}@test.dev`, name);
+  await sql(`insert into public.organization_users (organization_id, user_id, role) values ($1, $2, $3)`, [org.id, userId, role]);
+  return userId;
+}
+
+/** Date ISO dans n minutes. */
+export const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();

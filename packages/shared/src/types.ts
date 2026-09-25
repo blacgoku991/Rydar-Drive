@@ -302,4 +302,76 @@ export interface FlightUpdateNotificationData {
   terminal: string | null;
   pickup_at: Iso;
   pickup_at_original: Iso | null;
+
+// ---------------------------------------------------------------------------
+// Alertes de suivi des courses (migration 20260924002200_ride_alerts.sql)
+// ---------------------------------------------------------------------------
+export type RideAlertKind = "late" | "stalled" | "no_gps" | "not_started";
+export type RideAlertSeverity = "warning" | "critical";
+export type RideAlertStatus = "open" | "acknowledged" | "resolved";
+export type RideAlertResolution = "kept" | "reassigned" | "relaunched" | "auto_resolved";
+/** keep → acknowledge_ride_alert(alert_id) · reassign → assign_ride(ride_id, driver_id) · relaunch → reassign_ride(ride_id, reason) */
+export type RideAlertAction = "keep" | "reassign" | "relaunch";
+
+export interface RideAlertData {
+  alert_id: Uuid;
+  ride_number: number;
+  driver_id: Uuid;
+  driver_name: string;
+  driver_number: number;
+  actions: RideAlertAction[];
+  /** late */
+  delay_minutes?: number;
+  eta_minutes?: number;
+  expected_at?: Iso;
+  reference_at?: Iso;
+  tolerance_minutes?: number;
+  /** late · stalled */
+  distance_m?: number | null;
+  /** stalled */
+  still_minutes?: number;
+  since?: Iso;
+  threshold_minutes?: number;
+  /** stalled · no_gps */
+  lat?: number | null;
+  lng?: number | null;
+  /** no_gps · not_started */
+  last_location_at?: Iso | null;
+  location_age_s?: number | null;
+  max_age_s?: number;
+  /** late · not_started */
+  pickup_at?: Iso;
+  minutes_to_pickup?: number;
+  presence?: DriverPresence;
+}
+
+export interface RideAlert {
+  id: Uuid;
+  organization_id: Uuid;
+  ride_id: Uuid;
+  driver_id: Uuid | null;
+  kind: RideAlertKind;
+  severity: RideAlertSeverity;
+  message: string;
+  data: RideAlertData;
+  status: RideAlertStatus;
+  resolution: RideAlertResolution | null;
+  muted_until: Iso | null;
+  created_at: Iso;
+  updated_at: Iso;
+  resolved_at: Iso | null;
+  resolved_by: Uuid | null;
+}
+
+/** Diffusion temps réel `ride.alert` sur `org:{organization_id}` (et champ `alert` des RPC). */
+export interface RideAlertBroadcast extends Omit<RideAlert, "organization_id"> {
+  op: "insert" | "update" | "resolve";
+}
+
+/** Réglages (organization_settings) des alertes. */
+export interface RideAlertSettings {
+  /** Retard toléré avant alerte (1..60 min, défaut 5) */
+  late_alert_tolerance_minutes: number;
+  /** Immobilité avant alerte (2..30 min, défaut 4) */
+  stalled_alert_minutes: number;
 }
