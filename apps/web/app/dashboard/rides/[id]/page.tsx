@@ -16,6 +16,7 @@ import { RideMap } from "@/components/rides/ride-map";
 import { RideProgress } from "@/components/rides/ride-progress";
 import { RideTimeline, type TimelineEvent } from "@/components/rides/ride-timeline";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
+import { RideMoneyCard, type RideMoneyRide, type SettlementRow } from "@/components/settlements/ride-money";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/misc";
@@ -46,7 +47,8 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const { data: ride } = await ctx.supabase.from("rides").select("*").eq("id", id).eq("organization_id", ctx.org.id).maybeSingle();
   if (!ride) notFound();
 
-  const [events, offers, drivers, alerts] = await Promise.all([
+  const centrale = ctx.org.dispatch_model === "centrale";
+  const [events, offers, drivers, alerts, settlement] = await Promise.all([
     ctx.supabase.from("ride_events").select("id, category, level, type, message, actor_type, data, created_at").eq("ride_id", id).order("id"),
     ctx.supabase
       .from("ride_offers")
@@ -66,6 +68,10 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
       .eq("organization_id", ctx.org.id)
       .order("created_at", { ascending: false })
       .limit(12),
+    // Mode centrale : règlement de fin de course (commission due / part à verser)
+    centrale
+      ? ctx.supabase.from("ride_settlements").select("*").eq("ride_id", id).eq("organization_id", ctx.org.id).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
   const allDrivers = ((drivers.data ?? []) as any[]).map((d) => ({
@@ -95,7 +101,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
 
   return (
     <>
-      <LiveRefresh rideId={id} events={["ride.updated", "ride.event", "offer.updated", "ride.alert"]} />
+      <LiveRefresh rideId={id} events={["ride.updated", "ride.event", "offer.updated", "ride.alert", "settlement.updated"]} />
       <div className="border-b border-line">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
           <div>
@@ -165,6 +171,11 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                 <Info icon={<Wallet />} label="Prix">
                   <span className="num font-semibold">{formatPrice(ride.price_cents)}</span>{" "}
                   <span className="text-fg-subtle">· {PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod]}</span>
+                  {centrale && ride.driver_payout_cents != null && (
+                    <span className="block text-[12px] text-fg-subtle">
+                      dont <span className="mono text-brand">{formatPrice(ride.driver_payout_cents)}</span> pour le chauffeur
+                    </span>
+                  )}
                 </Info>
                 <Info icon={<Car />} label="Catégorie">{VEHICLE_CATEGORY_META[ride.vehicle_category as VehicleCategory]?.label}</Info>
               </div>
@@ -290,11 +301,19 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               </CardBody>
             </Card>
           )}
+          {centrale && (
+            <RideMoneyCard
+              ride={ride as RideMoneyRide}
+              settlement={(settlement.data ?? null) as SettlementRow | null}
+              driverName={driver?.first_name ?? null}
+              serverNow={Date.now()}
+            />
+          )}
         </div>
         <Card
           className={cn(
             "h-fit min-w-0 xl:sticky xl:top-6 xl:col-start-2",
-            (alerts.data ?? []).length > 0 || ride.flight_number ? "xl:row-start-2" : "xl:row-span-2 xl:row-start-1",
+            (alerts.data ?? []).length > 0 || ride.flight_number || centrale ? "xl:row-start-2" : "xl:row-span-2 xl:row-start-1",
           )}
         >
           <CardHeader title="Timeline" description="Chaque étape du dispatch, horodatée à la seconde." icon={<Radar />} />

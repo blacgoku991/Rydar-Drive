@@ -128,7 +128,16 @@ function SwitchRow({ title, hint, checked, onChange, disabled }: { title: string
 
 const num = (v: string) => (v.trim() === "" ? Number.NaN : Number(v.replace(",", ".")));
 
-export function DispatchSettingsForm({ settings, readOnly }: { settings: OrgSettings; readOnly: boolean }) {
+export function DispatchSettingsForm({
+  settings,
+  readOnly,
+  commissionNote,
+}: {
+  settings: OrgSettings;
+  readOnly: boolean;
+  /** Mode centrale : la commission se règle ailleurs (« Commission & encaissement ») — remplace la carte. */
+  commissionNote?: React.ReactNode;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const initial = useMemo<OrgSettings>(() => ({ ...SETTINGS_DEFAULTS, ...settings }), [settings]);
@@ -333,6 +342,7 @@ export function DispatchSettingsForm({ settings, readOnly }: { settings: OrgSett
         </Card>
       </div>
 
+      {commissionNote ?? (
       <Card>
         <CardHeader icon={<Percent />} title="Commission chauffeur" description="Part de la centrale sur le prix de chaque course : l'app chauffeur affiche les gains nets." />
         <CardBody className="grid gap-5 sm:grid-cols-[220px_1fr] sm:items-start">
@@ -369,6 +379,7 @@ export function DispatchSettingsForm({ settings, readOnly }: { settings: OrgSett
           </div>
         </CardBody>
       </Card>
+      )}
 
       {!readOnly && (
         <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] px-4 py-3 shadow-float backdrop-blur-xl">

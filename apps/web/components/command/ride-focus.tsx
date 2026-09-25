@@ -10,6 +10,8 @@ import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/
 import { PRESENCE_COLOR } from "@/components/map/map-theme";
 import { FlightDetails, PickupTime } from "@/components/rides/flight-info";
 import { RideActions, type AssignableDriver } from "@/components/rides/ride-actions";
+import { useIsCentrale } from "@/components/settlements/centrale-context";
+import { RideMoneyPanel } from "@/components/settlements/ride-money";
 import { toneDot, toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { LiveAlert, LiveDriver, LiveRide } from "@/lib/queries/live";
@@ -99,6 +101,7 @@ export function RideFocus({
   const status = ride.status as RideStatus;
   const meta = RIDE_STATUS_META[status] ?? { label: status, tone: "neutral" as const };
   const [events, setEvents] = useState<Event[]>([]);
+  const centrale = useIsCentrale();
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +214,9 @@ export function RideFocus({
             </div>
           ))}
         </div>
+
+        {/* Mode centrale : part chauffeur / commission / plateforme + règlement de fin de course */}
+        {centrale && <RideMoneyPanel rideId={ride.id} version={`${ride.status}:${ride.price_cents ?? ""}:${ride.payment_method ?? ""}:${ride.updated_at}`} now={now} />}
 
         {/* Client */}
         <div className="flex items-center justify-between gap-3">

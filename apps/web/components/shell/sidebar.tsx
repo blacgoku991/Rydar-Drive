@@ -3,6 +3,7 @@ import {
   BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Menu, MessageCircle, Radar,
   Route, ScrollText, Settings, ShieldCheck, Sparkles, Users,
 } from "lucide-react";
+import { HandCoins, Waypoints } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -17,6 +18,8 @@ const ICONS = {
   radar: Radar, route: Route, users: Users, scroll: ScrollText, chart: BarChart3, key: KeyRound, globe: Globe,
   settings: Settings, building: Building2, shield: ShieldCheck, card: CreditCard, sparkles: Sparkles, dashboard: LayoutDashboard,
   message: MessageCircle,
+  // Mode centrale : Encaissements, Réseau
+  wallet: HandCoins, network: Waypoints,
 };
 export type NavIcon = keyof typeof ICONS;
 /** Pastille de compteur : rouge (alertes, défaut), lime (messages), ambre. */

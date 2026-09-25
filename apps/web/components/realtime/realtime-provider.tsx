@@ -16,6 +16,9 @@ const EVENTS = [
   "driver.application",
 ] as const;
 
+/** Mode centrale (002600) : règlements, candidatures par lien, appareil d'un compte banni. */
+const CENTRALE_EVENTS = ["settlement.updated", "driver.application", "driver.flagged"] as const;
+
 /** Canal privé org:{id} (Broadcast from database, autorisé par la RLS sur realtime.messages). */
 export function RealtimeProvider({ topic, children }: { topic: string; children: React.ReactNode }) {
   const handlers = useRef(new Map<string, Set<Handler>>());
@@ -31,7 +34,7 @@ export function RealtimeProvider({ topic, children }: { topic: string; children:
       if (disposed) return;
       const ch = supabase.channel(topic, { config: { private: true } });
       channel = ch;
-      for (const event of EVENTS) {
+      for (const event of new Set<string>([...EVENTS, ...CENTRALE_EVENTS])) {
         ch.on("broadcast", { event }, (message: { payload: unknown }) => {
           handlers.current.get(event)?.forEach((h) => h(message.payload));
         });

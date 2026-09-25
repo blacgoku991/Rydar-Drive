@@ -1,6 +1,7 @@
 import {
-  RIDE_FILTER_STATUSES, RIDE_FILTERS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, formatDistance, formatPrice, formatRideDate, shortAddress,
-  type RideFilterKey, type RideSource, type VehicleCategory,
+  RIDE_FILTER_STATUSES, RIDE_FILTERS, RIDE_SOURCE_LABELS, SETTLEMENT_STATUS_META, VEHICLE_CATEGORY_META, formatDistance, formatPrice, formatRideDate,
+  settlementStatusLabel, shortAddress,
+  type RideFilterKey, type RideSource, type SettlementDirection, type SettlementStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ChevronLeft, ChevronRight, Route, Search } from "lucide-react";
 import type { Metadata } from "next";
@@ -9,6 +10,7 @@ import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { NewRideButton } from "@/components/rides/new-ride-button";
 import { RouteGlyph } from "@/components/rides/route-glyph";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
+import { toneDot, toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
@@ -22,8 +24,27 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 30;
 
+type SettlementCell = { ride_id: string; status: SettlementStatus; direction: SettlementDirection; amount_cents: number; due_at: string; currency: string };
+
+/** Mode centrale : règlement de fin de course, en une ligne sous le statut (« ● En retard 17,40 € »). */
+function SettlementLine({ s, now }: { s: SettlementCell; now: number }) {
+  const overdue = s.direction === "driver_owes" && s.status === "due" && Date.parse(s.due_at) <= now;
+  const tone = overdue ? "red" : SETTLEMENT_STATUS_META[s.status].tone;
+  // Libellés courts (colonne étroite) : « Déclaré » = payé selon le chauffeur, à confirmer
+  const label = s.status === "declared" ? "Déclaré" : settlementStatusLabel(s.status, s.direction, overdue);
+  const title = `${s.status === "declared" ? "Payé selon le chauffeur, à confirmer" : label} · ${s.direction === "driver_owes" ? "commission due par le chauffeur" : "part à verser au chauffeur"}`;
+  return (
+    <p className="mt-1 flex items-center gap-1.5 whitespace-nowrap text-[11.5px]" title={title}>
+      <span className={cn("size-1.5 shrink-0 rounded-full", toneDot[tone])} />
+      <span className={toneText[tone]}>{label}</span>
+      <span className="mono text-fg-muted">{formatPrice(s.amount_cents, s.currency)}</span>
+    </p>
+  );
+}
+
 export default async function RidesPage({ searchParams }: { searchParams: Promise<{ filter?: string; q?: string; page?: string }> }) {
   const ctx = await requireOrg();
+  const centrale = ctx.org.dispatch_model === "centrale";
   const sp = await searchParams;
   const filter = (RIDE_FILTERS.some((f) => f.key === sp.filter) ? sp.filter : "all") as RideFilterKey;
   const q = (sp.q ?? "").trim().slice(0, 80);
@@ -33,7 +54,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
   let query = ctx.supabase
     .from("rides")
     .select(
-      "id, number, type, status, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, route_polyline, estimated_distance_m, pickup_at, customer_name, customer_phone, vehicle_category, price_cents, driver:drivers!rides_organization_id_driver_id_fkey(first_name, last_name, number)",
+      "id, number, type, status, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, route_polyline, estimated_distance_m, pickup_at, customer_name, customer_phone, vehicle_category, price_cents, driver_payout_cents, driver:drivers!rides_organization_id_driver_id_fkey(first_name, last_name, number)",
       { count: "exact" },
     )
     .eq("organization_id", ctx.org.id);
@@ -53,6 +74,14 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
     ctx.supabase.rpc("org_ride_counts", { p_org: ctx.org.id, p_since: since }),
     getPricing(ctx.supabase, ctx.org.id),
   ]);
+  // Mode centrale : règlements des courses affichées (une requête pour la page)
+  const rideIds = (rides ?? []).map((r: { id: string }) => r.id);
+  const { data: settlementRows } =
+    centrale && rideIds.length
+      ? await ctx.supabase.from("ride_settlements").select("ride_id, status, direction, amount_cents, due_at, currency").in("ride_id", rideIds)
+      : { data: [] as SettlementCell[] };
+  const settlementByRide = new Map(((settlementRows ?? []) as SettlementCell[]).map((x) => [x.ride_id, x]));
+  const now = Date.now();
   const totalPages = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
   const href = (f: string, p = 1) => `/dashboard/rides?filter=${f}${q ? `&q=${encodeURIComponent(q)}` : ""}${p > 1 ? `&page=${p}` : ""}`;
 
@@ -131,7 +160,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                       <span className="text-[11.5px] text-fg-subtle">{RIDE_SOURCE_LABELS[r.source as RideSource]}</span>
                     </TD>
                     <TD className="whitespace-nowrap text-[13px] text-fg-muted">{formatRideDate(r.pickup_at, ctx.org.timezone)}</TD>
-                    <TD className="max-w-[380px]">
+                    <TD className={centrale ? "max-w-[300px]" : "max-w-[380px]"}>
                       <div className="flex items-center gap-3">
                         <RouteGlyph polyline={r.route_polyline} from={{ lat: r.pickup_lat, lng: r.pickup_lng }} to={{ lat: r.dropoff_lat, lng: r.dropoff_lng }} />
                         <div className="min-w-0">
@@ -140,7 +169,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                         </div>
                       </div>
                     </TD>
-                    <TD className="max-w-[220px]">
+                    <TD className={centrale ? "max-w-[180px]" : "max-w-[220px]"}>
                       <p className="truncate text-[13px]">{r.customer_name}</p>
                       <p className="text-[12px] text-fg-subtle">{VEHICLE_CATEGORY_META[r.vehicle_category as VehicleCategory]?.label}</p>
                     </TD>
@@ -153,9 +182,19 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                         <span className="text-fg-subtle">—</span>
                       )}
                     </TD>
-                    <TD className="text-right text-[14px] font-semibold tabular-nums">{formatPrice(r.price_cents)}</TD>
+                    <TD className="text-right text-[14px] font-semibold tabular-nums">
+                      {formatPrice(r.price_cents)}
+                      {centrale && r.driver_payout_cents != null && (
+                        <span className="block whitespace-nowrap text-[11.5px] font-normal text-fg-subtle">
+                          <span className="mono text-brand">{formatPrice(r.driver_payout_cents)}</span> chauffeur
+                        </span>
+                      )}
+                      {centrale && r.price_cents == null && <span className="block whitespace-nowrap text-[11.5px] font-normal text-amber">prix à fixer</span>}
+                    </TD>
+
                     <TD>
                       <RideStatusBadge status={r.status} />
+                      {centrale && settlementByRide.has(r.id) && <SettlementLine s={settlementByRide.get(r.id)!} now={now} />}
                     </TD>
                   </TR>
                 ))}

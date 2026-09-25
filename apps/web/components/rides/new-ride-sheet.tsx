@@ -1,14 +1,16 @@
 "use client";
 import {
-  decodePolyline, formatDistance, formatDuration, formatPrice, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, VEHICLE_CATEGORIES,
+  decodePolyline, driverCollects, formatDistance, formatDuration, formatPrice, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, VEHICLE_CATEGORIES,
   VEHICLE_CATEGORY_META, type Coord, type PricingRule, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowDownUp, CalendarClock, Car, Clock3, Minus, MousePointerClick, Plane, Plus, Route, Users, Zap } from "lucide-react";
+import { ArrowDownUp, Banknote, CalendarClock, Car, Clock3, Landmark, Minus, MousePointerClick, Plane, Plus, Route, Users, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createRide } from "@/app/dashboard/rides/actions";
 import { RoutePreview } from "@/components/map/route-preview";
 import { AddressInput, type PlaceValue } from "@/components/rides/address-input";
+import { useCentrale } from "@/components/settlements/centrale-context";
+import { SplitPreview, centsToInput, eurosToCents, useSplitPreview } from "@/components/settlements/split-preview";
 import { Button } from "@/components/ui/button";
 import { Dialog, WorkspaceContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
@@ -32,11 +34,11 @@ const QUICK_PLACES = ["Aéroport CDG — Terminal 2E", "Aéroport d'Orly — Ter
 
 function Stepper({ value, onChange, min, max, label, icon: Icon }: { value: number; onChange: (v: number) => void; min: number; max: number; label: string; icon: typeof Users }) {
   return (
-    <div className="flex h-10 items-center justify-between rounded-lg border border-line bg-ink-800 pl-3 pr-1">
-      <span className="flex items-center gap-2 text-[13px] text-fg-muted">
-        <Icon className="size-4" /> {label}
+    <div className="flex h-10 min-w-0 items-center justify-between rounded-lg border border-line bg-ink-800 pl-3 pr-1">
+      <span className="flex min-w-0 items-center gap-2 text-[13px] text-fg-muted" title={label}>
+        <Icon className="size-4 shrink-0" /> <span className="truncate max-[419px]:sr-only">{label}</span>
       </span>
-      <span className="flex items-center gap-1">
+      <span className="flex shrink-0 items-center">
         <button type="button" aria-label={`Moins de ${label}`} onClick={() => onChange(Math.max(min, value - 1))} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5 hover:text-fg">
           <Minus className="size-3.5" />
         </button>
@@ -83,6 +85,10 @@ export function NewRideSheet({
   const [luggage, setLuggage] = useState(1);
   const [category, setCategory] = useState<VehicleCategory>("business");
   const [price, setPrice] = useState("");
+  // Mode centrale : commission saisie à la course (vide = automatique selon les réglages)
+  const [commission, setCommission] = useState("");
+  const org = useCentrale();
+  const centrale = org?.model === "centrale";
   const [payment, setPayment] = useState(defaultPayment);
   const [flight, setFlight] = useState("");
   const [comment, setComment] = useState("");
@@ -131,6 +137,15 @@ export function NewRideSheet({
   const nearest = quote?.nearby.drivers[0];
   const isAirport = /a[ée]roport|terminal|cdg|orly|bourget|beauvais/i.test(`${pickup.address} ${dropoff.address}`);
   const finalPrice = price.trim() ? Math.round(Number(price.replace(",", ".")) * 100) : suggested;
+  const commissionCents = eurosToCents(commission);
+  const commissionValid = commissionCents == null || Number.isFinite(commissionCents);
+  const split = useSplitPreview(
+    org?.orgId,
+    centrale && finalPrice != null && Number.isFinite(finalPrice) ? finalPrice : null,
+    commissionValid ? commissionCents : null,
+    open && centrale,
+  );
+  const autoCommission = split.data && !split.data.manual && split.data.commission_cents != null ? split.data.commission_cents : null;
 
   async function pickOnMap(p: { lat: number; lng: number }) {
     const target = !pickupPt ? "pickup" : !dropoffPt ? "dropoff" : null;
@@ -156,6 +171,7 @@ export function NewRideSheet({
     setPassengers(1);
     setLuggage(1);
     setPrice("");
+    setCommission("");
     setFlight("");
     setComment("");
     setErrors({});
@@ -167,6 +183,19 @@ export function NewRideSheet({
     if (!pickupPt) {
       setErrors({ "pickup.address": "Choisissez une adresse dans la liste ou cliquez sur la carte" });
       return;
+    }
+    if (centrale) {
+      // Le chauffeur voit sa part dans l'offre : prix obligatoire, commission cohérente
+      const e: Record<string, string> = {};
+      if (finalPrice == null) e.priceCents = "Prix obligatoire en mode centrale";
+      else if (!Number.isFinite(finalPrice)) e.priceCents = "Montant en euros (ex. 59 ou 59,50)";
+      if (!commissionValid) e.commissionCents = "Montant en euros (ex. 14 ou 14,50)";
+      else if (split.data?.error === "COMMISSION_TOO_HIGH") e.commissionCents = "Commission + frais plateforme > prix";
+      if (Object.keys(e).length) {
+        setErrors(e);
+        toast.error(finalPrice == null ? "Indiquez le prix : le chauffeur voit sa part avant d'accepter." : Object.values(e)[0]!);
+        return;
+      }
     }
     start(async () => {
       const res = await createRide({
@@ -184,6 +213,7 @@ export function NewRideSheet({
         paymentMethod: payment as (typeof PAYMENT_METHODS)[number],
         comment,
         flightNumber: flight,
+        commissionCents: centrale ? commissionCents : null,
       });
       if (!res.ok) {
         setErrors(res.fieldErrors ?? {});
@@ -319,6 +349,22 @@ export function NewRideSheet({
                     ))}
                   </NativeSelect>
                 </Field>
+                {centrale && (
+                  <div className="col-span-2 space-y-1 rounded-lg bg-white/[0.03] px-3 py-2 text-[12px] leading-[18px]" aria-live="polite">
+                    <p className={cn("flex items-start gap-2", driverCollects(payment) ? "text-fg" : "text-fg-subtle")}>
+                      <Banknote className={cn("mt-0.5 size-3.5 shrink-0", driverCollects(payment) ? "text-amber" : "text-fg-subtle")} />
+                      <span>
+                        <span className="font-medium">Espèces / carte à bord</span> : le chauffeur encaisse et vous doit la commission.
+                      </span>
+                    </p>
+                    <p className={cn("flex items-start gap-2", !driverCollects(payment) ? "text-fg" : "text-fg-subtle")}>
+                      <Landmark className={cn("mt-0.5 size-3.5 shrink-0", !driverCollects(payment) ? "text-violet" : "text-fg-subtle")} />
+                      <span>
+                        <span className="font-medium">En ligne / facture</span> : vous encaissez et lui versez sa part.
+                      </span>
+                    </p>
+                  </div>
+                )}
                 <Field className="col-span-2" error={errors.customerEmail}>
                   <Input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="E-mail du client (facultatif)" type="email" aria-label="E-mail du client" />
                 </Field>
@@ -346,24 +392,77 @@ export function NewRideSheet({
                   <>Le prix se calcule dès le départ et la destination choisis</>
                 )}
               </p>
-              <div className="flex items-center gap-3">
-                <Field error={errors.priceCents} className="w-32">
-                  <div className="relative">
-                    <Input
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      inputMode="decimal"
-                      placeholder={suggested != null ? String(suggested / 100) : "Prix"}
-                      aria-label="Prix en euros"
-                      className="h-11 pr-7 text-[16px] font-semibold"
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>
+              {centrale ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Prix client" error={errors.priceCents}>
+                      <div className="relative">
+                        <Input
+                          value={price}
+                          onChange={(e) => {
+                            setPrice(e.target.value);
+                            if (errors.priceCents) setErrors(({ priceCents: _p, ...rest }) => rest);
+                          }}
+                          inputMode="decimal"
+                          placeholder={suggested != null ? centsToInput(suggested) : "Obligatoire"}
+                          aria-label="Prix en euros"
+                          aria-invalid={!!errors.priceCents}
+                          className="mono h-11 pr-7 text-[16px] font-semibold"
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>
+                      </div>
+                    </Field>
+                    <Field
+                      label={
+                        <span className="flex items-center gap-1.5">
+                          Commission
+                          {!commission.trim() && <span className="rounded bg-white/[0.06] px-1 text-[10.5px] font-medium text-fg-subtle">auto</span>}
+                        </span>
+                      }
+                      error={errors.commissionCents}
+                    >
+                      <div className="relative">
+                        <Input
+                          value={commission}
+                          onChange={(e) => {
+                            setCommission(e.target.value);
+                            if (errors.commissionCents) setErrors(({ commissionCents: _c, ...rest }) => rest);
+                          }}
+                          inputMode="decimal"
+                          placeholder={autoCommission != null ? centsToInput(autoCommission) : "Auto"}
+                          aria-label="Commission de la centrale en euros (vide : automatique)"
+                          aria-invalid={!!errors.commissionCents || split.data?.error === "COMMISSION_TOO_HIGH"}
+                          className="mono h-11 pr-7 text-[16px] font-semibold"
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>
+                      </div>
+                    </Field>
                   </div>
-                </Field>
-                <Button type="submit" variant="primary" size="lg" loading={pending} className="flex-1">
-                  {when === "now" ? "Créer et dispatcher" : "Planifier la course"}
-                </Button>
-              </div>
+                  <SplitPreview state={split} priceCents={finalPrice != null && Number.isFinite(finalPrice) ? finalPrice : null} />
+                  <Button type="submit" variant="primary" size="lg" loading={pending} className="w-full">
+                    {when === "now" ? "Créer et dispatcher" : "Planifier la course"}
+                  </Button>
+                </>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <Field error={errors.priceCents} className="w-32">
+                    <div className="relative">
+                      <Input
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                        inputMode="decimal"
+                        placeholder={suggested != null ? String(suggested / 100) : "Prix"}
+                        aria-label="Prix en euros"
+                        className="h-11 pr-7 text-[16px] font-semibold"
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>
+                    </div>
+                  </Field>
+                  <Button type="submit" variant="primary" size="lg" loading={pending} className="flex-1">
+                    {when === "now" ? "Créer et dispatcher" : "Planifier la course"}
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -387,7 +486,14 @@ export function NewRideSheet({
               <div className="glass grid grid-cols-2 gap-px overflow-hidden rounded-2xl sm:grid-cols-4">
                 <Metric icon={Route} label="Distance" value={quote?.route ? formatDistance(quote.route.distanceM) : "—"} loading={quoting && !!dropoffPt} />
                 <Metric icon={Clock3} label="Durée" value={quote?.route ? formatDuration(quote.route.durationS) : "—"} loading={quoting && !!dropoffPt} />
-                <Metric icon={Zap} label={quote?.fixedFare && !price ? "Forfait" : "Prix estimé"} value={finalPrice != null ? formatPrice(finalPrice) : "—"} accent loading={quoting && !!dropoffPt && !price} />
+                <Metric
+                  icon={Zap}
+                  label={quote?.fixedFare && !price ? "Forfait" : "Prix estimé"}
+                  value={finalPrice != null ? formatPrice(finalPrice) : "—"}
+                  hint={centrale && split.data?.driver_payout_cents != null ? `${formatPrice(split.data.driver_payout_cents)} pour le chauffeur` : undefined}
+                  accent
+                  loading={quoting && !!dropoffPt && !price}
+                />
                 <Metric
                   icon={Car}
                   label={quote ? `${quote.nearby.total} chauffeur${quote.nearby.total > 1 ? "s" : ""} dispo.` : "Chauffeurs"}
