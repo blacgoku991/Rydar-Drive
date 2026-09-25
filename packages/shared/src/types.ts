@@ -214,3 +214,92 @@ export interface DriverHome {
   next_scheduled: { id: Uuid; number: number; pickup_at: Iso; pickup_address: string; dropoff_address: string; price_cents: number | null } | null;
   pending_offers: number;
 }
+
+// -----------------------------------------------------------------------------
+// Suivi des vols (migration 20260924002100_flight_tracking)
+// -----------------------------------------------------------------------------
+export type FlightStatus = "scheduled" | "delayed" | "departed" | "landed" | "cancelled" | "diverted" | "unknown";
+/** arrival : prise en charge à l'aéroport ; departure : dépôt pour un vol (information seulement). */
+export type FlightMode = "arrival" | "departure";
+
+/**
+ * Colonnes vol d'une course (lecture seule côté client, écrites par le worker).
+ * Horaires = arrivée du vol en mode `arrival`, départ du vol en mode `departure` ;
+ * `flight_origin` = provenance (arrival) ou destination (departure).
+ */
+export interface RideFlightFields {
+  flight_mode: FlightMode | null;
+  flight_status: FlightStatus | null;
+  flight_scheduled_arrival: Iso | null;
+  flight_estimated_arrival: Iso | null;
+  flight_actual_arrival: Iso | null;
+  flight_terminal: string | null;
+  flight_origin: string | null;
+  /** Retard en minutes (négatif = en avance). */
+  flight_delay_minutes: number | null;
+  flight_checked_at: Iso | null;
+  /** Heure demandée avant recalage automatique (null si jamais recalée). */
+  pickup_at_original: Iso | null;
+}
+
+// Fusion de déclarations : les lignes `rides` (select *) et les offres chauffeur portent les champs vol.
+export interface Ride extends Partial<RideFlightFields> {}
+export interface DriverOffer extends Partial<Omit<RideFlightFields, "flight_checked_at">> {}
+
+export interface FlightSettings {
+  flight_tracking_enabled: boolean;
+  /** Marge entre l'arrivée du vol et la prise en charge (0..120 min). */
+  flight_pickup_buffer_minutes: number;
+}
+
+/** Ligne renvoyée par private.flights_to_check(n) (worker). */
+export interface FlightToCheck {
+  id: Uuid;
+  organization_id: Uuid;
+  /** bigint : chaîne avec node-postgres */
+  number: number | string;
+  /** Normalisé : majuscules, sans espaces (« AF1234 »). */
+  flight_number: string;
+  /** Date locale du vol (type SQL date). */
+  flight_date: string | Date;
+  mode: FlightMode;
+  timezone: string;
+  pickup_at: Iso | Date;
+  flight_status: FlightStatus | null;
+  flight_scheduled_arrival: Iso | Date | null;
+}
+
+/** Étiquettes renvoyées par apply_flight_status (`events`) et dans `data.event` des notifications `flight_update`. */
+export type FlightEventTag =
+  | "flight.delayed" | "flight.early" | "flight.updated" | "flight.landed" | "flight.cancelled"
+  | "flight.diverted" | "flight.departure_delayed" | "flight.terminal" | "flight.incoherent";
+
+/** Résultat de private.apply_flight_status(...). */
+export interface ApplyFlightStatusResult {
+  ok: boolean;
+  code: "UPDATED" | "UNCHANGED" | "RIDE_NOT_FOUND" | "NO_FLIGHT" | "RIDE_CLOSED" | "TRACKING_DISABLED" | "FLIGHT_CHANGED";
+  message?: string;
+  ride_id?: Uuid;
+  mode?: FlightMode;
+  flight_status?: FlightStatus;
+  delay_minutes?: number | null;
+  pickup_changed?: boolean;
+  pickup_at?: Iso;
+  previous_pickup_at?: Iso;
+  pickup_at_original?: Iso | null;
+  events?: FlightEventTag[];
+  notified?: boolean;
+}
+
+/** `data` des notifications push de type `flight_update` (chauffeur). */
+export interface FlightUpdateNotificationData {
+  type: "flight_update";
+  event: FlightEventTag;
+  ride_id: Uuid;
+  flight_number: string;
+  flight_status: FlightStatus;
+  delay_minutes: number | null;
+  terminal: string | null;
+  pickup_at: Iso;
+  pickup_at_original: Iso | null;
+}
