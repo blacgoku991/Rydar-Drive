@@ -1,17 +1,22 @@
 import {
-  DRIVER_STATUS_META, VEHICLE_CATEGORY_META, formatDate, formatPercent, formatPhone, formatPrice, formatRelative, formatRideDate,
+  DRIVER_STATUS_META, VEHICLE_CATEGORY_META, formatPercent, formatPhone, formatPrice, formatRelative, formatRideDate,
   shortAddress, type DriverStatus, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowLeft, Car, FileText, MapPin } from "lucide-react";
+import { ArrowLeft, Car, MapPin, MessageCircle } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DriverControls } from "@/components/drivers/driver-controls";
+import { DriverDocuments } from "@/components/drivers/driver-documents";
+import { DriverEarningsCard } from "@/components/drivers/driver-earnings";
 import { DriverMap } from "@/components/drivers/driver-map";
+import { DOCUMENT_COLUMNS, buildDocumentView, fileKind, type DocumentRow, type DocumentView } from "@/components/drivers/documents";
+import { computeDriverEarnings, earningsWindow, type EarningRide } from "@/components/drivers/earnings";
 import { PageBody, StatCard } from "@/components/layout/page-header";
 import { LiveRefresh } from "@/components/rides/live-refresh";
 import { PresenceBadge, RideStatusBadge } from "@/components/rides/status";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Avatar, EmptyState } from "@/components/ui/misc";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
@@ -21,10 +26,18 @@ import type { LiveDriver } from "@/lib/queries/live";
 export const metadata: Metadata = { title: "Chauffeur" };
 export const dynamic = "force-dynamic";
 
-const DOC_LABELS: Record<string, string> = {
-  vtc_card: "Carte VTC", driving_license: "Permis de conduire", insurance: "Assurance RC Pro",
-  vehicle_registration: "Carte grise", identity: "Pièce d'identité", medical: "Visite médicale", other: "Autre",
-};
+/** URL signée d'un fichier du bucket privé driver-documents (null si le stockage n'est pas disponible). */
+async function signedUrl(supabase: Awaited<ReturnType<typeof requireOrg>>["supabase"], path: string): Promise<string | null> {
+  try {
+    const res = await Promise.race([
+      supabase.storage.from("driver-documents").createSignedUrl(path, 600),
+      new Promise<null>((r) => setTimeout(() => r(null), 2500)),
+    ]);
+    return res && !res.error ? (res.data?.signedUrl ?? null) : null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function DriverPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -37,7 +50,9 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
     .eq("organization_id", ctx.org.id)
     .maybeSingle();
   if (!d) notFound();
-  const [{ data: stats }, { data: rides }, { data: docs }, { data: trail }] = await Promise.all([
+  const tz = ctx.org.timezone;
+  const since = earningsWindow(tz).since;
+  const [{ data: stats }, { data: rides }, { data: docs }, { data: trail }, { data: done }, { data: settings }] = await Promise.all([
     ctx.supabase.rpc("driver_stats", { p_driver: id, p_days: 30 }),
     ctx.supabase
       .from("rides")
@@ -46,7 +61,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
       .eq("driver_id", id)
       .order("pickup_at", { ascending: false })
       .limit(25),
-    ctx.supabase.from("driver_documents").select("id, type, number, expires_at, status").eq("driver_id", id).order("expires_at"),
+    ctx.supabase.from("driver_documents").select(DOCUMENT_COLUMNS).eq("organization_id", ctx.org.id).eq("driver_id", id),
     // Trajet des 3 dernières heures (historique échantillonné)
     ctx.supabase
       .from("driver_location_history")
@@ -55,13 +70,31 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
       .gte("recorded_at", new Date(Date.now() - 3 * 3600_000).toISOString())
       .order("recorded_at", { ascending: true })
       .limit(1500),
+    // Chiffre d'affaires : courses terminées depuis le début de la semaine / du mois / 14 jours
+    ctx.supabase
+      .from("rides")
+      .select("price_cents, completed_at, pickup_at, payment_method")
+      .eq("organization_id", ctx.org.id)
+      .eq("driver_id", id)
+      .eq("status", "COMPLETED")
+      .or(`completed_at.gte."${since}",and(completed_at.is.null,pickup_at.gte."${since}")`)
+      .limit(5000),
+    ctx.supabase.from("organization_settings").select("driver_commission_percent").eq("organization_id", ctx.org.id).maybeSingle(),
   ]);
   const vehicle = Array.isArray(d.vehicle) ? d.vehicle[0] : d.vehicle;
   const location = Array.isArray(d.location) ? d.location[0] : d.location;
   const live: LiveDriver = { ...d, vehicle, location } as LiveDriver;
   const s = stats as any;
-  const tz = ctx.org.timezone;
-  const soon = Date.now() + 30 * 86_400_000;
+  const commission = settings?.driver_commission_percent != null ? Number(settings.driver_commission_percent) : null;
+  const earnings = computeDriverEarnings((done ?? []) as EarningRide[], tz, commission);
+  const docView = buildDocumentView((docs ?? []) as unknown as DocumentRow[], tz);
+  const documents: DocumentView[] = await Promise.all(
+    docView.items.map(async (doc) => ({
+      ...doc,
+      kind: fileKind(doc.file_path),
+      url: doc.file_path ? await signedUrl(ctx.supabase, doc.file_path) : null,
+    })),
+  );
 
   return (
     <>
@@ -88,6 +121,11 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button variant="primary" asChild>
+              <Link href={`/dashboard/messages?driver=${d.id}`}>
+                <MessageCircle /> Message
+              </Link>
+            </Button>
             <DriverControls driver={{ ...d, vehicle }} canManage={isAdminRole(ctx.role)} />
           </div>
         </div>
@@ -119,31 +157,17 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
                 <div><p className="text-[11.5px] text-fg-subtle">Bagages</p><p className="num">{vehicle?.luggage_capacity ?? "—"}</p></div>
               </CardBody>
             </Card>
-            <Card>
-              <CardHeader title="Documents" icon={<FileText />} description="Alertes automatiques 30 jours avant expiration." />
-              <div className="divide-y divide-line">
-                {!docs?.length && <p className="px-5 py-5 text-[13px] text-fg-subtle">Aucun document enregistré.</p>}
-                {docs?.map((doc: any) => {
-                  const expSoon = doc.expires_at && new Date(doc.expires_at).getTime() < soon;
-                  return (
-                    <div key={doc.id} className="flex items-center justify-between px-5 py-3">
-                      <div>
-                        <p className="text-[13px] font-medium">{DOC_LABELS[doc.type] ?? doc.type}</p>
-                        <p className="num text-[12px] text-fg-subtle">{doc.number ?? "—"}</p>
-                      </div>
-                      <div className="text-right">
-                        <Badge tone={doc.status === "expired" ? "red" : expSoon ? "amber" : "green"}>
-                          {doc.status === "expired" ? "Expiré" : expSoon ? "Expire bientôt" : "Valide"}
-                        </Badge>
-                        <p className="mt-1 text-[11.5px] text-fg-subtle">{doc.expires_at ? `jusqu'au ${formatDate(doc.expires_at)}` : "sans expiration"}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
+            <DriverEarningsCard data={earnings} firstName={d.first_name} />
           </div>
         </div>
+
+        <DriverDocuments
+          driverId={d.id}
+          firstName={d.first_name}
+          items={documents}
+          missing={docView.missing}
+          canReview={["owner", "admin", "dispatcher"].includes(ctx.role)}
+        />
 
         <Card className="overflow-hidden">
           <CardHeader title="Historique des courses" description="25 dernières courses attribuées." />

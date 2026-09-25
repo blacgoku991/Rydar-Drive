@@ -1,7 +1,7 @@
 "use client";
 import {
-  BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Menu, Radar, Route,
-  ScrollText, Settings, ShieldCheck, Sparkles, Users,
+  BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Menu, MessageCircle, Radar,
+  Route, ScrollText, Settings, ShieldCheck, Sparkles, Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -16,9 +16,21 @@ import { cn } from "@/lib/utils";
 const ICONS = {
   radar: Radar, route: Route, users: Users, scroll: ScrollText, chart: BarChart3, key: KeyRound, globe: Globe,
   settings: Settings, building: Building2, shield: ShieldCheck, card: CreditCard, sparkles: Sparkles, dashboard: LayoutDashboard,
+  message: MessageCircle,
 };
 export type NavIcon = keyof typeof ICONS;
-export type NavSection = { title: string; items: { href: string; label: string; icon: NavIcon; exact?: boolean; badge?: number }[] };
+/** Pastille de compteur : rouge (alertes, défaut), lime (messages), ambre. */
+export type NavBadgeTone = "red" | "brand" | "amber";
+export type NavSection = {
+  title: string;
+  items: { href: string; label: string; icon: NavIcon; exact?: boolean; badge?: number; badgeTone?: NavBadgeTone; badgeLabel?: string }[];
+};
+
+const BADGE_TONE: Record<NavBadgeTone, string> = {
+  red: "bg-red/15 text-red",
+  brand: "bg-brand text-brand-fg",
+  amber: "bg-amber/15 text-amber",
+};
 
 type Props = {
   sections: NavSection[];
@@ -92,7 +104,12 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
                       <Icon className={cn("size-4", active ? "text-brand" : "text-fg-subtle group-hover:text-fg-muted")} />
                       <span className="flex-1">{item.label}</span>
                       {!!item.badge && (
-                        <span className="rounded-full bg-red/15 px-1.5 text-[11px] font-semibold tabular-nums text-red">{item.badge}</span>
+                        <span
+                          className={cn("min-w-[18px] rounded-full px-1.5 text-center text-[11px] font-semibold leading-[18px] tabular-nums", BADGE_TONE[item.badgeTone ?? "red"])}
+                          aria-label={item.badgeLabel}
+                        >
+                          {item.badge > 99 ? "99+" : item.badge}
+                        </span>
                       )}
                     </Link>
                   </li>
@@ -127,6 +144,8 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
 
 export function Sidebar(props: Props) {
   const [open, setOpen] = useState(false);
+  // Mobile : pastille sur le bouton menu quand une entrée a un compteur (messages non lus…)
+  const flagged = props.sections.flatMap((s) => s.items).find((i) => !!i.badge);
   return (
     <>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[232px] border-r border-line bg-ink-950 lg:block">
@@ -138,9 +157,17 @@ export function Sidebar(props: Props) {
         <div className="flex items-center gap-2">
           {props.headerAction}
           <D.Root open={open} onOpenChange={setOpen}>
-            <D.Trigger className="grid size-9 place-items-center rounded-lg border border-line text-fg-muted">
+            <D.Trigger className="relative grid size-9 place-items-center rounded-lg border border-line text-fg-muted">
               <Menu className="size-4" />
               <span className="sr-only">Menu</span>
+              {flagged && (
+                <span
+                  className={cn(
+                    "absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-ink-950",
+                    flagged.badgeTone === "brand" ? "bg-brand" : flagged.badgeTone === "amber" ? "bg-amber" : "bg-red",
+                  )}
+                />
+              )}
             </D.Trigger>
             <D.Portal>
               <D.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
