@@ -9,13 +9,13 @@ import { Alert, AppState, Platform, Vibration } from "react-native";
 import { api, ApiError } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
-import { locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking, type TrackingResult } from "@/lib/location";
+import { locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking } from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
 import { settlementSession } from "@/lib/settlement-session";
 import { supabase } from "@/lib/supabase";
 
-export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "imprecise" };
+export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "foreground-only" };
 
 type Ctx = {
   session: Session | null;
@@ -23,9 +23,11 @@ type Ctx = {
   ready: boolean;
   home: DriverHome | null;
   offers: DriverOffer[];
-  refresh: () => Promise<void>;
+  /** Relecture de l'accueil et des offres (une seule à la fois, les demandes simultanées sont regroupées). */
+  refresh: () => Promise<DriverHome | null>;
   setOnline: (online: boolean) => Promise<OnlineResult>;
   signOut: () => Promise<void>;
+  /** Passage en ligne / hors ligne en cours (confirmation du serveur, quelques centaines de ms). */
   busy: boolean;
   /** Messagerie (centrale + flotte) et signalements actifs — driver_chat_overview, tenu à jour en temps réel. */
   chat: DriverChatOverview | null;
@@ -101,6 +103,39 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   const userId = session?.user.id ?? null;
   const userIdRef = useRef<string | null>(null);
   userIdRef.current = userId;
+  // Dernières données appliquées (JSON) : pas de re-rendu de toute l'app quand rien n'a changé
+  const homeRef = useRef<DriverHome | null>(null);
+  const homeJson = useRef("");
+  const offersJson = useRef("");
+  const inflight = useRef<Promise<DriverHome | null> | null>(null);
+  const refreshAgain = useRef(false);
+  const lastRefreshAt = useRef(0);
+  /** Canal temps réel abonné : le sondage de repli ralentit */
+  const liveRef = useRef(false);
+  const onlinePending = useRef(false);
+
+  const applyHome = useCallback((h: DriverHome | null) => {
+    const json = h ? JSON.stringify(h) : "";
+    if (json === homeJson.current) return;
+    homeJson.current = json;
+    homeRef.current = h;
+    setHome(h);
+  }, []);
+  const applyOffers = useCallback((o: DriverOffer[]) => {
+    const json = JSON.stringify(o);
+    if (json === offersJson.current) return;
+    offersJson.current = json;
+    setOffers(o);
+  }, []);
+  /** Présence affichée tout de suite (mise en ligne optimiste), confirmée ou annulée ensuite. */
+  const patchPresence = useCallback((presence: DriverHome["driver"]["presence"]) => {
+    const h = homeRef.current;
+    if (!h || h.driver.presence === presence) return;
+    const next = { ...h, driver: { ...h.driver, presence } };
+    homeRef.current = next;
+    homeJson.current = "";
+    setHome(next);
+  }, []);
 
   // Session
   useEffect(() => {
@@ -139,15 +174,15 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!blockedAccount) return;
     void stopTracking().catch(() => null);
-    setHome(null);
-    setOffers([]);
-  }, [blockedAccount]);
+    applyHome(null);
+    applyOffers([]);
+  }, [blockedAccount, applyHome, applyOffers]);
 
   // Candidat en attente : appareil enregistré dès maintenant (push « candidature acceptée », contrôle
   // serveur « appareil déjà utilisé par un chauffeur banni »), puis relecture de l'état du compte
   const pendingAccount = accountChecked && account?.state === "pending";
   useEffect(() => {
-    if (!session || !pendingAccount) return;
+    if (!userId || !pendingAccount) return;
     let cancelled = false;
     (async () => {
       await setupNotificationChannels().catch(() => null);
@@ -157,7 +192,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session, pendingAccount, checkAccount]);
+  }, [userId, pendingAccount, checkAccount]);
 
   // Retour au premier plan : candidature validée, compte suspendu ou banni entre-temps
   useEffect(() => {
@@ -184,10 +219,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     else Vibration.vibrate([0, 200, 120, 200]);
   }, []);
 
-  const refresh = useCallback(async () => {
-    if (!session) return;
-    // Relevé des notifications AVANT la lecture des offres (cf. dismissClosedOfferNotifications)
-    const presented = await presentedOfferNotifications();
+  const fetchOnce = useCallback(async (): Promise<DriverHome | null> => {
+    if (!userIdRef.current) return null;
+    // Relevé des notifications lancé AVANT la lecture des offres (cf. dismissClosedOfferNotifications),
+    // en parallèle des requêtes : il se termine bien avant elles
+    const presentedP = presentedOfferNotifications();
     let forbidden = false;
     const [h, o] = await Promise.all([
       api.home().catch((e: unknown) => {
@@ -196,28 +232,52 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       }),
       api.offers().catch(() => null),
     ]);
+    const presented = await presentedP;
+    lastRefreshAt.current = Date.now();
     // Compte devenu inactif en cours d'usage (banni, suspendu, désactivé) : écran d'état du compte
     if (forbidden) {
       void checkAccount();
-      return;
+      return null;
     }
-    if (h) setHome(h);
+    if (h) applyHome(h);
     if (o) {
-      setOffers(o);
+      applyOffers(o);
       // Offre flotte à fenêtre courte : ouverte aussi, sauf en pleine course (la flotte entière la reçoit)
-      const onRide = Boolean(h?.driver.current_ride_id);
+      const onRide = Boolean((h ?? homeRef.current)?.driver.current_ride_id);
       const fresh = o.find((x) => !seenOffers.current.has(x.offer_id) && (x.mode === "geo" || (!onRide && isUrgentOffer(x))));
       if (fresh) openOffer(fresh);
       void dismissClosedOfferNotifications(presented, new Set(o.map((x) => x.offer_id)));
     }
-  }, [session, openOffer, checkAccount]);
+    return h ?? homeRef.current;
+  }, [openOffer, checkAccount, applyHome, applyOffers]);
+
+  // Une seule relecture à la fois : les demandes arrivées pendant ce temps (temps réel, notification,
+  // écran) déclenchent UNE relecture de plus à la fin, au lieu de 3 ou 4 en parallèle
+  const refresh = useCallback((): Promise<DriverHome | null> => {
+    if (inflight.current) {
+      refreshAgain.current = true;
+      return inflight.current;
+    }
+    const run = (async () => {
+      let h = await fetchOnce();
+      while (refreshAgain.current) {
+        refreshAgain.current = false;
+        h = await fetchOnce();
+      }
+      return h;
+    })().finally(() => {
+      inflight.current = null;
+    });
+    inflight.current = run;
+    return run;
+  }, [fetchOnce]);
 
   // Messagerie : une lecture complète (30 derniers messages par fil + signalements actifs) par rafale d'événements
   const refreshChat = useCallback(async () => {
-    if (!session) return;
+    if (!userIdRef.current) return;
     const c = await api.chatOverview().catch(() => null);
     if (c) setChat(c);
-  }, [session]);
+  }, []);
   const scheduleChat = useCallback(() => {
     if (chatTimer.current) return;
     chatTimer.current = setTimeout(() => {
@@ -226,15 +286,18 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     }, 250);
   }, [refreshChat]);
 
-  // Initialisation après connexion (compte actif) : canaux, push, données, temps réel
+  // Initialisation après connexion (compte actif) : données d'abord, push en parallèle, puis temps réel.
+  // Dépend de l'utilisateur et non de l'objet session : le renouvellement du jeton (≈ toutes les heures)
+  // ne relance ni l'enregistrement push, ni les canaux, ni le suivi GPS.
   useEffect(() => {
-    if (!session || !canDrive) return;
+    if (!userId || !canDrive) return;
     let cancelled = false;
+    void setupNotificationChannels()
+      .catch(() => null)
+      .then(() => registerForPush())
+      .catch(() => null);
     (async () => {
-      await setupNotificationChannels().catch(() => null);
-      await registerForPush().catch(() => null);
-      await refresh();
-      const h = await api.home().catch(() => null);
+      const h = await refresh();
       if (cancelled || !h) return;
       if (h.driver.presence !== "offline") {
         // Déjà en ligne au redémarrage : la position exacte a pu être retirée entre-temps dans les réglages
@@ -242,7 +305,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         if (perm === "ok") startTracking().catch(() => null);
         else {
           await api.setOnline(false).catch(() => null);
-          await refresh();
+          patchPresence("offline");
+          void refresh();
           Alert.alert(
             perm === "coarse" ? "Position exacte désactivée" : "Localisation désactivée",
             perm === "coarse" ? `Vous êtes passé hors ligne. ${COARSE_MESSAGE}` : "Vous êtes passé hors ligne : autorisez la localisation pour recevoir des courses.",
@@ -250,8 +314,10 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         }
       }
       void refreshChat();
-      await supabase.realtime.setAuth(session.access_token);
+      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      if (token) await supabase.realtime.setAuth(token);
       if (cancelled) return;
+      let subscribedOnce = false;
       const ch = supabase.channel(`driver:${h.driver.id}`, { config: { private: true } });
       ch.on("broadcast", { event: "offer.updated" }, () => void refresh())
         .on("broadcast", { event: "ride.updated" }, (m) => {
@@ -274,7 +340,14 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
           void refresh();
           appEvents.emit("settlements", m.payload as SettlementEvent | undefined);
         })
-        .subscribe();
+        .subscribe((status) => {
+          liveRef.current = status === "SUBSCRIBED";
+          // Reconnexion : relecture (des événements ont pu être manqués pendant la coupure)
+          if (status === "SUBSCRIBED") {
+            if (subscribedOnce) void refresh();
+            subscribedOnce = true;
+          }
+        });
       channelRef.current = ch;
       // Fil de la flotte (messages + signalements, votes « toujours là ») : topic privé fleet:<org>
       const fleet = supabase.channel(`fleet:${h.organization.id}`, { config: { private: true } });
@@ -286,18 +359,23 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     })();
     return () => {
       cancelled = true;
+      liveRef.current = false;
       if (channelRef.current) void supabase.removeChannel(channelRef.current);
       if (fleetChannelRef.current) void supabase.removeChannel(fleetChannelRef.current);
       channelRef.current = null;
       fleetChannelRef.current = null;
     };
-  }, [session, canDrive, refresh, refreshChat, scheduleChat]);
+  }, [userId, canDrive, refresh, refreshChat, scheduleChat, patchPresence]);
 
   // Messagerie : repli périodique (le temps réel peut manquer un message) et relecture au retour au premier plan
   useEffect(() => {
-    if (!session || !canDrive) return;
+    if (!userId || !canDrive) return;
+    let last = 0;
     const id = setInterval(() => {
-      if (AppState.currentState === "active") void refreshChat();
+      // Temps réel actif : une relecture par minute suffit ; sinon toutes les 30 s
+      if (AppState.currentState !== "active" || Date.now() - last < (liveRef.current ? 60_000 : 30_000)) return;
+      last = Date.now();
+      void refreshChat();
     }, 30_000);
     const sub = AppState.addEventListener("change", (s) => s === "active" && void refreshChat());
     return () => {
@@ -306,20 +384,22 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       if (chatTimer.current) clearTimeout(chatTimer.current);
       chatTimer.current = null;
     };
-  }, [session, canDrive, refreshChat]);
+  }, [userId, canDrive, refreshChat]);
 
-  // Repli : rafraîchissement périodique quand l'app est active et le chauffeur en ligne
+  // Repli : relecture périodique quand l'app est active et le chauffeur en ligne — toutes les 8 s si le temps
+  // réel est coupé, toutes les 30 s s'il fonctionne (il signale déjà offres, courses et présence)
   useEffect(() => {
-    if (!session || !canDrive) return;
+    if (!userId || !canDrive) return;
     const id = setInterval(() => {
-      if (AppState.currentState === "active" && home?.driver.presence !== "offline") void refresh();
+      if (AppState.currentState !== "active" || (homeRef.current?.driver.presence ?? "offline") === "offline") return;
+      if (Date.now() - lastRefreshAt.current >= (liveRef.current ? 30_000 : 8000)) void refresh();
     }, 8000);
     const sub = AppState.addEventListener("change", (s) => s === "active" && void refresh());
     return () => {
       clearInterval(id);
       sub.remove();
     };
-  }, [session, canDrive, home?.driver.presence, refresh]);
+  }, [userId, canDrive, refresh]);
 
   // Réponse à une notification (ACCEPTER / Refuser / ouverture) — écouteur ou démarrage à froid
   const handleResponse = useCallback(async (r: Notifications.NotificationResponse) => {
@@ -419,7 +499,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
 
   // Notifications : réception au premier plan + actions
   useEffect(() => {
-    if (!session) return;
+    if (!userId) return;
     const received = Notifications.addNotificationReceivedListener((n) => {
       const data = n.request.content.data as Record<string, any>;
       const type = typeof data?.type === "string" ? (data.type as string) : "";
@@ -454,65 +534,85 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       received.remove();
       response.remove();
     };
-  }, [session, refresh, handleResponse, scheduleChat, checkAccount]);
+  }, [userId, refresh, handleResponse, scheduleChat, checkAccount]);
 
+  /**
+   * En ligne / hors ligne, OPTIMISTE : l'interface bascule tout de suite ; seul l'appel au serveur est attendu
+   * (quelques centaines de ms), et l'état précédent revient s'il échoue. Le suivi GPS démarre sans attendre de
+   * premier point (la tâche le livre elle-même) ; un problème de localisation est signalé ensuite.
+   */
   const setOnline = useCallback(async (online: boolean): Promise<OnlineResult> => {
-    setBusy(true);
+    if (onlinePending.current) return { ok: true }; // double appui
+    onlinePending.current = true;
+    const previous = homeRef.current?.driver.presence ?? "offline";
     try {
       if (online) {
-        // 1. autorisations (position exacte exigée) → 2. EN LIGNE serveur → 3. suivi, premier point forcé
+        // Autorisations : lecture instantanée, fenêtre seulement si elles manquent (position exacte exigée)
         const perm = await requestLocationPermissions();
         if (perm === "denied") return { ok: false, message: "Autorisez la localisation pour passer en ligne." };
         if (perm === "coarse") return { ok: false, code: "coarse", message: COARSE_MESSAGE };
+        patchPresence("available");
+        setBusy(true);
         const res = await api.setOnline(true);
         if (!res.ok) {
-          await refresh();
+          patchPresence(previous);
+          void refresh();
           return { ok: false, message: res.message };
         }
-        let track: TrackingResult;
-        try {
-          track = await startTracking();
-        } catch (e) {
-          // Aucun suivi possible : on ne reste pas EN LIGNE sans position
-          await api.setOnline(false).catch(() => null);
-          await refresh();
-          return { ok: false, message: (e as Error).message };
-        }
-        await refresh();
-        if (track.accuracyM != null && track.accuracyM > MAX_ACCURACY_M) {
-          return {
-            ok: true,
-            code: "imprecise",
-            message: `Votre position n'est connue qu'à ${formatDistance(track.accuracyM)} près : au-delà de 1,5 km, elle n'est pas utilisée pour vous proposer des courses. Activez le GPS (haute précision) et patientez à découvert.`,
-          };
-        }
-        if (!track.background) return { ok: true, message: "Position partagée uniquement quand l'application est ouverte." };
-        return { ok: true, message: perm === "foreground-only" ? "Autorisez « Toujours » la localisation pour rester en ligne application fermée." : undefined };
+        startTracking()
+          .then((track) => {
+            void track.firstAccuracy.then((acc) => {
+              if (acc != null && acc > MAX_ACCURACY_M) {
+                Alert.alert(
+                  "Position imprécise",
+                  `Votre position n'est connue qu'à ${formatDistance(acc)} près : au-delà de 1,5 km, elle n'est pas utilisée pour vous proposer des courses. Activez le GPS et patientez à découvert.`,
+                );
+              }
+            });
+            if (!track.background) Alert.alert("Localisation", "Position partagée uniquement quand l'application est ouverte.");
+          })
+          .catch(async (e: unknown) => {
+            // Aucun suivi possible : on ne reste pas EN LIGNE sans position
+            await api.setOnline(false).catch(() => null);
+            patchPresence("offline");
+            void refresh();
+            Alert.alert("Vous êtes hors ligne", (e as Error).message);
+          });
+        return { ok: true, code: perm === "foreground-only" ? "foreground-only" : undefined };
       }
+      patchPresence("offline");
+      setBusy(true);
       const res = await api.setOnline(false);
-      if (res.ok) await stopTracking();
-      await refresh();
-      return { ok: res.ok, message: res.message };
+      if (!res.ok) {
+        patchPresence(previous);
+        void refresh();
+        return { ok: false, message: res.message };
+      }
+      // Suivi arrêté après la confirmation du serveur (sinon « disponible » sans position)
+      void stopTracking().catch(() => null);
+      return { ok: true };
     } catch (e) {
+      patchPresence(previous);
       if (isForbidden(e)) void checkAccount();
       return { ok: false, message: (e as Error).message };
     } finally {
+      onlinePending.current = false;
       setBusy(false);
     }
-  }, [refresh, checkAccount]);
+  }, [refresh, checkAccount, patchPresence]);
 
   const signOut = useCallback(async () => {
     await api.setOnline(false).catch(() => null);
     await stopTracking().catch(() => null);
     await unregisterPush();
     await supabase.auth.signOut();
-    setHome(null);
-    setOffers([]);
+    applyHome(null);
+    applyOffers([]);
     setChat(null);
     setAccount(null);
     setAccountFor(null);
     seenOffers.current.clear();
-  }, []);
+  }, [applyHome, applyOffers]);
 
   const value = useMemo(
     () => ({ session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat, account, canDrive, checkAccount }),

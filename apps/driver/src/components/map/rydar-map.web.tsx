@@ -4,7 +4,6 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { colors } from "@/theme";
-import { RadarPulse } from "../radar";
 import type { MapReport, RydarMapProps } from "./types";
 
 type MLMap = import("maplibre-gl").Map;
@@ -43,7 +42,7 @@ function reportElement(r: MapReport, onPress: (id: string) => void) {
 }
 
 export function RydarMap({
-  me, pickup, dropoff, route, dim, pulse, padding = { top: 80, bottom: 80, left: 50, right: 50 }, zoom = 15, reports, selectedReportId, onReportPress, focus,
+  me, pickup, dropoff, route, dim, padding = { top: 80, bottom: 80, left: 50, right: 50 }, zoom = 15, reports, selectedReportId, onReportPress, focus,
 }: RydarMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
@@ -166,11 +165,6 @@ export function RydarMap({
   return (
     <View style={StyleSheet.absoluteFill}>
       <div ref={container} style={{ position: "absolute", inset: 0, background: "#0b0d10" }} />
-      {pulse && me && (
-        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}>
-          <RadarPulse size={260} />
-        </View>
-      )}
       {dim && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(6,7,9,0.55)" }]} />}
     </View>
   );

@@ -1,10 +1,10 @@
 // Carte native (iOS : Apple Plans, Android : Google Maps) en style sombre Rydar.
+import { Ionicons } from "@expo/vector-icons";
 import { FLEET_REPORT_META } from "@rydar/shared";
-import { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import MapView, { Circle, Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
 import { colors } from "@/theme";
-import { RadarPulse } from "../radar";
 import type { MapReport, RydarMapProps } from "./types";
 
 const darkMap = [
@@ -36,6 +36,8 @@ function ReportMarker({ report, selected, onPress }: { report: MapReport; select
     <Marker
       coordinate={toLL(report)}
       anchor={{ x: 0.5, y: 1 }}
+      // iOS (Apple Plans) : anchor ignoré, la pointe est posée sur le lieu par décalage
+      centerOffset={{ x: 0, y: -25 }}
       tracksViewChanges={track}
       zIndex={selected ? 30 : 20}
       onPress={() => onPress?.(report.id)}
@@ -51,26 +53,78 @@ function ReportMarker({ report, selected, onPress }: { report: MapReport; select
   );
 }
 
-export function RydarMap({
-  me, pickup, dropoff, route, dim, pulse, padding = { top: 80, bottom: 80, left: 50, right: 50 }, zoom = 15, reports, selectedReportId, onReportPress, focus,
+const DEFAULT_PADDING = { top: 80, bottom: 80, left: 50, right: 50 };
+/** Altitude de caméra (Apple Plans ignore le zoom) équivalente au niveau de zoom Google. */
+const altitudeFor = (zoom: number) => Math.round(1100 * 2 ** (16 - zoom));
+
+/** Position du chauffeur : point bleu, flèche de cap quand il roule. */
+function MeMarker({ me }: { me: NonNullable<RydarMapProps["me"]> }) {
+  const heading = me.heading ?? null;
+  const ios = Platform.OS === "ios";
+  return (
+    <Marker
+      // Android : vue rendue en image — nouvelle image quand la flèche apparaît / disparaît
+      key={heading == null ? "dot" : "dir"}
+      coordinate={toLL(me)}
+      anchor={{ x: 0.5, y: 0.5 }}
+      // Rotation native réservée à Google Maps (Android) ; sur iPhone la vue elle-même tourne
+      flat={!ios}
+      rotation={!ios && heading != null ? heading : undefined}
+      tracksViewChanges={ios}
+      zIndex={40}
+      accessibilityLabel="Votre position"
+    >
+      <View style={[styles.meWrap, ios && heading != null && { transform: [{ rotate: `${heading}deg` }] }]}>
+        {heading != null && <View style={styles.meArrow} />}
+        <View style={styles.meDot} />
+      </View>
+    </Marker>
+  );
+}
+
+function RydarMapImpl({
+  me, pickup, dropoff, route, dim, padding = DEFAULT_PADDING, zoom = 16, reports, selectedReportId, onReportPress, focus, controlsBottom = 24,
 }: RydarMapProps) {
   const ref = useRef<MapView>(null);
-  const key = `${pickup?.lat},${dropoff?.lat},${route?.length ?? 0},${me ? 1 : 0},${focus?.lat},${focus?.lng}`;
+  // Suivi du chauffeur tant qu'il ne déplace pas la carte à la main ; bouton « Recentrer » ensuite
+  const [follow, setFollow] = useState(true);
+  const followRef = useRef(true);
+  followRef.current = follow;
+  const routeCoords = useMemo(() => (route && route.length > 1 ? route.map(([lng, lat]) => ({ latitude: lat, longitude: lng })) : null), [route]);
+  const framed = Boolean(pickup || dropoff || routeCoords);
+  const hasMe = me != null;
+  const key = `${pickup?.lat},${pickup?.lng},${dropoff?.lat},${dropoff?.lng},${route?.length ?? 0},${hasMe ? 1 : 0},${focus?.lat},${focus?.lng}`;
+  // Dernières valeurs pour « Recentrer » (position à jour, pas celle du dernier cadrage)
+  const latest = useRef({ me, pickup, dropoff, routeCoords, focus, padding, zoom });
+  latest.current = { me, pickup, dropoff, routeCoords, focus, padding, zoom };
 
-  useEffect(() => {
+  const frame = useCallback(() => {
+    const { me, pickup, dropoff, routeCoords, focus, padding, zoom } = latest.current;
     if (focus) {
-      ref.current?.animateCamera({ center: toLL(focus), zoom }, { duration: 600 });
+      ref.current?.animateCamera({ center: toLL(focus), zoom, altitude: altitudeFor(zoom), pitch: 0 }, { duration: 600 });
       return;
     }
-    const pts = [...(route ?? []).map(([lng, lat]) => ({ latitude: lat, longitude: lng }))];
+    const pts = [...(routeCoords ?? [])];
     if (pickup) pts.push(toLL(pickup));
     if (dropoff) pts.push(toLL(dropoff));
     if (me && (pickup || dropoff)) pts.push(toLL(me));
     if (pts.length > 1) ref.current?.fitToCoordinates(pts, { edgePadding: padding, animated: true });
-    else if (me) ref.current?.animateCamera({ center: toLL(me), zoom }, { duration: 600 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+    else if (me) ref.current?.animateCamera({ center: toLL(me), zoom, altitude: altitudeFor(zoom), pitch: 0, heading: 0 }, { duration: 600 });
+  }, []);
 
+  // Cadrage : signalement ciblé, course (tracé + points), sinon le chauffeur à l'échelle de la rue
+  useEffect(() => {
+    setFollow(true);
+    frame();
+  }, [key, frame]);
+
+  // Suivi : la carte accompagne le chauffeur (centre seulement : zoom choisi conservé)
+  useEffect(() => {
+    if (!follow || !me || framed || focus) return;
+    ref.current?.animateCamera({ center: toLL(me) }, { duration: 500 });
+  }, [follow, me?.lat, me?.lng, framed, focus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const accuracy = me?.accuracy ?? null;
   return (
     <View style={StyleSheet.absoluteFill}>
       <MapView
@@ -82,12 +136,19 @@ export function RydarMap({
         showsCompass={false}
         showsPointsOfInterests={false}
         toolbarEnabled={false}
-        initialRegion={me ? { ...toLL(me), latitudeDelta: 0.02, longitudeDelta: 0.02 } : { latitude: 48.8634, longitude: 2.3488, latitudeDelta: 0.12, longitudeDelta: 0.12 }}
+        // Carte à plat, nord en haut : lisible d'un coup d'œil au volant
+        pitchEnabled={false}
+        rotateEnabled={false}
+        showsBuildings={false}
+        onPanDrag={() => {
+          if (followRef.current) setFollow(false);
+        }}
+        initialRegion={me ? { ...toLL(me), latitudeDelta: 0.01, longitudeDelta: 0.01 } : { latitude: 48.8634, longitude: 2.3488, latitudeDelta: 0.12, longitudeDelta: 0.12 }}
       >
-        {route && route.length > 1 && (
+        {routeCoords && (
           <>
-            <Polyline coordinates={route.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))} strokeColor="#0b0d10" strokeWidth={9} />
-            <Polyline coordinates={route.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))} strokeColor={colors.brand} strokeWidth={5} />
+            <Polyline coordinates={routeCoords} strokeColor="#0b0d10" strokeWidth={9} />
+            <Polyline coordinates={routeCoords} strokeColor={colors.brand} strokeWidth={5} />
           </>
         )}
         {pickup && (
@@ -103,31 +164,53 @@ export function RydarMap({
         {reports?.map((r) => (
           <ReportMarker key={r.id} report={r} selected={r.id === selectedReportId} onPress={onReportPress} />
         ))}
-        {me && (
-          <Marker coordinate={toLL(me)} anchor={{ x: 0.5, y: 0.5 }} flat rotation={me.heading ?? 0} tracksViewChanges={false}>
-            <View style={styles.me}>
-              <View style={styles.meArrow} />
-            </View>
-          </Marker>
+        {/* Précision réelle du GPS : cercle accroché à la position (rien quand elle est précise) */}
+        {me && accuracy != null && accuracy > 15 && (
+          <Circle center={toLL(me)} radius={Math.min(accuracy, 500)} strokeWidth={1} strokeColor="rgba(106,166,255,0.45)" fillColor="rgba(106,166,255,0.10)" zIndex={1} />
         )}
+        {me && <MeMarker me={me} />}
       </MapView>
-      {pulse && me && (
-        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}>
-          <RadarPulse size={260} />
-        </View>
-      )}
       {dim && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(6,7,9,0.55)" }]} />}
+      {!follow && (me || framed) && (
+        <Pressable
+          onPress={() => {
+            setFollow(true);
+            frame();
+          }}
+          style={({ pressed }) => [styles.recenter, { bottom: controlsBottom, opacity: pressed ? 0.8 : 1 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Recentrer la carte"
+          hitSlop={6}
+        >
+          <Ionicons name="locate" size={22} color={colors.fg} />
+        </Pressable>
+      )}
     </View>
   );
 }
 
+/** Carte (mémorisée : pas de nouveau rendu natif quand l'écran parent se redessine pour autre chose). */
+export const RydarMap = memo(RydarMapImpl);
+
 const styles = StyleSheet.create({
   pickup: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.brand, borderWidth: 5, borderColor: "#0b0d10" },
   dropoff: { width: 16, height: 16, borderRadius: 3, backgroundColor: colors.fg, borderWidth: 4, borderColor: "#0b0d10" },
-  me: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.blue, borderWidth: 4, borderColor: "#0b0d10", alignItems: "center", justifyContent: "center" },
+  meWrap: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  meDot: {
+    width: 20, height: 20, borderRadius: 10, backgroundColor: colors.blue, borderWidth: 3, borderColor: "#FFFFFF",
+    shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 4,
+  },
+  recenter: {
+    position: "absolute", right: 16, width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(17,19,24,0.94)", borderWidth: 1, borderColor: colors.lineStrong,
+  },
   reportWrap: { alignItems: "center", paddingTop: 4, paddingHorizontal: 4 },
   report: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 2.5, alignItems: "center", justifyContent: "center" },
   reportEmoji: { fontSize: 20, lineHeight: 24, textAlign: "center" },
   reportTip: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 7, borderLeftColor: "transparent", borderRightColor: "transparent", marginTop: -1 },
-  meArrow: { width: 0, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderBottomWidth: 8, borderLeftColor: "transparent", borderRightColor: "transparent", borderBottomColor: "#fff", marginTop: -2 },
+  // Flèche de cap au-dessus du point (la vue entière tourne selon le cap)
+  meArrow: {
+    position: "absolute", top: 0, width: 0, height: 0, borderLeftWidth: 7, borderRightWidth: 7, borderBottomWidth: 11,
+    borderLeftColor: "transparent", borderRightColor: "transparent", borderBottomColor: colors.blue,
+  },
 });

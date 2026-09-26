@@ -12,6 +12,11 @@ import { appConfig } from "./config";
  * données chiffrées dans AsyncStorage (SecureStore est limité à ~2 Ko).
  */
 class LargeSecureStore {
+  /**
+   * Dernière valeur déchiffrée par clé : supabase-js relit la session à CHAQUE requête (stockage + trousseau +
+   * AES en JavaScript) ; la mémoire du process suffit tant que l'app vit (même moteur JS pour la tâche GPS).
+   */
+  private cache = new Map<string, string | null>();
   private async encrypt(key: string, value: string) {
     const encryptionKey = Crypto.getRandomBytes(256 / 8);
     const cipher = new aesjs.ModeOfOperation.ctr(encryptionKey, new aesjs.Counter(1));
@@ -26,13 +31,18 @@ class LargeSecureStore {
     return aesjs.utils.utf8.fromBytes(cipher.decrypt(aesjs.utils.hex.toBytes(value)));
   }
   async getItem(key: string) {
+    if (this.cache.has(key)) return this.cache.get(key) ?? null;
     const encrypted = await AsyncStorage.getItem(key);
-    return encrypted ? this.decrypt(key, encrypted) : null;
+    const value = encrypted ? await this.decrypt(key, encrypted) : null;
+    this.cache.set(key, value);
+    return value;
   }
   async setItem(key: string, value: string) {
     await AsyncStorage.setItem(key, await this.encrypt(key, value));
+    this.cache.set(key, value);
   }
   async removeItem(key: string) {
+    this.cache.delete(key);
     await AsyncStorage.removeItem(key);
     await SecureStore.deleteItemAsync(key);
   }

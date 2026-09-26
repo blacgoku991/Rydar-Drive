@@ -10,12 +10,14 @@ export const FLEET_REPORT_META: Record<
   FleetReportType,
   { label: string; short: string; emoji: string; color: string; lucide: string; ionicon: string }
 > = {
-  police: { label: "Police", short: "Police", emoji: "🚓", color: "#4C9DFF", lucide: "siren", ionicon: "shield" },
-  control: { label: "Contrôle", short: "Contrôle", emoji: "🛑", color: "#FF4D4F", lucide: "octagon-alert", ionicon: "hand-left" },
-  accident: { label: "Accident", short: "Accident", emoji: "💥", color: "#FFB020", lucide: "car-front", ionicon: "car-sport" },
-  traffic: { label: "Bouchon / travaux", short: "Bouchon", emoji: "🚧", color: "#FFB020", lucide: "construction", ionicon: "construct" },
-  danger: { label: "Danger", short: "Danger", emoji: "⚠️", color: "#FF4D4F", lucide: "triangle-alert", ionicon: "warning" },
-  other: { label: "Signalement", short: "Info", emoji: "📍", color: "#A78BFA", lucide: "map-pin", ionicon: "location" },
+  // Couleurs = thème (apps/driver/src/theme.ts, apps/web globals.css) ; ionicon = pictogramme de l'app (jamais d'emoji) ;
+  // emoji conservé pour le dashboard web tant qu'il l'utilise.
+  police: { label: "Police", short: "Police", emoji: "🚓", color: "#6AA6FF", lucide: "siren", ionicon: "shield-outline" },
+  control: { label: "Contrôle", short: "Contrôle", emoji: "🛑", color: "#F2555A", lucide: "octagon-alert", ionicon: "id-card-outline" },
+  accident: { label: "Accident", short: "Accident", emoji: "💥", color: "#F5B544", lucide: "car-front", ionicon: "car-outline" },
+  traffic: { label: "Bouchon / travaux", short: "Bouchon", emoji: "🚧", color: "#F5B544", lucide: "construction", ionicon: "construct-outline" },
+  danger: { label: "Danger", short: "Danger", emoji: "⚠️", color: "#F2555A", lucide: "triangle-alert", ionicon: "warning-outline" },
+  other: { label: "Signalement", short: "Info", emoji: "📍", color: "#B39DFA", lucide: "map-pin", ionicon: "location-outline" },
 };
 
 /** Ordre des gros boutons « Signaler » (le type « other » reste accessible par la messagerie). */

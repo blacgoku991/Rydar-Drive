@@ -3,11 +3,11 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Animated, PanResponder, Platform, Pressable, StyleSheet, Text, View,
+  ActivityIndicator, Animated, KeyboardAvoidingView, PanResponder, Platform, Pressable, StyleSheet, Text, View,
   type LayoutChangeEvent, type PressableProps, type StyleProp, type TextStyle, type ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { colors, radius } from "@/theme";
+import { alpha, colors, control, radius, type, weight } from "@/theme";
 
 const haptic = (style: Haptics.ImpactFeedbackStyle) => {
   if (Platform.OS !== "web") void Haptics.impactAsync(style);
@@ -40,14 +40,16 @@ export function Sheet({ children, style }: { children: React.ReactNode; style?: 
   );
 }
 
+/** Bouton d'action. Hauteurs : control.sm 48 · md 56 · lg 64 · xl 72 (« Passer en ligne », « Accepter »). */
 export function BigButton({
-  title, onPress, loading, variant = "primary", icon, style, disabled, height = 64,
+  title, onPress, loading, variant = "primary", icon, style, disabled, height = control.lg,
 }: {
   title: string; onPress: () => void; loading?: boolean; variant?: "primary" | "secondary" | "danger" | "ghost"; icon?: keyof typeof Ionicons.glyphMap;
   style?: StyleProp<ViewStyle>; disabled?: boolean; height?: number;
 } & Omit<PressableProps, "onPress" | "style">) {
-  const bg = variant === "primary" ? colors.brand : variant === "danger" ? "rgba(242,85,90,0.14)" : variant === "ghost" ? "transparent" : colors.surface3;
+  const bg = variant === "primary" ? colors.brand : variant === "danger" ? alpha(colors.red, 0.14) : variant === "ghost" ? "transparent" : colors.surface3;
   const fg = variant === "primary" ? colors.brandFg : variant === "danger" ? colors.red : variant === "ghost" ? colors.muted : colors.fg;
+  const big = height >= control.lg;
   return (
     <Pressable
       accessibilityRole="button"
@@ -58,7 +60,8 @@ export function BigButton({
       }}
       style={({ pressed }) => [
         styles.button,
-        { height, backgroundColor: bg, opacity: disabled ? 0.45 : 1, transform: [{ scale: pressed ? 0.98 : 1 }] },
+        variant === "secondary" && styles.buttonSecondary,
+        { height, backgroundColor: bg, opacity: disabled ? 0.45 : pressed ? 0.85 : 1 },
         style,
       ]}
     >
@@ -66,8 +69,10 @@ export function BigButton({
         <ActivityIndicator color={fg} />
       ) : (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          {icon && <Ionicons name={icon} size={height >= 64 ? 24 : 20} color={fg} />}
-          <Text style={[styles.buttonText, { color: fg, fontSize: height >= 64 ? 19 : 16 }]}>{title}</Text>
+          {icon && <Ionicons name={icon} size={big ? 22 : 20} color={fg} />}
+          <Text style={[styles.buttonText, { color: fg, fontSize: big ? type.headline + 1 : type.headline, fontWeight: variant === "primary" ? weight.bold : weight.semibold }]}>
+            {title}
+          </Text>
         </View>
       )}
     </Pressable>
@@ -136,14 +141,15 @@ export function SlideToConfirm({
   );
 }
 
+/** Étiquette de statut : texte coloré sur fond légèrement teinté (seul endroit où la couleur d'état s'affiche). */
 export function Pill({ label, color }: { label: string; color: string }) {
   return (
-    <View style={[styles.pill, { backgroundColor: `${color}1F` }]}>
-      <View style={[styles.dot, { backgroundColor: color }]} />
+    <View style={[styles.pill, { backgroundColor: alpha(color, 0.14) }]}>
       <Text style={[styles.pillText, { color }]}>{label}</Text>
     </View>
   );
 }
+export const StatusTag = Pill;
 
 /** Progression de la course (étapes chauffeur). */
 export function StepDots({ steps, current }: { steps: string[]; current: number }) {
@@ -154,7 +160,7 @@ export function StepDots({ steps, current }: { steps: string[]; current: number 
           <View key={s} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i < current ? colors.brand : i === current ? colors.amber : "rgba(255,255,255,0.09)" }} />
         ))}
       </View>
-      <Text style={{ color: colors.subtle, fontSize: 13, fontWeight: "600" }}>
+      <Text style={{ color: colors.muted, fontSize: 13, fontWeight: "600" }}>
         Étape {Math.min(current + 1, steps.length)} sur {steps.length} · <Text style={{ color: colors.fg }}>{steps[Math.min(current, steps.length - 1)]}</Text>
       </Text>
     </View>
@@ -252,8 +258,8 @@ export function CountBadge({ count, color = colors.brand }: { count: number; col
  * récapitulatif de fin de course… Reste montée pendant l'animation de fermeture.
  */
 export function BottomSheet({
-  visible, onClose, children, dismissable = true,
-}: { visible: boolean; onClose: () => void; children: React.ReactNode; dismissable?: boolean }) {
+  visible, onClose, children, dismissable = true, keyboard = false,
+}: { visible: boolean; onClose: () => void; children: React.ReactNode; dismissable?: boolean; /** Champ de saisie dans la feuille : elle remonte avec le clavier (iOS) */ keyboard?: boolean }) {
   const anim = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(visible);
   useEffect(() => {
@@ -273,21 +279,24 @@ export function BottomSheet({
         pointerEvents="box-none"
         accessibilityViewIsModal
       >
-        <Sheet>
-          <SafeAreaView edges={["bottom"]} style={{ gap: 14, paddingBottom: 16 }}>{children}</SafeAreaView>
-        </Sheet>
+        <KeyboardAvoidingView behavior={keyboard && Platform.OS === "ios" ? "padding" : undefined} pointerEvents="box-none">
+          <Sheet>
+            <SafeAreaView edges={["bottom"]} style={{ gap: 14, paddingBottom: 16 }}>{children}</SafeAreaView>
+          </Sheet>
+        </KeyboardAvoidingView>
       </Animated.View>
     </View>
   );
 }
 
 type FlashTone = "success" | "error" | "info";
+type IconName = keyof typeof Ionicons.glyphMap;
 /**
- * Bandeau de confirmation éphémère (« Signalé à la flotte ») : `node` à placer dans l'écran,
- * `show(texte, ton)` pour l'afficher ~2,6 s.
+ * Bandeau de confirmation éphémère (« Signalement envoyé ») : `node` à placer dans l'écran,
+ * `show(texte, ton, icône?)` pour l'afficher ~2,6 s. Jamais d'emoji dans le texte : l'icône suffit.
  */
 export function useFlash(top = 0) {
-  const [msg, setMsg] = useState<{ text: string; tone: FlashTone; key: number } | null>(null);
+  const [msg, setMsg] = useState<{ text: string; tone: FlashTone; icon?: IconName; key: number } | null>(null);
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!msg) return;
@@ -298,18 +307,19 @@ export function useFlash(top = 0) {
     }, msg.tone === "error" ? 4200 : 2600);
     return () => clearTimeout(t);
   }, [msg, anim]);
-  const show = useCallback((text: string, tone: FlashTone = "success") => setMsg({ text, tone, key: Date.now() }), []);
+  const show = useCallback((text: string, tone: FlashTone = "success", icon?: IconName) => setMsg({ text, tone, icon, key: Date.now() }), []);
   const color = msg?.tone === "error" ? colors.red : msg?.tone === "info" ? colors.blue : colors.brand;
+  const icon: IconName = msg?.icon ?? (msg?.tone === "error" ? "alert-circle-outline" : msg?.tone === "info" ? "information-circle-outline" : "checkmark");
   const node = msg ? (
     <Animated.View
       pointerEvents="none"
       style={[
         styles.flash,
-        { top, borderColor: `${color}55`, opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }] },
+        { top, opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }] },
       ]}
       accessibilityLiveRegion="polite"
     >
-      <Ionicons name={msg.tone === "error" ? "alert-circle" : msg.tone === "info" ? "information-circle" : "checkmark-circle"} size={22} color={color} />
+      <Ionicons name={icon} size={20} color={color} />
       <Text style={styles.flashText}>{msg.text}</Text>
     </Animated.View>
   ) : null;
@@ -317,38 +327,38 @@ export function useFlash(top = 0) {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, padding: 18 },
-  label: { color: colors.subtle, fontSize: 13, fontWeight: "600" },
-  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 10, borderTopWidth: 1, borderColor: colors.line },
-  handle: { alignSelf: "center", width: 40, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.14)", marginBottom: 14 },
-  button: { borderRadius: radius.lg, alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
-  buttonText: { fontWeight: "800", letterSpacing: 0.2 },
+  card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, padding: 16 },
+  label: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
+  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, paddingHorizontal: 20, paddingTop: 10, borderTopWidth: 1, borderColor: colors.line },
+  handle: { alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.16)", marginBottom: 14 },
+  button: { borderRadius: radius.md, alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
+  buttonSecondary: { borderWidth: 1, borderColor: colors.lineStrong },
+  buttonText: { letterSpacing: 0.1 },
   slide: { borderRadius: 999, borderWidth: 1, backgroundColor: colors.surface2, justifyContent: "center", overflow: "hidden" },
-  slideText: { position: "absolute", left: 0, right: 0, textAlign: "center", fontSize: 18, fontWeight: "800", paddingLeft: 40 },
+  slideText: { position: "absolute", left: 0, right: 0, textAlign: "center", fontSize: type.headline + 1, fontWeight: weight.bold, paddingLeft: 40 },
   knob: { position: "absolute", left: 6, alignItems: "center", justifyContent: "center" },
-  pill: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 99, alignSelf: "flex-start" },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  pillText: { fontSize: 13, fontWeight: "700" },
-  routeText: { color: colors.fg, fontSize: 16, fontWeight: "600" },
-  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: colors.surface2 },
-  chipText: { fontSize: 14, fontWeight: "600" },
+  pill: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm, alignSelf: "flex-start" },
+  pillText: { fontSize: type.footnote, fontWeight: weight.semibold },
+  routeText: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold },
+  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.sm, backgroundColor: colors.surface2 },
+  chipText: { fontSize: type.subhead, fontWeight: weight.semibold },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
   headerBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 },
-  headerTitle: { flex: 1, textAlign: "center", color: colors.fg, fontSize: 18, fontWeight: "800" },
-  segmented: { flexDirection: "row", padding: 4, borderRadius: 16, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line },
-  segment: { flex: 1, height: 42, borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  headerTitle: { flex: 1, textAlign: "center", color: colors.fg, fontSize: type.headline, fontWeight: weight.semibold },
+  segmented: { flexDirection: "row", padding: 4, borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line },
+  segment: { flex: 1, height: 42, borderRadius: radius.sm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   segmentActive: { backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong },
-  segmentText: { color: colors.muted, fontSize: 15, fontWeight: "800" },
+  segmentText: { color: colors.muted, fontSize: type.body, fontWeight: weight.semibold },
   segmentBadge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: "center", justifyContent: "center", backgroundColor: colors.brand },
-  segmentBadgeText: { color: colors.brandFg, fontSize: 11, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  segmentBadgeText: { color: colors.brandFg, fontSize: 11, fontWeight: weight.bold, fontVariant: ["tabular-nums"] },
   countBadge: { position: "absolute", top: -3, right: -3, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: colors.bg },
-  countBadgeText: { color: colors.brandFg, fontWeight: "900", fontSize: 11, fontVariant: ["tabular-nums"] },
+  countBadgeText: { color: colors.brandFg, fontWeight: weight.bold, fontSize: 11, fontVariant: ["tabular-nums"] },
   flash: {
     position: "absolute", left: 16, right: 16, zIndex: 50, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingVertical: 14,
-    borderRadius: 18, backgroundColor: "rgba(17,19,24,0.97)", borderWidth: 1,
-    shadowColor: "#000", shadowOpacity: 0.5, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 12,
+    borderRadius: radius.md, backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong,
+    shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 8,
   },
-  flashText: { flex: 1, color: colors.fg, fontSize: 16, fontWeight: "800" },
+  flashText: { flex: 1, color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
   backdrop: { backgroundColor: "rgba(4,5,7,0.66)" },
   sheetWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
 });

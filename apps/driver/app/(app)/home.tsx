@@ -104,7 +104,8 @@ export default function Home() {
       ]);
       return;
     }
-    if (!res.ok || res.message) Alert.alert(res.ok ? (res.code === "imprecise" ? "Position imprécise" : "Localisation") : "Action impossible", res.message ?? "Réessayez.");
+    if (!res.ok) Alert.alert("Action impossible", res.message ?? "Réessayez.");
+    else if (res.code === "foreground-only") flash.show("Autorisez « Toujours » la localisation pour rester en ligne application fermée.", "info");
   }
 
   const initials = `${(home?.driver.first_name ?? "?").charAt(0)}${(home?.driver.last_name ?? "").charAt(0)}`;
@@ -114,7 +115,6 @@ export default function Home() {
       <RydarMap
         me={me}
         dim={!online && !selected}
-        pulse={online && !current && !focus}
         padding={{ top: 120, bottom: 360, left: 40, right: 40 }}
         reports={mapReports}
         selectedReportId={selectedId}

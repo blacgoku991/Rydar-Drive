@@ -29,8 +29,30 @@ export const presenceColor: Record<string, string> = {
   offline: colors.subtle,
 };
 
-export const radius = { sm: 10, md: 14, lg: 20, xl: 28 };
+// --- Système de design (sobre, lisible en plein soleil) -------------------------------------------
+// Règles : 4 graisses au plus (400/500/600/700, jamais 800/900) ; couleur = information (lime : en ligne et
+// action principale ; ambre / rouge / bleu : états), jamais décoration ; cibles tactiles ≥ 48 px (56 en
+// conduite) ; aucune animation en boucle décorative ; aucun emoji ; icônes Ionicons « outline ».
+
+export const radius = { sm: 8, md: 12, lg: 16, xl: 24, full: 999 };
 export const mono = { fontVariant: ["tabular-nums"] as "tabular-nums"[] };
+
+/** Échelle typographique (pt). Information utile en conduite : 15 minimum ; métadonnées : 13. */
+export const type = { caption: 12, footnote: 13, subhead: 14, body: 15, callout: 16, headline: 17, title3: 20, title2: 24, title1: 30, display: 40 } as const;
+export const weight = { regular: "400", medium: "500", semibold: "600", bold: "700" } as const;
+export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
+/** Hauteurs de contrôle : 48 (secondaire), 56 (standard), 64 (principal), 72 (« Passer en ligne », « Accepter »). */
+export const control = { sm: 48, md: 56, lg: 64, xl: 72 } as const;
+
+/** Couleur du thème avec opacité : alpha(colors.red, 0.12) → "rgba(242,85,90,0.12)". */
+export function alpha(hex: string, a: number) {
+  const h = hex.replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/** Boutons et pastilles posés sur la carte : fond sombre opaque, bordure fine. */
+export const overlay = { backgroundColor: "rgba(17,19,24,0.94)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)" } as const;
 
 /** Tons des libellés partagés (@rydar/shared : vols, documents) → couleurs de l'app. */
 export function toneColor(tone: string | null | undefined) {
