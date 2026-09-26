@@ -138,7 +138,11 @@ create trigger ride_events_broadcast
 do $$
 begin
   if to_regclass('realtime.messages') is not null then
-    execute 'alter table realtime.messages enable row level security';
+    -- Sur Supabase, la table appartient au service Realtime (pas à postgres) et RLS y est déjà
+    -- active : ALTER TABLE y est interdit. On ne l'active que si besoin (environnement local).
+    if not (select c.relrowsecurity from pg_class c where c.oid = 'realtime.messages'::regclass) then
+      execute 'alter table realtime.messages enable row level security';
+    end if;
     execute 'drop policy if exists rydar_realtime_receive on realtime.messages';
     execute $pol$
       create policy rydar_realtime_receive on realtime.messages

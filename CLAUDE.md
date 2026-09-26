@@ -114,6 +114,8 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
+- Supabase hébergé : `postgres` NON super-utilisateur (BYPASSRLS) ; `auth.*`, `storage.*`, `realtime.messages` appartiennent
+  aux services → seulement CREATE/DROP POLICY (supautils policy_grants), trigger sur auth.users, DML ; jamais ALTER TABLE/fonction dessus.
 - RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_register_device, driver_home, driver_offers ; centrale : driver_settlements, driver_declare_payment, driver_account_state.
 - RPC dashboard : cancel_ride, assign_ride, redispatch_ride, reassign_ride, acknowledge_ride_alert, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
   Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
