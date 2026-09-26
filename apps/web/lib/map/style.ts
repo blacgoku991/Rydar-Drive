@@ -3,9 +3,9 @@
 import { DEFAULT_MAP_GLYPHS, DEFAULT_MAP_TILES, rydarMapStyle } from "@rydar/shared";
 import type { StyleSpecification } from "maplibre-gl";
 
-export const MAP_TILES_URL = process.env.NEXT_PUBLIC_MAP_TILES_URL ?? DEFAULT_MAP_TILES;
-export const MAP_GLYPHS_URL = process.env.NEXT_PUBLIC_MAP_GLYPHS_URL ?? DEFAULT_MAP_GLYPHS;
-export const MAP_STYLE_OVERRIDE = process.env.NEXT_PUBLIC_MAP_STYLE_URL ?? "";
+export const MAP_TILES_URL = process.env.NEXT_PUBLIC_MAP_TILES_URL || DEFAULT_MAP_TILES;
+export const MAP_GLYPHS_URL = process.env.NEXT_PUBLIC_MAP_GLYPHS_URL || DEFAULT_MAP_GLYPHS;
+export const MAP_STYLE_OVERRIDE = process.env.NEXT_PUBLIC_MAP_STYLE_URL || "";
 
 /** Style effectif : URL imposée (fournisseur tiers) ou style Rydar. */
 export function mapStyle(theme: "night" | "day" = "night"): string | StyleSpecification {

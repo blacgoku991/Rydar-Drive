@@ -10,8 +10,8 @@ import type { MapReport, RydarMapProps } from "./types";
 type MLMap = import("maplibre-gl").Map;
 type MLMarker = import("maplibre-gl").Marker;
 
-const TILES = process.env.EXPO_PUBLIC_MAP_TILES_URL ?? DEFAULT_MAP_TILES;
-const GLYPHS = process.env.EXPO_PUBLIC_MAP_GLYPHS_URL ?? DEFAULT_MAP_GLYPHS;
+const TILES = process.env.EXPO_PUBLIC_MAP_TILES_URL || DEFAULT_MAP_TILES;
+const GLYPHS = process.env.EXPO_PUBLIC_MAP_GLYPHS_URL || DEFAULT_MAP_GLYPHS;
 
 function dot(style: Partial<CSSStyleDeclaration>, inner?: HTMLElement) {
   const el = document.createElement("div");

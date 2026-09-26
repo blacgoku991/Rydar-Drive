@@ -1,7 +1,7 @@
 // Itinéraires routiers pour le worker (simulateur, rattrapage des tracés) via OSRM.
 import { decodePolyline, encodePolyline, estimateRoute, simplifyLine, type Coord, type LatLng } from "@rydar/shared";
 
-const OSRM_URL = (process.env.OSRM_URL ?? "https://router.project-osrm.org").replace(/\/$/, "");
+const OSRM_URL = (process.env.OSRM_URL || "https://router.project-osrm.org").replace(/\/$/, "");
 
 export type SimpleRoute = { coords: Coord[]; distanceM: number; durationS: number; polyline: string; approximate: boolean };
 

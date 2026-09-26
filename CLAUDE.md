@@ -120,6 +120,8 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
 - Données indispensables en production : par MIGRATION, jamais seulement dans seed.sql (jamais chargé en prod).
+- Variables d'environnement : défaut avec `||`, jamais `??` (Docker/Compose passent des variables VIDES, ex. NEXT_PUBLIC_MAP_*
+  → carte noire en prod) ; la CI vérifie l'image (CSP tuiles, worker MapLibre, adresse des tuiles).
 - Formulaires web : `onSubmit={submitWith(fn)}` (`lib/utils`), jamais `<form action={fn}>` (React 19 vide le formulaire même
   si le serveur répond une erreur) ; erreurs serveur : `fieldErrors(err)` + `describeError(err, LABELS)` (« Champ : message »).
 - Supabase hébergé : `postgres` NON super-utilisateur (BYPASSRLS) ; `auth.*`, `storage.*`, `realtime.messages` appartiennent

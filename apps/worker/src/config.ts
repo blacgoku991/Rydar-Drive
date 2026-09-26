@@ -5,7 +5,7 @@ function num(name: string, fallback: number) {
 }
 
 export const config = {
-  databaseUrl: process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:5432/rydar",
+  databaseUrl: process.env.DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/rydar",
   dispatchTickMs: num("DISPATCH_TICK_MS", 2000),
   notificationPollMs: num("NOTIFICATION_POLL_MS", 3000),
   housekeepingMs: num("HOUSEKEEPING_MS", 5 * 60_000),
@@ -32,9 +32,9 @@ export const config = {
   apns: process.env.APNS_KEY_P8_B64
     ? {
         key: Buffer.from(process.env.APNS_KEY_P8_B64, "base64").toString("utf8"),
-        keyId: process.env.APNS_KEY_ID ?? "",
-        teamId: process.env.APNS_TEAM_ID ?? "",
-        bundleId: process.env.APNS_BUNDLE_ID ?? "app.rydar.driver",
+        keyId: process.env.APNS_KEY_ID || "",
+        teamId: process.env.APNS_TEAM_ID || "",
+        bundleId: process.env.APNS_BUNDLE_ID || "app.rydar.driver",
         production: process.env.APNS_PRODUCTION !== "false",
       }
     : null,

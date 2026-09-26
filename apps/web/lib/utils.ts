@@ -17,6 +17,6 @@ export function submitWith(handler: (data: FormData, form: HTMLFormElement) => v
 }
 
 export function absoluteUrl(path = "/") {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const base = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   return new URL(path, base).toString();
 }

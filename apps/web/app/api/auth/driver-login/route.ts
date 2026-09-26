@@ -34,7 +34,7 @@ type DriverRow = {
 // (aperçu web de l'app chauffeur, ex. http://localhost:8081) sont autorisées.
 function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get("origin");
-  const allowed = (process.env.DRIVER_APP_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+  const allowed = (process.env.DRIVER_APP_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
   if (!origin || !allowed.includes(origin)) return {};
   return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", Vary: "Origin" };
 }

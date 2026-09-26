@@ -4,10 +4,10 @@ import type { NextConfig } from "next";
 // Image Docker (VPS) : serveur autonome, dépendances tracées depuis la racine du monorepo
 const standalone = process.env.NEXT_OUTPUT === "standalone";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
 const supabaseWs = supabaseOrigin.replace(/^http/, "ws");
-const mapOrigins = (process.env.NEXT_PUBLIC_MAP_CONNECT_ORIGINS ?? "https://*.basemaps.cartocdn.com https://basemaps.cartocdn.com https://tiles.openfreemap.org https://api.maptiler.com https://api.mapbox.com")
+const mapOrigins = (process.env.NEXT_PUBLIC_MAP_CONNECT_ORIGINS || "https://*.basemaps.cartocdn.com https://basemaps.cartocdn.com https://tiles.openfreemap.org https://api.maptiler.com https://api.mapbox.com")
   .split(/\s+/)
   .filter(Boolean);
 
