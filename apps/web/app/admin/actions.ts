@@ -1,7 +1,7 @@
 "use server";
 import {
-  dispatchModelSchema, emailSchema, humanizeError, organizationCreateSchema, planSchema,
-  type DispatchModelInput, type OrganizationCreateInput,
+  describeError, dispatchModelSchema, emailSchema, fieldErrors, humanizeError, ORGANIZATION_CREATE_LABELS, organizationCreateSchema,
+  planSchema, type DispatchModelInput, type OrganizationCreateInput,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -19,6 +19,13 @@ const note = (v: string | null | undefined) => v?.trim().slice(0, 500) || null;
 const likeExact = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
 /** Ban Auth « définitif » (100 ans) / levée. */
 const BAN_FOREVER = "876000h";
+/** Noms des champs pour les messages d'erreur (« Frais plateforme (%) : maximum 50 »). */
+const FEE_LABELS = { dispatchModel: "Modèle d'exploitation", platformFeePercent: "Frais plateforme (%)", platformFeeFixedCents: "Frais fixes par course" };
+const ACCESS_LABELS = { fullName: "Nom complet", email: "E-mail", role: "Rôle", password: "Mot de passe provisoire" };
+const PLAN_LABELS = {
+  code: "Code", name: "Nom", description: "Description", price_monthly_cents: "Prix mensuel", price_yearly_cents: "Prix annuel",
+  limits: "Limites", features: "Avantages",
+};
 
 /** Crée un rattacheur + son compte propriétaire + abonnement d'essai, avec son modèle d'exploitation. */
 export async function createOrganization(
@@ -27,14 +34,16 @@ export async function createOrganization(
 ): Promise<Result<{ id: string; password?: string }>> {
   const session = await requireSuperAdmin();
   const parsed = organizationCreateSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
+  if (!parsed.success) {
+    return { ok: false, error: describeError(parsed.error, ORGANIZATION_CREATE_LABELS), fieldErrors: fieldErrors(parsed.error) };
+  }
   const model = dispatchModelSchema.safeParse(dispatch ?? { dispatchModel: "fleet", platformFeePercent: 0, platformFeeFixedCents: 0 });
-  if (!model.success) return { ok: false, error: model.error.issues[0]?.message ?? "Frais plateforme invalides." };
+  if (!model.success) return { ok: false, error: describeError(model.error, FEE_LABELS), fieldErrors: fieldErrors(model.error) };
   const v: OrganizationCreateInput = parsed.data;
   const m: DispatchModelInput = model.data;
   const admin = createAdminClient();
   const { data: plan } = await admin.from("plans").select("id").eq("code", v.planCode).maybeSingle();
-  if (!plan) return { ok: false, error: "Offre inconnue." };
+  if (!plan) return { ok: false, error: "Offre introuvable : choisissez-en une dans la liste.", fieldErrors: { planCode: "Choisissez une offre" } };
 
   const { data: org, error } = await admin
     .from("organizations")
@@ -89,7 +98,7 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof d
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
   const parsed = dispatchModelSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Paramètres invalides." };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, FEE_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const admin = createAdminClient();
   const { data: before } = await admin
@@ -146,10 +155,7 @@ export async function grantOrganizationAccess(
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
   const parsed = accessSchema.safeParse(input);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    return { ok: false, error: issue?.message ?? "Vérifiez les champs.", fieldErrors: issue ? { [String(issue.path[0] ?? "_")]: issue.message } : undefined };
-  }
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, ACCESS_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const admin = createAdminClient();
   const { data: org } = await admin.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
@@ -409,7 +415,7 @@ export async function updateOrganizationPlan(orgId: string, planId: string, limi
 export async function savePlan(id: string | null, input: z.input<typeof planSchema>): Promise<Result> {
   const session = await requireSuperAdmin();
   const parsed = planSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Offre invalide." };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, PLAN_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const admin = createAdminClient();
   const { error } = id ? await admin.from("plans").update(parsed.data as never).eq("id", id) : await admin.from("plans").insert(parsed.data as never);
   if (error) return { ok: false, error: error.code === "23505" ? "Code déjà utilisé." : "Enregistrement impossible." };

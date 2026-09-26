@@ -9,7 +9,7 @@ import { RoutePreview } from "@/components/map/route-preview";
 import { AddressInput, type PlaceValue } from "@/components/rides/address-input";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { cn, submitWith } from "@/lib/utils";
 
 const empty: PlaceValue = { address: "", lat: null, lng: null };
 
@@ -94,7 +94,7 @@ export function BookingForm({ slug, categories, pricing, showPrice, phone, near 
   return (
     <form
       className="space-y-5 p-6"
-      action={(f) => {
+      onSubmit={submitWith((f) => {
         setError(null);
         if (pickup.lat == null || dropoff.lat == null) {
           setErrors({ pickup: pickup.lat == null ? "Choisissez une adresse dans la liste" : "", dropoff: dropoff.lat == null ? "Choisissez une adresse dans la liste" : "" });
@@ -122,7 +122,7 @@ export function BookingForm({ slug, categories, pricing, showPrice, phone, near 
             setError(res.error);
           } else setDone(res.number);
         });
-      }}
+      })}
     >
       <div className="space-y-2.5">
         <Field error={errors.pickup}><AddressInput marker="pickup" value={pickup} onChange={setPickup} near={near} placeholder="Adresse de prise en charge" /></Field>

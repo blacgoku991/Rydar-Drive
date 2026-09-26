@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
+import { submitWith } from "@/lib/utils";
 
 const dayLabel = (v: string) => {
   const d = new Date(v);
@@ -38,6 +39,7 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
   const [feePercent, setFeePercent] = useState("0");
   const [feeFixed, setFeeFixed] = useState("0");
   const [feeErrors, setFeeErrors] = useState<{ percent?: string; fixed?: string }>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <Button variant="primary" onClick={() => setOpen(true)}>
@@ -45,12 +47,13 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
       </Button>
       <SheetContent title="Nouveau rattacheur" description="Espace totalement isolé : données, chauffeurs, API et mini-site dédiés.">
         <form
-          action={(f) =>
+          onSubmit={submitWith((f) =>
             start(async () => {
               const g = (k: string) => String(f.get(k) ?? "");
               const fees = model === "centrale" ? readFees(feePercent, feeFixed) : readFees("0", "0");
               if (!fees.valid) return void setFeeErrors(fees.errors);
               setFeeErrors({});
+              setErrors({});
               const res = await createOrganization(
                 {
                   name, slug, planCode: g("plan"), email: g("email"), phone: g("phone"), city: g("city"),
@@ -58,29 +61,38 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
                 },
                 { dispatchModel: model, platformFeePercent: fees.percent, platformFeeFixedCents: fees.fixedCents },
               );
-              if (!res.ok) return void toast.error(res.error);
+              if (!res.ok) {
+                setErrors(res.fieldErrors ?? {});
+                if (res.fieldErrors?.platformFeePercent || res.fieldErrors?.platformFeeFixedCents) {
+                  setFeeErrors({ percent: res.fieldErrors.platformFeePercent, fixed: res.fieldErrors.platformFeeFixedCents });
+                }
+                return void toast.error(res.error);
+              }
               toast.success("Rattacheur créé");
               setOpen(false);
               router.push(`/admin/organizations/${res.id}`);
-            })
-          }
+            }),
+          )}
           className="space-y-6 px-6 py-6"
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Nom de la centrale" className="sm:col-span-2">
+            <Field label="Nom de la centrale" className="sm:col-span-2" error={errors.name}>
               <Input value={name} required onChange={(e) => { setName(e.target.value); if (!touched) setSlug(slugify(e.target.value)); }} placeholder="Élite Chauffeurs Paris" />
             </Field>
-            <Field label="Identifiant (slug)" hint={`${slug || "slug"}.rydar.app`}>
+            <Field label="Identifiant (slug)" hint={`${slug || "slug"}.rydar.app`} error={errors.slug}>
               <Input value={slug} required onChange={(e) => { setTouched(true); setSlug(slugify(e.target.value)); }} className="num" />
             </Field>
-            <Field label="Offre">
-              <NativeSelect name="plan" defaultValue={plans[0]?.code}>
+            <Field
+              label="Offre"
+              error={errors.planCode ?? (plans.length ? undefined : "Aucune offre active : créez-en une dans « Offres ».")}
+            >
+              <NativeSelect name="plan" defaultValue={plans[0]?.code} required>
                 {plans.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
               </NativeSelect>
             </Field>
-            <Field label="E-mail de la centrale"><Input name="email" type="email" required /></Field>
-            <Field label="Téléphone" optional><Input name="phone" /></Field>
-            <Field label="Ville" optional className="sm:col-span-2"><Input name="city" /></Field>
+            <Field label="E-mail de la centrale" error={errors.email}><Input name="email" type="email" required /></Field>
+            <Field label="Téléphone" optional error={errors.phone}><Input name="phone" /></Field>
+            <Field label="Ville" optional className="sm:col-span-2" error={errors.city}><Input name="city" /></Field>
           </div>
           <div className="space-y-3">
             <p className="text-[13px] font-medium text-fg-muted">Modèle d&apos;exploitation</p>
@@ -93,9 +105,11 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
           </div>
           <div className="grid gap-4 rounded-xl border border-line bg-white/[0.02] p-4 sm:grid-cols-2">
             <p className="text-[13px] font-medium text-fg-muted sm:col-span-2">Compte propriétaire</p>
-            <Field label="Nom complet"><Input name="ownerName" required /></Field>
-            <Field label="E-mail"><Input name="ownerEmail" type="email" required /></Field>
-            <Field label="Mot de passe provisoire" optional hint="Vide = invitation par e-mail" className="sm:col-span-2"><Input name="ownerPassword" className="num" /></Field>
+            <Field label="Nom complet" error={errors.ownerName}><Input name="ownerName" required /></Field>
+            <Field label="E-mail" error={errors.ownerEmail}><Input name="ownerEmail" type="email" required /></Field>
+            <Field label="Mot de passe provisoire" optional hint="Vide = invitation par e-mail (10 caractères minimum sinon)" className="sm:col-span-2" error={errors.ownerPassword}>
+              <Input name="ownerPassword" className="num" />
+            </Field>
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
@@ -205,7 +219,7 @@ export function PlanEditor({ plan }: { plan: any | null }) {
       <Button variant={plan ? "outline" : "primary"} size={plan ? "sm" : "md"} onClick={() => setOpen(true)}>{plan ? "Modifier" : "Nouvelle offre"}</Button>
       <DialogContent title={plan ? `Offre ${plan.name}` : "Nouvelle offre"} size="lg">
         <form
-          action={(f) =>
+          onSubmit={submitWith((f) =>
             start(async () => {
               const num = (k: string) => (String(f.get(k) ?? "") === "" ? null : Number(f.get(k)));
               const res = await savePlan(plan?.id ?? null, {
@@ -223,8 +237,8 @@ export function PlanEditor({ plan }: { plan: any | null }) {
               toast.success("Offre enregistrée");
               setOpen(false);
               router.refresh();
-            })
-          }
+            }),
+          )}
           className="grid gap-4 sm:grid-cols-2"
         >
           <Field label="Code"><Input name="code" defaultValue={plan?.code ?? ""} required className="num" /></Field>

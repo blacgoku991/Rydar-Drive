@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { cn, submitWith } from "@/lib/utils";
 
 export type ApiKeyRow = {
   id: string;
@@ -161,7 +161,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent title="Nouvelle clé API" description="Donnez-lui un nom explicite (ex. « Site web », « WordPress »).">
-          <form action={create} className="space-y-4">
+          <form onSubmit={submitWith(create)} className="space-y-4">
             <Field label="Nom">
               <Input name="name" required placeholder="Site web — formulaire de réservation" />
             </Field>

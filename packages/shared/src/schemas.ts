@@ -4,6 +4,30 @@ import { normalizePhone } from "./format";
 
 // Messages de validation en français (API publique, formulaires).
 z.config(z.locales.fr());
+// Cas courants en langage simple (sinon « Trop petit : chaîne de caractères doit avoir >=2 caractères ») ;
+// un message écrit dans un schéma reste prioritaire, et le reste suit la locale française.
+z.config({
+  customError: (issue) => {
+    if (issue.code === "invalid_type" && issue.input === undefined) return "Champ obligatoire";
+    if (issue.code === "invalid_format" && issue.format === "email") return "Adresse e-mail invalide";
+    if (issue.code === "too_small" || issue.code === "too_big") {
+      const bound = Number(issue.code === "too_small" ? issue.minimum : issue.maximum);
+      const small = issue.code === "too_small";
+      if (issue.origin === "string") {
+        if (small && bound <= 1) return "Champ obligatoire";
+        return `${bound} caractères ${small ? "minimum" : "maximum"}`;
+      }
+      if (issue.origin === "number" || issue.origin === "int") {
+        if (issue.inclusive === false) return small ? `Doit être supérieur à ${bound}` : `Doit être inférieur à ${bound}`;
+        return `${small ? "Minimum" : "Maximum"} ${bound}`;
+      }
+      if (issue.origin === "array" || issue.origin === "set") {
+        return small ? `Au moins ${bound} élément${bound > 1 ? "s" : ""}` : `${bound} éléments au maximum`;
+      }
+    }
+    return undefined;
+  },
+});
 
 // -----------------------------------------------------------------------------
 // Briques
@@ -233,7 +257,7 @@ export const slugSchema = z
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: slugSchema,
-  planCode: z.string().trim().min(2).max(40),
+  planCode: z.string().trim().min(1, "Choisissez une offre").max(40),
   email: emailSchema,
   phone: z.union([phoneSchema, z.literal("")]).optional(),
   city: optionalText(80),
@@ -241,6 +265,10 @@ export const organizationCreateSchema = z.object({
   ownerEmail: emailSchema,
   ownerPassword: z.string().min(10).max(72).optional().or(z.literal("")),
 });
+export const ORGANIZATION_CREATE_LABELS: Record<string, string> = {
+  name: "Nom de la centrale", slug: "Identifiant", planCode: "Offre", email: "E-mail de la centrale", phone: "Téléphone",
+  city: "Ville", ownerName: "Nom du propriétaire", ownerEmail: "E-mail du propriétaire", ownerPassword: "Mot de passe provisoire",
+};
 export type OrganizationCreateInput = z.output<typeof organizationCreateSchema>;
 
 export const organizationUpdateSchema = z.object({
@@ -364,4 +392,13 @@ export function fieldErrors(error: z.ZodError): Record<string, string> {
     if (!out[key]) out[key] = issue.message;
   }
   return out;
+}
+
+/** Première erreur, précédée du nom du champ : « Offre : choisissez une offre ». */
+export function describeError(error: z.ZodError, labels: Record<string, string> = {}): string {
+  const issue = error.issues[0];
+  if (!issue) return "Formulaire invalide.";
+  const label = labels[issue.path.join(".")] ?? labels[String(issue.path[0] ?? "")];
+  if (!label || issue.message.startsWith(`${label} :`)) return issue.message;
+  return `${label} : ${issue.message.charAt(0).toLowerCase()}${issue.message.slice(1)}`;
 }

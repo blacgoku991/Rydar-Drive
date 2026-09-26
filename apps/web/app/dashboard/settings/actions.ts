@@ -1,6 +1,6 @@
 "use server";
 import {
-  centraleSettingsSchema, emailSchema, humanizeError, orgSettingsSchema, organizationUpdateSchema, VEHICLE_CATEGORIES,
+  centraleSettingsSchema, describeError, emailSchema, humanizeError, orgSettingsSchema, organizationUpdateSchema, VEHICLE_CATEGORIES,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -13,6 +13,14 @@ import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+
+/** Noms des réglages de dispatch pour les messages d'erreur. */
+const SETTINGS_LABELS: Record<string, string> = {
+  dispatch_radii_m: "Rayons de recherche", offer_timeout_seconds: "Délai de réponse du chauffeur", max_search_seconds: "Durée maximale de recherche",
+  max_offers_per_wave: "Chauffeurs sollicités par vague", instant_threshold_minutes: "Seuil course immédiate",
+  scheduled_dispatch_lead_minutes: "Anticipation des courses planifiées", reminder_offsets_minutes: "Rappels",
+  location_max_age_seconds: "Fraîcheur de la position GPS", default_payment_method: "Paiement par défaut",
+};
 
 async function adminCtx() {
   const ctx = await getOrgContext();
@@ -41,7 +49,7 @@ export async function updateDispatchSettings(input: z.input<typeof orgSettingsSc
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = orgSettingsSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Paramètres invalides." };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, SETTINGS_LABELS) };
   // Mode centrale : la commission se règle dans « Commission & encaissement » (jamais écrasée d'ici)
   const { driver_commission_percent: _commission, ...dispatch } = parsed.data;
   const patch = ctx.org.dispatch_model === "centrale" ? dispatch : parsed.data;

@@ -8,6 +8,7 @@ import { addDriverDocument, resetDriverPassword, revokeDriverSessions, setDriver
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
+import { submitWith } from "@/lib/utils";
 
 type DriverData = {
   id: string;
@@ -107,7 +108,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
       <Dialog open={dialog === "document"} onOpenChange={(o) => !o && setDialog(null)}>
         <DialogContent title="Ajouter un document" description="Carte VTC, permis, assurance… avec date d'expiration pour les alertes.">
           <form
-            action={(f) =>
+            onSubmit={submitWith((f) =>
               run(
                 () =>
                   addDriverDocument(driver.id, {
@@ -116,8 +117,8 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
                     expiresAt: String(f.get("expiresAt") ?? ""),
                   }),
                 "Document ajouté",
-              )
-            }
+              ),
+            )}
             className="grid grid-cols-2 gap-3"
           >
             <Field label="Type" className="col-span-2">
@@ -148,7 +149,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
       <Dialog open={dialog === "edit"} onOpenChange={(o) => !o && setDialog(null)}>
         <DialogContent title="Modifier le chauffeur" size="lg">
           <form
-            action={(f) => {
+            onSubmit={submitWith((f) => {
               const g = (k: string) => String(f.get(k) ?? "");
               run(
                 () =>
@@ -162,7 +163,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
                   }),
                 "Fiche mise à jour",
               );
-            }}
+            })}
             className="grid grid-cols-2 gap-3"
           >
             <Field label="Prénom" error={errors.firstName}><Input name="firstName" defaultValue={driver.first_name} /></Field>

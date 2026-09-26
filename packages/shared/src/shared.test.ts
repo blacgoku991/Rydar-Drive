@@ -205,3 +205,36 @@ describe("mode centrale (option 2)", () => {
     expect(joinApplicationSchema.safeParse({ ...application.data, acceptTerms: true, website: "spam" }).success).toBe(false);
   });
 });
+
+import { describeError, fieldErrors, ORGANIZATION_CREATE_LABELS, organizationCreateSchema } from "./schemas";
+describe("messages de validation lisibles", () => {
+  const valid = {
+    name: "Mans", slug: "mans", planCode: "starter", email: "contact@mans.fr", phone: "", city: "",
+    ownerName: "Karim Benali", ownerEmail: "karim@mans.fr", ownerPassword: "",
+  };
+
+  it("création de centrale sans offre : le champ est nommé, plus de message technique", () => {
+    const res = organizationCreateSchema.safeParse({ ...valid, planCode: "" });
+    expect(res.success).toBe(false);
+    if (res.success) return;
+    expect(describeError(res.error, ORGANIZATION_CREATE_LABELS)).toBe("Offre : choisissez une offre");
+    expect(fieldErrors(res.error)).toEqual({ planCode: "Choisissez une offre" });
+  });
+
+  it("messages simples pour les cas courants, champ par champ", () => {
+    const res = organizationCreateSchema.safeParse({ ...valid, name: "M", ownerName: "", ownerEmail: "karim", ownerPassword: "court" });
+    expect(res.success).toBe(false);
+    if (res.success) return;
+    const errors = fieldErrors(res.error);
+    expect(errors.name).toBe("2 caractères minimum");
+    expect(errors.ownerName).toBe("2 caractères minimum");
+    expect(errors.ownerEmail).toMatch(/e-mail invalide/i);
+    expect(errors.ownerPassword).toBe("10 caractères minimum");
+    expect(describeError(res.error, ORGANIZATION_CREATE_LABELS)).toBe("Nom de la centrale : 2 caractères minimum");
+    expect(Object.values(errors).join(" ")).not.toMatch(/Trop petit|>=/);
+  });
+
+  it("formulaire valide accepté", () => {
+    expect(organizationCreateSchema.safeParse(valid).success).toBe(true);
+  });
+});

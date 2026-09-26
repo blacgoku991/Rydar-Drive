@@ -12,7 +12,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/misc";
-import { cn } from "@/lib/utils";
+import { cn, submitWith } from "@/lib/utils";
 
 export type AccessMember = {
   id: string;
@@ -112,7 +112,7 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent title="Donner un accès" description={`Accès au tableau de bord de ${orgName}. Un compte existant (même e-mail) est réutilisé.`}>
           <form
-            action={(f) =>
+            onSubmit={submitWith((f) =>
               start(async () => {
                 const res = await grantOrganizationAccess(orgId, {
                   fullName: String(f.get("fullName") ?? ""),
@@ -136,8 +136,8 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
                 });
                 setOpen(false);
                 router.refresh();
-              })
-            }
+              }),
+            )}
             className="space-y-4"
           >
             <div className="grid gap-3 sm:grid-cols-2">

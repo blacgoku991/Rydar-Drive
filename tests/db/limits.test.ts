@@ -48,3 +48,11 @@ describe("Limites des offres SaaS", () => {
     expect(logs.at(-1)).toEqual({ action: "drivers.update", severity: "warning" });
   });
 });
+
+describe("Données de référence présentes sans le seed", () => {
+  it("les offres Starter, Pro et Business existent après les seules migrations", async () => {
+    const rows = await sql(`select code, is_active, is_public from public.plans where code in ('starter', 'pro', 'business') order by sort_order`);
+    expect(rows.map((r) => r.code)).toEqual(["starter", "pro", "business"]);
+    expect(rows.every((r) => r.is_active && r.is_public)).toBe(true);
+  });
+});

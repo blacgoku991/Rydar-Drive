@@ -8,7 +8,7 @@ import { createDriver } from "@/app/dashboard/drivers/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, SheetContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { cn, submitWith } from "@/lib/utils";
 
 function generatePassword() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -67,7 +67,7 @@ export function DriverFormSheet() {
         <UserPlus /> Ajouter un chauffeur
       </Button>
       <SheetContent title="Nouveau chauffeur" description="Le chauffeur se connecte à l'application avec les identifiants que vous lui transmettez.">
-        <form action={submit} className="flex min-h-full flex-col">
+        <form onSubmit={submitWith(submit)} className="flex min-h-full flex-col">
           <div className="flex-1 space-y-7 px-6 py-6">
             <section className="grid grid-cols-2 gap-3">
               <p className="col-span-2 text-[13px] font-medium text-fg-muted">Identité</p>

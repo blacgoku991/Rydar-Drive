@@ -1,5 +1,5 @@
 "use server";
-import { bookingSiteSchema, humanizeError } from "@rydar/shared";
+import { bookingSiteSchema, describeError, humanizeError } from "@rydar/shared";
 import { createHash } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { revalidatePath } from "next/cache";
@@ -12,6 +12,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result = { ok: true } | { ok: false; error: string };
 
+/** Noms des champs du mini-site pour les messages d'erreur. */
+const BOOKING_LABELS: Record<string, string> = {
+  subdomain: "Sous-domaine", custom_domain: "Domaine personnalisé", title: "Titre", tagline: "Accroche", description: "Description",
+  logo_url: "Logo", hero_image_url: "Image d'en-tête", primary_color: "Couleur principale", phone: "Téléphone", email: "E-mail",
+  whatsapp: "WhatsApp", service_area: "Zone desservie", vehicle_categories: "Catégories de véhicules",
+};
+
 export async function domainToken(orgId: string) {
   return `rydar-verify=${createHash("sha256").update(`rydar:${orgId}`).digest("hex").slice(0, 24)}`;
 }
@@ -20,7 +27,7 @@ export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>
   const ctx = await getOrgContext();
   if (!ctx || !isAdminRole(ctx.role)) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = bookingSiteSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Paramètres invalides." };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS) };
   const v = parsed.data;
   const { error } = await ctx.supabase
     .from("booking_sites")

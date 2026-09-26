@@ -14,7 +14,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
 import { Avatar, Switch } from "@/components/ui/misc";
-import { cn } from "@/lib/utils";
+import { cn, submitWith } from "@/lib/utils";
 
 function useSave() {
   const router = useRouter();
@@ -39,10 +39,10 @@ export function OrganizationForm({ org, readOnly }: { org: any; readOnly: boolea
       <CardHeader title="Identité de la centrale" description="Affichée dans l'application chauffeur, les factures et le mini-site." />
       <CardBody>
         <form
-          action={(f) => {
+          onSubmit={submitWith((f) => {
             const g = (k: string) => String(f.get(k) ?? "");
             save(() => updateOrganization({ name: g("name"), legalName: g("legalName"), siret: g("siret"), email: g("email"), phone: g("phone"), address: g("address"), city: g("city"), postalCode: g("postalCode") }));
-          }}
+          })}
           className="grid gap-4 sm:grid-cols-2"
         >
           <Field label="Nom commercial"><Input name="name" defaultValue={org.name} disabled={readOnly} /></Field>
@@ -436,7 +436,7 @@ export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boo
           return (
             <form
               key={cat}
-              action={(f) => {
+              onSubmit={submitWith((f) => {
                 const n = (k: string) => Math.round(Number(String(f.get(k) ?? "0").replace(",", ".")) * 100);
                 save(() =>
                   savePricingRule({
@@ -451,7 +451,7 @@ export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boo
                   }),
                   `Tarif ${VEHICLE_CATEGORY_META[cat].label} enregistré`,
                 );
-              }}
+              })}
               className="grid items-end gap-3 px-5 py-4 md:grid-cols-[150px_repeat(5,1fr)_auto]"
             >
               <div>
@@ -510,13 +510,13 @@ export function TeamPanel({ members, isOwner, canInvite }: { members: any[]; isO
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent title="Ajouter un membre" description="Sans mot de passe, une invitation est envoyée par e-mail.">
           <form
-            action={(f) =>
+            onSubmit={submitWith((f) =>
               save(async () => {
                 const res = await inviteMember({ fullName: String(f.get("name")), email: String(f.get("email")), role, password: String(f.get("password") ?? "") });
                 if (res.ok) setOpen(false);
                 return res;
-              }, "Membre ajouté")
-            }
+              }, "Membre ajouté"),
+            )}
             className="space-y-4"
           >
             <Field label="Nom complet"><Input name="name" required /></Field>

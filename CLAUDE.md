@@ -118,6 +118,9 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
+- Données indispensables en production (offres…) : par MIGRATION (ex. 002700 default_plans), jamais seulement dans seed.sql.
+- Formulaires web : `onSubmit={submitWith(fn)}` (`lib/utils`), jamais `<form action={fn}>` (React 19 vide le formulaire même
+  si le serveur répond une erreur) ; erreurs serveur : `fieldErrors(err)` + `describeError(err, LABELS)` (« Champ : message »).
 - Supabase hébergé : `postgres` NON super-utilisateur (BYPASSRLS) ; `auth.*`, `storage.*`, `realtime.messages` appartiennent
   aux services → seulement CREATE/DROP POLICY (supautils policy_grants), trigger sur auth.users, DML ; jamais ALTER TABLE/fonction dessus.
 - RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_register_device, driver_home, driver_offers ; centrale : driver_settlements, driver_declare_payment, driver_account_state.
