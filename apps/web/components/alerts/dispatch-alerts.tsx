@@ -6,15 +6,18 @@
 //  - `chat.message` (message ou signalement d'un chauffeur) ; `driver.document` (document déposé à valider).
 // Mode centrale (002600) :
 //  - `settlement.updated` : course terminée (commission à encaisser / part à verser), « J'ai payé » à confirmer ;
-//  - `driver.application` (candidature par le lien d'inscription) ; `driver.flagged` (appareil d'un compte banni).
+//  - `driver.application` (candidature par le lien d'inscription) ; `driver.flagged` (appareil d'un compte banni) ;
+//  - `platform.updated` (frais plateforme dus à Rydar, owner / admin) : paiement reçu / non reçu, relance, avoir,
+//    baisse acceptée / refusée ; rien pour « fee » (chaque course terminée). Page Encaissements relue.
 import {
   DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatPhone, formatPrice, formatRideDate, formatTime,
   shortAddress,
-  type ChatMessage, type DriverApplicationEvent, type DriverDocumentEvent, type DriverFlaggedEvent, type PaymentMethod, type RideAlertBroadcast,
+  type ChatMessage, type DriverApplicationEvent, type DriverDocumentEvent, type DriverFlaggedEvent, type OrgPlatformAccount, type PaymentMethod, type PlatformEvent,
+  type RideAlertBroadcast,
   type RideAlertKind, type RideAlertSeverity, type SettlementDirection, type SettlementEvent,
 } from "@rydar/shared";
 import {
-  AlertTriangle, ArrowUpRight, Bell, BellOff, BellRing, Check, CheckCheck, CheckCircle2, CircleSlash, Clock3, FileText, Globe, HandCoins, KeyRound,
+  AlertTriangle, ArrowUpRight, Bell, BellOff, BellRing, Check, CheckCheck, CheckCircle2, CircleSlash, Clock3, FileText, Globe, HandCoins, KeyRound, Landmark,
   MessageSquareText, Monitor, Plane, PlaneLanding, Reply, RotateCw, ShieldAlert, UserPlus, Volume2, VolumeX, X, type LucideIcon,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -28,12 +31,13 @@ import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useCentrale, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { buildSettlementWhatsApp, methodLabel, parseDriverLabel, rideNumberOf, useDriverContact } from "@/components/settlements/settlement-ui";
 import { playSound, unlockAudio, type SoundKind } from "@/lib/sounds";
+import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 export type AlertKind =
   | "new" | "accepted" | "no_driver" | "escalated" | "cancelled" | "ride_alert" | "flight" | "message" | "report" | "document"
   // mode centrale
-  | "settlement" | "application" | "flagged";
+  | "settlement" | "application" | "flagged" | "platform";
 type Level = "info" | "success" | "warning" | "critical";
 export type AlertItem = {
   id: string;
@@ -86,6 +90,7 @@ const BASE: Record<AlertKind, { icon: LucideIcon; color: string }> = {
   settlement: { icon: HandCoins, color: "var(--color-amber)" },
   application: { icon: UserPlus, color: "var(--color-brand)" },
   flagged: { icon: ShieldAlert, color: "var(--color-red)" },
+  platform: { icon: Landmark, color: "var(--color-violet)" },
 };
 
 const LEVEL_COLOR: Record<Level, string> = {
@@ -100,6 +105,12 @@ function visual(i: AlertItem): { icon: LucideIcon; color: string; emoji?: string
   if (i.kind === "ride_alert" && i.alert) return { icon: ALERT_ICON[i.alert.kind] ?? AlertTriangle, color: severityColor(i.alert.severity) };
   if (i.kind === "flight") return { icon: i.level === "success" ? PlaneLanding : Plane, color: LEVEL_COLOR[i.level ?? "info"] };
   if (i.kind === "report") return { icon: AlertTriangle, color: i.color ?? BASE.report.color, emoji: i.emoji };
+  if (i.kind === "platform") {
+    if (i.level === "success") return { icon: CheckCircle2, color: LEVEL_COLOR.success };
+    if (i.level === "critical") return { icon: CircleSlash, color: LEVEL_COLOR.critical };
+    if (i.level === "warning") return { icon: BellRing, color: LEVEL_COLOR.warning };
+    return BASE.platform;
+  }
   if (i.kind === "settlement" && i.settlement) {
     if (i.settlement.action === "declared") return { icon: CheckCheck, color: "var(--color-blue)" };
     if (i.settlement.direction === "centrale_owes") return { icon: ArrowUpRight, color: "var(--color-violet)" };
@@ -141,6 +152,11 @@ function behavior(i: AlertItem): { sound: SoundKind | null; desktop: boolean; du
       return { sound: "notice", desktop: true, duration: 12_000 };
     case "flagged":
       return { sound: "alert", desktop: true, duration: Infinity };
+    case "platform":
+      // Paiement refusé ou relance de Rydar : à traiter ; confirmation, avoir : simple information
+      return i.level === "critical" || i.level === "warning"
+        ? { sound: "notice", desktop: true, duration: 20_000 }
+        : { sound: "notice", desktop: false, duration: 10_000 };
   }
 }
 
@@ -181,6 +197,93 @@ const DEFAULT_REPORT_BODIES = new Set([
 ]);
 
 const firstName = (name: string | null | undefined) => (name ?? "").trim().split(/\s+/)[0] || "Un chauffeur";
+
+const PLATFORM_METHOD_LABEL: Record<string, string> = { transfer: "virement", link: "lien de paiement", cash: "espèces", card: "carte", other: "autre moyen" };
+
+/** Actions de Rydar signalées à la centrale (pas les frais de chaque course, ni ses propres déclarations). */
+const PLATFORM_ALERT_ACTIONS = new Set<string>(["confirmed", "rejected", "reopened", "reminded", "adjusted", "reduction_approved", "reduction_rejected", "terms"]);
+
+/** Alerte « frais plateforme » (null : rien à signaler, ex. frais d'une course terminée, action de la centrale elle-même). */
+function platformAlert(e: PlatformEvent): Pick<AlertItem, "id" | "title" | "body" | "level"> | null {
+  const p = e.payment;
+  const entry = e.entry;
+  const quote = (t: string | null | undefined) => (t ? `« ${t} »` : null);
+  switch (e.action) {
+    case "confirmed": {
+      if (!p) return null;
+      const received = p.received_cents ?? p.amount_cents;
+      const partial = p.received_cents != null && p.received_cents !== p.amount_cents;
+      return {
+        id: `pf:${p.id}:confirmed:${p.reviewed_at ?? ""}`,
+        level: "success",
+        title: p.source === "admin" ? `Rydar a enregistré votre paiement de ${formatPrice(received)}` : `Rydar a bien reçu ${formatPrice(received)}`,
+        body: [
+          partial ? `sur ${formatPrice(p.amount_cents)} déclarés` : null,
+          PLATFORM_METHOD_LABEL[p.method] ? `par ${PLATFORM_METHOD_LABEL[p.method]}` : null,
+          p.reference ? `réf. ${p.reference}` : null,
+          quote(p.review_note),
+        ].filter(Boolean).join(" · ") || "Votre solde de frais plateforme est à jour.",
+      };
+    }
+    case "rejected":
+      if (!p) return null;
+      return {
+        id: `pf:${p.id}:rejected:${p.reviewed_at ?? ""}`,
+        level: "critical",
+        title: `Rydar n'a pas reçu votre paiement de ${formatPrice(p.amount_cents)}`,
+        body: [p.review_note ? `Motif : ${p.review_note}` : null, "Vérifiez le paiement puis déclarez-le à nouveau."].filter(Boolean).join(" · "),
+      };
+    case "reopened":
+      if (!p) return null;
+      return {
+        id: `pf:${p.id}:reopened:${p.reviewed_at ?? Date.now()}`,
+        level: "info",
+        title: `Rydar a rouvert votre paiement de ${formatPrice(p.amount_cents)}`,
+        body: [p.review_note ? `Motif : ${p.review_note}` : null, "Il attend de nouveau sa confirmation."].filter(Boolean).join(" · "),
+      };
+    case "reminded":
+      return {
+        id: `pf:reminded:${new Date().toISOString().slice(0, 16)}`,
+        level: "warning",
+        title: "Rydar vous relance pour vos frais plateforme",
+        body: e.note ? quote(e.note)! : "Merci de régler le solde de vos frais plateforme.",
+      };
+    case "adjusted":
+      if (!entry) return null;
+      return {
+        id: `pf:${entry.id}:adjusted`,
+        level: entry.amount_cents < 0 ? "success" : "warning",
+        title: entry.amount_cents < 0 ? `Avoir de ${formatPrice(-entry.amount_cents)} accordé par Rydar` : `Rydar a ajouté ${formatPrice(entry.amount_cents)} de frais plateforme`,
+        body: entry.reason ?? entry.label,
+      };
+    case "reduction_approved":
+      if (!entry) return null;
+      return {
+        id: `pf:${entry.id}:approved`,
+        level: "success",
+        title: `Baisse de frais acceptée par Rydar : ${formatPrice(Math.abs(entry.amount_cents))}`,
+        body: [entry.label, quote(entry.review_note)].filter(Boolean).join(" · "),
+      };
+    case "reduction_rejected":
+      if (!entry) return null;
+      return {
+        id: `pf:${entry.id}:rejected`,
+        level: "warning",
+        title: "Baisse de frais refusée par Rydar",
+        body: [entry.label, entry.review_note ? `Motif : ${entry.review_note}` : null, "Les frais initiaux restent dus."].filter(Boolean).join(" · "),
+      };
+    case "terms":
+      return {
+        id: `pf:terms:${new Date().toISOString().slice(0, 16)}`,
+        level: "info",
+        title: "Rydar a mis à jour vos conditions de règlement",
+        body: "Échéance ou délai des frais plateforme modifiés : consultez votre compte.",
+      };
+    default:
+      // fee (chaque course terminée), declared / cancelled (action de la centrale), reduction_pending (sa propre correction)
+      return null;
+  }
+}
 
 type Api = {
   focusRide: (id: string) => void;
@@ -626,6 +729,35 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     });
   });
 
+  // ---------------------------------------------------------------- frais plateforme dus à Rydar (20260924003000)
+  const platformTimer = useRef<number | null>(null);
+  useRealtimeEvent("platform.updated", (e: PlatformEvent) => {
+    const org = centraleRef.current;
+    if (!e?.action || !org || (org.role !== "owner" && org.role !== "admin")) return; // les dispatchers ne gèrent pas les frais
+    if (e.organization_id && e.organization_id !== org.orgId) return;
+    // Page Encaissements (carte « Frais plateforme » + relevé) : relue après chaque changement
+    if (window.location.pathname.startsWith("/dashboard/settlements")) {
+      if (platformTimer.current) window.clearTimeout(platformTimer.current);
+      platformTimer.current = window.setTimeout(() => router.refresh(), 700);
+    }
+    if (!PLATFORM_ALERT_ACTIONS.has(e.action)) return;
+    // L'événement ne porte que des identifiants : détail relu par org_platform_account (owner / admin)
+    void getBrowserClient()
+      .rpc("org_platform_account", { p_org: org.orgId })
+      .then(({ data }: { data: unknown }) => {
+        const acc = data as OrgPlatformAccount | null;
+        if (!acc?.enabled) return;
+        const full: PlatformEvent = {
+          ...e,
+          payment: e.payment_id ? acc.payments.find((x) => x.id === e.payment_id) : undefined,
+          entry: e.entry_id ? acc.entries.find((x) => x.id === e.entry_id) : undefined,
+          note: e.action === "reminded" ? acc.account.reminder_note : undefined,
+        };
+        const alert = platformAlert(full);
+        if (alert) push({ ...alert, kind: "platform", rideId: null, href: "/dashboard/settlements#frais-plateforme", cta: "Frais plateforme" });
+      }, () => undefined);
+  });
+
   const unread = useMemo(() => items.filter((i) => !i.read).length, [items]);
 
   // Compteur dans l'onglet du navigateur
@@ -757,10 +889,13 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
                   ? "bg-red font-semibold text-white hover:bg-red/90"
                   : item.kind === "application"
                     ? "bg-brand font-semibold text-brand-fg hover:opacity-90"
-                    : "bg-white/[0.08] text-fg hover:bg-white/[0.13]",
+                    : item.kind === "platform" && item.level === "critical"
+                      ? "bg-red font-semibold text-white hover:bg-red/90"
+                      : "bg-white/[0.08] text-fg hover:bg-white/[0.13]",
             )}
           >
             {item.kind === "message" && <Reply className="size-3.5" />}
+            {item.kind === "platform" && <Landmark className="size-3.5" />}
             {item.cta ?? "Voir"}
           </button>
         </div>
@@ -881,7 +1016,9 @@ export function AlertsBell({ className }: { className?: string }) {
                 <Bell className="mx-auto mb-2 size-5 text-fg-subtle" />
                 <p className="text-[13px] font-medium">Rien de neuf</p>
                 <p className="mt-1 text-[12px] text-fg-subtle">
-                  Courses, retards, vols, messages{centrale?.model === "centrale" ? ", paiements, candidatures" : ""} et signalements apparaîtront ici, avec un son.
+                  Courses, retards, vols, messages
+                  {centrale?.model === "centrale" ? `, paiements, candidatures${centrale.role === "owner" || centrale.role === "admin" ? ", frais Rydar" : ""}` : ""} et
+                  signalements apparaîtront ici, avec un son.
                 </p>
               </div>
             ) : (

@@ -1,8 +1,9 @@
-import { DISPATCH_MODEL_META, type OrgSettlementFilter, type OrgSettlementOverview, type OrgSettlements } from "@rydar/shared";
-import { HandCoins, Settings2 } from "lucide-react";
+import { DISPATCH_MODEL_META, type OrgPlatformAccount, type OrgSettlementFilter, type OrgSettlementOverview, type OrgSettlements } from "@rydar/shared";
+import { HandCoins, Landmark, Settings2 } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
+import { OrgPlatformCard } from "@/components/platform-fees/org-platform-card";
 import { SettlementsView } from "@/components/settlements/settlements-view";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -45,15 +46,20 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
   const driver = sp.driver && UUID.test(sp.driver) ? sp.driver : null;
   const limit = Math.min(500, Math.max(100, Math.round(Number(sp.n) || 100)));
   const orgId = ctx.org.id;
+  const canManage = isAdminRole(ctx.role);
 
-  // « À traiter » (tous chauffeurs) sert aussi aux soldes, compteurs et messages WhatsApp : lu une fois
-  const [overview, open, filtered] = await Promise.all([
+  // « À traiter » (tous chauffeurs) sert aussi aux soldes, compteurs et messages WhatsApp : lu une fois.
+  // Frais plateforme dus à Rydar : owner / admin seulement (un dispatcher ne voit pas la carte).
+  const [overview, open, filtered, platform] = await Promise.all([
     ctx.supabase.rpc("org_settlement_overview", { p_org: orgId }),
     ctx.supabase.rpc("org_settlements", { p_org: orgId, p_filter: "open", p_driver: null, p_limit: 500, p_before: null }),
     filter === "open" && !driver
       ? Promise.resolve(null)
       : ctx.supabase.rpc("org_settlements", { p_org: orgId, p_filter: filter, p_driver: driver, p_limit: limit, p_before: null }),
+    canManage ? ctx.supabase.rpc("org_platform_account", { p_org: orgId }) : Promise.resolve(null),
   ]);
+  const platformData = (platform?.data ?? null) as OrgPlatformAccount | null;
+  const serverNow = Date.now();
   const openItems = ((open.data as OrgSettlements | null)?.items ?? []);
   const items = filtered ? ((filtered.data as OrgSettlements | null)?.items ?? []) : openItems;
   const failed = overview.error || open.error || filtered?.error;
@@ -63,9 +69,13 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
       <PageHeader
         eyebrow="Centrale"
         title="Encaissements"
-        description="Commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez les paiements, relancez les retardataires, réclamez en un clic."
+        description={
+          canManage
+            ? "Frais plateforme à reverser à Rydar, commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez, relancez, réclamez en un clic."
+            : "Commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez les paiements, relancez les retardataires, réclamez en un clic."
+        }
         actions={
-          isAdminRole(ctx.role) ? (
+          canManage ? (
             <Button asChild variant="outline">
               <Link href="/dashboard/settings?tab=centrale">
                 <Settings2 /> Commission & encaissement
@@ -74,7 +84,14 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
           ) : undefined
         }
       />
-      <PageBody>
+      <PageBody className="space-y-8">
+        {platform?.error ? (
+          <Card id="frais-plateforme">
+            <EmptyState icon={<Landmark />} title="Frais plateforme indisponibles" description="La lecture de votre compte auprès de Rydar a échoué. Réessayez dans un instant." className="py-8" />
+          </Card>
+        ) : platformData?.enabled ? (
+          <OrgPlatformCard data={platformData} serverNow={serverNow} />
+        ) : null}
         {failed ? (
           <Card>
             <EmptyState icon={<HandCoins />} title="Encaissements indisponibles" description="La lecture des règlements a échoué. Réessayez dans un instant." />
@@ -90,8 +107,9 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
             limit={filter === "open" && !driver ? 500 : limit}
             orgName={ctx.org.name}
             timeZone={ctx.org.timezone || "Europe/Paris"}
-            canManage={isAdminRole(ctx.role)}
-            serverNow={Date.now()}
+            canManage={canManage}
+            serverNow={serverNow}
+            platformMonthCents={platformData?.enabled ? platformData.account.month.fees_cents : null}
           />
         )}
       </PageBody>

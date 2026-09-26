@@ -174,6 +174,8 @@ describe("Frais plateforme : dus par la centrale dès la fin de la course", () =
     expect(p2.amount_cents).toBe(-50);
     expect((await svc("svc_platform_review_entry", [p2.id, sa, false, "Course réellement facturée"])).code).toBe("REJECTED");
     expect((await account(org)).balance_cents).toBe(200);
+    const refused = (await rpc(org.ownerId, "org_platform_account", [org.id])).entries.find((x: any) => x.id === p2.id);
+    expect(refused).toMatchObject({ status: "rejected", superseded: false });
   });
 
   it("registre immuable : ni modification ni suppression, sauf avec l'organisation", async () => {
@@ -220,7 +222,9 @@ describe("Frais plateforme : paiements déclarés par la centrale, confirmés pa
     const msgs = await as({ sub: org.ownerId }, (q) =>
       q(`select payload from realtime.messages where topic = $1 and event = 'platform.updated' order by id desc limit 1`, [`org:${org.id}`]),
       { topic: `org:${org.id}` });
-    expect(msgs[0]?.payload).toMatchObject({ action: "declared", organization_id: org.id });
+    expect(msgs[0]?.payload).toMatchObject({ action: "declared", organization_id: org.id, payment_id: dec.id });
+    // Canal lisible par tous les membres (dispatchers compris) : ni montant, ni note, ni nom dans l'événement
+    expect(Object.keys(msgs[0]!.payload).sort()).toEqual(["action", "organization_id", "payment_id"]);
 
     // Reçu partiel : 15 € sur 20 € → reste 5 €
     const conf = await svc("svc_platform_confirm_payment", [dec.id, sa, 1500, "Virement reçu incomplet"]);
@@ -436,5 +440,191 @@ describe("Frais plateforme : échéances, retard, blocage, relevé, super admin"
     expect((await svc("svc_platform_remind", [org.id, sa, null])).code).toBe("RATE_LIMITED");
     expect(await account(org)).toMatchObject({ reminder_note: "Merci de régler avant vendredi" });
     expect((await account(org)).reminded_at).toBeTruthy();
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Revue SQL (argent) : chaque cas ci-dessous faussait un solde ou contournait un contrôle
+// -----------------------------------------------------------------------------
+describe("Frais plateforme : revue SQL (soldes justes, contrôles sans contournement)", () => {
+  it("baisse en attente puis nouveau prix : la baisse est remplacée (la refuser ensuite ne compte pas la hausse deux fois)", async () => {
+    const org = await centrale("Centrale Baisse Remplacée", { platform_fee_percent: 10, platform_fee_fixed_cents: 0 });
+    const d = await driverIn(org);
+    const sa = await superAdmin();
+    const ride = await completedRide(org, d, { price_cents: 5000, commission_cents: 0 });
+
+    await setPrice(org, ride.id, 2000); // frais 5 € → 2 € : −3 € en attente
+    const [old] = await sql(`select id from public.platform_fee_entries where ride_id = $1 and status = 'pending'`, [ride.id]);
+    await setPrice(org, ride.id, 5000); // retour au prix initial : plus rien à corriger
+    let acc = await account(org);
+    expect(acc).toMatchObject({ balance_cents: 500, pending_reductions_count: 0, pending_reductions_cents: 0 });
+    // L'ancienne baisse n'est plus à valider : la refuser ne peut plus rajouter 3 €
+    expect((await svc("svc_platform_review_entry", [old.id, sa, false, "Course réellement facturée"])).code).toBe("NOT_PENDING");
+    expect((await account(org)).balance_cents).toBe(500);
+    const [superseded] = await sql(`select status, review_note, reviewed_by from public.platform_fee_entries where id = $1`, [old.id]);
+    expect(superseded).toMatchObject({ status: "rejected", reviewed_by: null });
+    expect(superseded.review_note).toMatch(/remplacée/i);
+    const listed = (await rpc(org.ownerId, "org_platform_account", [org.id])).entries.find((x: any) => x.id === old.id);
+    expect(listed).toMatchObject({ status: "rejected", superseded: true });
+
+    // Deux baisses successives : une seule en attente, calculée sur les frais comptabilisés
+    await setPrice(org, ride.id, 2000);
+    await setPrice(org, ride.id, 1000);
+    const pend = await sql(`select id, amount_cents from public.platform_fee_entries where ride_id = $1 and status = 'pending'`, [ride.id]);
+    expect(pend).toHaveLength(1);
+    expect(pend[0].amount_cents).toBe(-400);
+    expect((await svc("svc_platform_review_entry", [pend[0].id, sa, true, "Prix corrigé"])).code).toBe("APPROVED");
+    acc = await account(org);
+    expect(acc).toMatchObject({ balance_cents: 100, posted_cents: 100 });
+
+    // Baisse en attente puis hausse au-delà du prix initial : la baisse est remplacée, la hausse comptée
+    await setPrice(org, ride.id, 500); // 1 € → 0,50 € : −0,50 € en attente
+    await setPrice(org, ride.id, 3000); // 3 € : +2 € par rapport aux frais comptabilisés
+    expect((await account(org))).toMatchObject({ balance_cents: 300, pending_reductions_count: 0 });
+    // Paiement ou encaissement changé sans effet sur les frais : la baisse en attente reste en attente
+    await setPrice(org, ride.id, 1000);
+    await as({ sub: org.ownerId }, (q) => q(`update public.rides set payment_method = 'card' where id = $1`, [ride.id]));
+    expect((await account(org))).toMatchObject({ pending_reductions_count: 1, pending_reductions_cents: -200 });
+  });
+
+  it("concurrence : baisse refusée pendant que la centrale remet le prix initial → frais comptés une seule fois", async () => {
+    const org = await centrale("Centrale Course Concurrente", { platform_fee_percent: 10, platform_fee_fixed_cents: 0 });
+    const d = await driverIn(org);
+    const sa = await superAdmin();
+    const ride = await completedRide(org, d, { price_cents: 5000, commission_cents: 0 });
+    await setPrice(org, ride.id, 2000);
+    const [pending] = await sql(`select id from public.platform_fee_entries where ride_id = $1 and status = 'pending'`, [ride.id]);
+
+    // Le super admin refuse la baisse (transaction ouverte) pendant que la centrale remet 50 €
+    const admin = await pool.connect();
+    try {
+      await admin.query("begin");
+      await admin.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ role: "service_role" })]);
+      await admin.query("set local role service_role");
+      const { rows } = await admin.query(`select public.svc_platform_review_entry($1, $2, false, 'Pas de remise') as r`, [pending.id, sa]);
+      expect(rows[0].r.code).toBe("REJECTED");
+      let done = false;
+      const update = setPrice(org, ride.id, 5000).then(() => { done = true; });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(done, "la correction attend la décision du super admin").toBe(false);
+      await admin.query("commit");
+      await update;
+    } finally {
+      admin.release();
+    }
+    expect(await account(org)).toMatchObject({ balance_cents: 500, posted_cents: 500, pending_reductions_count: 0 });
+  });
+
+  it("avoir ou baisse acceptée : l'échu, le retard et le blocage baissent tout de suite", async () => {
+    const org = await centrale("Centrale Avoir Échu");
+    const sa = await superAdmin();
+    await insertRideBypass(org, { completed_at: daysAgo(75) }); // 5 € échus depuis longtemps
+    expect((await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1])).code).toBe("SAVED");
+    expect((await account(org))).toMatchObject({ due_cents: 500, blocked: true });
+
+    expect((await svc("svc_platform_adjust", [org.id, sa, -500, "Geste commercial"])).code).toBe("ADJUSTED");
+    const acc = await account(org);
+    expect(acc).toMatchObject({ balance_cents: 0, due_cents: 0, overdue_since: null, days_overdue: 0, blocked: false });
+    await createRideAsOwner(org, { price_cents: 5900, commission_cents: 1400, payment_method: "cash" });
+
+    // Baisse acceptée sur une course échue : l'échu suit
+    const pct = await centrale("Centrale Baisse Échue", { platform_fee_percent: 10, platform_fee_fixed_cents: 0 });
+    const rideId = await insertRideBypass(pct, { completed_at: daysAgo(75), price_cents: 5000 });
+    expect((await account(pct)).due_cents).toBe(500);
+    await setPrice(pct, rideId, 0);
+    const [entry] = await sql(`select id from public.platform_fee_entries where ride_id = $1 and status = 'pending'`, [rideId]);
+    expect((await svc("svc_platform_review_entry", [entry.id, sa, true, "Course offerte au client"])).code).toBe("APPROVED");
+    expect(await account(pct)).toMatchObject({ balance_cents: 0, due_cents: 0, overdue_since: null });
+
+    // Avoir partiel : il solde d'abord la plus ancienne échéance
+    const part = await centrale("Centrale Avoir Partiel");
+    await insertRideBypass(part, { completed_at: daysAgo(75) });
+    await insertRideBypass(part, { completed_at: new Date() });
+    await svc("svc_platform_adjust", [part.id, sa, -300, "Geste commercial"]);
+    expect(await account(part)).toMatchObject({ balance_cents: 700, due_cents: 200, next_due_cents: 700 });
+  });
+
+  it("blocage : une déclaration « J'ai payé » ne le suspend ni après un refus récent ni au-delà de 7 jours", async () => {
+    const org = await centrale("Centrale Déclarations En Boucle");
+    const sa = await superAdmin();
+    await insertRideBypass(org, { completed_at: daysAgo(75) });
+    await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1]);
+    expect((await account(org))).toMatchObject({ blocked: true, block_suspended: false });
+
+    const first = await rpc(org.ownerId, "declare_platform_payment", [org.id, 500, "transfer", null, null, null]);
+    expect((await account(org))).toMatchObject({ blocked: false, block_suspended: true });
+    expect((await svc("svc_platform_reject_payment", [first.id, sa, "Aucun virement reçu"])).code).toBe("REJECTED");
+    // Nouvelle déclaration juste après un refus : le blocage reste
+    await sql(`update public.platform_payments set declared_at = now() - interval '1 minute' where organization_id = $1`, [org.id]);
+    const again = await rpc(org.ownerId, "declare_platform_payment", [org.id, 500, "transfer", null, null, null]);
+    expect(again.code).toBe("DECLARED");
+    expect((await account(org))).toMatchObject({ blocked: true, block_suspended: false });
+    await expectPgError(createRideAsOwner(org, { price_cents: 5900, commission_cents: 1400, payment_method: "cash" }));
+    // Rydar confirme la réception : plus rien d'échu
+    expect((await svc("svc_platform_confirm_payment", [again.id, sa, null, null])).code).toBe("CONFIRMED");
+    expect((await account(org))).toMatchObject({ blocked: false, due_cents: 0 });
+
+    // Déclaration jamais traitée : elle ne suspend le blocage que 7 jours
+    const stale = await centrale("Centrale Déclaration Ancienne");
+    await insertRideBypass(stale, { completed_at: daysAgo(75) });
+    await svc("svc_platform_terms", [stale.id, sa, "monthly", 5, 1]);
+    await rpc(stale.ownerId, "declare_platform_payment", [stale.id, 500, "transfer", null, null, null]);
+    expect((await account(stale)).blocked).toBe(false);
+    await sql(`update public.platform_payments set declared_at = now() - interval '8 days' where organization_id = $1`, [stale.id]);
+    expect((await account(stale))).toMatchObject({ blocked: true, declared_count: 1 });
+  });
+
+  it("centrale archivée qui doit encore des frais : toujours suivie par le super admin", async () => {
+    const org = await centrale("Centrale Archivée Débitrice");
+    const sa = await superAdmin();
+    await insertRideBypass(org, { completed_at: new Date() });
+    await sql(`update public.organizations set status = 'archived' where id = $1`, [org.id]);
+    const ov = await rpc(sa, "admin_platform_overview");
+    expect(ov.organizations.find((o: any) => o.id === org.id)).toMatchObject({ balance_cents: 500, status: "archived" });
+    // Soldée : elle sort de la liste
+    await svc("svc_platform_record_payment", [org.id, sa, 500, "transfer", null, null, null]);
+    const after = await rpc(sa, "admin_platform_overview");
+    expect(after.organizations.find((o: any) => o.id === org.id)).toBeUndefined();
+  });
+
+  it("paiement rouvert par Rydar : la centrale ne peut plus retirer sa déclaration", async () => {
+    const org = await centrale("Centrale Paiement Rouvert");
+    const sa = await superAdmin();
+    await insertRideBypass(org, { completed_at: new Date() });
+    const dec = await rpc(org.ownerId, "declare_platform_payment", [org.id, 500, "transfer", null, null, null]);
+    await svc("svc_platform_confirm_payment", [dec.id, sa, null, null]);
+    expect((await svc("svc_platform_reopen_payment", [dec.id, sa, "Montant à vérifier"])).code).toBe("REOPENED");
+    expect((await rpc(org.ownerId, "cancel_platform_payment", [dec.id])).code).toBe("NOT_CANCELLABLE");
+    const [p] = await sql(`select status from public.platform_payments where id = $1`, [dec.id]);
+    expect(p.status).toBe("declared");
+  });
+
+  it("relevé : un mois hors limites donne le mois courant au lieu d'une erreur", async () => {
+    const org = await centrale("Centrale Relevé Hors Limites");
+    const month = (await sql(`select to_char(now() at time zone 'Europe/Paris', 'YYYY-MM') as m`))[0].m;
+    expect((await rpc(org.ownerId, "org_platform_statement", [org.id, "0000-01"])).month).toBe(month);
+  });
+
+  it("rattrapage des courses déjà terminées : montant dû, mais aucune échéance rétroactive", async () => {
+    const org = await centrale("Centrale Rattrapage");
+    await sql(`alter table public.rides disable trigger rides_e_platform_fee`);
+    let rideId: string;
+    try {
+      rideId = await insertRideBypass(org, { completed_at: daysAgo(120) });
+    } finally {
+      await sql(`alter table public.rides enable trigger rides_e_platform_fee`);
+    }
+    expect(await entriesOf(rideId)).toHaveLength(0);
+    const [{ n }] = await sql(`select private.platform_backfill() as n`);
+    expect(n).toBeGreaterThanOrEqual(1);
+    const [e] = await sql(`select occurred_at, due_at from public.platform_fee_entries where ride_id = $1 and kind = 'ride'`, [rideId]);
+    expect(new Date(e.occurred_at).getTime()).toBeLessThan(daysAgo(119).getTime());
+    expect(new Date(e.due_at).getTime()).toBeGreaterThan(Date.now());
+    expect(await account(org)).toMatchObject({ balance_cents: 500, due_cents: 0, overdue_since: null });
+    // Idempotent
+    expect((await sql(`select private.platform_backfill() as n`))[0].n).toBe(0);
+    // Fonction interne : jamais exposée
+    const denied = await expectPgError(as({ role: "service_role" }, (q) => q(`select private.platform_backfill()`)));
+    expect(denied.code).toBe("42501");
   });
 });

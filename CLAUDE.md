@@ -134,6 +134,35 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
     droite = retour) + `gestureEnabled: false` sur l'écran course ; PanResponder qui ne cède pas le geste
   - À FAIRE (demandé « par la suite ») : code e-mail à l'inscription par lien (OTP GoTrue : createUser email_confirm:false +
     resend signup, verifyOtp type email ; `drivers.email_verified_at` + trigger sur auth.users ; modèle « Confirm signup » avec {{ .Token }})
+- [x] M14 FRAIS PLATEFORME (reversement centrale → Rydar, mig 003000 + 003100 corrections de la revue, 19 tests
+  `tests/db/platform-fees.test.ts`) — règles d'argent :
+  - frais DUS PAR LA CENTRALE dès la fin de course (trigger `rides_e_platform_fee` → `private.sync_platform_fee`), même si la centrale
+    annule / conteste le règlement chauffeur ; registre IMMUABLE `platform_fee_entries` (ride | correction | adjustment, trigger
+    `platform_entry_guard`) : changement de frais = écriture de correction (delta) ; BAISSE = `pending` (compte seulement si le super admin
+    l'accepte, `svc_platform_review_entry`) ; rattrapage des courses déjà terminées dans la migration
+  - `platform_payments` : centrale (owner/admin, même suspendue) `declare_platform_payment` / `cancel_platform_payment` ; super admin (service role,
+    `svc_platform_*`, p_actor super admin vérifié, audit_logs écrit en SQL) confirme (montant REÇU, partiel possible), refuse (motif), rouvre,
+    saisit un paiement, avoir / frais ajoutés (`svc_platform_adjust`), relance (`svc_platform_remind`, 1/h), conditions (`svc_platform_terms`),
+    coordonnées (`platform_billing`, `svc_platform_billing_update`)
+  - solde = Σ posted − Σ reçus ; échéance = fin du cycle (mois / semaine, fuseau org) + `platform_payment_days` (défaut 5) − 1 s ; paiements
+    soldent les échéances les plus anciennes (FIFO) ; `private.platform_account(org)` (échu, retard, déclaré, encaissé non reversé,
+    chez les chauffeurs, annulé, signaux 0 € / annulées) ; levier `platform_block_after_days` → `PLATFORM_FEES_OVERDUE` (402) à la création de
+    course, suspendu par un paiement déclaré en attente
+  - lecture : `org_platform_status` (bandeau), `org_platform_account`, `org_platform_statement` (relevé) ; super admin `admin_platform_overview`,
+    `admin_platform_account` ; `admin_centrale_overview` borné au mois choisi + dette envers Rydar ; temps réel `platform.updated` (org:{id})
+  - 003100 : `private.platform_position` (paiements ET écritures négatives soldent les échéances les plus anciennes), une nouvelle
+    correction de prix REMPLACE la baisse en attente (`superseded`), déclaration « J'ai payé » ne suspend le blocage que 7 j (et pas
+    dans les 7 j après un refus), rattrapage sans échéance rétroactive (+ réparation), centrale archivée débitrice toujours listée
+  - temps réel `platform.updated` : action + identifiants SEULEMENT (canal org:{id} lisible par les dispatchers) → les écrans relisent
+    le détail par `org_platform_account` (owner/admin) ou la RLS super admin ; une migration publiée ne se modifie plus (corrections
+    dans une nouvelle migration : le VPS a pu l'appliquer)
+  - shared `platform-fees.ts` (types, libellés, schémas, `platformEntryStatusMeta`) ; web : Encaissements (carte Rydar, J'ai payé,
+    relevé + CSV), bandeau (`components/platform-fees/org-*`), /suspended, alertes ; `/admin/frais` (+ `/admin/frais/[id]`, CSV,
+    `components/platform-fees/admin-*`), colonne « Dû à Rydar » dans /admin/centrales ; seed : paiements démo Centrale Express
+  - exports CSV : UTF-8 BOM, « ; », cellules commençant par = + - @ préfixées d'une apostrophe (injection de formules)
+- [x] Super admin : effectifs partout (/admin) + carte en direct des chauffeurs en ligne par organisation (`/admin/carte`, `/api/admin/live`)
+- [x] App chauffeur : guidage dans l'app (voir Retours terrain) ; véhicule accroché au tracé (`snapToTrack`) ; sens du véhicule sur le point
+  (faisceau hors guidage, flèche en guidage, boussole à l'arrêt `watchHeadingAsync`)
 - **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;
   aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
   lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;
@@ -156,4 +185,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
   ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application, admin_centrale_overview ;
   service role : svc_join_info, svc_identity_check, svc_driver_apply, svc_platform_ban/unban/dismiss_report.
+- Frais plateforme : centrale org_platform_status, org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
+  super admin admin_platform_overview, admin_platform_account ; service role svc_platform_confirm/reject/reopen/record_payment,
+  svc_platform_adjust, svc_platform_review_entry, svc_platform_remind, svc_platform_terms, svc_platform_billing_update.
 - Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.

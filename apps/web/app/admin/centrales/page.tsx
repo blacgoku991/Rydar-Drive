@@ -1,5 +1,5 @@
 import { formatCompactPrice, formatNumber, formatPrice, zonedTimeToUtc, type AdminCentraleOverview } from "@rydar/shared";
-import { AlertTriangle, Banknote, Flag, Network, Route, ShieldBan } from "lucide-react";
+import { AlertTriangle, Banknote, CircleDollarSign, Flag, Network, Route, ShieldBan } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { formatPlatformFee } from "@/components/admin/fees";
@@ -50,11 +50,13 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
   ]);
   const overview = (overviewData ?? null) as AdminCentraleOverview | null;
   const rows = overview?.organizations ?? [];
-  const totals = overview?.totals ?? { centrales: 0, rides: 0, volume_cents: 0, platform_fee_cents: 0 };
+  const totals = overview?.totals ?? { centrales: 0, rides: 0, volume_cents: 0, platform_fee_cents: 0, platform_due_cents: 0, platform_balance_cents: 0 };
   const commissionTotal = rows.reduce((s, r) => s + Number(r.commission_cents ?? 0), 0);
   const outstandingTotal = rows.reduce((s, r) => s + Number(r.outstanding_cents ?? 0), 0);
   const overdueTotal = rows.reduce((s, r) => s + Number(r.overdue_cents ?? 0), 0);
   const pendingTotal = rows.reduce((s, r) => s + Number(r.applications_pending ?? 0), 0);
+  const platformDeclaredTotal = rows.reduce((s, r) => s + Number(r.platform_declared_cents ?? 0), 0);
+  const platformLateCount = rows.filter((r) => r.platform_overdue_since && Number(r.platform_due_cents ?? 0) > 0).length;
   const reports = ((reportRows ?? []) as unknown as Record<string, unknown>[]).map(
     (r) =>
       ({
@@ -95,12 +97,30 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
         {error && (
           <p className="rounded-xl border border-red/25 bg-red/[0.07] px-4 py-3 text-[13px] text-red">Vue d&apos;ensemble indisponible : {error.message}</p>
         )}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
           <StatCard label="Centrales" value={formatNumber(totals.centrales)} sub={`${pendingTotal} candidature${pendingTotal > 1 ? "s" : ""} en attente`} icon={<Network />} />
           <StatCard label={isCurrent ? "Courses du mois" : "Courses"} value={formatNumber(totals.rides)} sub={monthLabel(month)} icon={<Route />} />
           <StatCard label="Volume" value={formatCompactPrice(totals.volume_cents)} sub={`${formatCompactPrice(commissionTotal)} de commissions`} icon={<Banknote />} />
           <StatCard label="Frais plateforme" value={formatPrice(totals.platform_fee_cents)} sub={`total ${monthLabel(month)}`} tone="brand" />
-          <StatCard label="Encours chauffeurs" value={formatCompactPrice(outstandingTotal)} sub={overdueTotal ? `${formatCompactPrice(overdueTotal)} en retard` : "aucun retard"} tone={overdueTotal ? "amber" : undefined} icon={<AlertTriangle />} />
+          <StatCard label="Dû par les chauffeurs" value={formatCompactPrice(outstandingTotal)} sub={overdueTotal ? `${formatCompactPrice(overdueTotal)} en retard` : "aucun retard"} tone={overdueTotal ? "amber" : undefined} icon={<AlertTriangle />} />
+          <Link href="/admin/frais" className="block h-full rounded-xl transition-opacity hover:opacity-90 [&>div]:h-full" aria-label="Dû à Rydar : ouvrir les frais plateforme">
+            <StatCard
+              label="Dû à Rydar"
+              value={formatPrice(totals.platform_due_cents)}
+              sub={
+                // Le solde reste visible même quand rien n'est échu (« 0 € » seul laisserait croire que rien n'est dû)
+                [
+                  platformLateCount ? `${platformLateCount} en retard` : "échu",
+                  `solde ${formatPrice(totals.platform_balance_cents)}`,
+                  platformDeclaredTotal ? `${formatPrice(platformDeclaredTotal)} à confirmer` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              }
+              tone={platformLateCount ? "red" : totals.platform_due_cents ? "amber" : undefined}
+              icon={<CircleDollarSign />}
+            />
+          </Link>
           <StatCard
             label="Signalements"
             value={formatNumber(overview?.reports_open ?? 0)}
@@ -114,7 +134,7 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
           <CardHeader
             title="Centrales"
             icon={<Network />}
-            description={`Activité ${isCurrent ? "du mois en cours" : `de ${monthLabel(month)}`} (courses terminées) ; encours et retards à date.`}
+            description={`Activité ${isCurrent ? "du mois en cours" : `de ${monthLabel(month)}`} (courses terminées) ; montants dus à date.`}
           />
           {!rows.length ? (
             <EmptyState
@@ -130,14 +150,12 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
                   <TH>Centrale</TH>
                   <TH>Frais plateforme</TH>
                   <TH className="text-right">Chauffeurs</TH>
-                  <TH className="text-right">Candidatures</TH>
-                  <TH className="text-right">Bannis</TH>
                   <TH className="text-right">Courses</TH>
                   <TH className="text-right">Volume</TH>
                   <TH className="text-right">Commissions</TH>
                   <TH className="text-right">Frais du mois</TH>
-                  <TH className="text-right">Encours</TH>
-                  <TH className="text-right">Retards</TH>
+                  <TH className="text-right">Dû par les chauffeurs</TH>
+                  <TH className="text-right">Dû à Rydar</TH>
                 </tr>
               </THead>
               <tbody>
@@ -153,15 +171,54 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
                       </p>
                     </TD>
                     <TD className="num whitespace-nowrap text-[12.5px] text-fg-muted">{formatPlatformFee(o.platform_fee_percent, o.platform_fee_fixed_cents)}</TD>
-                    <TD className="num text-right">{formatNumber(o.drivers_active)}</TD>
-                    <TD className={cn("num text-right", o.applications_pending ? "font-semibold text-amber" : "text-fg-subtle")}>{formatNumber(o.applications_pending)}</TD>
-                    <TD className={cn("num text-right", o.drivers_banned ? "text-red" : "text-fg-subtle")}>{formatNumber(o.drivers_banned)}</TD>
+                    <TD className="whitespace-nowrap text-right">
+                      <span className="num block">{formatNumber(o.drivers_active)}</span>
+                      {(o.applications_pending > 0 || o.drivers_banned > 0) && (
+                        <span className="block text-[11.5px]">
+                          {o.applications_pending > 0 && (
+                            <span className="font-medium text-amber">
+                              {o.applications_pending} candidature{o.applications_pending > 1 ? "s" : ""}
+                            </span>
+                          )}
+                          {o.applications_pending > 0 && o.drivers_banned > 0 && <span className="text-fg-subtle"> · </span>}
+                          {o.drivers_banned > 0 && (
+                            <span className="text-red">
+                              {o.drivers_banned} banni{o.drivers_banned > 1 ? "s" : ""}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </TD>
                     <TD className="num text-right">{formatNumber(o.rides)}</TD>
                     <TD className="num whitespace-nowrap text-right">{formatPrice(o.volume_cents)}</TD>
                     <TD className="num whitespace-nowrap text-right text-fg-muted">{formatPrice(o.commission_cents)}</TD>
                     <TD className="num whitespace-nowrap text-right font-semibold text-brand">{formatPrice(o.platform_fee_cents)}</TD>
-                    <TD className="num whitespace-nowrap text-right">{formatPrice(o.outstanding_cents)}</TD>
-                    <TD className={cn("num whitespace-nowrap text-right", o.overdue_cents ? "font-semibold text-red" : "text-fg-subtle")}>{formatPrice(o.overdue_cents)}</TD>
+                    <TD className="whitespace-nowrap text-right">
+                      <span className="num block">{formatPrice(o.outstanding_cents)}</span>
+                      <span className={cn("num block text-[11.5px]", o.overdue_cents ? "font-medium text-red" : "text-fg-subtle")}>
+                        {o.overdue_cents ? `${formatPrice(o.overdue_cents)} en retard` : "aucun retard"}
+                      </span>
+                    </TD>
+                    <TD className="whitespace-nowrap text-right">
+                      <Link
+                        href={`/admin/frais/${o.id}`}
+                        className="relative z-10 -mx-1.5 inline-block rounded-md px-1.5 py-0.5 text-right hover:bg-white/[0.05]"
+                        title="Frais plateforme de cette centrale"
+                      >
+                        <span
+                          className={cn(
+                            "num block",
+                            Number(o.platform_due_cents ?? 0) > 0 ? (o.platform_overdue_since ? "font-semibold text-red" : "font-semibold text-amber") : "text-fg-subtle",
+                          )}
+                        >
+                          {formatPrice(Number(o.platform_due_cents ?? 0))}
+                        </span>
+                        <span className="num block text-[11.5px] text-fg-subtle">solde {formatPrice(Number(o.platform_balance_cents ?? 0))}</span>
+                        {Number(o.platform_declared_cents ?? 0) > 0 && (
+                          <span className="num block text-[11.5px] text-blue">{formatPrice(Number(o.platform_declared_cents))} à confirmer</span>
+                        )}
+                      </Link>
+                    </TD>
                   </TR>
                 ))}
               </tbody>
@@ -170,14 +227,20 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
                   <TD className="text-[12.5px] font-semibold text-fg-muted">Total</TD>
                   <TD />
                   <TD className="num text-right text-fg-muted">{formatNumber(rows.reduce((s, r) => s + Number(r.drivers_active ?? 0), 0))}</TD>
-                  <TD className="num text-right text-fg-muted">{formatNumber(pendingTotal)}</TD>
-                  <TD className="num text-right text-fg-muted">{formatNumber(rows.reduce((s, r) => s + Number(r.drivers_banned ?? 0), 0))}</TD>
                   <TD className="num text-right font-semibold">{formatNumber(totals.rides)}</TD>
                   <TD className="num whitespace-nowrap text-right font-semibold">{formatPrice(totals.volume_cents)}</TD>
                   <TD className="num whitespace-nowrap text-right text-fg-muted">{formatPrice(commissionTotal)}</TD>
                   <TD className="num whitespace-nowrap text-right font-semibold text-brand">{formatPrice(totals.platform_fee_cents)}</TD>
-                  <TD className="num whitespace-nowrap text-right">{formatPrice(outstandingTotal)}</TD>
-                  <TD className={cn("num whitespace-nowrap text-right", overdueTotal ? "font-semibold text-red" : "text-fg-subtle")}>{formatPrice(overdueTotal)}</TD>
+                  <TD className="whitespace-nowrap text-right">
+                    <span className="num block">{formatPrice(outstandingTotal)}</span>
+                    <span className={cn("num block text-[11.5px]", overdueTotal ? "font-medium text-red" : "text-fg-subtle")}>
+                      {overdueTotal ? `${formatPrice(overdueTotal)} en retard` : "aucun retard"}
+                    </span>
+                  </TD>
+                  <TD className="whitespace-nowrap text-right">
+                    <span className={cn("num block", totals.platform_due_cents ? (platformLateCount ? "font-semibold text-red" : "font-semibold text-amber") : "text-fg-subtle")}>{formatPrice(totals.platform_due_cents)}</span>
+                    <span className="num block text-[11.5px] text-fg-subtle">solde {formatPrice(totals.platform_balance_cents)}</span>
+                  </TD>
                 </tr>
               </tfoot>
             </Table>

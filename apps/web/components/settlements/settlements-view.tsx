@@ -37,6 +37,8 @@ type Props = {
   canManage: boolean;
   /** Horloge du rendu serveur (libellés relatifs identiques à l'hydratation) */
   serverNow: number;
+  /** Frais plateforme du mois selon le registre Rydar (carte « Frais plateforme », owner / admin) : même chiffre que la carte */
+  platformMonthCents?: number | null;
 };
 
 const TABS: { key: OrgSettlementFilter; label: string }[] = [
@@ -87,7 +89,7 @@ function href(filter: OrgSettlementFilter, driver: string | null, n?: number) {
 const driverName = (d: { first_name: string; last_name: string }) => `${d.first_name} ${d.last_name}`;
 
 // ---------------------------------------------------------------------------- vue
-export function SettlementsView({ overview, openItems, items, filter, driverId, limit, orgName, timeZone, canManage, serverNow }: Props) {
+export function SettlementsView({ overview, openItems, items, filter, driverId, limit, orgName, timeZone, canManage, serverNow, platformMonthCents }: Props) {
   const router = useRouter();
   const now = useNow(30_000) ?? serverNow;
   const t = overview.totals;
@@ -200,7 +202,15 @@ export function SettlementsView({ overview, openItems, items, filter, driverId, 
           icon={<Check />}
         />
         <Kpi label="Commission du mois" value={formatPrice(m.commission_cents, currency)} tone="brand" sub={`${formatNumber(m.rides)} course${m.rides > 1 ? "s" : ""} terminée${m.rides > 1 ? "s" : ""}`} />
-        {m.platform_fee_cents > 0 && <Kpi label="Frais plateforme du mois" value={formatPrice(m.platform_fee_cents, currency)} sub="fixés par Rydar" />}
+        {(platformMonthCents ?? m.platform_fee_cents) > 0 && (
+          // Registre Rydar (avoirs, baisses validées) quand la carte est affichée, sinon frais calculés sur les courses
+          <Kpi
+            label="Frais plateforme du mois"
+            value={formatPrice(platformMonthCents ?? m.platform_fee_cents, currency)}
+            sub={platformMonthCents != null ? "comptés par Rydar · voir votre compte" : "fixés par Rydar"}
+            href={platformMonthCents != null ? "#frais-plateforme" : undefined}
+          />
+        )}
         <Kpi label="Volume du mois" value={formatPrice(m.volume_cents, currency)} sub={`dont ${formatPrice(m.driver_payout_cents, currency)} pour les chauffeurs`} />
       </section>
 

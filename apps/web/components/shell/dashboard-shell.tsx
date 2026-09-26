@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
 import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-provider";
+import { OrgPlatformBanner } from "@/components/platform-fees/org-platform-banner";
 import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, type CentraleCounts } from "@/components/settlements/counts";
@@ -163,7 +164,11 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
         }
         signOut={() => start(() => signOut())}
       />
-      <div className="lg:pl-[232px]">{children}</div>
+      <div className="lg:pl-[232px]">
+        {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}
+        <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isCentrale && (org.role === "owner" || org.role === "admin")} />
+        {children}
+      </div>
     </AlertsProvider>
   );
 }

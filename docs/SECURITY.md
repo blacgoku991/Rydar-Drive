@@ -67,3 +67,20 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 ## Limites des offres
 
 Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domaine personnalisé sont vérifiés **par des triggers en base** (`PLAN_LIMIT_*`, `PLAN_FEATURE_*`). Contourner l'interface ne permet pas de les dépasser.
+
+## Frais plateforme (centrales → Rydar)
+
+- Les frais d'une course terminée sont **dus par la centrale** dès la fin de course (`platform_fee_entries`, trigger
+  `rides_e_platform_fee`) : annuler ou contester le règlement du chauffeur n'y change rien.
+- **Registre immuable** : aucune écriture ne se modifie ni ne se supprime (trigger `platform_entry_guard`, même en service
+  role) ; tout changement de frais est une nouvelle écriture de correction. Une **baisse** (prix corrigé après la course)
+  reste « en attente » et ne compte qu'après l'accord du super admin.
+- **Seul le super admin** confirme un paiement (montant réellement reçu), le refuse, le rouvre, saisit un paiement, accorde
+  un avoir ou change les conditions : fonctions `svc_platform_*` réservées au service role, auteur super admin vérifié en
+  base, chaque action inscrite dans `audit_logs`. La centrale (owner / admin) peut seulement déclarer « J'ai payé » et
+  retirer sa déclaration tant que Rydar ne l'a pas traitée.
+- Colonnes `organizations.platform_*` et table `platform_billing` : jamais modifiables par un rattacheur (absentes des
+  droits UPDATE, RLS en lecture seule).
+- **Temps réel** : l'événement `platform.updated` ne contient que l'action et des identifiants (le canal `org:{id}` est
+  lisible par les dispatchers) ; le détail est relu par des fonctions qui contrôlent le rôle.
+- Exports CSV (centrale, super admin) : cellules commençant par `=`, `+`, `-` ou `@` neutralisées (injection de formules).

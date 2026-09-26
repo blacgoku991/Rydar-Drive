@@ -1,6 +1,6 @@
 import {
   DISPATCH_MODEL_META, ORG_STATUS_META, PRESENCE_META, formatCompactPrice, formatNumber, formatRelative,
-  type DispatchModel, type DriverPresence, type OrgStatus,
+  type AdminPlatformAccount, type DispatchModel, type DriverPresence, type OrgStatus,
 } from "@rydar/shared";
 import { ArrowLeft, ExternalLink, Layers } from "lucide-react";
 import type { Metadata } from "next";
@@ -9,6 +9,7 @@ import { notFound } from "next/navigation";
 import { OrganizationPlanForm, OrganizationStatusActions } from "@/components/admin/admin-widgets";
 import { DispatchModelForm } from "@/components/admin/dispatch-model";
 import { OrganizationAccessCard, type AccessMember } from "@/components/admin/organization-access";
+import { OrgPlatformFeesCard } from "@/components/platform-fees/admin-org-fees-card";
 import { PageBody, StatCard } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -26,7 +27,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   const { data: org } = await db.from("organizations").select("*").eq("id", id).maybeSingle();
   if (!org) notFound();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const [kpis, plans, subscription, drivers, errors, notifications, members, keys, applications, banned] = await Promise.all([
+  const [kpis, plans, subscription, drivers, errors, notifications, members, keys, applications, banned, platform] = await Promise.all([
     db.rpc("org_kpis", { p_org: id }),
     db.from("plans").select("id, name, limits").order("sort_order"),
     db.from("subscriptions").select("*").eq("organization_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
@@ -37,6 +38,8 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     db.from("api_keys").select("id", { count: "exact", head: true }).eq("organization_id", id).is("revoked_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("application_status", "pending"),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).not("banned_at", "is", null),
+    // Frais plateforme dus à Rydar (centrale, ou ancienne centrale qui a encore des frais)
+    db.rpc("admin_platform_account", { p_org: id }),
   ]);
   const k = (kpis.data ?? {}) as any;
   const status = org.status as OrgStatus;
@@ -45,6 +48,9 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     (m) => ({ ...m, user: Array.isArray(m.user) ? (m.user[0] ?? null) : m.user }) as AccessMember,
   );
   const joinUrl = org.join_code ? `${env.appUrl}/rejoindre/${org.join_code}` : null;
+  const platformAccount = ((platform.data ?? null) as AdminPlatformAccount | null)?.account ?? null;
+  const showPlatform =
+    !!platformAccount && (model === "centrale" || platformAccount.posted_cents !== 0 || platformAccount.received_cents !== 0 || platformAccount.declared_count > 0);
 
   return (
     <>
@@ -112,7 +118,10 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
               )}
             </CardBody>
           </Card>
-          <OrganizationAccessCard orgId={id} orgName={org.name} members={accessMembers} />
+          <div className="min-w-0 space-y-6">
+            <OrganizationAccessCard orgId={id} orgName={org.name} members={accessMembers} />
+            {showPlatform && platformAccount && <OrgPlatformFeesCard orgId={id} account={platformAccount} timeZone={org.timezone ?? "Europe/Paris"} />}
+          </div>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-2">

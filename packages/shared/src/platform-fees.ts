@@ -54,6 +54,9 @@ export interface PlatformAccount {
   held_by_centrale_cents: number;
   /** Création de courses refusée (retard au-delà du seuil choisi par le super admin) */
   blocked: boolean;
+  /** Retard au-delà du seuil, mais blocage suspendu par un paiement « J'ai payé » récent (7 jours au plus,
+   *  jamais dans les 7 jours qui suivent un « Pas reçu ») */
+  block_suspended?: boolean;
   reminded_at: Iso | null;
   reminder_note: string | null;
   month: {
@@ -102,6 +105,8 @@ export interface PlatformEntry {
   created_by_name: string | null;
   reviewed_at: Iso | null;
   review_note: string | null;
+  /** Statut « rejected » sans décision de Rydar : baisse remplacée par une correction plus récente du prix */
+  superseded?: boolean;
   ride: {
     id: Uuid;
     number: number;
@@ -209,6 +214,10 @@ export interface PlatformEvent {
     | "fee" | "reduction_pending" | "reduction_approved" | "reduction_rejected" | "adjusted"
     | "declared" | "cancelled" | "confirmed" | "rejected" | "reopened" | "reminded" | "terms";
   organization_id: Uuid;
+  /** Identifiants seulement : le canal org:{id} est lisible par tous les membres (dispatchers compris) */
+  payment_id?: Uuid;
+  entry_id?: Uuid;
+  /** Détails complétés côté écran par une lecture qui contrôle le rôle (jamais transmis par le temps réel) */
   payment?: PlatformPayment;
   entry?: PlatformEntry;
   note?: string | null;
@@ -248,6 +257,12 @@ export const PLATFORM_CYCLE_META: Record<PlatformBillingCycle, { label: string; 
   monthly: { label: "Mensuel", hint: "Frais du mois à régler au début du mois suivant" },
   weekly: { label: "Hebdomadaire", hint: "Frais de la semaine à régler au début de la semaine suivante" },
 };
+
+/** Statut affiché d'une écriture : une baisse remplacée par une nouvelle correction de prix n'a pas été refusée par Rydar. */
+export function platformEntryStatusMeta(e: Pick<PlatformEntry, "status" | "superseded">): { label: string; tone: Tone } {
+  if (e.status === "rejected" && e.superseded) return { label: "Baisse remplacée", tone: "neutral" };
+  return PLATFORM_ENTRY_STATUS_META[e.status];
+}
 
 /** « Échéance : 5 octobre » / « En retard depuis 12 jours » / « Rien à régler ». */
 export function platformDueSummary(a: Pick<PlatformAccount, "balance_cents" | "due_cents" | "days_overdue" | "overdue_since" | "next_due_at">,

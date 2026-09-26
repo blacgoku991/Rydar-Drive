@@ -7,11 +7,14 @@ export function AdminShell({
   children,
   user,
   openReports = 0,
+  platformToReview = 0,
 }: {
   children: React.ReactNode;
   user: { name: string; email: string };
   /** Signalements de fraude à examiner (pastille « Centrales ») */
   openReports?: number;
+  /** Paiements de frais plateforme à confirmer + baisses de frais à valider (pastille « Frais plateforme ») */
+  platformToReview?: number;
 }) {
   const [, start] = useTransition();
   const sections: NavSection[] = [
@@ -28,6 +31,14 @@ export function AdminShell({
           badge: openReports,
           badgeTone: "red",
           badgeLabel: `${openReports} signalement${openReports > 1 ? "s" : ""} de fraude à examiner`,
+        },
+        {
+          href: "/admin/frais",
+          label: "Frais plateforme",
+          icon: "wallet",
+          badge: platformToReview,
+          badgeTone: "amber",
+          badgeLabel: `${platformToReview} élément${platformToReview > 1 ? "s" : ""} à confirmer (paiements, baisses de frais)`,
         },
         { href: "/admin/plans", label: "Offres & limites", icon: "card" },
       ],

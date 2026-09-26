@@ -14,8 +14,11 @@ const EVENTS = [
   "ride.alert", "chat.message", "chat.report", "chat.read", "driver.document",
 ] as const;
 
-/** Mode centrale (002600) : règlements, candidatures par lien (page Réseau), appareil d'un compte banni. */
-const CENTRALE_EVENTS = ["settlement.updated", "driver.application", "driver.flagged"] as const;
+/**
+ * Mode centrale (002600) : règlements, candidatures par lien (page Réseau), appareil d'un compte banni ;
+ * frais plateforme dus à Rydar (20260924003000) : paiement confirmé / refusé, relance, avoir…
+ */
+const CENTRALE_EVENTS = ["settlement.updated", "driver.application", "driver.flagged", "platform.updated"] as const;
 
 /** Canal privé org:{id} (Broadcast from database, autorisé par la RLS sur realtime.messages). */
 export function RealtimeProvider({ topic, children }: { topic: string; children: React.ReactNode }) {
