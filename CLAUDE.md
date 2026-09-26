@@ -124,6 +124,14 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
     liés à `userId` (pas à l'objet session) ; session chiffrée en cache mémoire
   - mot de passe oublié chauffeur : API `/api/auth/driver-password-reset` (réponse neutre, `after()`, flux implicite) → code
     à 6 chiffres dans l'app (`/confirm`, verifyOtp recovery) ou lien `/auth/set-password?app=driver` (client isolé sans cookie)
+  - guidage DANS l'app (Waze / Plans restent proposés) : `POST /api/driver/route` (Bearer jeton du chauffeur, fiche drivers
+    via RLS, 30/min) → tracé + étapes FR (`computeNavRoute` osrm|mapbox|google, repli estimation = pas de guidage) ;
+    `@rydar/shared` navigation.ts (navInstruction, buildNavTrack, locateOnTrack, nextManeuver, remainingTrack, maneuverGlyph) ;
+    app `hooks/use-navigation.ts` (recalcul après 2 points à > 40 m du tracé, 10 s min, rafraîchi 3 min) +
+    `components/nav-banner.tsx` ; `RydarMap navigation` (suit le chauffeur, carte orientée cap, zoom selon la vitesse ; iOS : la
+    flèche tourne de cap − orientation carte) + `routeMuted` (trajet client en pointillé pendant l'approche)
+  - glissières (SlideToConfirm) : `fullScreenGestureEnabled: false` sur les piles (iOS 26 : sinon tout glissement vers la
+    droite = retour) + `gestureEnabled: false` sur l'écran course ; PanResponder qui ne cède pas le geste
   - À FAIRE (demandé « par la suite ») : code e-mail à l'inscription par lien (OTP GoTrue : createUser email_confirm:false +
     resend signup, verifyOtp type email ; `drivers.email_verified_at` + trigger sur auth.users ; modèle « Confirm signup » avec {{ .Token }})
 - **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;

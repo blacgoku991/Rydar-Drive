@@ -1,7 +1,7 @@
 import type {
   ChatThreadKey, DocumentType, DriverAccountState, DriverAccountStateKind, DriverBlocker, DriverChatOverview, DriverDocumentItem,
-  DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverSettlements, FleetReportType, FleetReportVoteResult, MarkChatReadResult,
-  Ride, RideStatus, RpcResult, SendChatMessageResult, SettlementMethod,
+  DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverSettlements, FleetReportType, FleetReportVoteResult, LatLng, MarkChatReadResult,
+  NavStep, Ride, RideStatus, RpcResult, SendChatMessageResult, SettlementMethod,
 } from "@rydar/shared";
 import { extractErrorCode, humanizeError } from "@rydar/shared";
 import { appConfig } from "./config";
@@ -126,6 +126,35 @@ export async function confirmPasswordReset(email: string, code: string, password
   const { error } = await supabase.auth.setSession({ access_token: json.access_token, refresh_token: json.refresh_token });
   if (error) throw new ApiError("Session invalide.", "SESSION");
   return { state: json.state ?? null };
+}
+
+/** Itinéraire guidé (POST /api/driver/route) : tracé encodé + étapes en français. */
+export type DriverRoute = { distanceM: number; durationS: number; polyline: string; approximate: boolean; steps: NavStep[] };
+
+/**
+ * Itinéraire routier du chauffeur jusqu'à sa cible (prise en charge ou destination), calculé par le serveur.
+ * null : serveur non configuré, réseau, session absente ou réponse inattendue (l'app garde le tracé de la course).
+ */
+export async function fetchDriverRoute(from: LatLng, to: LatLng, signal?: AbortSignal): Promise<DriverRoute | null> {
+  if (!appConfig.apiUrl) return null;
+  const token = (await supabase.auth.getSession()).data.session?.access_token;
+  if (!token) return null;
+  const res = await fetch(`${appConfig.apiUrl}/api/driver/route`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ from: { lat: from.lat, lng: from.lng }, to: { lat: to.lat, lng: to.lng } }),
+    signal,
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const json = (await res.json().catch(() => null)) as Partial<DriverRoute> | null;
+  if (!json || typeof json.polyline !== "string" || typeof json.distanceM !== "number" || typeof json.durationS !== "number") return null;
+  return {
+    distanceM: json.distanceM,
+    durationS: json.durationS,
+    polyline: json.polyline,
+    approximate: !!json.approximate,
+    steps: Array.isArray(json.steps) ? json.steps : [],
+  };
 }
 
 export const api = {

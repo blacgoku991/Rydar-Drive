@@ -11,9 +11,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CollectNote, deductionCents, dueText, frTypo } from "@/components/centrale";
 import { FlightCard, PickupShiftBanner } from "@/components/flight";
 import { RydarMap } from "@/components/map/rydar-map";
+import { NavBanner } from "@/components/nav-banner";
 import { BigButton, BottomSheet, Chip, Pill, Screen, Sheet, SlideToConfirm, StepDots } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
+import { useNavigation } from "@/hooks/use-navigation";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { setHighAccuracy } from "@/lib/location";
@@ -33,6 +35,12 @@ const STEPS: { status: RideStatus; label: string }[] = [
 const POLL_MS = 30_000;
 /** Cadrage de la carte (constante : la carte mémorisée n'est pas redessinée à chaque rendu de l'écran). */
 const MAP_PADDING = { top: 100, bottom: 80, left: 50, right: 50 };
+/** Boutons Waze / Plans : hauteur au-dessus du bas de la carte ; « Recentrer » se place au-dessus d'eux. */
+const NAV_APPS_BOTTOM = 38;
+const RECENTER_BOTTOM = NAV_APPS_BOTTOM + control.sm + space.sm;
+const TO_PICKUP: RideStatus[] = ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED"];
+/** Course acceptée : guidage vers la prise en charge à partir de 90 min avant l'heure (avant : aperçu du trajet). */
+const GUIDE_BEFORE_MS = 90 * 60_000;
 
 const NBSP = " ";
 const passengersText = (n: number) => `${n}${NBSP}passager${n > 1 ? "s" : ""}`;
@@ -90,7 +98,7 @@ export default function RideScreen() {
     return () => void setHighAccuracy(false).catch(() => null);
   }, []);
 
-  const route = useMemo(() => (ride?.route_polyline ? decodePolyline(ride.route_polyline) : null), [ride?.route_polyline]);
+  const rideRoute = useMemo(() => (ride?.route_polyline ? decodePolyline(ride.route_polyline) : null), [ride?.route_polyline]);
   // Points de la carte : mêmes objets tant que les coordonnées ne changent pas (pas de recadrage ni de rendu natif inutile)
   const pickupLat = ride?.pickup_lat;
   const pickupLng = ride?.pickup_lng;
@@ -98,6 +106,19 @@ export default function RideScreen() {
   const dropoffLng = ride?.dropoff_lng;
   const pickup = useMemo(() => (pickupLat != null && pickupLng != null ? { lat: pickupLat, lng: pickupLng } : null), [pickupLat, pickupLng]);
   const dropoff = useMemo(() => (dropoffLat != null && dropoffLng != null ? { lat: dropoffLat, lng: dropoffLng } : null), [dropoffLat, dropoffLng]);
+
+  // Guidage sur notre carte : vers la prise en charge, puis vers la destination (Waze / Plans restent proposés)
+  const rideStatus = ride?.status as RideStatus | undefined;
+  const headingToPickup = rideStatus == null || TO_PICKUP.includes(rideStatus);
+  const navTarget = headingToPickup || !dropoff ? pickup : dropoff;
+  // Course planifiée acceptée longtemps à l'avance : aperçu du trajet, le guidage démarre à l'approche de l'heure
+  const pickupSoon = rideStatus !== "ACCEPTED" || (ride != null && new Date(ride.pickup_at).getTime() - Date.now() < GUIDE_BEFORE_MS);
+  const navOn = rideStatus != null && DRIVER_FLOW[rideStatus] != null && rideStatus !== "DRIVER_ARRIVED" && navTarget != null && pickupSoon;
+  const nav = useNavigation(me, navTarget, navOn);
+  // Trait principal : trajet guidé restant (sinon trajet de la course une fois le client à bord) ; en pointillé,
+  // pendant l'approche, le trajet du client
+  const mapRoute = navOn ? (nav.route ?? (headingToPickup ? null : rideRoute)) : rideRoute;
+  const mutedRoute = navOn && headingToPickup ? rideRoute : null;
 
   if (!ride) {
     return (
@@ -113,12 +134,16 @@ export default function RideScreen() {
   // Mode centrale : répartition calculée sur la course (part chauffeur / commission / frais plateforme)
   const centrale = (home?.model ?? home?.organization.dispatch_model) === "centrale" && ride.driver_payout_cents != null;
   const stepIndex = Math.max(0, STEPS.findIndex((s) => s.status === status));
-  const toPickup = ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED"].includes(status);
+  const toPickup = headingToPickup;
   const target = toPickup || ride.dropoff_lat == null
     ? { lat: ride.pickup_lat, lng: ride.pickup_lng, label: ride.pickup_address }
     : { lat: ride.dropoff_lat!, lng: ride.dropoff_lng!, label: ride.dropoff_address };
   const distToTarget = me ? haversine(me, target) : null;
-  const etaToTarget = toPickup ? approachSeconds(distToTarget) : distToTarget != null && ride.estimated_distance_m ? Math.round(((distToTarget * 1.3) / Math.max(1, ride.estimated_distance_m)) * (ride.estimated_duration_s ?? 0)) : null;
+  const estimatedEta = toPickup ? approachSeconds(distToTarget) : distToTarget != null && ride.estimated_distance_m ? Math.round(((distToTarget * 1.3) / Math.max(1, ride.estimated_distance_m)) * (ride.estimated_duration_s ?? 0)) : null;
+  // Itinéraire guidé disponible : distance et durée par la route ; sinon estimation
+  const etaToTarget = nav.remainingS ?? estimatedEta;
+  const distLeft = nav.remainingM ?? distToTarget;
+  const guiding = navOn && (nav.next != null || nav.rerouting);
   const navApp = Platform.OS === "ios" ? "Plans" : "Maps";
 
   async function advance() {
@@ -142,8 +167,17 @@ export default function RideScreen() {
 
   return (
     <Screen>
-      <View style={styles.mapBox}>
-        <RydarMap me={me} pickup={pickup} dropoff={dropoff} route={route} padding={MAP_PADDING} />
+      <View style={[styles.mapBox, navOn && styles.mapBoxNav]}>
+        <RydarMap
+          me={me}
+          pickup={pickup}
+          dropoff={dropoff}
+          route={mapRoute}
+          routeMuted={mutedRoute}
+          navigation={navOn}
+          padding={MAP_PADDING}
+          controlsBottom={RECENTER_BOTTOM}
+        />
         <SafeAreaView edges={["top"]} style={styles.mapTop} pointerEvents="box-none">
           <Pressable
             onPress={() => (router.canGoBack() ? router.back() : router.replace("/home"))}
@@ -154,12 +188,18 @@ export default function RideScreen() {
           >
             <Ionicons name="chevron-back" size={22} color={colors.fg} />
           </Pressable>
-          <View style={styles.statusBox} accessible accessibilityLabel={`Course ${ride.number}, ${RIDE_STATUS_META[status].label}`}>
-            <Text style={styles.statusNumber}>Course {ride.number}</Text>
-            <View>
-              <Pill label={RIDE_STATUS_META[status].label} color={STEP_COLOR[status] ?? colors.muted} />
+          {guiding ? (
+            <View style={styles.flex}>
+              <NavBanner next={nav.next} then={nav.then} rerouting={nav.rerouting} />
             </View>
-          </View>
+          ) : (
+            <View style={styles.statusBox} accessible accessibilityLabel={`Course ${ride.number}, ${RIDE_STATUS_META[status].label}`}>
+              <Text style={styles.statusNumber}>Course {ride.number}</Text>
+              <View>
+                <Pill label={RIDE_STATUS_META[status].label} color={STEP_COLOR[status] ?? colors.muted} />
+              </View>
+            </View>
+          )}
         </SafeAreaView>
         {step && (
           <View style={styles.navRow}>
@@ -196,9 +236,9 @@ export default function RideScreen() {
               <Text style={styles.target} numberOfLines={2}>{target.label}</Text>
             </View>
             {etaToTarget != null && step && (
-              <View style={styles.etaBox} accessible accessibilityLabel={`Arrivée dans ${formatDuration(etaToTarget)}, ${formatDistance(distToTarget)}`}>
+              <View style={styles.etaBox} accessible accessibilityLabel={`Arrivée dans ${formatDuration(etaToTarget)}, ${formatDistance(distLeft)}`}>
                 <Text style={styles.eta}>{formatDuration(etaToTarget)}</Text>
-                <Text style={styles.etaSub}>{formatDistance(distToTarget)}</Text>
+                <Text style={styles.etaSub}>{formatDistance(distLeft)}</Text>
               </View>
             )}
           </View>
@@ -311,8 +351,11 @@ const styles = StyleSheet.create({
   center: { alignItems: "center", justifyContent: "center", gap: space.md },
   loadingText: { color: colors.muted, fontSize: type.body },
   mapBox: { height: "50%" },
+  // Guidage : la carte prend plus de place (la route devant compte plus que les détails)
+  mapBoxNav: { height: "58%" },
+  flex: { flex: 1 },
   mapTop: {
-    position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start",
     gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.sm,
   },
   round: { ...overlay, width: control.sm, height: control.sm, borderRadius: radius.full, alignItems: "center", justifyContent: "center" },
@@ -322,7 +365,7 @@ const styles = StyleSheet.create({
     paddingLeft: space.lg, paddingRight: 6, flexShrink: 1,
   },
   statusNumber: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold, ...mono },
-  navRow: { position: "absolute", right: space.lg, bottom: 38, flexDirection: "row", gap: space.sm },
+  navRow: { position: "absolute", right: space.lg, bottom: NAV_APPS_BOTTOM, flexDirection: "row", gap: space.sm },
   navBtn: {
     ...overlay, flexDirection: "row", alignItems: "center", gap: space.sm, height: control.sm, paddingHorizontal: space.lg, borderRadius: radius.full,
   },

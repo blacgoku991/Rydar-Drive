@@ -66,8 +66,12 @@ function reportElement(r: MapReport, onPress: (id: string) => void) {
   return root;
 }
 
+/** Guidage : zoom selon la vitesse (m/s) — tuiles MapLibre de 512 px : un cran de moins que la carte native. */
+const navZoom = (speed: number | null) => ((speed ?? 0) < 8 ? 16 : (speed ?? 0) < 19 ? 15 : 14);
+
 export function RydarMap({
-  me, pickup, dropoff, route, dim, padding = { top: 80, bottom: 80, left: 50, right: 50 }, zoom = 15, reports, selectedReportId, onReportPress, focus,
+  me, pickup, dropoff, route, routeMuted, navigation = false, dim, padding = { top: 80, bottom: 80, left: 50, right: 50 }, zoom = 15, reports,
+  selectedReportId, onReportPress, focus,
 }: RydarMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
@@ -99,6 +103,11 @@ export function RydarMap({
       ro = new ResizeObserver(() => instance.resize());
       ro.observe(container.current);
       instance.on("load", () => {
+        instance.addSource("route-muted", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        instance.addLayer({
+          id: "route-muted", type: "line", source: "route-muted", layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": "rgba(158,165,177,0.45)", "line-width": 4, "line-dasharray": [0.5, 2.5] },
+        });
         instance.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         instance.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#0b0d10", "line-width": 10 } });
         instance.addLayer({ id: "route-line", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": colors.brand, "line-width": 5 } });
@@ -126,7 +135,8 @@ export function RydarMap({
         markers.current[key] = undefined;
         return;
       }
-      if (!markers.current[key]) markers.current[key] = new L.Marker({ element: make(), anchor: "center" }).setLngLat([p.lng, p.lat]).addTo(m);
+      // Position du chauffeur : flèche orientée par rapport au nord (la carte tourne pendant le guidage)
+      if (!markers.current[key]) markers.current[key] = new L.Marker({ element: make(), anchor: "center", rotationAlignment: key === "me" ? "map" : "auto" }).setLngLat([p.lng, p.lat]).addTo(m);
       else markers.current[key]!.setLngLat([p.lng, p.lat]);
     };
     place("pickup", pickup, () => dot({ width: "20px", height: "20px", borderRadius: "999px", background: colors.brand, border: "5px solid #0b0d10", boxShadow: "0 0 0 2px " + colors.brand }));
@@ -139,11 +149,22 @@ export function RydarMap({
     );
     if (me && markers.current.me) markers.current.me.setRotation(me.heading ?? 0);
 
-    (m.getSource("route") as import("maplibre-gl").GeoJSONSource | undefined)?.setData({
-      type: "FeatureCollection",
-      features: route && route.length > 1 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: route } }] : [],
+    const line = (coords: [number, number][] | null | undefined) => ({
+      type: "FeatureCollection" as const,
+      features: coords && coords.length > 1 ? [{ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: coords } }] : [],
     });
+    (m.getSource("route") as import("maplibre-gl").GeoJSONSource | undefined)?.setData(line(route));
+    (m.getSource("route-muted") as import("maplibre-gl").GeoJSONSource | undefined)?.setData(line(routeMuted));
 
+    // Guidage : la carte suit le chauffeur dans son sens de marche, lui un peu sous le centre
+    if (navigation && me && !focus) {
+      m.easeTo({
+        center: [me.lng, me.lat], bearing: me.heading ?? m.getBearing(), zoom: navZoom(me.speed ?? null),
+        offset: [0, m.getContainer().clientHeight * 0.2], duration: 800,
+      });
+      return;
+    }
+    if (m.getBearing() !== 0) m.setBearing(0);
     const pts: [number, number][] = [...(route ?? [])];
     if (pickup) pts.push([pickup.lng, pickup.lat]);
     if (dropoff) pts.push([dropoff.lng, dropoff.lat]);
@@ -154,7 +175,7 @@ export function RydarMap({
       m.fitBounds(b, { padding, maxZoom: 15.5, duration: 700 });
     } else if (me) m.easeTo({ center: [me.lng, me.lat], zoom, duration: 600 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, me?.lat, me?.lng, me?.heading, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, route, focus?.lat, focus?.lng]);
+  }, [ready, me?.lat, me?.lng, me?.heading, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, route, routeMuted, navigation, focus?.lat, focus?.lng]);
 
   // Signalements de la flotte : un marqueur par id (ajout, déplacement, retrait à l'expiration)
   useEffect(() => {

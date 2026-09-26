@@ -8,11 +8,15 @@ export type MapReport = LatLng & { id: string; type: FleetReportType };
 
 export type RydarMapProps = {
   /** Position du chauffeur (précision en mètres : cercle d'incertitude) */
-  me?: (LatLng & { heading?: number | null; accuracy?: number | null }) | null;
+  me?: (LatLng & { heading?: number | null; accuracy?: number | null; speed?: number | null }) | null;
   pickup?: LatLng | null;
   dropoff?: LatLng | null;
   /** Tracé de la course [lng, lat][] */
   route?: Coord[] | null;
+  /** Tracé secondaire, discret (ex. trajet du client pendant l'approche) */
+  routeMuted?: Coord[] | null;
+  /** Guidage : la carte suit le chauffeur, orientée dans son sens de marche, zoom selon la vitesse */
+  navigation?: boolean;
   /** Hors ligne : carte assombrie */
   dim?: boolean;
   /** Marges de cadrage (px) — laisser la place aux panneaux */

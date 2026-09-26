@@ -294,7 +294,7 @@ describe("mot de passe oublié par code (app chauffeur)", () => {
   });
 });
 
-import { navDistance, navInstruction } from "./navigation";
+import { buildNavTrack, locateOnTrack, maneuverGlyph, navDistance, navInstruction, nextManeuver, remainingTrack, type NavStep } from "./navigation";
 describe("guidage : instructions en français", () => {
   it("formule les manœuvres courantes", () => {
     expect(navInstruction({ type: "turn", modifier: "right" }, "Rue de Berri")).toBe("Tournez à droite sur Rue de Berri");
@@ -311,5 +311,70 @@ describe("guidage : instructions en français", () => {
     expect(navDistance(763)).toBe("750 m");
     expect(navDistance(47)).toBe("50 m");
     expect(navDistance(3)).toBe("10 m");
+  });
+});
+
+describe("guidage : suivi sur le tracé", () => {
+  // Tracé en L : 500 m vers l'est puis 300 m vers le nord (Paris 8e)
+  const LAT = 48.87;
+  const M_LNG = 1 / (6_371_000 * (Math.PI / 180) * Math.cos((LAT * Math.PI) / 180));
+  const M_LAT = 1 / (6_371_000 * (Math.PI / 180));
+  const at = (east: number, north: number) => ({ lng: 2.3 + east * M_LNG, lat: LAT + north * M_LAT });
+  const c = (east: number, north: number): [number, number] => {
+    const p = at(east, north);
+    return [p.lng, p.lat];
+  };
+  const coords = [c(0, 0), c(250, 0), c(500, 0), c(500, 150), c(500, 300)];
+  const step = (type: string, modifier: string | null, p: { lat: number; lng: number }, name = ""): NavStep => ({
+    type, modifier, exit: null, ...p, name, instruction: navInstruction({ type, modifier }, name),
+  });
+  const steps = [step("depart", null, at(0, 0), "Rue de Berri"), step("turn", "left", at(500, 0), "Rue du Colisée"), step("arrive", null, at(500, 300))];
+  const track = buildNavTrack(coords, steps);
+
+  it("mesure le tracé et place chaque manœuvre", () => {
+    expect(track.total).toBeCloseTo(800, 0);
+    expect(track.steps.map((s) => Math.round(s.along))).toEqual([0, 500, 800]);
+  });
+
+  it("situe le chauffeur, sa prochaine manœuvre et la distance qui l'en sépare", () => {
+    const pos = locateOnTrack(track, at(200, 10))!;
+    expect(pos.along).toBeCloseTo(200, 0);
+    expect(pos.off).toBeCloseTo(10, 0);
+    const next = nextManeuver(track, pos.along)!;
+    expect(next.step.instruction).toBe("Tournez à gauche sur Rue du Colisée");
+    expect(Math.round(next.distance)).toBe(300);
+    // Virage franchi : c'est l'arrivée qui s'annonce
+    const after = nextManeuver(track, locateOnTrack(track, at(500, 20))!.along)!;
+    expect(after.step.type).toBe("arrive");
+    expect(Math.round(after.distance)).toBe(280);
+  });
+
+  it("détecte la sortie d'itinéraire", () => {
+    expect(locateOnTrack(track, at(250, -120))!.off).toBeCloseTo(120, 0);
+  });
+
+  it("raccourcit le tracé affiché à partir de la position", () => {
+    const rest = remainingTrack(track, locateOnTrack(track, at(300, 0))!);
+    expect(rest[0]![0]).toBeCloseTo(c(300, 0)[0], 6);
+    expect(rest[rest.length - 1]).toEqual(c(500, 300));
+    expect(rest).toHaveLength(4);
+  });
+
+  it("ne saute pas sur l'autre sens d'un aller-retour dans la même rue", () => {
+    const back = buildNavTrack([c(0, 0), c(500, 0), c(0, 0)], []);
+    expect(Math.round(locateOnTrack(back, at(400, 0), 0)!.along)).toBe(400);
+    expect(Math.round(locateOnTrack(back, at(400, 0), 1)!.along)).toBe(600);
+    // Arrivée ajoutée quand le fournisseur n'en donne pas
+    expect(back.steps.at(-1)?.type).toBe("arrive");
+  });
+
+  it("choisit le pictogramme de la manœuvre", () => {
+    expect(maneuverGlyph({ type: "turn", modifier: "sharp right" })).toBe("sharp-right");
+    expect(maneuverGlyph({ type: "roundabout", exit: 3 })).toBe("roundabout");
+    expect(maneuverGlyph({ type: "fork", modifier: "slight left" })).toBe("slight-left");
+    expect(maneuverGlyph({ type: "end of road", modifier: "left" })).toBe("left");
+    expect(maneuverGlyph({ type: "new name", modifier: "straight" })).toBe("straight");
+    expect(maneuverGlyph({ type: "continue", modifier: "uturn" })).toBe("uturn");
+    expect(maneuverGlyph({ type: "arrive" })).toBe("arrive");
   });
 });
