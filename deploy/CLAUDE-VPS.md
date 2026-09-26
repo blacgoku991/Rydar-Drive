@@ -42,7 +42,17 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
 - *Authentication → Sign In / Providers* : désactiver **Allow new users to sign up**.
 - *Authentication → URL Configuration* : Site URL `https://DOMAINE` ; Redirect URLs `https://DOMAINE/auth/callback` et `https://DOMAINE/auth/set-password`.
 - *Authentication → Emails → SMTP Settings* : SMTP personnalisé avec sa boîte mail (hôte, port 465 ou 587, identifiant, mot de passe fournis par son hébergeur mail ; expéditeur `noreply@DOMAINE` ou `contact@DOMAINE`). Demande-lui l'hébergeur de sa boîte pour lui donner les bons réglages. Sans SMTP, les invitations par e-mail et « mot de passe oublié » ne partent pas.
-- *Authentication → Emails → Templates* : traduire en français « Reset password » (mot de passe oublié des chauffeurs et des centrales) et « Invite user ». Garder le lien `{{ .ConfirmationURL }}` tel quel (ne pas le remplacer par un lien `token_hash`). Exemple : sujet « Rydar Drive — nouveau mot de passe », texte « Touchez ce lien depuis votre téléphone pour choisir un nouveau mot de passe : {{ .ConfirmationURL }} — il expire dans une heure. Pas à l'origine de la demande ? Ignorez ce message. »
+- *Authentication → Emails → Templates* : traduire en français « Reset password » (mot de passe oublié des chauffeurs et des centrales) et « Invite user ». Le modèle « Reset password » doit contenir **le code `{{ .Token }}` ET le lien `{{ .ConfirmationURL }}`** : le chauffeur saisit le code dans l'application ; le lien sert aux centrales (web) et de secours au chauffeur. Garder le lien tel quel (ne pas le remplacer par un lien `token_hash`). Exemple, à coller tel quel :
+  - sujet : `Rydar Drive : votre code pour changer de mot de passe`
+  - corps (HTML) :
+    ```html
+    <p>Bonjour,</p>
+    <p>Code à saisir dans l'application Rydar Drive :</p>
+    <p style="font-size:28px;font-weight:700;letter-spacing:6px">{{ .Token }}</p>
+    <p>Vous pouvez aussi ouvrir ce lien pour choisir un nouveau mot de passe : <a href="{{ .ConfirmationURL }}">changer mon mot de passe</a>.</p>
+    <p>Le code et le lien expirent dans une heure ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
+    ```
+  - *Authentication → Sign In / Providers → Email* : laisser *Email OTP Length* à 6 chiffres (l'app accepte 6 à 10) et *Email OTP Expiration* à 3600 s.
 - *Realtime → Settings* : désactiver **Allow public access**. Rydar n'utilise que des canaux privés.
 - Il garde sous la main, sans te les envoyer : l'URL du projet, la clé **publishable**, la clé **secret** et la chaîne **Session pooler** (bouton *Connect*).
 

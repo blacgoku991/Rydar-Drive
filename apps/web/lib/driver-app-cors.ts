@@ -4,5 +4,5 @@ export function driverAppCors(req: Request): Record<string, string> {
   const origin = req.headers.get("origin");
   const allowed = (process.env.DRIVER_APP_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
   if (!origin || !allowed.includes(origin)) return {};
-  return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", Vary: "Origin" };
+  return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, Authorization", Vary: "Origin" };
 }

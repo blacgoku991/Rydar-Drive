@@ -1,21 +1,26 @@
-// Signalements de la flotte : envoi (gros boutons), feuille « Signaler », carte d'un signalement + votes.
+// Signalements de la flotte : envoi (grandes tuiles), feuille « Signaler », carte d'un signalement + votes.
 import { Ionicons } from "@expo/vector-icons";
 import { FLEET_REPORT_BUTTONS, FLEET_REPORT_META, formatDistance, haversine, type ChatMessage, type FleetReportType } from "@rydar/shared";
+import * as Location from "expo-location";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { useDriver } from "@/hooks/driver-context";
+import { lastPosition } from "@/hooks/use-my-position";
 import { useNow } from "@/hooks/use-now";
 import { api, type ApiError } from "@/lib/api";
-import { ago, colors } from "@/theme";
-import { hapticResult, Sheet } from "./ui";
+import { ago, alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
+import { frTypo } from "./centrale";
+import { BottomSheet, hapticResult, Pill } from "./ui";
 
-type Pos = { lat: number; lng: number } | null | undefined;
+type IconName = keyof typeof Ionicons.glyphMap;
+type Pos = { lat: number; lng: number; accuracy?: number | null; at?: number | null } | null | undefined;
 /** Signalement affiché : message du fil flotte, avec distance et vote quand ils sont connus. */
 export type ReportView = ChatMessage & { distance_m?: number | null; my_vote?: boolean | null };
 export type FlashFn = (text: string, tone?: "success" | "error" | "info") => void;
 
+const NBSP = " ";
 const metaOf = (t: FleetReportType | null | undefined) => FLEET_REPORT_META[t ?? "other"] ?? FLEET_REPORT_META.other;
+const iconOf = (t: FleetReportType | null | undefined) => metaOf(t).ionicon as IconName;
 
 /** Textes par défaut posés par send_chat_message (signalement sans commentaire) : inutile de les répéter sous le titre. */
 const DEFAULT_BODY: Record<FleetReportType, string> = {
@@ -27,155 +32,190 @@ const DEFAULT_BODY: Record<FleetReportType, string> = {
   other: "Signalement de la flotte",
 };
 
+/** Position assez précise et récente pour être envoyée telle quelle. */
+const GOOD_ACCURACY_M = 50;
+const FRESH_MS = 10_000;
+/** Attente maximale d'un point GPS précis avant l'envoi (sinon : dernière position connue). */
+const FIX_TIMEOUT_MS = 5_000;
+
+type Fix = { lat: number; lng: number; accuracy: number | null; at: number };
+
+function toFix(p: Pos): Fix | null {
+  if (!p) return null;
+  return { lat: p.lat, lng: p.lng, accuracy: p.accuracy ?? null, at: p.at ?? 0 };
+}
+
+/**
+ * Point à envoyer : la position connue si elle est précise (≤ 50 m) et récente (≤ 10 s) ; sinon un point GPS
+ * « haute précision » demandé à l'instant (5 s au plus), ou à défaut la position connue.
+ */
+async function reportPosition(known: Fix | null, onLocating: (v: boolean) => void): Promise<Fix | null> {
+  const fresh = known && Date.now() - known.at <= FRESH_MS;
+  if (known && fresh && known.accuracy != null && known.accuracy <= GOOD_ACCURACY_M) return known;
+  onLocating(true);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const fix = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }).catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), FIX_TIMEOUT_MS);
+      }),
+    ]);
+    if (!fix) return known;
+    const next: Fix = {
+      lat: fix.coords.latitude,
+      lng: fix.coords.longitude,
+      accuracy: fix.coords.accuracy != null && fix.coords.accuracy > 0 ? fix.coords.accuracy : null,
+      at: fix.timestamp || Date.now(),
+    };
+    // Point obtenu moins précis qu'une position connue encore récente : on garde la position connue
+    if (known && fresh && known.accuracy != null && next.accuracy != null && next.accuracy > known.accuracy) return known;
+    return next;
+  } finally {
+    clearTimeout(timer);
+    onLocating(false);
+  }
+}
+
 /** Envoi d'un signalement à la position actuelle (sinon dernière position connue côté serveur). */
 export function useReportSender(me: Pos) {
   const { refreshChat } = useDriver();
   const [sending, setSending] = useState<FleetReportType | null>(null);
+  const [locating, setLocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const meRef = useRef(me);
+  meRef.current = me;
   const send = useCallback(
-    async (type: FleetReportType) => {
+    async (kind: FleetReportType) => {
       if (busy.current) return false;
       busy.current = true;
-      setSending(type);
+      setSending(kind);
       setError(null);
       try {
-        await api.sendMessage({ channel: "fleet", reportType: type, lat: me?.lat ?? null, lng: me?.lng ?? null });
+        // Position la plus récente entre celle de l'écran et le flux GPS partagé
+        const a = toFix(meRef.current);
+        const b = toFix(lastPosition());
+        const known = a && b ? (b.at > a.at ? b : a) : a ?? b;
+        const pos = await reportPosition(known, setLocating);
+        await api.sendMessage({ channel: "fleet", reportType: kind, lat: pos?.lat ?? null, lng: pos?.lng ?? null });
         hapticResult(true);
         void refreshChat();
         return true;
       } catch (e) {
         hapticResult(false);
         const err = e as ApiError;
-        setError(err.code === "LOCATION_REQUIRED" ? "Position GPS introuvable : activez la localisation puis réessayez." : err.message);
+        setError(
+          err.code === "LOCATION_REQUIRED"
+            ? `Position GPS introuvable${NBSP}: activez la localisation puis réessayez.`
+            : frTypo(err.message || "Envoi impossible. Réessayez."),
+        );
         return false;
       } finally {
         busy.current = false;
         setSending(null);
       }
     },
-    [me?.lat, me?.lng, refreshChat],
+    [refreshChat],
   );
-  return { send, sending, error, setError };
+  return { send, sending, locating, error, setError };
 }
 
-/** Gros bouton de signalement (emoji + libellé), utilisable au volant. */
+/** Tuile de signalement (pictogramme + libellé), utilisable au volant. */
 export function ReportButton({
-  type, onPress, loading, disabled, compact, style,
+  type: kind, onPress, loading, disabled, compact, style,
 }: { type: FleetReportType; onPress: () => void; loading?: boolean; disabled?: boolean; compact?: boolean; style?: StyleProp<ViewStyle> }) {
-  const meta = metaOf(type);
+  const meta = metaOf(kind);
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
-      accessibilityLabel={`Signaler : ${meta.label}`}
+      accessibilityLabel={`Signaler${NBSP}: ${meta.label}`}
+      accessibilityState={{ disabled: Boolean(disabled), busy: Boolean(loading) }}
       style={({ pressed }) => [
-        compact ? styles.btnCompact : styles.btn,
-        { backgroundColor: `${meta.color}1A`, borderColor: `${meta.color}47`, opacity: disabled && !loading ? 0.5 : 1, transform: [{ scale: pressed ? 0.96 : 1 }] },
+        compact ? styles.tileCompact : styles.tile,
+        pressed && { backgroundColor: colors.surface3 },
+        disabled && !loading && { opacity: 0.5 },
         style,
       ]}
     >
-      {loading ? (
-        <ActivityIndicator color={meta.color} />
-      ) : (
-        <Text style={compact ? styles.emojiCompact : styles.emoji}>{meta.emoji}</Text>
-      )}
-      <Text style={[compact ? styles.btnLabelCompact : styles.btnLabel]} numberOfLines={1}>
+      <View style={compact ? styles.tileIconCompact : styles.tileIcon}>
+        {loading ? (
+          <ActivityIndicator color={colors.fg} />
+        ) : (
+          <Ionicons name={iconOf(kind)} size={compact ? 22 : 26} color={meta.color} />
+        )}
+      </View>
+      <Text style={compact ? styles.tileLabelCompact : styles.tileLabel} numberOfLines={1}>
         {compact ? meta.short : meta.label}
       </Text>
     </Pressable>
   );
 }
 
-/** Feuille « Signaler à la flotte » : 5 gros boutons, envoi immédiat à la position actuelle. */
+/** Feuille « Signaler » : 5 tuiles, envoi immédiat à la position actuelle. */
 export function ReportSheet({ visible, onClose, onSent, me }: { visible: boolean; onClose: () => void; onSent: (type: FleetReportType) => void; me: Pos }) {
-  const { send, sending, error, setError } = useReportSender(me);
-  const anim = useRef(new Animated.Value(0)).current;
-  const [mounted, setMounted] = useState(visible);
+  const { send, sending, locating, error, setError } = useReportSender(me);
 
   useEffect(() => {
-    if (visible) {
-      setMounted(true);
-      setError(null);
-      Animated.spring(anim, { toValue: 1, useNativeDriver: true, friction: 9, tension: 70 }).start();
-    } else Animated.timing(anim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => setMounted(false));
-  }, [visible, anim, setError]);
+    if (visible) setError(null);
+  }, [visible, setError]);
 
-  if (!mounted) return null;
+  const last = FLEET_REPORT_BUTTONS.length - 1;
+  const odd = FLEET_REPORT_BUTTONS.length % 2 === 1;
   return (
-    <View style={[StyleSheet.absoluteFill, { zIndex: 40 }]} pointerEvents="box-none">
-      <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, { opacity: anim }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Fermer" />
-      </Animated.View>
-      <Animated.View style={[styles.sheetWrap, { transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [520, 0] }) }] }]}>
-        <Sheet>
-          <SafeAreaView edges={["bottom"]} style={{ gap: 16, paddingBottom: 14 }}>
-            <View style={styles.sheetHead}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sheetTitle}>Signaler à la flotte</Text>
-                <Text style={styles.sheetSub}>Un appui suffit : votre position actuelle est partagée avec les chauffeurs proches.</Text>
-              </View>
-              <Pressable onPress={onClose} style={styles.close} accessibilityLabel="Fermer" hitSlop={8}>
-                <Ionicons name="close" size={22} color={colors.fg} />
-              </Pressable>
-            </View>
-            <View style={styles.grid}>
-              {FLEET_REPORT_BUTTONS.map((t, i) => (
-                <ReportButton
-                  key={t}
-                  type={t}
-                  loading={sending === t}
-                  disabled={sending != null}
-                  style={i === FLEET_REPORT_BUTTONS.length - 1 && FLEET_REPORT_BUTTONS.length % 2 === 1 ? { flexBasis: "100%" } : null}
-                  onPress={async () => {
-                    if (await send(t)) onSent(t);
-                  }}
-                />
-              ))}
-            </View>
-            {error && (
-              <View style={styles.error} accessibilityLiveRegion="assertive">
-                <Ionicons name="alert-circle" size={20} color={colors.red} />
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            )}
-          </SafeAreaView>
-        </Sheet>
-      </Animated.View>
-    </View>
+    <BottomSheet visible={visible} onClose={onClose}>
+      <View style={styles.sheetHead}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.sheetTitle} accessibilityRole="header">Signaler</Text>
+          <Text style={styles.sheetSub}>Votre position actuelle est envoyée aux chauffeurs à proximité.</Text>
+        </View>
+        <Pressable
+          onPress={onClose}
+          style={({ pressed }) => [styles.close, pressed && { backgroundColor: colors.surface2 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Fermer"
+          hitSlop={4}
+        >
+          <Ionicons name="close" size={22} color={colors.fg} />
+        </Pressable>
+      </View>
+      <View style={styles.grid}>
+        {FLEET_REPORT_BUTTONS.map((t, i) => (
+          <ReportButton
+            key={t}
+            type={t}
+            loading={sending === t}
+            disabled={sending != null}
+            style={i === last && odd ? { flexBasis: "100%" } : null}
+            onPress={async () => {
+              if (await send(t)) onSent(t);
+            }}
+          />
+        ))}
+      </View>
+      {locating && (
+        <View style={styles.hint} accessibilityLiveRegion="polite">
+          <ActivityIndicator size="small" color={colors.muted} />
+          <Text style={styles.hintText}>Recherche de votre position précise…</Text>
+        </View>
+      )}
+      {error && (
+        <View style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+          <Ionicons name="alert-circle-outline" size={20} color={colors.red} />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+    </BottomSheet>
   );
 }
 
-/** Rangée compacte de signalements rapides (haut du fil « Flotte »). */
-export function QuickReportRow({ me, onSent, onError }: { me: Pos; onSent: (type: FleetReportType) => void; onError: FlashFn }) {
-  const { send, sending, error } = useReportSender(me);
-  useEffect(() => {
-    if (error) onError(error, "error");
-  }, [error, onError]);
-  return (
-    <View style={styles.row}>
-      {FLEET_REPORT_BUTTONS.map((t) => (
-        <ReportButton
-          key={t}
-          type={t}
-          compact
-          loading={sending === t}
-          disabled={sending != null}
-          onPress={async () => {
-            if (await send(t)) onSent(t);
-          }}
-        />
-      ))}
-    </View>
-  );
-}
-
-/** Ligne d'information : « signalé par Karim T. · il y a 6 min · confirmé 2× ». */
+/** Ligne d'information : « Signalé par Karim T. · il y a 6 min · confirmé 2 fois ». */
 export function reportMetaLine(r: ReportView, myDriverId: string | null | undefined, now = Date.now()) {
   const who = r.author_driver_id && r.author_driver_id === myDriverId ? "vous" : r.author_name;
-  const parts = [`signalé par ${who}`, ago(r.created_at, now)];
-  if (r.confirmations > 0) parts.push(`confirmé ${r.confirmations}×`);
+  const parts = [`Signalé par ${who}`, ago(r.created_at, now)];
+  if (r.confirmations > 0) parts.push(`confirmé ${r.confirmations}${NBSP}fois`);
   return parts.join(" · ");
 }
 
@@ -207,7 +247,7 @@ export function ReportCard({
       const res = await api.voteReport(report.id, still);
       if (!res.ok) {
         hapticResult(false);
-        onFlash(res.message ?? "Ce signalement a expiré.", "info");
+        onFlash(frTypo(res.message ?? "Ce signalement a expiré."), "info");
         if (res.code === "REPORT_EXPIRED") onExpired?.();
       } else {
         hapticResult(true);
@@ -215,11 +255,11 @@ export function ReportCard({
         if (res.expired) {
           onFlash("Signalement retiré de la carte");
           onExpired?.();
-        } else onFlash(still ? "Merci, signalement confirmé" : "Merci, c'est noté");
+        } else onFlash(still ? "Signalement confirmé" : "Vote enregistré");
       }
     } catch (e) {
       hapticResult(false);
-      onFlash((e as Error).message, "error");
+      onFlash(frTypo((e as Error).message), "error");
     } finally {
       setBusy(null);
       void refreshChat();
@@ -227,28 +267,30 @@ export function ReportCard({
   }
 
   const feed = variant === "feed";
+  const voteH = feed ? control.sm : control.md;
   return (
-    <View style={[feed ? styles.feedCard : styles.card, { borderColor: active ? `${meta.color}40` : colors.line, opacity: active ? 1 : 0.6 }, style]}>
+    <View style={[feed ? styles.feedCard : styles.card, !active && { opacity: 0.6 }, style]}>
       <View style={styles.cardHead}>
-        <View style={[feed ? styles.cardIconSmall : styles.cardIcon, { backgroundColor: `${meta.color}1F`, borderColor: `${meta.color}66` }]}>
-          <Text style={feed ? styles.cardEmojiSmall : styles.cardEmoji}>{meta.emoji}</Text>
-        </View>
-        <View style={{ flex: 1, gap: 3 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Text style={[styles.cardTitle, feed && { fontSize: 17 }]} numberOfLines={1}>{meta.label}</Text>
+        <Ionicons name={iconOf(report.report_type)} size={20} color={meta.color} style={styles.cardIcon} />
+        <View style={{ flex: 1, gap: 2 }}>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitle} numberOfLines={1}>{meta.label}</Text>
             {distance != null && active ? (
-              <View style={styles.dist}>
-                <Ionicons name="navigate" size={11} color={colors.fg} />
-                <Text style={styles.distText}>{formatDistance(distance)}</Text>
-              </View>
+              <Text style={styles.distText} accessibilityLabel={`à ${formatDistance(distance)}`}>{formatDistance(distance)}</Text>
             ) : null}
-            {!active && <Text style={styles.ended}>Terminé</Text>}
+            {!active && <Pill label="Terminé" color={colors.muted} />}
           </View>
           <Text style={styles.cardMeta} numberOfLines={2}>{reportMetaLine(report, myDriverId, now)}</Text>
         </View>
         {onClose && (
-          <Pressable onPress={onClose} style={styles.cardClose} accessibilityLabel="Fermer" hitSlop={8}>
-            <Ionicons name="close" size={18} color={colors.muted} />
+          <Pressable
+            onPress={onClose}
+            style={({ pressed }) => [styles.cardClose, pressed && { backgroundColor: colors.surface3 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Fermer"
+            hitSlop={4}
+          >
+            <Ionicons name="close" size={20} color={colors.muted} />
           </Pressable>
         )}
       </View>
@@ -257,26 +299,40 @@ export function ReportCard({
         <View style={styles.votes}>
           {/* L'auteur ne confirme pas son propre signalement (refusé par le serveur) : il peut seulement le retirer */}
           {!mine && (
-          <Pressable
-            onPress={() => void doVote(true)}
-            disabled={busy != null}
-            accessibilityRole="button"
-            accessibilityState={{ selected: vote === true }}
-            style={({ pressed }) => [styles.vote, feed && { height: 44 }, vote === true && styles.voteYes, { transform: [{ scale: pressed ? 0.97 : 1 }] }]}
-          >
-            {busy === "yes" ? <ActivityIndicator color={colors.brand} /> : <Ionicons name="checkmark-circle" size={feed ? 18 : 20} color={vote === true ? colors.brandFg : colors.brand} />}
-            <Text style={[styles.voteText, vote === true && { color: colors.brandFg }]}>Toujours là</Text>
-          </Pressable>
+            <Pressable
+              onPress={() => void doVote(true)}
+              disabled={busy != null}
+              accessibilityRole="button"
+              accessibilityLabel="Toujours là"
+              accessibilityState={{ selected: vote === true, disabled: busy != null, busy: busy === "yes" }}
+              style={({ pressed }) => [styles.vote, { height: voteH }, vote === true && styles.voteOn, pressed && { backgroundColor: colors.surface3 }]}
+            >
+              {busy === "yes" ? (
+                <ActivityIndicator color={colors.fg} />
+              ) : (
+                <Ionicons name={vote === true ? "checkmark-circle" : "checkmark-circle-outline"} size={20} color={colors.fg} />
+              )}
+              <Text style={styles.voteText}>Toujours là</Text>
+            </Pressable>
           )}
           <Pressable
             onPress={() => void doVote(false)}
             disabled={busy != null}
             accessibilityRole="button"
-            accessibilityState={{ selected: vote === false }}
-            style={({ pressed }) => [styles.vote, feed && { height: 44 }, vote === false && styles.voteNo, { transform: [{ scale: pressed ? 0.97 : 1 }] }]}
+            accessibilityLabel={mine ? "Retirer mon signalement" : "Plus là"}
+            accessibilityState={{ selected: vote === false, disabled: busy != null, busy: busy === "no" }}
+            style={({ pressed }) => [styles.vote, { height: voteH }, vote === false && styles.voteOn, pressed && { backgroundColor: colors.surface3 }]}
           >
-            {busy === "no" ? <ActivityIndicator color={colors.muted} /> : <Ionicons name={mine ? "trash-outline" : "close-circle"} size={feed ? 18 : 20} color={vote === false ? colors.fg : colors.muted} />}
-            <Text style={[styles.voteText, { color: vote === false ? colors.fg : colors.muted }]}>{mine ? "Retirer" : "Plus là"}</Text>
+            {busy === "no" ? (
+              <ActivityIndicator color={colors.fg} />
+            ) : (
+              <Ionicons
+                name={mine ? "trash-outline" : vote === false ? "close-circle" : "close-circle-outline"}
+                size={20}
+                color={vote === false ? colors.fg : colors.muted}
+              />
+            )}
+            <Text style={styles.voteText}>{mine ? "Retirer" : "Plus là"}</Text>
           </Pressable>
         </View>
       )}
@@ -285,42 +341,49 @@ export function ReportCard({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { backgroundColor: "rgba(4,5,7,0.62)" },
-  sheetWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  sheetHead: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  sheetTitle: { color: colors.fg, fontSize: 24, fontWeight: "900", letterSpacing: -0.4 },
-  sheetSub: { color: colors.muted, fontSize: 14, marginTop: 4, lineHeight: 19 },
-  close: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface3, alignItems: "center", justifyContent: "center" },
+  sheetHead: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
+  sheetTitle: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, letterSpacing: -0.3 },
+  sheetSub: { color: colors.muted, fontSize: type.body, marginTop: space.xs, lineHeight: 21 },
+  close: { width: control.sm, height: control.sm, borderRadius: radius.full, backgroundColor: colors.surface3, alignItems: "center", justifyContent: "center" },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  btn: { flexGrow: 1, flexBasis: "46%", height: 96, borderRadius: 22, borderWidth: 1.5, alignItems: "center", justifyContent: "center", gap: 6 },
-  emoji: { fontSize: 34, lineHeight: 40 },
-  btnLabel: { color: colors.fg, fontSize: 16, fontWeight: "800" },
-  row: { flexDirection: "row", gap: 8 },
-  btnCompact: { flex: 1, height: 74, borderRadius: 18, borderWidth: 1.5, alignItems: "center", justifyContent: "center", gap: 4, paddingHorizontal: 2 },
-  emojiCompact: { fontSize: 25, lineHeight: 30 },
-  btnLabelCompact: { color: colors.fg, fontSize: 11.5, fontWeight: "800" },
-  error: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: 16, backgroundColor: "rgba(242,85,90,0.12)", borderWidth: 1, borderColor: "rgba(242,85,90,0.3)" },
-  errorText: { flex: 1, color: colors.fg, fontSize: 15, fontWeight: "700" },
-  card: {
-    backgroundColor: "rgba(17,19,24,0.98)", borderRadius: 24, borderWidth: 1.5, padding: 16, gap: 14,
-    shadowColor: "#000", shadowOpacity: 0.55, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 14,
+  tile: {
+    flexGrow: 1, flexBasis: "46%", minHeight: control.xl + space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface2,
+    alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: space.sm, paddingVertical: space.md,
   },
-  feedCard: { backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, padding: 14, gap: 12 },
-  cardHead: { flexDirection: "row", alignItems: "center", gap: 12 },
-  cardIcon: { width: 50, height: 50, borderRadius: 25, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
-  cardEmoji: { fontSize: 26, lineHeight: 32 },
-  cardIconSmall: { width: 42, height: 42, borderRadius: 21, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
-  cardEmojiSmall: { fontSize: 21, lineHeight: 26 },
-  cardTitle: { color: colors.fg, fontSize: 19, fontWeight: "900", letterSpacing: -0.3, flexShrink: 1 },
-  cardMeta: { color: colors.muted, fontSize: 13.5, lineHeight: 18 },
-  cardBody: { color: colors.fg, fontSize: 15, lineHeight: 21 },
-  ended: { color: colors.subtle, fontSize: 12, fontWeight: "800", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: colors.surface3, overflow: "hidden" },
-  dist: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 10, backgroundColor: colors.surface3 },
-  distText: { color: colors.fg, fontSize: 13, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  cardClose: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2, marginLeft: -2 },
+  tileIcon: { height: 28, alignItems: "center", justifyContent: "center" },
+  tileLabel: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold, textAlign: "center" },
+  row: { flexDirection: "row", gap: space.sm },
+  tileCompact: {
+    flex: 1, height: control.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface2,
+    alignItems: "center", justifyContent: "center", gap: space.xs, paddingHorizontal: 2,
+  },
+  tileIconCompact: { height: 24, alignItems: "center", justifyContent: "center" },
+  tileLabelCompact: { color: colors.fg, fontSize: type.caption, fontWeight: weight.semibold },
+  hint: { flexDirection: "row", alignItems: "center", gap: 10 },
+  hintText: { color: colors.muted, fontSize: type.subhead },
+  error: {
+    flexDirection: "row", alignItems: "center", gap: space.md, padding: space.md, borderRadius: radius.md,
+    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
+  },
+  errorText: { flex: 1, color: colors.fg, fontSize: type.body, fontWeight: weight.medium, lineHeight: 21 },
+  card: {
+    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.lineStrong, padding: space.lg, gap: space.lg,
+    shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8,
+  },
+  feedCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, padding: 14, gap: space.md },
+  cardHead: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
+  cardIcon: { marginTop: 2 },
+  cardTitleRow: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  cardTitle: { color: colors.fg, fontSize: type.headline, fontWeight: weight.semibold, flexShrink: 1 },
+  distText: { color: colors.muted, fontSize: type.body, fontWeight: weight.semibold, ...mono },
+  cardMeta: { color: colors.muted, fontSize: type.subhead, lineHeight: 19 },
+  cardBody: { color: colors.fg, fontSize: type.body, lineHeight: 21 },
+  cardClose: { width: 44, height: 44, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2, marginTop: -10, marginRight: -6 },
   votes: { flexDirection: "row", gap: 10 },
-  vote: { flex: 1, height: 52, borderRadius: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line },
-  voteYes: { backgroundColor: colors.brand, borderColor: colors.brand },
-  voteNo: { backgroundColor: colors.surface3, borderColor: colors.lineStrong },
-  voteText: { color: colors.fg, fontSize: 15.5, fontWeight: "800" },
+  vote: {
+    flex: 1, borderRadius: radius.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm,
+    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
+  },
+  voteOn: { backgroundColor: colors.surface3, borderColor: alpha(colors.fg, 0.45) },
+  voteText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
 });

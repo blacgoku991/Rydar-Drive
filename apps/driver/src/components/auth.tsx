@@ -1,20 +1,24 @@
-// Écrans d'accès (connexion, mot de passe oublié, inscription par lien) : radar animé, logo, champs à
-// libellé flottant, bouton lumineux, carte vitrée. Animations natives, coupées si « Réduire les animations ».
+// Briques des écrans d'accès (connexion, mot de passe oublié, inscription par lien) : champ à libellé au-dessus,
+// défilement qui garde le champ actif et le bouton au-dessus du clavier, message d'erreur, logo.
+// Sobre : ni lueur, ni flou, ni dégradé, ni animation en boucle ; mouvements coupés si « Réduire les animations ».
 import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
-  AccessibilityInfo, ActivityIndicator, Animated, Easing, Keyboard, LayoutAnimation, Platform, Pressable, StyleSheet, Text, TextInput, View,
-  type KeyboardEvent, type StyleProp, type TextInputProps, type ViewStyle,
+  AccessibilityInfo, Animated, Easing, Keyboard, KeyboardAvoidingView, LayoutAnimation, Platform, Pressable, ScrollView, StyleSheet, Text,
+  TextInput, View, type KeyboardEvent, type StyleProp, type TextInputProps, type TextStyle, type ViewStyle,
 } from "react-native";
-import Svg, { Circle, Defs, G, Line, Path, RadialGradient, Stop } from "react-native-svg";
-import { colors, radius } from "@/theme";
+import Svg, { Circle } from "react-native-svg";
+import { colors, control, mono, radius, space, type, weight } from "@/theme";
 
-type IconName = keyof typeof Ionicons.glyphMap;
+export type IconName = keyof typeof Ionicons.glyphMap;
 
-/** « Réduire les animations » (iOS / Android / navigateur) : balayage, reflets et entrées désactivés. */
+/** Agrandissement maximal du texte (réglage « Taille du texte ») : titres et champs restent dans leur cadre. */
+export const TITLE_SCALE = 1.3;
+export const TEXT_SCALE = 1.5;
+const INPUT_SCALE = 1.4;
+
+/** « Réduire les animations » (iOS / Android / navigateur). */
 export function useReduceMotion() {
   const [reduce, setReduce] = useState(false);
   useEffect(() => {
@@ -29,6 +33,20 @@ export function useReduceMotion() {
     };
   }, []);
   return reduce;
+}
+
+/** Annonce vocale (lecteur d'écran) : erreurs, envoi du code, connexion en cours. */
+export function announce(message: string) {
+  try {
+    if (typeof AccessibilityInfo.announceForAccessibility === "function") AccessibilityInfo.announceForAccessibility(message);
+  } catch {
+    /* pas de lecteur d'écran sur cette plateforme */
+  }
+}
+
+/** Changement de contenu du panneau (connexion ↔ mot de passe oublié ↔ inscription) : fondu court, sauf mouvements réduits. */
+export function panelTransition(animate: boolean) {
+  if (animate) LayoutAnimation.configureNext(LayoutAnimation.create(200, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
 }
 
 /**
@@ -62,31 +80,32 @@ export function useKeyboardVisible() {
   return visible;
 }
 
-/** Secousse horizontale (saisie refusée) + vibration d'erreur. */
-export function useShake() {
+/** Saisie refusée : vibration d'erreur, et courte secousse du panneau sauf si les animations sont réduites. */
+export function useShake(reduceMotion: boolean) {
   const x = useRef(new Animated.Value(0)).current;
   const shake = useCallback(() => {
     if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => null);
+    if (reduceMotion) return;
     x.setValue(0);
-    Animated.sequence([10, -10, 7, -7, 3, 0].map((toValue) => Animated.timing(x, { toValue, duration: 45, useNativeDriver: true }))).start();
-  }, [x]);
+    Animated.sequence([8, -8, 5, -5, 2, 0].map((toValue) => Animated.timing(x, { toValue, duration: 45, useNativeDriver: true }))).start();
+  }, [x, reduceMotion]);
   return { shake, style: { transform: [{ translateX: x }] } };
 }
 
-/** Apparition (fondu + glissement) au montage. */
+/** Apparition (fondu + léger glissement) au montage : panneau d'accès, changement de panneau. */
 export function EnterView({
-  children, delay = 0, from = 14, animate = true, style,
-}: { children: React.ReactNode; delay?: number; from?: number; animate?: boolean; style?: StyleProp<ViewStyle> }) {
+  children, delay = 0, from = 8, duration = 220, animate = true, style,
+}: { children: React.ReactNode; delay?: number; from?: number; duration?: number; animate?: boolean; style?: StyleProp<ViewStyle> }) {
   const v = useRef(new Animated.Value(animate ? 0 : 1)).current;
   useEffect(() => {
     if (!animate) {
       v.setValue(1);
       return;
     }
-    const anim = Animated.timing(v, { toValue: 1, duration: 420, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    const anim = Animated.timing(v, { toValue: 1, duration, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true });
     anim.start();
     return () => anim.stop();
-  }, [animate, delay, v]);
+  }, [animate, delay, duration, v]);
   return (
     <Animated.View style={[style, { opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [from, 0] }) }] }]}>
       {children}
@@ -94,450 +113,360 @@ export function EnterView({
   );
 }
 
-// --- Radar --------------------------------------------------------------------------------------
-
-const SWEEP_MS = 5600;
-const RINGS = [0.3, 0.48, 0.66, 0.84];
-const TRAIL_DEG = 78;
-const TRAIL_LAYERS = 22;
-/** Échos (d : distance au centre, a : angle en degrés depuis le nord, sens horaire) — couleurs des statuts chauffeur. */
-const BLIPS = [
-  { d: 0.5, a: 32, color: colors.brand },
-  { d: 0.76, a: 98, color: colors.brand },
-  { d: 0.84, a: 150, color: colors.cyan },
-  { d: 0.88, a: 192, color: colors.brand },
-  { d: 0.62, a: 238, color: colors.amber },
-  { d: 0.9, a: 292, color: colors.brand },
-  { d: 0.56, a: 330, color: colors.brand },
-];
-const BLIP_DECAY = 0.42;
-
-function polar(c: number, radiusPx: number, deg: number) {
-  const rad = (deg * Math.PI) / 180;
-  return { x: c + radiusPx * Math.sin(rad), y: c - radiusPx * Math.cos(rad) };
-}
-
-/** Luminosité d'un écho selon la position du balayage (0 → 1 = un tour) : s'allume au passage, s'éteint ensuite. */
-function blipRange(angle: number): { input: number[]; output: number[] } {
-  const p = angle / 360;
-  if (p + BLIP_DECAY <= 1) return { input: [0, p, p + 0.002, p + BLIP_DECAY, 1], output: [0, 0, 1, 0, 0] };
-  const tail = p + BLIP_DECAY - 1;
-  const atZero = 1 - (1 - p) / BLIP_DECAY;
-  return { input: [0, tail, p, p + 0.002, 1], output: [atZero, 0, 0, 1, atZero] };
-}
-
-/**
- * Écran radar : anneaux, graduations, halo, balayage tournant (traînée dégradée)
- * et échos qui s'allument au passage. Un seul Animated.Value (pilote natif) anime le tout.
- */
-export function RadarScope({ size, animate = true }: { size: number; animate?: boolean }) {
-  const sweep = useRef(new Animated.Value(0.14)).current;
-  useEffect(() => {
-    if (!animate) {
-      sweep.setValue(0.14);
-      return;
-    }
-    sweep.setValue(0);
-    const loop = Animated.loop(Animated.timing(sweep, { toValue: 1, duration: SWEEP_MS, easing: Easing.linear, useNativeDriver: true }));
-    loop.start();
-    return () => loop.stop();
-  }, [animate, sweep]);
-
-  const c = size / 2;
-  const R = c * 0.97;
-  const scope = useMemo(() => {
-    const ticks = Array.from({ length: 72 }, (_, i) => {
-      const deg = i * 5;
-      const major = deg % 30 === 0;
-      const a = polar(c, R, deg);
-      const b = polar(c, R - (major ? 11 : 5), deg);
-      return <Line key={deg} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={colors.brand} strokeOpacity={major ? 0.3 : 0.13} strokeWidth={major ? 1.4 : 1} />;
-    });
-    // Traînée : secteurs superposés, tous terminés sur le bord d'attaque → dégradé angulaire sans jointure
-    const lead = polar(c, R, 0);
-    const trail = Array.from({ length: TRAIL_LAYERS }, (_, k) => {
-      const start = polar(c, R, -TRAIL_DEG * (1 - k / TRAIL_LAYERS));
-      return <Path key={k} d={`M ${c} ${c} L ${start.x} ${start.y} A ${R} ${R} 0 0 1 ${lead.x} ${lead.y} Z`} fill={colors.brand} fillOpacity={0.015} />;
-    });
-    return { ticks, trail, lead };
-  }, [c, R]);
-
-  const rotate = sweep.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+/** Pictogramme décoratif : ignoré par le lecteur d'écran (le libellé voisin suffit). */
+export function Glyph({ name, size = 20, color = colors.muted }: { name: IconName; size?: number; color?: string }) {
   return (
-    <View pointerEvents="none" style={{ width: size, height: size }}>
-      <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
-        <Defs>
-          <RadialGradient id="scopeGlow" cx="50%" cy="50%" r="50%">
-            <Stop offset="0" stopColor={colors.brand} stopOpacity={0.2} />
-            <Stop offset="0.35" stopColor={colors.brand} stopOpacity={0.06} />
-            <Stop offset="1" stopColor={colors.brand} stopOpacity={0} />
-          </RadialGradient>
-        </Defs>
-        <Circle cx={c} cy={c} r={c} fill="url(#scopeGlow)" />
-        <G>
-          <Line x1={c - R} y1={c} x2={c + R} y2={c} stroke={colors.brand} strokeOpacity={0.09} strokeDasharray="2 7" />
-          <Line x1={c} y1={c - R} x2={c} y2={c + R} stroke={colors.brand} strokeOpacity={0.09} strokeDasharray="2 7" />
-        </G>
-        {RINGS.map((f, i) => (
-          <Circle key={f} cx={c} cy={c} r={R * f} fill="none" stroke={colors.brand} strokeOpacity={0.15 - i * 0.022} strokeWidth={1} />
-        ))}
-        <Circle cx={c} cy={c} r={R} fill="none" stroke={colors.brand} strokeOpacity={0.22} strokeWidth={1.2} />
-        {scope.ticks}
-      </Svg>
-      <Animated.View style={[StyleSheet.absoluteFill, { transform: [{ rotate }] }]}>
-        <Svg width={size} height={size}>
-          {scope.trail}
-          <Line x1={c} y1={c} x2={scope.lead.x} y2={scope.lead.y} stroke={colors.brand} strokeOpacity={0.14} strokeWidth={7} strokeLinecap="round" />
-          <Line x1={c} y1={c} x2={scope.lead.x} y2={scope.lead.y} stroke={colors.brand} strokeOpacity={0.85} strokeWidth={1.6} strokeLinecap="round" />
-        </Svg>
-      </Animated.View>
-      {BLIPS.map((b) => {
-        const p = polar(c, R * b.d, b.a);
-        const { input, output } = blipRange(b.a);
-        return (
-          <Animated.View
-            key={b.a}
-            style={[
-              styles.blip,
-              {
-                left: p.x - 10,
-                top: p.y - 10,
-                opacity: sweep.interpolate({ inputRange: input, outputRange: output, extrapolate: "clamp" }),
-                transform: [{ scale: sweep.interpolate({ inputRange: input, outputRange: output.map((o) => 0.8 + o * 0.5), extrapolate: "clamp" }) }],
-              },
-            ]}
-          >
-            <View style={[styles.blipHalo, { backgroundColor: `${b.color}33` }]} />
-            <View style={[styles.blipCore, { backgroundColor: b.color, shadowColor: b.color }]} />
-          </Animated.View>
-        );
-      })}
+    <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <Ionicons name={name} size={size} color={color} />
     </View>
   );
 }
 
-/** Logo Rydar (anneaux + point, comme l'icône de l'app) ; intérieur translucide : le balayage passe dessous. */
+/** Logo Rydar (anneaux + point, comme l'icône de l'app), statique. */
 export function LogoMark({ size }: { size: number }) {
   return (
-    <View style={[styles.logo, { width: size, height: size, borderRadius: size / 2 }]}>
+    <View style={{ width: size, height: size }} accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <Svg width={size} height={size} viewBox="0 0 100 100">
-        <Circle cx={50} cy={50} r={46} fill="rgba(8,9,12,0.55)" stroke={colors.brand} strokeWidth={5.5} />
-        <Circle cx={50} cy={50} r={29} fill="none" stroke={colors.brand} strokeOpacity={0.42} strokeWidth={4} />
+        <Circle cx={50} cy={50} r={46} fill={colors.bgDeep} stroke={colors.brand} strokeWidth={6} />
+        <Circle cx={50} cy={50} r={28} fill="none" stroke={colors.brand} strokeOpacity={0.5} strokeWidth={4} />
         <Circle cx={50} cy={50} r={10} fill={colors.brand} />
       </Svg>
     </View>
   );
 }
 
-/** Point lumineux qui respire (statut « en ligne »). */
-export function PulseDot({ color = colors.brand, animate = true }: { color?: string; animate?: boolean }) {
-  const v = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    if (!animate) {
-      v.setValue(1);
+// --- Défilement du formulaire ----------------------------------------------------------------------
+
+/** Champ qui prend le focus → FormScroll le fait apparaître au-dessus du clavier. */
+const RevealContext = createContext<((node: View | null) => void) | null>(null);
+
+/**
+ * Conteneur des écrans d'accès : KeyboardAvoidingView + ScrollView. Le contenu occupe au moins tout l'écran
+ * (flexGrow) ; clavier ouvert, il défile : jusqu'au bas du formulaire (bouton visible) tant que le champ
+ * actif reste visible, sinon jusqu'à ce champ. Toucher hors d'un champ ferme le clavier.
+ */
+export function FormScroll({ children }: { children: React.ReactNode }) {
+  const scroll = useRef<ScrollView>(null);
+  const content = useRef<View>(null);
+  const focused = useRef<View | null>(null);
+  const sizes = useRef({ content: 0, viewport: 0 });
+  const keyboardUp = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const reveal = useCallback(() => {
+    const s = scroll.current;
+    if (!s) return;
+    const end = Math.max(0, sizes.current.content - sizes.current.viewport);
+    const node = focused.current;
+    if (!node || !content.current) {
+      s.scrollToEnd({ animated: true });
       return;
     }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(v, { toValue: 0.35, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(v, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-      ]),
+    node.measureLayout(
+      content.current,
+      (_x, y) => s.scrollTo({ y: Math.min(end, Math.max(0, y - space.md)), animated: true }),
+      () => s.scrollToEnd({ animated: true }),
     );
-    loop.start();
-    return () => loop.stop();
-  }, [animate, v]);
-  return <Animated.View style={[styles.pulseDot, { backgroundColor: color, shadowColor: color, opacity: v }]} />;
-}
+  }, []);
 
-// --- Formulaire ---------------------------------------------------------------------------------
+  const schedule = useCallback(
+    (delay: number) => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(reveal, delay);
+    },
+    [reveal],
+  );
 
-/** Carte vitrée (flou iOS / navigateur ; fond opaque sur Android, où le flou natif est coûteux). */
-export function GlassCard({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
+  useEffect(() => {
+    // Après l'animation du clavier (hauteur disponible à jour)
+    const show = Keyboard.addListener("keyboardDidShow", () => {
+      keyboardUp.current = true;
+      schedule(60);
+    });
+    const hide = Keyboard.addListener("keyboardDidHide", () => {
+      keyboardUp.current = false;
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [schedule]);
+
+  const onFieldFocus = useCallback(
+    (node: View | null) => {
+      focused.current = node;
+      // Passage d'un champ à l'autre, clavier déjà ouvert
+      if (keyboardUp.current) schedule(0);
+    },
+    [schedule],
+  );
+
   return (
-    <View style={[styles.glass, style]}>
-      {Platform.OS !== "android" && <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />}
-      <LinearGradient pointerEvents="none" colors={["rgba(255,255,255,0.075)", "rgba(255,255,255,0)"]} style={styles.glassSheen} />
-      <View style={styles.glassBody}>{children}</View>
-    </View>
+    <RevealContext.Provider value={onFieldFocus}>
+      <KeyboardAvoidingView behavior="padding" style={styles.fill}>
+        <ScrollView
+          ref={scroll}
+          style={styles.fill}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+          overScrollMode="never"
+          onLayout={(e) => {
+            sizes.current.viewport = e.nativeEvent.layout.height;
+          }}
+          onContentSizeChange={(_w, h) => {
+            sizes.current.content = h;
+          }}
+        >
+          <View ref={content} collapsable={false} style={styles.scrollContent}>
+            {children}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </RevealContext.Provider>
   );
 }
+
+// --- Champ ---------------------------------------------------------------------------------------
 
 type AuthFieldProps = Omit<TextInputProps, "style" | "placeholder"> & {
   label: string;
   icon: IconName;
   /** Exemple affiché dans le champ vide pendant la saisie. */
   hint?: string;
+  /** Aide sous le champ (remplacée par l'erreur). */
+  help?: string | null;
   error?: string | null;
   /** Mot de passe : masqué, avec bouton « afficher ». */
   secure?: boolean;
   right?: React.ReactNode;
+  inputStyle?: StyleProp<TextStyle>;
   ref?: React.Ref<TextInput>;
 };
 
-/** Champ à libellé flottant : icône, halo au focus, erreur sous le champ, œil pour les mots de passe. */
-export function AuthField({ label, icon, hint, error, secure, right, value, onFocus, onBlur, editable = true, ref, ...input }: AuthFieldProps) {
+/**
+ * Champ de formulaire : libellé au-dessus (lu une seule fois : c'est le nom du champ pour le lecteur d'écran),
+ * cadre de 56 px dont toute la surface donne le focus, bordure lime au focus, rouge en erreur, œil pour les
+ * mots de passe. L'erreur s'affiche sous le champ et fait partie de sa description vocale.
+ */
+export function AuthField({
+  label, icon, hint, help, error, secure, right, inputStyle, value, onFocus, onBlur, editable = true, keyboardType, ref, ...input
+}: AuthFieldProps) {
   const [focused, setFocused] = useState(false);
   const [hidden, setHidden] = useState(true);
-  const filled = !!value;
-  const lift = useRef(new Animated.Value(filled ? 1 : 0)).current;
-  useEffect(() => {
-    Animated.timing(lift, { toValue: focused || filled ? 1 : 0, duration: 170, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
-  }, [focused, filled, lift]);
-  const tint = error ? colors.red : focused ? colors.brand : colors.subtle;
+  const inner = useRef<TextInput | null>(null);
+  const wrap = useRef<View>(null);
+  const onReveal = useContext(RevealContext);
+  const setRef = useCallback(
+    (node: TextInput | null) => {
+      inner.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) (ref as React.RefObject<TextInput | null>).current = node;
+    },
+    [ref],
+  );
+  const border = error ? colors.red : focused ? colors.brand : colors.lineStrong;
+  const note = error || help;
   return (
-    <View style={{ gap: 6 }}>
-      <View style={[styles.field, focused && styles.fieldFocused, !!error && styles.fieldInvalid, !editable && { opacity: 0.6 }]}>
-        <View style={[styles.fieldIcon, focused && !error && { backgroundColor: "rgba(200,240,60,0.12)" }]}>
-          <Ionicons name={icon} size={18} color={tint} />
-        </View>
-        <View style={styles.fieldBody}>
-          <Animated.Text
-            pointerEvents="none"
-            numberOfLines={1}
-            style={[
-              styles.floatLabel,
-              {
-                top: lift.interpolate({ inputRange: [0, 1], outputRange: [20, 9] }),
-                fontSize: lift.interpolate({ inputRange: [0, 1], outputRange: [16, 11.5] }),
-                color: error ? colors.red : focused ? colors.brand : colors.muted,
-              },
-            ]}
-          >
-            {label}
-          </Animated.Text>
-          <TextInput
-            ref={ref}
-            value={value}
-            editable={editable}
-            secureTextEntry={secure && hidden}
-            placeholder={focused && !filled ? hint : undefined}
-            placeholderTextColor={colors.subtle}
-            accessibilityLabel={label}
-            selectionColor={colors.brand}
-            cursorColor={colors.brand}
-            keyboardAppearance="dark"
-            onFocus={(e) => {
-              setFocused(true);
-              onFocus?.(e);
-            }}
-            onBlur={(e) => {
-              setFocused(false);
-              onBlur?.(e);
-            }}
-            style={styles.fieldInput}
-            {...input}
-          />
-        </View>
+    <View ref={wrap} collapsable={false} style={styles.fieldWrap}>
+      <Text style={styles.fieldLabel} maxFontSizeMultiplier={TEXT_SCALE} accessible={false} accessibilityElementsHidden importantForAccessibility="no">
+        {label}
+      </Text>
+      <Pressable
+        accessible={false}
+        disabled={!editable}
+        onPress={() => inner.current?.focus()}
+        style={[styles.field, { borderColor: border }, !editable && styles.fieldDisabled]}
+      >
+        <Glyph name={icon} size={20} />
+        <TextInput
+          ref={setRef}
+          value={value}
+          editable={editable}
+          secureTextEntry={secure && hidden}
+          // Android : mot de passe affiché → clavier sans suggestions ni mémorisation
+          keyboardType={secure && !hidden && Platform.OS === "android" ? "visible-password" : keyboardType}
+          placeholder={focused && !value ? hint : undefined}
+          placeholderTextColor={colors.muted}
+          accessibilityLabel={label}
+          accessibilityHint={error ?? help ?? undefined}
+          accessibilityState={{ disabled: !editable }}
+          maxFontSizeMultiplier={INPUT_SCALE}
+          selectionColor={colors.brand}
+          cursorColor={colors.brand}
+          keyboardAppearance="dark"
+          onFocus={(e) => {
+            setFocused(true);
+            onReveal?.(wrap.current);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
+          style={[styles.input, inputStyle]}
+          {...input}
+        />
         {secure && (
           <Pressable
             onPress={() => setHidden((h) => !h)}
-            hitSlop={10}
-            style={styles.fieldAction}
+            style={({ pressed }) => [styles.fieldAction, pressed && styles.pressed]}
             accessibilityRole="button"
             accessibilityLabel={hidden ? "Afficher le mot de passe" : "Masquer le mot de passe"}
           >
-            <Ionicons name={hidden ? "eye-outline" : "eye-off-outline"} size={20} color={colors.muted} />
+            <Glyph name={hidden ? "eye-outline" : "eye-off-outline"} size={22} />
           </Pressable>
         )}
         {right}
-      </View>
-      {!!error && (
-        <Text style={styles.fieldError} accessibilityLiveRegion="polite">
-          {error}
+      </Pressable>
+      {!!note && (
+        // Déjà lu avec le champ (accessibilityHint) : masqué au lecteur d'écran pour ne pas l'entendre deux fois
+        <Text
+          style={[styles.fieldNote, !!error && styles.fieldError]}
+          maxFontSizeMultiplier={TEXT_SCALE}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          {note}
         </Text>
       )}
     </View>
   );
 }
 
-/** Bouton principal : dégradé lime, halo, reflet qui passe de temps en temps, chargement. */
-export function GlowButton({
-  title, onPress, loading, loadingTitle, icon = "arrow-forward", animate = true,
-}: { title: string; onPress: () => void; loading?: boolean; loadingTitle?: string; icon?: IconName | null; animate?: boolean }) {
-  const [width, setWidth] = useState(0);
-  const shine = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!animate || !width || loading) return;
-    shine.setValue(0);
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.delay(2600),
-        Animated.timing(shine, { toValue: 1, duration: 950, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(shine, { toValue: 0, duration: 0, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [animate, width, loading, shine]);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={loading ? (loadingTitle ?? title) : title}
-      accessibilityState={{ busy: !!loading, disabled: !!loading }}
-      disabled={loading}
-      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
-      onPress={() => {
-        if (Platform.OS !== "web") void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => null);
-        onPress();
-      }}
-      style={({ pressed }) => [styles.ctaWrap, { transform: [{ scale: pressed ? 0.975 : 1 }] }]}
-    >
-      <LinearGradient colors={["#DDFF6A", colors.brand, "#A4CF2A"]} locations={[0, 0.55, 1]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.cta}>
-        {width > 0 && !loading && (
-          <Animated.View
-            pointerEvents="none"
-            style={[styles.shine, { transform: [{ translateX: shine.interpolate({ inputRange: [0, 1], outputRange: [-120, width + 40] }) }, { skewX: "-22deg" }] }]}
-          >
-            <LinearGradient
-              colors={["rgba(255,255,255,0)", "rgba(255,255,255,0.55)", "rgba(255,255,255,0)"]}
-              start={{ x: 0, y: 0.5 }}
-              end={{ x: 1, y: 0.5 }}
-              style={StyleSheet.absoluteFill}
-            />
-          </Animated.View>
-        )}
-        {loading ? (
-          <View style={styles.ctaRow}>
-            <ActivityIndicator color={colors.brandFg} />
-            <Text style={styles.ctaText}>{loadingTitle ?? title}</Text>
-          </View>
-        ) : (
-          <View style={styles.ctaRow}>
-            <Text style={styles.ctaText}>{title}</Text>
-            {icon && (
-              <View style={styles.ctaIcon}>
-                <Ionicons name={icon} size={17} color={colors.brand} />
-              </View>
-            )}
-          </View>
-        )}
-      </LinearGradient>
-    </Pressable>
-  );
-}
+// --- Liens, en-têtes, messages -------------------------------------------------------------------
 
-/** Lien texte (« Mot de passe oublié ? », « Renvoyer le lien »). */
+/** Lien texte (« Mot de passe oublié ? », « Renvoyer le code ») : cible de 48 px, désactivé en gris lisible. */
 export function TextLink({
-  title, onPress, disabled, color = colors.brand, icon, align = "center",
-}: { title: string; onPress: () => void; disabled?: boolean; color?: string; icon?: IconName; align?: "center" | "flex-end" | "flex-start" }) {
+  title, onPress, disabled, muted, icon, align = "center", accessibilityLabel,
+}: {
+  title: string; onPress: () => void; disabled?: boolean; muted?: boolean; icon?: IconName;
+  align?: "center" | "flex-end" | "flex-start"; accessibilityLabel?: string;
+}) {
+  const color = disabled || muted ? colors.muted : colors.fg;
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      hitSlop={10}
+      hitSlop={4}
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
       accessibilityState={{ disabled: !!disabled }}
-      style={({ pressed }) => [styles.textLink, { alignSelf: align, opacity: disabled ? 0.45 : pressed ? 0.6 : 1 }]}
+      style={({ pressed }) => [styles.textLink, { alignSelf: align }, pressed && styles.pressed]}
     >
-      {icon && <Ionicons name={icon} size={15} color={color} />}
-      <Text style={[styles.textLinkText, { color }]}>{title}</Text>
+      {icon && <Glyph name={icon} size={18} color={color} />}
+      <Text style={[styles.textLinkText, { color }]} maxFontSizeMultiplier={TEXT_SCALE}>
+        {title}
+      </Text>
     </Pressable>
   );
 }
 
-/** En-tête de panneau secondaire : retour + titre + sous-titre. */
-export function PanelHeader({ title, subtitle, onBack }: { title: string; subtitle?: string; onBack?: () => void }) {
+/** En-tête de panneau secondaire : retour + titre ; sous-titre masqué clavier ouvert (compact). */
+export function PanelHeader({ title, subtitle, onBack, compact }: { title: string; subtitle?: React.ReactNode; onBack?: () => void; compact?: boolean }) {
   return (
-    <View style={{ gap: 8 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+    <View style={styles.panelHeader}>
+      <View style={styles.panelHeaderRow}>
         {onBack && (
-          <Pressable onPress={onBack} hitSlop={8} style={styles.back} accessibilityRole="button" accessibilityLabel="Retour à la connexion">
-            <Ionicons name="chevron-back" size={20} color={colors.fg} />
+          <Pressable
+            onPress={onBack}
+            style={({ pressed }) => [styles.back, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Retour à la connexion"
+          >
+            <Glyph name="chevron-back" size={22} color={colors.fg} />
           </Pressable>
         )}
-        <Text style={styles.panelTitle} accessibilityRole="header">
+        <Text style={styles.panelTitle} accessibilityRole="header" maxFontSizeMultiplier={TITLE_SCALE}>
           {title}
         </Text>
       </View>
-      {!!subtitle && <Text style={styles.panelSubtitle}>{subtitle}</Text>}
+      {!!subtitle && !compact && (
+        <Text style={styles.panelSubtitle} maxFontSizeMultiplier={TEXT_SCALE}>
+          {subtitle}
+        </Text>
+      )}
     </View>
   );
 }
 
-/** Message d'erreur / d'information dans la carte (icône, titre optionnel, texte). */
+/**
+ * Message d'erreur ou d'information dans le panneau : pictogramme et titre de la couleur de l'état,
+ * texte en clair sur fond neutre. Annoncé au lecteur d'écran à l'affichage.
+ */
 export function Notice({ tone = "error", title, message, icon }: { tone?: "error" | "warning" | "info"; title?: string; message: string; icon?: IconName }) {
   const tint = tone === "error" ? colors.red : tone === "warning" ? colors.amber : colors.blue;
+  useEffect(() => {
+    announce(title ? `${title}. ${message}` : message);
+  }, [title, message]);
   return (
-    <EnterView from={6}>
-      <View
-        style={[styles.notice, { borderColor: `${tint}55`, backgroundColor: `${tint}14` }]}
-        accessibilityRole="alert"
-        accessibilityLiveRegion="assertive"
-      >
-        <Ionicons name={icon ?? (tone === "info" ? "information-circle" : "alert-circle")} size={22} color={tint} />
-        <View style={{ flex: 1, gap: 2 }}>
-          {!!title && <Text style={[styles.noticeTitle, { color: tint }]}>{title}</Text>}
-          <Text style={styles.noticeText}>{message}</Text>
-        </View>
+    <View style={styles.notice} accessibilityRole="alert">
+      <Glyph name={icon ?? (tone === "info" ? "information-circle-outline" : "alert-circle-outline")} size={20} color={tint} />
+      <View style={styles.noticeBody}>
+        {!!title && (
+          <Text style={[styles.noticeTitle, { color: tint }]} maxFontSizeMultiplier={TEXT_SCALE}>
+            {title}
+          </Text>
+        )}
+        <Text style={styles.noticeText} maxFontSizeMultiplier={TEXT_SCALE}>
+          {message}
+        </Text>
       </View>
-    </EnterView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  blip: { position: "absolute", width: 20, height: 20, alignItems: "center", justifyContent: "center" },
-  blipHalo: { position: "absolute", width: 20, height: 20, borderRadius: 10 },
-  blipCore: { width: 7, height: 7, borderRadius: 4, shadowOpacity: 0.9, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } },
-  logo: { alignItems: "center", justifyContent: "center", shadowColor: colors.brand, shadowOpacity: 0.45, shadowRadius: 22, shadowOffset: { width: 0, height: 0 } },
-  pulseDot: { width: 7, height: 7, borderRadius: 4, shadowOpacity: 0.9, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } },
-  glass: {
-    borderRadius: radius.xl,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.09)",
-    backgroundColor: Platform.OS === "android" ? "rgba(16,18,23,0.95)" : "rgba(13,15,19,0.6)",
-  },
-  glassSheen: { position: "absolute", left: 0, right: 0, top: 0, height: 90 },
-  glassBody: { padding: 20, gap: 14 },
+  fill: { flex: 1 },
+  scrollContent: { flexGrow: 1 },
+  pressed: { opacity: 0.6 },
+  fieldWrap: { gap: space.sm },
+  fieldLabel: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
   field: {
     flexDirection: "row",
     alignItems: "center",
-    height: 62,
-    borderRadius: 18,
+    minHeight: control.md,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.lineStrong,
-    backgroundColor: "rgba(8,9,12,0.55)",
-    paddingLeft: 12,
-    paddingRight: 8,
-    gap: 12,
+    backgroundColor: colors.bg,
+    paddingLeft: space.lg,
+    gap: space.md,
   },
-  fieldFocused: {
-    borderColor: "rgba(200,240,60,0.6)",
-    backgroundColor: "rgba(200,240,60,0.04)",
-    shadowColor: colors.brand,
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  fieldInvalid: { borderColor: `${colors.red}AA`, backgroundColor: `${colors.red}0D` },
-  fieldIcon: { width: 36, height: 36, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.05)" },
-  fieldBody: { flex: 1, alignSelf: "stretch", justifyContent: "center" },
-  floatLabel: { position: "absolute", left: 0, right: 0, fontWeight: "600" },
-  fieldInput: {
-    height: 62, paddingTop: 22, paddingBottom: 6, paddingHorizontal: 0, color: colors.fg, fontSize: 16, fontWeight: "600",
-    // Aperçu web : pas de contour de focus du navigateur (le champ entier s'illumine déjà)
+  fieldDisabled: { opacity: 0.6 },
+  input: {
+    flex: 1,
+    alignSelf: "stretch",
+    minHeight: control.md - 2,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    paddingRight: space.lg,
+    color: colors.fg,
+    fontSize: type.callout,
+    fontWeight: weight.medium,
+    // Aperçu web : pas de contour de focus du navigateur (la bordure du champ l'indique déjà)
     ...(Platform.OS === "web" ? { outlineWidth: 0 } : null),
   },
-  fieldAction: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 20 },
-  fieldError: { color: colors.red, fontSize: 13, fontWeight: "600", paddingHorizontal: 6 },
-  ctaWrap: {
-    borderRadius: 20,
-    shadowColor: colors.brand,
-    shadowOpacity: Platform.OS === "ios" ? 0.35 : 0,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
+  fieldAction: { width: control.sm, height: control.sm, alignItems: "center", justifyContent: "center", marginRight: space.xs, borderRadius: radius.md },
+  fieldNote: { color: colors.muted, fontSize: type.footnote, lineHeight: 18 },
+  fieldError: { color: colors.red, fontWeight: weight.medium },
+  textLink: { flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: control.sm, paddingHorizontal: space.xs },
+  textLinkText: { fontSize: type.body, fontWeight: weight.semibold, ...mono },
+  panelHeader: { gap: space.sm },
+  panelHeaderRow: { flexDirection: "row", alignItems: "center", gap: space.md },
+  back: {
+    width: control.sm, height: control.sm, borderRadius: radius.full, alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.surface2, marginLeft: -space.xs,
   },
-  cta: { height: 60, borderRadius: 20, overflow: "hidden", alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
-  shine: { position: "absolute", top: -10, bottom: -10, left: 0, width: 70 },
-  ctaRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  ctaText: { color: colors.brandFg, fontSize: 18, fontWeight: "900", letterSpacing: 0.2 },
-  ctaIcon: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandFg },
-  textLink: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 4 },
-  textLinkText: { fontSize: 14, fontWeight: "700" },
-  back: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.07)" },
-  panelTitle: { flex: 1, color: colors.fg, fontSize: 22, fontWeight: "800", letterSpacing: -0.4 },
-  panelSubtitle: { color: colors.muted, fontSize: 14.5, lineHeight: 21 },
-  notice: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: radius.md, borderWidth: 1 },
-  noticeTitle: { fontSize: 15, fontWeight: "900" },
-  noticeText: { color: colors.fg, fontSize: 14.5, lineHeight: 20, fontWeight: "600" },
+  panelTitle: { flex: 1, color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, letterSpacing: -0.3 },
+  panelSubtitle: { color: colors.muted, fontSize: type.body, lineHeight: 21 },
+  notice: {
+    flexDirection: "row", alignItems: "flex-start", gap: space.md, paddingHorizontal: space.lg, paddingVertical: 14,
+    borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
+  },
+  noticeBody: { flex: 1, gap: 2 },
+  noticeTitle: { fontSize: type.body, fontWeight: weight.semibold },
+  noticeText: { color: colors.fg, fontSize: type.body, lineHeight: 21 },
 });

@@ -2,7 +2,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { FLEET_REPORT_META } from "@rydar/shared";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
 import MapView, { Circle, Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
 import { colors } from "@/theme";
 import type { MapReport, RydarMapProps } from "./types";
@@ -23,13 +23,16 @@ const darkMap = [
 
 const toLL = (p: { lat: number; lng: number }) => ({ latitude: p.lat, longitude: p.lng });
 
-/** Pastille emoji d'un signalement ; rendu suivi un court instant (sinon vue vide sur Android). */
+/**
+ * Pastille d'un signalement : pictogramme Ionicons de la couleur du type, pointe posée sur le lieu.
+ * Rendu suivi un court instant (sinon vue vide sur Android, le temps que la police d'icônes se dessine).
+ */
 function ReportMarker({ report, selected, onPress }: { report: MapReport; selected: boolean; onPress?: (id: string) => void }) {
   const meta = FLEET_REPORT_META[report.type] ?? FLEET_REPORT_META.other;
   const [track, setTrack] = useState(true);
   useEffect(() => {
     setTrack(true);
-    const t = setTimeout(() => setTrack(false), 700);
+    const t = setTimeout(() => setTrack(false), 1000);
     return () => clearTimeout(t);
   }, [selected]);
   return (
@@ -41,11 +44,11 @@ function ReportMarker({ report, selected, onPress }: { report: MapReport; select
       tracksViewChanges={track}
       zIndex={selected ? 30 : 20}
       onPress={() => onPress?.(report.id)}
-      accessibilityLabel={`Signalement : ${meta.label}`}
+      accessibilityLabel={`Signalement\u00A0: ${meta.label}`}
     >
       <View style={styles.reportWrap}>
-        <View style={[styles.report, { borderColor: meta.color, transform: [{ scale: selected ? 1.18 : 1 }] }]}>
-          <Text style={styles.reportEmoji}>{meta.emoji}</Text>
+        <View style={[styles.report, { borderColor: meta.color }, selected && styles.reportSelected]}>
+          <Ionicons name={meta.ionicon as keyof typeof Ionicons.glyphMap} size={20} color={meta.color} />
         </View>
         <View style={[styles.reportTip, { borderTopColor: meta.color }]} />
       </View>
@@ -205,8 +208,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(17,19,24,0.94)", borderWidth: 1, borderColor: colors.lineStrong,
   },
   reportWrap: { alignItems: "center", paddingTop: 4, paddingHorizontal: 4 },
-  report: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 2.5, alignItems: "center", justifyContent: "center" },
-  reportEmoji: { fontSize: 20, lineHeight: 24, textAlign: "center" },
+  report: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 2, alignItems: "center", justifyContent: "center" },
+  reportSelected: { transform: [{ scale: 1.18 }], backgroundColor: colors.surface3 },
   reportTip: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 7, borderLeftColor: "transparent", borderRightColor: "transparent", marginTop: -1 },
   // Flèche de cap au-dessus du point (la vue entière tourne selon le cap)
   meArrow: {

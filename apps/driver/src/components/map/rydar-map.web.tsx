@@ -19,21 +19,46 @@ function dot(style: Partial<CSSStyleDeclaration>, inner?: HTMLElement) {
   return el;
 }
 
-/** Pastille emoji d'un signalement (ancrage en bas, pointe colorée) ; l'élément interne porte la mise à l'échelle. */
+/** Pictogrammes des signalements (trait 2 px, couleur héritée), équivalents web des icônes Ionicons de l'app. */
+const REPORT_GLYPHS: Record<string, string> = {
+  police: '<path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6l7-3z"/>',
+  control: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c.7-1.3 1.8-2 3-2s2.3.7 3 2M14 10h4M14 14h3"/>',
+  accident: '<path d="M5 11l1.6-4.1A2 2 0 0 1 8.5 5.5h7a2 2 0 0 1 1.9 1.4L19 11"/><rect x="3" y="11" width="18" height="6" rx="2"/><path d="M6 17v2M18 17v2M7 14h.01M17 14h.01"/>',
+  traffic: '<path d="M10 4h4l4.5 15h-13L10 4zM7.7 11h8.6M6.5 15h11M3 19h18"/>',
+  danger: '<path d="M12 4L2.5 20h19L12 4zM12 10v4M12 17h.01"/>',
+  other: '<path d="M12 21s-6-5.3-6-11a6 6 0 0 1 12 0c0 5.7-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/>',
+};
+
+function reportGlyph(type: string, color: string) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", color);
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  // Chaînes constantes ci-dessus (aucune donnée externe)
+  svg.innerHTML = REPORT_GLYPHS[type] ?? REPORT_GLYPHS.other!;
+  return svg;
+}
+
+/** Pastille d'un signalement (ancrage en bas, pointe colorée) ; l'élément interne porte la mise à l'échelle. */
 function reportElement(r: MapReport, onPress: (id: string) => void) {
   const meta = FLEET_REPORT_META[r.type] ?? FLEET_REPORT_META.other;
   const root = dot({ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", padding: "4px 4px 0" });
   const bubble = dot({
-    width: "40px", height: "40px", borderRadius: "999px", background: colors.surface, border: `2.5px solid ${meta.color}`,
-    boxShadow: `0 0 0 4px ${meta.color}2E, 0 8px 18px rgba(0,0,0,.6)`, display: "grid", placeItems: "center",
-    fontSize: "20px", lineHeight: "1", transition: "transform 160ms ease", transformOrigin: "50% 100%",
+    width: "40px", height: "40px", borderRadius: "999px", background: colors.surface, border: `2px solid ${meta.color}`,
+    boxShadow: "0 2px 6px rgba(0,0,0,.45)", display: "grid", placeItems: "center", transformOrigin: "50% 100%",
   });
-  bubble.textContent = meta.emoji;
+  bubble.appendChild(reportGlyph(r.type, meta.color));
   bubble.dataset.role = "bubble";
   const tip = dot({ width: "0", height: "0", borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderTop: `7px solid ${meta.color}`, marginTop: "-1px" });
   root.append(bubble, tip);
   root.setAttribute("role", "button");
-  root.setAttribute("aria-label", `Signalement : ${meta.label}`);
+  root.setAttribute("aria-label", `Signalement\u00A0: ${meta.label}`);
   root.addEventListener("click", (e) => {
     e.stopPropagation();
     onPress(r.id);
@@ -151,7 +176,10 @@ export function RydarMap({
         current.set(r.id, entry);
       } else entry.marker.setLngLat([r.lng, r.lat]);
       const bubble = entry.el.querySelector<HTMLElement>('[data-role="bubble"]');
-      if (bubble) bubble.style.transform = r.id === selectedReportId ? "scale(1.18)" : "scale(1)";
+      if (bubble) {
+        bubble.style.transform = r.id === selectedReportId ? "scale(1.18)" : "scale(1)";
+        bubble.style.background = r.id === selectedReportId ? colors.surface3 : colors.surface;
+      }
       entry.el.style.zIndex = r.id === selectedReportId ? "3" : "2";
     }
     for (const [id, entry] of current) {

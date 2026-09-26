@@ -1,29 +1,56 @@
+// Mon compte : identité, accès aux gains / commissions / documents / messages, véhicule, centrale, déconnexion.
 import { Ionicons } from "@expo/vector-icons";
 import { VEHICLE_CATEGORY_META, formatPrice } from "@rydar/shared";
 import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { Children, Fragment, useCallback, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { TrustBadge } from "@/components/centrale";
-import { BigButton, Card, Label, Screen } from "@/components/ui";
+import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
-import { colors } from "@/theme";
+import { colors, control, mono, radius, space, type, weight } from "@/theme";
 
-function Row({ icon, title, detail, detailColor, onPress }: { icon: keyof typeof Ionicons.glyphMap; title: string; detail?: string; detailColor?: string; onPress: () => void }) {
+const NBSP = "\u00A0";
+type IconName = keyof typeof Ionicons.glyphMap;
+
+const ICON = 20;
+const ROW_PAD = space.lg;
+const ROW_GAP = 14;
+
+/** Ligne de réglage : icône neutre, titre, détail (coloré seulement quand il signale un état), chevron. */
+function Row({ icon, title, detail, detailColor, onPress }: { icon: IconName; title: string; detail?: string; detailColor?: string; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.surface2 }]}>
-      <View style={styles.rowIcon}>
-        <Ionicons name={icon} size={19} color={colors.brand} />
-      </View>
-      <View style={{ flex: 1 }}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={detail ? `${title}, ${detail}` : title}
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.surface2 }]}
+    >
+      <Ionicons name={icon} size={ICON} color={colors.muted} />
+      <View style={{ flex: 1, gap: 2 }}>
         <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>
         {detail ? <Text style={[styles.rowDetail, detailColor ? { color: detailColor } : null]} numberOfLines={1}>{detail}</Text> : null}
       </View>
       <Ionicons name="chevron-forward" size={18} color={colors.subtle} />
     </Pressable>
+  );
+}
+
+/** Groupe de lignes séparées par un filet de 1 px aligné sur les titres. */
+function Group({ children }: { children: React.ReactNode }) {
+  const items = Children.toArray(children);
+  return (
+    <View style={styles.group}>
+      {items.map((child, i) => (
+        <Fragment key={i}>
+          {i > 0 && <View style={styles.sep} />}
+          {child}
+        </Fragment>
+      ))}
+    </View>
   );
 }
 
@@ -58,73 +85,115 @@ export default function Profile() {
           : s.to_receive_cents > 0
             ? `${formatPrice(s.to_receive_cents)} à recevoir`
             : "À jour";
-  const commissionsColor = !s ? undefined : s.blocked ? colors.red : s.owed_cents > 0 ? colors.amber : s.declared_cents > 0 ? colors.blue : colors.green;
+  // Couleur seulement pour un état qui demande attention (ou un montant à recevoir) ; « À jour » reste neutre
+  const commissionsColor = !s
+    ? undefined
+    : s.blocked
+      ? colors.red
+      : s.owed_cents > 0
+        ? colors.amber
+        : s.declared_cents > 0
+          ? colors.blue
+          : s.to_receive_cents > 0
+            ? colors.green
+            : undefined;
+
+  const d = home?.driver;
+  const initials = `${d?.first_name?.charAt(0) ?? ""}${d?.last_name?.charAt(0) ?? ""}`.toUpperCase();
+  const fullName = d ? `${d.first_name ?? ""} ${d.last_name ?? ""}`.trim() : "";
+  const unread = chat?.unread_total ?? 0;
+  const phone = home?.organization.phone;
+
   return (
     <Screen>
-      <SafeAreaView style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 18, gap: 14 }}>
-          <View style={styles.header}>
-            <Pressable onPress={() => router.back()} style={styles.back}><Ionicons name="chevron-back" size={22} color={colors.fg} /></Pressable>
-            <Text style={styles.title}>Mon compte</Text>
-            <View style={{ width: 44 }} />
+      <SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
+        <ScreenHeader title="Mon compte" />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.identity} accessible accessibilityLabel={fullName ? `${fullName}, chauffeur ${d?.number ?? ""}, ${home?.organization.name ?? ""}` : "Chargement du compte"}>
+            <View style={styles.avatar}>
+              {initials ? <Text style={styles.avatarText}>{initials}</Text> : <Ionicons name="person-outline" size={24} color={colors.muted} />}
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={styles.name} numberOfLines={1}>{fullName || "—"}</Text>
+              {d && (
+                <Text style={styles.sub} numberOfLines={1}>
+                  Chauffeur n°{NBSP}<Text style={mono}>{d.number}</Text>
+                  {home?.organization.name ? ` · ${home.organization.name}` : ""}
+                </Text>
+              )}
+              {centrale && <TrustBadge level={d?.trust_level} style={{ marginTop: space.xs }} />}
+            </View>
           </View>
-          <Card style={{ alignItems: "center", gap: 6, paddingVertical: 26 }}>
-            <View style={styles.avatar}><Text style={styles.avatarText}>{home?.driver.first_name?.charAt(0)}{home?.driver.last_name?.charAt(0)}</Text></View>
-            <Text style={styles.name}>{home?.driver.first_name} {home?.driver.last_name}</Text>
-            <Text style={styles.sub}>Chauffeur #{home?.driver.number} · {home?.organization.name}</Text>
-            {centrale && <TrustBadge level={home?.driver.trust_level} style={{ alignSelf: "center", marginTop: 4 }} />}
-          </Card>
-          <Card style={{ padding: 6 }}>
+
+          <Group>
             <Row
               icon="wallet-outline"
               title="Mes gains"
               detail={`${formatPrice(centrale ? home?.today.net_cents ?? 0 : home?.today.revenue_cents ?? 0)} aujourd'hui`}
               onPress={() => router.push("/earnings")}
             />
-            <View style={styles.sep} />
             {centrale && (
-              <>
-                <Row
-                  icon={s?.blocked ? "lock-closed-outline" : "cash-outline"}
-                  title="Commissions"
-                  detail={commissionsDetail}
-                  detailColor={commissionsColor}
-                  onPress={() => router.push("/commissions")}
-                />
-                <View style={styles.sep} />
-              </>
+              <Row
+                icon={s?.blocked ? "lock-closed-outline" : "cash-outline"}
+                title="Commissions"
+                detail={commissionsDetail}
+                detailColor={commissionsColor}
+                onPress={() => router.push("/commissions")}
+              />
             )}
             <Row
               icon="folder-open-outline"
               title="Mes documents"
               detail={docsTodo == null ? undefined : docsTodo > 0 ? `${docsTodo} à mettre à jour` : "À jour"}
-              detailColor={docsTodo && docsTodo > 0 ? colors.amber : colors.green}
+              detailColor={docsTodo != null && docsTodo > 0 ? colors.amber : undefined}
               onPress={() => router.push("/documents")}
             />
-            <View style={styles.sep} />
             <Row
               icon="chatbubbles-outline"
               title="Messages"
-              detail={chat && chat.unread_total > 0 ? `${chat.unread_total} non lu${chat.unread_total > 1 ? "s" : ""}` : undefined}
-              detailColor={colors.brand}
+              detail={unread > 0 ? `${unread} non lu${unread > 1 ? "s" : ""}` : undefined}
+              detailColor={colors.fg}
               onPress={() => router.push("/messages")}
             />
-          </Card>
-          <Card style={{ gap: 10 }}>
-            <Label>Véhicule</Label>
-            <Text style={styles.vehicle}>{v ? `${v.brand ?? ""} ${v.model}` : "Aucun véhicule"}</Text>
-            {v && <Text style={styles.sub}>{v.plate} · {VEHICLE_CATEGORY_META[v.category].label} · {v.seats} places</Text>}
-          </Card>
-          {home?.organization.phone && (
-            <Pressable onPress={() => void Linking.openURL(`tel:${home.organization.phone}`)}>
-              <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                <Ionicons name="call-outline" size={20} color={colors.brand} />
-                <Text style={styles.vehicle}>Appeler la centrale</Text>
-              </Card>
-            </Pressable>
+          </Group>
+
+          <Text style={styles.section} accessibilityRole="header">Véhicule</Text>
+          <View style={styles.group}>
+            <View style={styles.row} accessible>
+              <Ionicons name="car-outline" size={ICON} color={colors.muted} />
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={[styles.rowTitle, !v && { color: colors.muted }]} numberOfLines={1}>
+                  {v ? `${v.brand ?? ""} ${v.model}`.trim() : "Aucun véhicule"}
+                </Text>
+                {v && (
+                  <Text style={styles.rowDetail} numberOfLines={1}>
+                    <Text style={mono}>{v.plate}</Text> · {VEHICLE_CATEGORY_META[v.category].label} · {v.seats}{NBSP}{v.seats > 1 ? "places" : "place"}
+                  </Text>
+                )}
+              </View>
+            </View>
+          </View>
+
+          {phone && (
+            <>
+              <Text style={styles.section} accessibilityRole="header">Centrale</Text>
+              <Group>
+                <Row icon="call-outline" title="Appeler la centrale" detail={phone} onPress={() => void Linking.openURL(`tel:${phone}`)} />
+              </Group>
+            </>
           )}
-          <View style={{ marginTop: "auto", gap: 10 }}>
-            <BigButton title="Se déconnecter" variant="danger" height={56} onPress={async () => { await signOut(); router.replace("/login"); }} />
+
+          <View style={styles.footer}>
+            <BigButton
+              title="Se déconnecter"
+              variant="danger"
+              icon="log-out-outline"
+              height={control.md}
+              onPress={async () => {
+                await signOut();
+                router.replace("/login");
+              }}
+            />
             <Text style={styles.version}>Rydar Drive {Constants.expoConfig?.version}</Text>
           </View>
         </ScrollView>
@@ -134,18 +203,18 @@ export default function Profile() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  back: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 },
-  title: { color: colors.fg, fontSize: 18, fontWeight: "800" },
-  avatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: colors.surface3, borderWidth: 2, borderColor: "rgba(200,240,60,0.5)", alignItems: "center", justifyContent: "center", marginBottom: 6 },
-  avatarText: { color: colors.fg, fontSize: 24, fontWeight: "800" },
-  name: { color: colors.fg, fontSize: 22, fontWeight: "800" },
-  sub: { color: colors.subtle, fontSize: 14 },
-  vehicle: { color: colors.fg, fontSize: 16, fontWeight: "700" },
-  version: { color: colors.subtle, textAlign: "center", fontSize: 12 },
-  row: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 14, borderRadius: 14 },
-  rowIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(200,240,60,0.1)", alignItems: "center", justifyContent: "center" },
-  rowTitle: { color: colors.fg, fontSize: 16, fontWeight: "700" },
-  rowDetail: { color: colors.muted, fontSize: 13.5, fontWeight: "700", marginTop: 2 },
-  sep: { height: 1, backgroundColor: colors.line, marginHorizontal: 12 },
+  content: { flexGrow: 1, paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.lg, gap: space.md },
+  identity: { flexDirection: "row", alignItems: "center", gap: space.lg, paddingVertical: space.md, marginBottom: space.xs },
+  avatar: { width: 56, height: 56, borderRadius: radius.full, backgroundColor: colors.surface3, alignItems: "center", justifyContent: "center" },
+  avatarText: { color: colors.fg, fontSize: type.title3, fontWeight: weight.semibold },
+  name: { color: colors.fg, fontSize: type.title3, fontWeight: weight.bold },
+  sub: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.regular },
+  section: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.semibold, marginTop: space.sm, marginLeft: space.xs },
+  group: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
+  row: { flexDirection: "row", alignItems: "center", gap: ROW_GAP, minHeight: control.md + space.xs, paddingHorizontal: ROW_PAD, paddingVertical: space.md },
+  rowTitle: { color: colors.fg, fontSize: type.callout, fontWeight: weight.medium },
+  rowDetail: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.regular },
+  sep: { height: 1, backgroundColor: colors.line, marginLeft: ROW_PAD + ICON + ROW_GAP },
+  footer: { marginTop: "auto", paddingTop: space.xl, gap: space.md },
+  version: { color: colors.muted, textAlign: "center", fontSize: type.caption },
 });

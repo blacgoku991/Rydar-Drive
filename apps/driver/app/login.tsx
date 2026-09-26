@@ -1,46 +1,56 @@
-// Accès chauffeur : connexion, mot de passe oublié, inscription par le lien d'une centrale.
-// Un seul écran : le radar tourne en fond, la carte vitrée change de contenu (pas de navigation).
+// Accès chauffeur : connexion, mot de passe oublié (code reçu par e-mail), inscription par le lien d'une centrale.
+// Un seul écran : la carte de la ville en fond (statique, non interactive), un panneau opaque en bas dont le
+// contenu change (pas de navigation).
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Ionicons } from "@expo/vector-icons";
+import { NEW_PASSWORD_MAX, NEW_PASSWORD_MIN } from "@rydar/shared";
 import { LinearGradient } from "expo-linear-gradient";
-import { Redirect, router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import {
-  Animated, BackHandler, Easing, Keyboard, KeyboardAvoidingView, LayoutAnimation, Platform, Pressable, StyleSheet, Text, View,
-  useWindowDimensions, type TextInput,
-} from "react-native";
+import { Redirect, router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Animated, BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View, type TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
-  AuthField, EnterView, GlassCard, GlowButton, LogoMark, Notice, PanelHeader, PulseDot, RadarScope, TextLink,
-  useKeyboardVisible, useReduceMotion, useShake,
+  announce, AuthField, EnterView, FormScroll, Glyph, LogoMark, Notice, PanelHeader, panelTransition, TEXT_SCALE, TextLink, TITLE_SCALE,
+  useKeyboardVisible, useReduceMotion, useShake, type IconName,
 } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
-import { RadarPulse } from "@/components/radar";
-import { hapticResult } from "@/components/ui";
+import { RydarMap } from "@/components/map/rydar-map";
+import { BigButton, hapticResult } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { parseJoinCode, requestPasswordReset, signIn, type ApiError } from "@/lib/api";
+import { confirmPasswordReset, parseJoinCode, requestPasswordReset, signIn, type ApiError } from "@/lib/api";
 import { canReadText, readText } from "@/lib/clipboard";
-import { colors } from "@/theme";
+import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
 
 type Mode = "login" | "forgot" | "join";
 type Failure = { message: string; code: string | null };
 
+/** Espace insécable avant « ? : ; ! » (typographie française). */
+const NB = " ";
 /** Dernière adresse utilisée (pré-remplie à la prochaine connexion). */
 const LAST_EMAIL_KEY = "rydar.driver.lastEmail";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+/** Délai avant de pouvoir redemander un code (Supabase n'envoie pas deux e-mails de suite plus vite). */
 const RESEND_SECONDS = 60;
-/** En dessous de cette hauteur (petit écran, clavier ouvert), l'en-tête ne garde que le logo. */
-const HERO_FULL_MIN = 200;
+const NETWORK_MESSAGE = "Vérifiez votre connexion internet (4G ou Wi-Fi), puis réessayez.";
 
-/** Refus de connexion (codes de /api/auth/driver-login) : titre, icône et ton du message. */
-const DENIED: Record<string, { title: string; icon: keyof typeof Ionicons.glyphMap; tone: "error" | "warning" }> = {
-  BANNED: { title: "Compte banni", icon: "ban", tone: "error" },
-  REJECTED: { title: "Candidature refusée", icon: "close-circle", tone: "error" },
-  INACTIVE: { title: "Compte inactif", icon: "pause-circle", tone: "warning" },
-  ORGANIZATION_SUSPENDED: { title: "Centrale suspendue", icon: "business", tone: "warning" },
-  NOT_DRIVER: { title: "Compte non chauffeur", icon: "person-remove", tone: "warning" },
-  RATE_LIMITED: { title: "Trop de tentatives", icon: "time", tone: "warning" },
-  NETWORK: { title: "Pas de connexion", icon: "cloud-offline", tone: "warning" },
+/** Refus et erreurs serveur (codes de /api/auth/driver-login et de la réinitialisation) : titre, pictogramme, ton. */
+const DENIED: Record<string, { title: string; icon: IconName; tone: "error" | "warning" }> = {
+  BANNED: { title: "Compte banni", icon: "ban-outline", tone: "error" },
+  REJECTED: { title: "Candidature refusée", icon: "close-circle-outline", tone: "error" },
+  INACTIVE: { title: "Compte inactif", icon: "pause-circle-outline", tone: "warning" },
+  ORGANIZATION_SUSPENDED: { title: "Centrale suspendue", icon: "business-outline", tone: "warning" },
+  NOT_DRIVER: { title: "Compte non chauffeur", icon: "person-remove-outline", tone: "warning" },
+  RATE_LIMITED: { title: "Trop de tentatives", icon: "time-outline", tone: "warning" },
+  NETWORK: { title: "Pas de connexion", icon: "cloud-offline-outline", tone: "warning" },
+  SAME_PASSWORD: { title: "Mot de passe inchangé", icon: "key-outline", tone: "warning" },
+  WEAK_PASSWORD: { title: "Mot de passe refusé", icon: "key-outline", tone: "warning" },
+  PASSWORD_UPDATE_FAILED: { title: "Mot de passe non enregistré", icon: "key-outline", tone: "error" },
+};
+
+/** Code valable mais mot de passe refusé : le code a été consommé par le serveur. */
+const CODE_USED_HINT: Record<string, string> = {
+  SAME_PASSWORD: "Ce code a déjà servi : connectez-vous avec ce mot de passe, ou demandez un nouveau code.",
+  WEAK_PASSWORD: "Ce code a déjà servi : demandez-en un nouveau.",
+  PASSWORD_UPDATE_FAILED: "",
 };
 
 function emailProblem(email: string) {
@@ -49,30 +59,38 @@ function emailProblem(email: string) {
   return EMAIL_RE.test(e) ? null : "Adresse e-mail invalide.";
 }
 
+function failureOf(e: unknown): Failure {
+  return { message: (e as Error).message, code: (e as ApiError).code ?? null };
+}
+
 function FailureNotice({ failure }: { failure: Failure }) {
   const denied = failure.code ? DENIED[failure.code] : undefined;
-  return <Notice tone={denied?.tone ?? "error"} title={denied?.title} icon={denied?.icon} message={frTypo(failure.message)} />;
+  const message = failure.code === "NETWORK" ? NETWORK_MESSAGE : failure.message;
+  return <Notice tone={denied?.tone ?? "error"} title={denied?.title} icon={denied?.icon} message={frTypo(message)} />;
 }
 
 export default function Login() {
   const { session, ready, canDrive } = useDriver();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
   const reduceMotion = useReduceMotion();
   const keyboard = useKeyboardVisible();
-  const card = useShake();
+  const panel = useShake(reduceMotion);
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
-  const [heroHeight, setHeroHeight] = useState(0);
-  const compact = keyboard || (heroHeight > 0 && heroHeight < HERO_FULL_MIN);
-  const radarScale = useRef(new Animated.Value(1)).current;
+  /** Panneau déjà changé une fois : au premier affichage, seul le panneau entier apparaît (pas de double animation). */
+  const [switched, setSwitched] = useState(false);
+  const animate = !reduceMotion;
 
-  /** Changement de panneau (connexion ↔ mot de passe oublié ↔ inscription), hauteur animée. */
-  function go(next: Mode) {
-    Keyboard.dismiss();
-    LayoutAnimation.configureNext(LayoutAnimation.create(260, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
-    setMode(next);
-  }
+  /** Changement de panneau (connexion ↔ mot de passe oublié ↔ inscription). */
+  const go = useCallback(
+    (next: Mode) => {
+      Keyboard.dismiss();
+      panelTransition(animate);
+      setSwitched(true);
+      setMode(next);
+    },
+    [animate],
+  );
 
   useEffect(() => {
     AsyncStorage.getItem(LAST_EMAIL_KEY)
@@ -80,91 +98,69 @@ export default function Login() {
       .catch(() => null);
   }, []);
 
-  useEffect(() => {
-    Animated.timing(radarScale, { toValue: compact ? 0.62 : 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, [compact, radarScale]);
-
-  // Android : le bouton retour ramène à la connexion au lieu de quitter l'application
-  useEffect(() => {
-    if (mode === "login" || Platform.OS !== "android") return;
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      go("login");
-      return true;
-    });
-    return () => sub.remove();
-  }, [mode]);
+  // Android : « retour » ramène à la connexion au lieu de quitter l'application. Seulement quand cet écran a
+  // le focus : depuis /rejoindre (empilé au-dessus), le retour revient normalement ici.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== "android" || mode === "login") return undefined;
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        go("login");
+        return true;
+      });
+      return () => sub.remove();
+    }, [mode, go]),
+  );
 
   // Connecté et état du compte connu : accueil, ou écran d'attente / de blocage
   if (session && ready) return <Redirect href={canDrive ? "/home" : "/account"} />;
 
-  const logo = compact ? 58 : 92;
-  const radarSize = Math.round(Math.min(Math.max(width * 1.35, 440), 640));
+  const compact = keyboard;
+  const panelProps = { compact, animate: animate && switched, onFail: panel.shake };
   return (
     <View style={styles.screen}>
-      <LinearGradient colors={[colors.bg, colors.bgDeep]} style={StyleSheet.absoluteFill} />
-      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
-        <View style={[styles.column, { paddingTop: insets.top + 10, paddingBottom: keyboard ? 12 : Math.max(insets.bottom, 18) }]}>
-          {/* En-tête : radar centré sur le logo (déborde derrière la carte), nom, badge */}
-          <View style={styles.hero} onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}>
-            <EnterView animate={!reduceMotion} from={-8} style={{ alignItems: "center" }}>
-              <View style={{ width: logo, height: logo, alignItems: "center", justifyContent: "center" }}>
-                <Animated.View
-                  pointerEvents="none"
-                  style={{ position: "absolute", width: radarSize, height: radarSize, left: (logo - radarSize) / 2, top: (logo - radarSize) / 2, transform: [{ scale: radarScale }] }}
-                >
-                  <RadarScope size={radarSize} animate={!reduceMotion} />
-                </Animated.View>
-                <LogoMark size={logo} />
-              </View>
-              {!compact && (
-                <View style={styles.brandBlock}>
-                  <Text style={styles.wordmark} accessibilityRole="header">
-                    Rydar<Text style={styles.wordmarkLight}> Drive</Text>
-                  </Text>
-                  <View style={styles.kicker}>
-                    <PulseDot animate={!reduceMotion} />
-                    <Text style={styles.kickerText}>ESPACE CHAUFFEUR</Text>
-                  </View>
-                </View>
-              )}
-            </EnterView>
-          </View>
+      {/* Fond : carte de la ville, figée, sous un voile sombre (lisibilité du logo et du panneau) */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <RydarMap />
+        <LinearGradient
+          colors={[alpha(colors.bgDeep, 0.88), alpha(colors.bgDeep, 0.3), alpha(colors.bgDeep, 0.3), alpha(colors.bgDeep, 0.96)]}
+          locations={[0, 0.18, 0.55, 0.85]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
 
-          <View>
-            {/* Fondu sous la carte : le radar s'efface vers le bas */}
-            <LinearGradient pointerEvents="none" colors={["rgba(6,7,9,0)", "rgba(6,7,9,0.92)"]} locations={[0, 0.45]} style={styles.bottomFade} />
-            <EnterView animate={!reduceMotion} delay={140} from={28}>
-              <Animated.View style={card.style}>
-                <GlassCard>
-                  {mode === "login" ? (
-                    <LoginPanel key="login" email={email} setEmail={setEmail} onForgot={() => go("forgot")} onFail={card.shake} animate={!reduceMotion} />
-                  ) : mode === "forgot" ? (
-                    <ForgotPanel key="forgot" email={email} setEmail={setEmail} onBack={() => go("login")} onFail={card.shake} animate={!reduceMotion} />
-                  ) : (
-                    <JoinPanel key="join" onBack={() => go("login")} onFail={card.shake} animate={!reduceMotion} />
-                  )}
-                </GlassCard>
-              </Animated.View>
-            </EnterView>
-            {mode === "login" && !keyboard && (
-              <EnterView animate={!reduceMotion} delay={260}>
-                <Pressable onPress={() => go("join")} style={({ pressed }) => [styles.joinRow, pressed && { opacity: 0.6 }]} accessibilityRole="button" hitSlop={6}>
-                  <Text style={styles.joinMuted}>Nouveau chauffeur ?</Text>
-                  <Text style={styles.joinLink}>Rejoindre une centrale</Text>
-                  <Ionicons name="arrow-forward" size={15} color={colors.brand} />
-                </Pressable>
-              </EnterView>
-            )}
-          </View>
+      <FormScroll>
+        <View style={[styles.brandRow, { paddingTop: insets.top + (compact ? space.sm : space.lg) }]}>
+          <LogoMark size={compact ? 28 : 40} />
+          <Text style={[styles.brand, compact && styles.brandCompact]} maxFontSizeMultiplier={TITLE_SCALE}>
+            Rydar Drive
+          </Text>
         </View>
-      </KeyboardAvoidingView>
+
+        <View style={{ flex: 1, minHeight: compact ? space.lg : 96 }} />
+
+        <EnterView animate={animate} from={24} duration={320} style={styles.panelWrap}>
+          <Animated.View style={[styles.panel, { paddingBottom: compact ? space.lg : Math.max(insets.bottom, space.lg) + space.sm }, panel.style]}>
+            {mode === "login" ? (
+              <LoginPanel key="login" {...panelProps} email={email} setEmail={setEmail} onForgot={() => go("forgot")} onJoin={() => go("join")} />
+            ) : mode === "forgot" ? (
+              <ForgotPanel key="forgot" {...panelProps} email={email} setEmail={setEmail} onBack={() => go("login")} />
+            ) : (
+              <JoinPanel key="join" {...panelProps} onBack={() => go("login")} />
+            )}
+          </Animated.View>
+        </EnterView>
+      </FormScroll>
     </View>
   );
 }
 
-type PanelProps = { onFail: () => void; animate: boolean };
+type PanelProps = { compact: boolean; animate: boolean; onFail: () => void };
 
-function LoginPanel({ email, setEmail, onForgot, onFail, animate }: PanelProps & { email: string; setEmail: (v: string) => void; onForgot: () => void }) {
+// --- Connexion -----------------------------------------------------------------------------------
+
+function LoginPanel({
+  email, setEmail, onForgot, onJoin, compact, animate, onFail,
+}: PanelProps & { email: string; setEmail: (v: string) => void; onForgot: () => void; onJoin: () => void }) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [invalid, setInvalid] = useState<{ email?: string | null; password?: string | null }>({});
@@ -172,34 +168,45 @@ function LoginPanel({ email, setEmail, onForgot, onFail, animate }: PanelProps &
   const passwordRef = useRef<TextInput>(null);
 
   async function submit() {
+    if (loading) return;
     const problems = { email: emailProblem(email), password: password ? null : "Saisissez votre mot de passe." };
     setInvalid(problems);
     setFailure(null);
-    if (problems.email || problems.password) {
+    const first = problems.email ?? problems.password;
+    if (first) {
       onFail();
+      announce(first);
       if (!problems.email) passwordRef.current?.focus();
       return;
     }
     Keyboard.dismiss();
     setLoading(true);
+    announce("Connexion en cours");
     try {
       await signIn(email, password);
       hapticResult(true);
       AsyncStorage.setItem(LAST_EMAIL_KEY, email.trim().toLowerCase()).catch(() => null);
       // Redirection dès que l'état du compte est lu (bouton en attente jusque-là)
     } catch (e) {
-      setFailure({ message: (e as Error).message, code: (e as ApiError).code ?? null });
+      setFailure(failureOf(e));
       setLoading(false);
       onFail();
     }
   }
 
   return (
-    <EnterView animate={animate} from={10} style={{ gap: 14 }}>
-      <View style={{ gap: 6 }}>
-        <Text style={styles.title} accessibilityRole="header">Bienvenue à bord</Text>
-        <Text style={styles.subtitle}>Connectez-vous avec les identifiants de votre centrale.</Text>
+    <EnterView animate={animate} style={styles.panelBody}>
+      <View style={styles.heading}>
+        <Text style={styles.title} accessibilityRole="header" maxFontSizeMultiplier={TITLE_SCALE}>
+          Connexion
+        </Text>
+        {!compact && (
+          <Text style={styles.lead} maxFontSizeMultiplier={TEXT_SCALE}>
+            Identifiants fournis par votre centrale.
+          </Text>
+        )}
       </View>
+
       <AuthField
         label="E-mail"
         icon="mail-outline"
@@ -220,7 +227,8 @@ function LoginPanel({ email, setEmail, onForgot, onFail, animate }: PanelProps &
         submitBehavior="submit"
         onSubmitEditing={() => passwordRef.current?.focus()}
       />
-      <View style={{ gap: 8 }}>
+
+      <View>
         <AuthField
           ref={passwordRef}
           label="Mot de passe"
@@ -238,22 +246,51 @@ function LoginPanel({ email, setEmail, onForgot, onFail, animate }: PanelProps &
           autoComplete="current-password"
           textContentType="password"
           returnKeyType="go"
+          submitBehavior="blurAndSubmit"
           onSubmitEditing={submit}
         />
-        <TextLink title="Mot de passe oublié ?" onPress={onForgot} align="flex-end" disabled={loading} />
+        <TextLink title={`Mot de passe oublié${NB}?`} onPress={onForgot} align="flex-end" disabled={loading} />
       </View>
+
       {failure && <FailureNotice failure={failure} />}
-      <GlowButton title="Se connecter" loadingTitle="Connexion…" onPress={submit} loading={loading} animate={animate} />
+
+      <BigButton title="Se connecter" onPress={submit} loading={loading} height={control.md} />
+
+      {!compact && (
+        <Pressable
+          onPress={onJoin}
+          disabled={loading}
+          style={({ pressed }) => [styles.joinRow, pressed && styles.pressed]}
+          accessibilityRole="button"
+          accessibilityLabel="Nouveau chauffeur ? Rejoindre une centrale"
+          accessibilityState={{ disabled: loading }}
+        >
+          <Text style={styles.joinText} maxFontSizeMultiplier={TEXT_SCALE}>
+            Nouveau chauffeur{NB}? <Text style={styles.joinStrong}>Rejoindre une centrale</Text>
+          </Text>
+        </Pressable>
+      )}
     </EnterView>
   );
 }
 
-function ForgotPanel({ email, setEmail, onBack, onFail, animate }: PanelProps & { email: string; setEmail: (v: string) => void; onBack: () => void }) {
-  const [loading, setLoading] = useState(false);
-  const [invalid, setInvalid] = useState<string | null>(null);
-  const [failure, setFailure] = useState<Failure | null>(null);
+// --- Mot de passe oublié : adresse → code reçu par e-mail + nouveau mot de passe --------------------
+
+function ForgotPanel({ email, setEmail, onBack, compact, animate, onFail }: PanelProps & { email: string; setEmail: (v: string) => void; onBack: () => void }) {
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  const [resent, setResent] = useState(false);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [invalid, setInvalid] = useState<{ code?: string | null; password?: string | null; confirm?: string | null }>({});
+  const [saving, setSaving] = useState(false);
+  const codeRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmRef = useRef<TextInput>(null);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -261,105 +298,247 @@ function ForgotPanel({ email, setEmail, onBack, onFail, animate }: PanelProps & 
     return () => clearTimeout(t);
   }, [cooldown]);
 
-  async function send() {
-    const problem = emailProblem(email);
-    setInvalid(problem);
+  /** Envoi (ou renvoi) de l'e-mail : code à saisir ici + lien de secours. */
+  async function request(target: string, resend: boolean) {
     setFailure(null);
-    if (problem) {
-      onFail();
-      return;
-    }
-    Keyboard.dismiss();
-    setLoading(true);
+    setResent(false);
+    setSending(true);
     try {
-      const target = email.trim().toLowerCase();
       await requestPasswordReset(target);
       hapticResult(true);
-      setSentTo(target);
       setCooldown(RESEND_SECONDS);
+      if (resend) {
+        setCode("");
+        setInvalid((p) => ({ ...p, code: null }));
+        setResent(true);
+      } else {
+        panelTransition(animate);
+        setSentTo(target);
+        announce("Code envoyé. Saisissez le code reçu par e-mail.");
+      }
     } catch (e) {
-      setFailure({ message: (e as Error).message, code: (e as ApiError).code ?? null });
+      setFailure(failureOf(e));
       onFail();
     } finally {
-      setLoading(false);
+      setSending(false);
     }
   }
 
-  if (sentTo) {
+  function send() {
+    if (sending) return;
+    const problem = emailProblem(email);
+    setEmailError(problem);
+    setFailure(null);
+    if (problem) {
+      onFail();
+      announce(problem);
+      return;
+    }
+    Keyboard.dismiss();
+    void request(email.trim().toLowerCase(), false);
+  }
+
+  async function save() {
+    if (saving || !sentTo) return;
+    const digits = code.replace(/\D/g, "");
+    const problems = {
+      code: /^\d{6,10}$/.test(digits) ? null : "Saisissez les chiffres du code reçu par e-mail.",
+      password:
+        password.length < NEW_PASSWORD_MIN
+          ? `${NEW_PASSWORD_MIN} caractères minimum.`
+          : password.length > NEW_PASSWORD_MAX
+            ? `${NEW_PASSWORD_MAX} caractères maximum.`
+            : null,
+      confirm: !confirm ? "Saisissez à nouveau le mot de passe." : confirm !== password ? "Les deux mots de passe ne correspondent pas." : null,
+    };
+    setInvalid(problems);
+    setFailure(null);
+    setResent(false);
+    const first = problems.code ?? problems.password ?? problems.confirm;
+    if (first) {
+      onFail();
+      announce(first);
+      (problems.code ? codeRef : problems.password ? passwordRef : confirmRef).current?.focus();
+      return;
+    }
+    Keyboard.dismiss();
+    setSaving(true);
+    announce("Enregistrement du mot de passe");
+    try {
+      await confirmPasswordReset(sentTo, digits, password);
+      hapticResult(true);
+      AsyncStorage.setItem(LAST_EMAIL_KEY, sentTo).catch(() => null);
+      // Session ouverte : redirection dès que l'état du compte est lu (bouton en attente jusque-là)
+    } catch (e) {
+      const err = failureOf(e);
+      setSaving(false);
+      onFail();
+      if (err.code === "OTP_INVALID") {
+        setInvalid({ code: err.message });
+        announce(err.message);
+        return;
+      }
+      if (err.code && err.code in CODE_USED_HINT) {
+        // Code consommé par le serveur : il faut en demander un nouveau
+        setCode("");
+        if (err.code !== "SAME_PASSWORD") {
+          setPassword("");
+          setConfirm("");
+        }
+        const hint = CODE_USED_HINT[err.code];
+        setFailure({ code: err.code, message: hint ? `${err.message} ${hint}` : err.message });
+        return;
+      }
+      setFailure(err);
+    }
+  }
+
+  if (!sentTo) {
     return (
-      <EnterView animate={animate} from={10} style={{ gap: 16 }}>
-        <View style={styles.mailBadgeWrap}>
-          <RadarPulse size={128} rings={2} active={animate} />
-          <View style={styles.mailBadge}>
-            <Ionicons name="mail-unread-outline" size={30} color={colors.brand} />
-          </View>
-        </View>
-        <View style={{ gap: 8 }}>
-          <Text style={[styles.title, { textAlign: "center" }]} accessibilityRole="header">Vérifiez vos e-mails</Text>
-          <Text style={[styles.subtitle, { textAlign: "center" }]}>
-            Si un compte chauffeur existe pour <Text style={styles.strong}>{sentTo}</Text>, un lien vient de partir. Ouvrez-le sur ce téléphone,
-            choisissez un nouveau mot de passe, puis revenez vous connecter.
-          </Text>
-        </View>
-        <View style={styles.tip}>
-          <Ionicons name="information-circle-outline" size={18} color={colors.muted} />
-          <Text style={styles.tipText}>Rien reçu ? Regardez dans les courriers indésirables, ou contactez votre centrale.</Text>
-        </View>
-        {failure && <FailureNotice failure={failure} />}
-        <GlowButton title="Retour à la connexion" icon="log-in-outline" onPress={onBack} animate={animate} />
-        <TextLink
-          title={loading ? "Envoi…" : cooldown > 0 ? `Renvoyer le lien dans ${cooldown} s` : "Renvoyer le lien"}
-          icon="refresh"
-          onPress={send}
-          disabled={loading || cooldown > 0}
-          color={colors.muted}
+      <EnterView animate={animate} style={styles.panelBody}>
+        <PanelHeader
+          title="Mot de passe oublié"
+          subtitle={`Saisissez l'adresse e-mail de votre compte chauffeur${NB}: vous recevrez un code pour choisir un nouveau mot de passe.`}
+          onBack={onBack}
+          compact={compact}
         />
+        <AuthField
+          label="E-mail"
+          icon="mail-outline"
+          hint="vous@exemple.fr"
+          value={email}
+          onChangeText={(v) => {
+            setEmail(v);
+            if (emailError) setEmailError(null);
+          }}
+          error={emailError}
+          editable={!sending}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="email"
+          textContentType="username"
+          keyboardType="email-address"
+          returnKeyType="send"
+          submitBehavior="blurAndSubmit"
+          onSubmitEditing={send}
+        />
+        {failure && <FailureNotice failure={failure} />}
+        <BigButton title="Recevoir un code" onPress={send} loading={sending} height={control.md} />
       </EnterView>
     );
   }
 
   return (
-    <EnterView animate={animate} from={10} style={{ gap: 14 }}>
+    <EnterView animate={animate} style={styles.panelBody}>
       <PanelHeader
-        title="Mot de passe oublié"
-        subtitle="Indiquez l'e-mail de votre compte chauffeur : vous recevrez un lien pour choisir un nouveau mot de passe."
+        title="Nouveau mot de passe"
+        subtitle={
+          <>
+            Saisissez le code reçu par e-mail à <Text style={styles.strong}>{sentTo}</Text>.
+          </>
+        }
         onBack={onBack}
+        compact={compact}
       />
       <AuthField
-        label="E-mail"
-        icon="mail-outline"
-        hint="vous@exemple.fr"
-        value={email}
+        ref={codeRef}
+        label="Code reçu par e-mail"
+        icon="keypad-outline"
+        value={code}
         onChangeText={(v) => {
-          setEmail(v);
-          if (invalid) setInvalid(null);
+          setCode(v.replace(/\D/g, ""));
+          if (invalid.code) setInvalid((p) => ({ ...p, code: null }));
         }}
-        error={invalid}
-        editable={!loading}
+        error={invalid.code}
+        editable={!saving}
+        keyboardType="number-pad"
+        textContentType="oneTimeCode"
+        autoComplete="one-time-code"
+        maxLength={10}
+        returnKeyType="next"
+        submitBehavior="submit"
+        onSubmitEditing={() => passwordRef.current?.focus()}
+        inputStyle={styles.codeInput}
+      />
+      <AuthField
+        ref={passwordRef}
+        label="Nouveau mot de passe"
+        icon="lock-closed-outline"
+        secure
+        value={password}
+        help={`${NEW_PASSWORD_MIN} caractères minimum.`}
+        onChangeText={(v) => {
+          setPassword(v);
+          if (invalid.password) setInvalid((p) => ({ ...p, password: null }));
+        }}
+        error={invalid.password}
+        editable={!saving}
         autoCapitalize="none"
         autoCorrect={false}
-        autoComplete="email"
-        textContentType="username"
-        keyboardType="email-address"
-        returnKeyType="send"
-        onSubmitEditing={send}
+        autoComplete="new-password"
+        textContentType="newPassword"
+        returnKeyType="next"
+        submitBehavior="submit"
+        onSubmitEditing={() => confirmRef.current?.focus()}
+      />
+      <AuthField
+        ref={confirmRef}
+        label="Confirmez le mot de passe"
+        icon="lock-closed-outline"
+        secure
+        value={confirm}
+        onChangeText={(v) => {
+          setConfirm(v);
+          if (invalid.confirm) setInvalid((p) => ({ ...p, confirm: null }));
+        }}
+        error={invalid.confirm}
+        editable={!saving}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="new-password"
+        textContentType="newPassword"
+        returnKeyType="go"
+        submitBehavior="blurAndSubmit"
+        onSubmitEditing={save}
       />
       {failure && <FailureNotice failure={failure} />}
-      <GlowButton title="Envoyer le lien" loadingTitle="Envoi…" icon="paper-plane" onPress={send} loading={loading} animate={animate} />
+      {resent && !failure && <Notice tone="info" icon="mail-outline" message="Nouveau code envoyé. Seul le dernier code reçu est valable." />}
+      <BigButton title="Changer le mot de passe" onPress={save} loading={saving} height={control.md} />
+      <View style={styles.resendRow}>
+        <TextLink
+          title={sending ? "Envoi…" : cooldown > 0 ? `Renvoyer le code dans ${cooldown}${NB}s` : "Renvoyer le code"}
+          accessibilityLabel={cooldown > 0 ? `Renvoyer le code, disponible dans ${cooldown} secondes` : "Renvoyer le code"}
+          icon="refresh-outline"
+          onPress={() => void request(sentTo, true)}
+          disabled={sending || saving || cooldown > 0}
+        />
+      </View>
+      {!compact && (
+        <Text style={styles.note} maxFontSizeMultiplier={TEXT_SCALE}>
+          L&apos;e-mail contient aussi un lien{NB}: vous pouvez l&apos;ouvrir à la place. Rien reçu{NB}? Vérifiez les courriers indésirables.
+        </Text>
+      )}
     </EnterView>
   );
 }
 
-function JoinPanel({ onBack, onFail, animate }: PanelProps & { onBack: () => void }) {
+// --- Rejoindre une centrale (lien d'inscription) --------------------------------------------------
+
+function JoinPanel({ onBack, compact, animate, onFail }: PanelProps & { onBack: () => void }) {
   const [link, setLink] = useState("");
   const [invalid, setInvalid] = useState<string | null>(null);
   const code = parseJoinCode(link);
   const [pasteAvailable] = useState(canReadText);
 
+  function fail(message: string) {
+    setInvalid(message);
+    onFail();
+    announce(message);
+  }
+
   function next() {
     if (!code) {
-      setInvalid(link.trim() ? "Lien non reconnu : copiez le lien complet envoyé par la centrale." : "Collez le lien reçu de votre centrale.");
-      onFail();
+      fail(link.trim() ? "Lien non reconnu : copiez le lien complet envoyé par la centrale." : "Collez le lien reçu de votre centrale.");
       return;
     }
     Keyboard.dismiss();
@@ -368,88 +547,116 @@ function JoinPanel({ onBack, onFail, animate }: PanelProps & { onBack: () => voi
 
   async function paste() {
     const text = await readText();
-    if (!text) return;
-    setLink(text.trim());
+    if (!text) {
+      fail("Presse-papiers vide : copiez d'abord le lien reçu de votre centrale.");
+      return;
+    }
+    setLink(text);
+    if (!parseJoinCode(text)) {
+      fail("Lien non reconnu : copiez le lien complet envoyé par la centrale.");
+      return;
+    }
     setInvalid(null);
+    announce("Lien reconnu");
   }
 
   return (
-    <EnterView animate={animate} from={10} style={{ gap: 14 }}>
+    <EnterView animate={animate} style={styles.panelBody}>
       <PanelHeader
         title="Rejoindre une centrale"
-        subtitle="Collez le lien d'inscription envoyé par votre centrale (WhatsApp, SMS, e-mail)."
+        subtitle="Collez le lien d'inscription envoyé par votre centrale (WhatsApp, SMS ou e-mail)."
         onBack={onBack}
+        compact={compact}
       />
-      <AuthField
-        label="Lien d'inscription"
-        icon="link-outline"
-        hint="https://…/rejoindre/…"
-        value={link}
-        onChangeText={(v) => {
-          setLink(v);
-          if (invalid) setInvalid(null);
-        }}
-        error={invalid}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-        returnKeyType="go"
-        onSubmitEditing={next}
-        right={
-          pasteAvailable && !link ? (
-            <Pressable onPress={paste} hitSlop={6} style={({ pressed }) => [styles.pasteBtn, pressed && { opacity: 0.6 }]} accessibilityRole="button" accessibilityLabel="Coller le lien">
-              <Ionicons name="clipboard-outline" size={15} color={colors.brand} />
-              <Text style={styles.pasteText}>Coller</Text>
-            </Pressable>
-          ) : null
-        }
-      />
-      {code && (
-        <View style={styles.recognized}>
-          <Ionicons name="checkmark-circle" size={16} color={colors.brand} />
-          <Text style={styles.recognizedText}>Lien reconnu</Text>
-        </View>
-      )}
-      <GlowButton title="Continuer" onPress={next} animate={animate} />
-      <View style={styles.tip}>
-        <Ionicons name="flash-outline" size={18} color={colors.muted} />
-        <Text style={styles.tipText}>Astuce : touchez directement le lien reçu, il ouvre l&apos;inscription dans l&apos;application.</Text>
+      <View style={styles.joinField}>
+        <AuthField
+          label="Lien d'inscription"
+          icon="link-outline"
+          hint="https://…/rejoindre/…"
+          value={link}
+          onChangeText={(v) => {
+            setLink(v);
+            if (invalid) setInvalid(null);
+          }}
+          error={invalid ? frTypo(invalid) : null}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          returnKeyType="go"
+          submitBehavior="blurAndSubmit"
+          onSubmitEditing={next}
+          right={
+            pasteAvailable && !link ? (
+              <Pressable
+                onPress={paste}
+                hitSlop={4}
+                style={({ pressed }) => [styles.pasteBtn, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Coller le lien"
+              >
+                <Glyph name="clipboard-outline" size={18} />
+                <Text style={styles.pasteText} maxFontSizeMultiplier={TEXT_SCALE}>
+                  Coller
+                </Text>
+              </Pressable>
+            ) : null
+          }
+        />
+        {code && !invalid && (
+          <View style={styles.recognized}>
+            <Glyph name="checkmark-circle-outline" size={20} color={colors.green} />
+            <Text style={styles.recognizedText} maxFontSizeMultiplier={TEXT_SCALE}>
+              Lien reconnu
+            </Text>
+          </View>
+        )}
       </View>
+      <BigButton title="Continuer" onPress={next} height={control.md} />
+      {!compact && (
+        <Text style={styles.note} maxFontSizeMultiplier={TEXT_SCALE}>
+          Vous pouvez aussi toucher directement le lien reçu{NB}: il ouvre l&apos;inscription dans l&apos;application.
+        </Text>
+      )}
     </EnterView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bgDeep },
-  column: { flex: 1, paddingHorizontal: 18 },
-  hero: { flex: 1, minHeight: 72, alignItems: "center", justifyContent: "center" },
-  brandBlock: { alignItems: "center", gap: 12, marginTop: 20 },
-  wordmark: { color: colors.fg, fontSize: 36, fontWeight: "900", letterSpacing: -1.2 },
-  wordmarkLight: { color: colors.muted, fontWeight: "300", letterSpacing: -0.8 },
-  kicker: {
-    flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 99,
-    borderWidth: 1, borderColor: "rgba(200,240,60,0.25)", backgroundColor: "rgba(200,240,60,0.06)",
+  pressed: { opacity: 0.6 },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: space.md, paddingHorizontal: space.xl },
+  brand: { color: colors.fg, fontSize: type.title3, fontWeight: weight.bold, letterSpacing: -0.2 },
+  brandCompact: { fontSize: type.headline },
+  panelWrap: { width: "100%", maxWidth: 560, alignSelf: "center" },
+  panel: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    borderTopWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: space.xl,
+    paddingTop: space.xl,
   },
-  kickerText: { color: colors.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2.2 },
-  bottomFade: { position: "absolute", left: -18, right: -18, top: 0, bottom: -40 },
-  title: { color: colors.fg, fontSize: 25, fontWeight: "900", letterSpacing: -0.6 },
-  subtitle: { color: colors.muted, fontSize: 14.5, lineHeight: 21 },
-  strong: { color: colors.fg, fontWeight: "800" },
-  joinRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 16, paddingVertical: 6 },
-  joinMuted: { color: colors.muted, fontSize: 14 },
-  joinLink: { color: colors.brand, fontSize: 14, fontWeight: "800" },
-  mailBadgeWrap: { height: 128, alignItems: "center", justifyContent: "center" },
-  mailBadge: {
-    width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center",
-    borderWidth: 1.5, borderColor: "rgba(200,240,60,0.5)", backgroundColor: "rgba(200,240,60,0.08)",
+  panelBody: { gap: space.lg },
+  heading: { gap: space.xs },
+  title: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, letterSpacing: -0.3 },
+  lead: { color: colors.muted, fontSize: type.body, lineHeight: 21 },
+  strong: { color: colors.fg, fontWeight: weight.semibold },
+  note: { color: colors.muted, fontSize: type.subhead, lineHeight: 20 },
+  joinRow: {
+    minHeight: control.sm, alignItems: "center", justifyContent: "center", paddingTop: space.md,
+    borderTopWidth: 1, borderColor: colors.line,
   },
-  tip: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.04)" },
-  tipText: { flex: 1, color: colors.muted, fontSize: 13, lineHeight: 19 },
+  joinText: { color: colors.muted, fontSize: type.body, textAlign: "center" },
+  joinStrong: { color: colors.fg, fontWeight: weight.semibold },
+  codeInput: { fontSize: type.title3, fontWeight: weight.semibold, letterSpacing: 4, ...mono },
+  resendRow: { alignItems: "center", marginTop: -space.sm },
+  joinField: { gap: space.sm },
   pasteBtn: {
-    flexDirection: "row", alignItems: "center", gap: 5, height: 34, paddingHorizontal: 10, borderRadius: 12,
-    backgroundColor: "rgba(200,240,60,0.1)", marginRight: 4,
+    flexDirection: "row", alignItems: "center", gap: 6, height: 44, paddingHorizontal: space.md, marginRight: 6,
+    borderRadius: radius.sm, backgroundColor: colors.surface3,
   },
-  pasteText: { color: colors.brand, fontSize: 13, fontWeight: "800" },
-  recognized: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: -4, paddingHorizontal: 6 },
-  recognizedText: { color: colors.brand, fontSize: 13, fontWeight: "700" },
+  pasteText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
+  recognized: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  recognizedText: { color: colors.fg, fontSize: type.body, fontWeight: weight.medium },
 });

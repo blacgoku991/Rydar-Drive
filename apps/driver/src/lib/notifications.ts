@@ -31,7 +31,7 @@ export async function setupNotificationChannels() {
     await Notifications.deleteNotificationChannelAsync("ride-offers").catch(() => null);
     await Notifications.setNotificationChannelAsync(RIDE_OFFER_CHANNEL, {
       name: "Nouvelles courses",
-      description: "Offres de course : sonnerie et vibration prioritaires",
+      description: "Offres de course : sonnerie et vibration prioritaires",
       importance: Notifications.AndroidImportance.MAX,
       sound: "ride_offer_v2.wav",
       vibrationPattern: [0, 500, 250, 500, 250, 900],
@@ -79,7 +79,7 @@ export async function setupNotificationChannels() {
   }
   // Boutons d'action directement dans la notification
   await Notifications.setNotificationCategoryAsync("ride_offer", [
-    { identifier: "ACCEPT", buttonTitle: "ACCEPTER", options: { opensAppToForeground: true } },
+    { identifier: "ACCEPT", buttonTitle: "Accepter", options: { opensAppToForeground: true } },
     { identifier: "DECLINE", buttonTitle: "Refuser", options: { opensAppToForeground: false, isDestructive: true } },
   ]);
 }

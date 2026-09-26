@@ -9,10 +9,13 @@ export default function AppLayout() {
   // Compte devenu inactif (banni, suspendu…) ou candidature pas encore validée : écran d'état du compte
   if (!canDrive) return <Redirect href="/account" />;
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
+    // iOS 26 : sans réglage, le geste « retour » couvre tout l'écran → un glissement vers la droite (glissière
+    // « Aller au départ », listes horizontales) ramenait à l'écran précédent. Retour depuis le bord seulement.
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg }, fullScreenGestureEnabled: false }}>
       <Stack.Screen name="home" />
       <Stack.Screen name="offer/[id]" options={{ presentation: "fullScreenModal", animation: "fade_from_bottom", gestureEnabled: false }} />
-      <Stack.Screen name="ride/[id]" options={{ animation: "slide_from_right" }} />
+      {/* Course en cours : aucun geste de retour (bouton ‹ seulement) — la glissière de statut se fait vers la droite */}
+      <Stack.Screen name="ride/[id]" options={{ animation: "slide_from_right", gestureEnabled: false }} />
       <Stack.Screen name="planning" options={{ animation: "slide_from_right" }} />
       <Stack.Screen name="profile" options={{ animation: "slide_from_right" }} />
       <Stack.Screen name="messages" options={{ animation: "slide_from_right" }} />

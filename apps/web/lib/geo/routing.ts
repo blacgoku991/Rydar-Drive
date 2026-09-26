@@ -1,5 +1,5 @@
 import "server-only";
-import { decodePolyline, encodePolyline, estimateRoute, haversine, simplifyLine, type Coord, type LatLng } from "@rydar/shared";
+import { decodePolyline, encodePolyline, estimateRoute, haversine, navInstruction, simplifyLine, type Coord, type LatLng, type NavStep } from "@rydar/shared";
 import { serverEnv } from "@/lib/env";
 import { fetchJson, lruCache } from "@/lib/geo/cache";
 
@@ -77,6 +77,107 @@ async function google(from: LatLng, to: LatLng, apiKey: string, timeoutMs: numbe
   const r = data?.routes?.[0];
   if (!r) throw new Error("Google: aucun itinéraire");
   return finalize(decodePolyline(r.polyline.encodedPolyline), r.distanceMeters, Number.parseInt(String(r.duration), 10), "google");
+}
+
+// -----------------------------------------------------------------------------
+// Guidage (app chauffeur) : même itinéraire + étapes (manœuvres) en français
+// -----------------------------------------------------------------------------
+
+export type NavRoute = Route & { steps: NavStep[] };
+const navCache = lruCache<NavRoute>(500, 5 * 60_000);
+const MAX_STEPS = 80;
+
+/** Étapes OSRM ou Mapbox (même format de manœuvre) ; Mapbox fournit déjà l'instruction en français. */
+function stepsFromOsrmLike(r: any, useProviderText: boolean): NavStep[] {
+  const out: NavStep[] = [];
+  for (const leg of r?.legs ?? []) {
+    for (const st of leg?.steps ?? []) {
+      const m = st?.maneuver;
+      if (!m?.location) continue;
+      const maneuver = { type: String(m.type ?? "turn"), modifier: m.modifier ?? null, exit: typeof m.exit === "number" ? m.exit : null };
+      const name = String(st.name ?? "").trim();
+      out.push({
+        ...maneuver,
+        lng: m.location[0],
+        lat: m.location[1],
+        name,
+        instruction: useProviderText && typeof m.instruction === "string" ? m.instruction : navInstruction(maneuver, name),
+      });
+      if (out.length >= MAX_STEPS) return out;
+    }
+  }
+  return out;
+}
+
+async function osrmNav(from: LatLng, to: LatLng, base: string, timeoutMs: number): Promise<NavRoute> {
+  const url = `${base.replace(/\/$/, "")}/route/v1/driving/${key(from)};${key(to)}?overview=full&geometries=polyline&steps=true`;
+  const data = await fetchJson(url, { timeoutMs });
+  const r = data?.routes?.[0];
+  if (data?.code !== "Ok" || !r) throw new Error(`OSRM ${data?.code}`);
+  return { ...finalize(decodePolyline(r.geometry), r.distance, r.duration, "osrm"), steps: stepsFromOsrmLike(r, false) };
+}
+
+async function mapboxNav(from: LatLng, to: LatLng, token: string, timeoutMs: number): Promise<NavRoute> {
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${key(from)};${key(to)}?geometries=polyline&overview=full&steps=true&language=fr&access_token=${token}`;
+  const data = await fetchJson(url, { timeoutMs });
+  const r = data?.routes?.[0];
+  if (!r) throw new Error("Mapbox: aucun itinéraire");
+  return { ...finalize(decodePolyline(r.geometry), r.distance, r.duration, "mapbox"), steps: stepsFromOsrmLike(r, true) };
+}
+
+async function googleNav(from: LatLng, to: LatLng, apiKey: string, timeoutMs: number): Promise<NavRoute> {
+  const wp = (p: LatLng) => ({ location: { latLng: { latitude: p.lat, longitude: p.lng } } });
+  const data = await fetchJson("https://routes.googleapis.com/directions/v2:computeRoutes", {
+    method: "POST",
+    timeoutMs,
+    headers: {
+      "content-type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask":
+        "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction",
+    },
+    body: JSON.stringify({ origin: wp(from), destination: wp(to), travelMode: "DRIVE", routingPreference: "TRAFFIC_AWARE", languageCode: "fr-FR" }),
+  });
+  const r = data?.routes?.[0];
+  if (!r) throw new Error("Google: aucun itinéraire");
+  const steps: NavStep[] = [];
+  for (const leg of r.legs ?? []) {
+    for (const st of leg.steps ?? []) {
+      const ll = st.startLocation?.latLng;
+      if (!ll) continue;
+      const mv = String(st.navigationInstruction?.maneuver ?? "STRAIGHT").toLowerCase();
+      const modifier = mv.includes("left") ? (mv.includes("slight") ? "slight left" : mv.includes("sharp") ? "sharp left" : "left")
+        : mv.includes("right") ? (mv.includes("slight") ? "slight right" : mv.includes("sharp") ? "sharp right" : "right")
+        : mv.includes("uturn") ? "uturn" : "straight";
+      const type = mv.includes("roundabout") ? "roundabout" : mv === "depart" ? "depart" : mv.includes("merge") ? "merge" : mv.includes("fork") ? "fork" : "turn";
+      steps.push({ type, modifier, exit: null, lat: ll.latitude, lng: ll.longitude, name: "", instruction: String(st.navigationInstruction?.instructions ?? navInstruction({ type, modifier }, "")) });
+      if (steps.length >= MAX_STEPS) break;
+    }
+  }
+  steps.push({ type: "arrive", modifier: null, exit: null, lat: to.lat, lng: to.lng, name: "", instruction: navInstruction({ type: "arrive" }) });
+  return { ...finalize(decodePolyline(r.polyline.encodedPolyline), r.distanceMeters, Number.parseInt(String(r.duration), 10), "google"), steps };
+}
+
+/** Itinéraire de guidage (tracé + étapes) ; repli : estimation à vol d'oiseau sans étape. */
+export async function computeNavRoute(from: LatLng, to: LatLng, opts: { timeoutMs?: number } = {}): Promise<NavRoute> {
+  const timeoutMs = opts.timeoutMs ?? 4000;
+  if (haversine(from, to) < 30) return { ...estimate(from, to), steps: [] };
+  const k = `nav:${key(from)}>${key(to)}`;
+  const cached = navCache.get(k);
+  if (cached) return cached;
+  const env = serverEnv();
+  try {
+    let route: NavRoute;
+    if (env.routing === "mapbox" && env.mapboxToken) route = await mapboxNav(from, to, env.mapboxToken, timeoutMs);
+    else if (env.routing === "google" && env.googleMapsKey) route = await googleNav(from, to, env.googleMapsKey, timeoutMs);
+    else if (env.routing === "none") return { ...estimate(from, to), steps: [] };
+    else route = await osrmNav(from, to, env.osrmUrl, timeoutMs);
+    navCache.set(k, route);
+    return route;
+  } catch (error) {
+    console.warn("[routing] guidage : repli estimation :", (error as Error).message);
+    return { ...estimate(from, to), steps: [] };
+  }
 }
 
 /** Itinéraire routier entre deux points (avec cache et repli). */

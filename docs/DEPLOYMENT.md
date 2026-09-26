@@ -28,7 +28,23 @@ Architecture cible :
    - *Site URL* = `https://app.votre-domaine` ;
    - *Redirect URLs* : `https://app.votre-domaine/auth/callback` et `/auth/set-password` ;
    - SMTP personnalisé, pour les invitations des chauffeurs et des rattacheurs.
-   - *Emails → Templates* : « Reset password » et « Invite user » en français, en gardant le lien `{{ .ConfirmationURL }}` (mot de passe oublié de l'app chauffeur : page `/auth/set-password?app=driver`).
+   - *Emails → Templates* : « Reset password » et « Invite user » en français, en gardant le lien `{{ .ConfirmationURL }}`.
+     Le modèle « Reset password » doit contenir **le code `{{ .Token }}` et le lien `{{ .ConfirmationURL }}`** : dans l'app chauffeur,
+     « Mot de passe oublié » demande le code reçu par e-mail puis le nouveau mot de passe (`POST /api/auth/driver-password-reset/confirm`) ;
+     le lien sert aux centrales sur le web et de secours au chauffeur (page `/auth/set-password?app=driver`). Exemple :
+
+     - sujet : `Rydar Drive : votre code pour changer de mot de passe`
+     - corps (HTML) :
+
+       ```html
+       <p>Bonjour,</p>
+       <p>Code à saisir dans l'application Rydar Drive :</p>
+       <p style="font-size:28px;font-weight:700;letter-spacing:6px">{{ .Token }}</p>
+       <p>Vous pouvez aussi ouvrir ce lien pour choisir un nouveau mot de passe : <a href="{{ .ConfirmationURL }}">changer mon mot de passe</a>.</p>
+       <p>Le code et le lien expirent dans une heure ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
+       ```
+
+     Laissez *Email OTP Length* à 6 chiffres (l'app accepte 6 à 10) et *Email OTP Expiration* à 3600 s (*Sign In / Providers → Email*).
 4. **Realtime** (*Realtime → Settings*) : désactivez *Allow public access*. Rydar n'utilise que des canaux privés ; la policy `rydar_realtime_receive` (migrations 0600 et 2300) gère les droits d'écoute des canaux `org:*`, `driver:*` et `fleet:*`.
 5. **Storage** : les buckets `org-assets`, `driver-photos` et `driver-documents` et leurs policies sont créés par la migration 0800.
 6. Créez le premier **Super Admin** : invitez l'utilisateur depuis le dashboard Supabase, puis exécutez `update public.users set is_super_admin = true where email = '…';` dans le SQL editor.
@@ -53,7 +69,7 @@ Architecture cible :
 | `API_KEY_PEPPER` | Poivre HMAC des clés API, 32 caractères aléatoires ou plus. Le changer invalide toutes les clés |
 | `REDIS_URL` | Rate limiting et anti brute force partagés (Upstash, Redis Cloud…) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Abonnements. Webhook : `https://app…/api/stripe/webhook` |
-| `DRIVER_APP_ORIGINS` | (optionnel) origines autorisées à appeler `/api/auth/driver-login` depuis un navigateur |
+| `DRIVER_APP_ORIGINS` | (optionnel) origines autorisées à appeler les routes de l'app chauffeur (`/api/auth/driver-login`, `/api/auth/driver-password-reset…`) depuis un navigateur |
 
 ### Cartographie, adresses et itinéraires
 

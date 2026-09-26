@@ -3,10 +3,11 @@
 import { useMemo, useState } from "react";
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { frTypo } from "@/components/centrale";
 import { buildDocEntries, DocCard, DocumentsSummary, UploadSheet, useDriverDocuments, type DocEntry } from "@/components/documents";
-import { Screen, ScreenHeader, useFlash } from "@/components/ui";
+import { BigButton, Screen, ScreenHeader, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { colors } from "@/theme";
+import { colors, control, space, type } from "@/theme";
 
 export default function Documents() {
   const { home } = useDriver();
@@ -14,15 +15,16 @@ export default function Documents() {
   const flash = useFlash(insets.top + 64);
   const { data, error, load } = useDriverDocuments();
   const [refreshing, setRefreshing] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [editing, setEditing] = useState<DocEntry | null>(null);
   const entries = useMemo(() => buildDocEntries(data), [data]);
 
   return (
     <Screen>
-      <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
+      <SafeAreaView edges={["top"]} style={styles.fill}>
         <ScreenHeader title="Mes documents" />
         <ScrollView
-          contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 48 }}
+          contentContainerStyle={styles.scroll}
           refreshControl={
             <RefreshControl
               tintColor={colors.brand}
@@ -36,8 +38,29 @@ export default function Documents() {
           }
         >
           {!data ? (
-            <View style={{ paddingVertical: 80, alignItems: "center" }}>
-              {error ? <Text style={styles.errorText}>{error}</Text> : <ActivityIndicator color={colors.brand} />}
+            <View style={styles.empty}>
+              {error ? (
+                <>
+                  <Text style={styles.errorText} accessibilityRole="alert">
+                    {frTypo(error)}
+                  </Text>
+                  <BigButton
+                    title="Réessayer"
+                    icon="refresh-outline"
+                    variant="secondary"
+                    height={control.md}
+                    loading={retrying}
+                    onPress={async () => {
+                      setRetrying(true);
+                      await load();
+                      setRetrying(false);
+                    }}
+                    style={styles.retry}
+                  />
+                </>
+              ) : (
+                <ActivityIndicator color={colors.muted} accessibilityLabel="Chargement des documents" />
+              )}
             </View>
           ) : (
             <>
@@ -67,6 +90,10 @@ export default function Documents() {
 }
 
 const styles = StyleSheet.create({
-  errorText: { color: colors.red, fontSize: 15, textAlign: "center" },
-  footnote: { color: colors.subtle, fontSize: 12.5, textAlign: "center", marginTop: 6, paddingHorizontal: 20 },
+  fill: { flex: 1 },
+  scroll: { padding: space.lg, gap: space.md, paddingBottom: space.xxl + 16 },
+  empty: { paddingVertical: 80, alignItems: "center", gap: space.lg },
+  errorText: { color: colors.fg, fontSize: type.body, lineHeight: 21, textAlign: "center", paddingHorizontal: space.lg },
+  retry: { alignSelf: "stretch" },
+  footnote: { color: colors.muted, fontSize: type.footnote, lineHeight: 18, textAlign: "center", marginTop: space.sm, paddingHorizontal: space.xl },
 });

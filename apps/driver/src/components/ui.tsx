@@ -42,7 +42,7 @@ export function Sheet({ children, style }: { children: React.ReactNode; style?: 
 
 /** Bouton d'action. Hauteurs : control.sm 48 · md 56 · lg 64 · xl 72 (« Passer en ligne », « Accepter »). */
 export function BigButton({
-  title, onPress, loading, variant = "primary", icon, style, disabled, height = control.lg,
+  title, onPress, loading, variant = "primary", icon, style, disabled, height = control.lg, ...rest
 }: {
   title: string; onPress: () => void; loading?: boolean; variant?: "primary" | "secondary" | "danger" | "ghost"; icon?: keyof typeof Ionicons.glyphMap;
   style?: StyleProp<ViewStyle>; disabled?: boolean; height?: number;
@@ -53,6 +53,9 @@ export function BigButton({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
+      {...rest}
       disabled={disabled || loading}
       onPress={() => {
         haptic(variant === "primary" ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Light);
@@ -70,7 +73,10 @@ export function BigButton({
       ) : (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           {icon && <Ionicons name={icon} size={big ? 22 : 20} color={fg} />}
-          <Text style={[styles.buttonText, { color: fg, fontSize: big ? type.headline + 1 : type.headline, fontWeight: variant === "primary" ? weight.bold : weight.semibold }]}>
+          <Text
+            maxFontSizeMultiplier={1.3}
+            style={[styles.buttonText, { color: fg, fontSize: big ? type.headline + 1 : type.headline, fontWeight: variant === "primary" ? weight.bold : weight.semibold }]}
+          >
             {title}
           </Text>
         </View>
@@ -107,6 +113,9 @@ export function SlideToConfirm({
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
+      // Le glissement reste à la glissière jusqu'au bout (ni défilement ni geste parent ne le reprend)
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
       onPanResponderGrant: () => haptic(Haptics.ImpactFeedbackStyle.Light),
       onPanResponderMove: (_, g) => x.setValue(Math.max(0, Math.min(maxRef.current, g.dx))),
       onPanResponderRelease: (_, g) => {
@@ -117,19 +126,23 @@ export function SlideToConfirm({
           onConfirmRef.current();
         } else Animated.spring(x, { toValue: 0, useNativeDriver: false }).start();
       },
+      // Geste repris malgré tout par le système (appel entrant…) : le curseur revient au départ
+      onPanResponderTerminate: () => {
+        if (!fired.current) Animated.spring(x, { toValue: 0, useNativeDriver: false }).start();
+      },
     }),
   ).current;
 
   return (
     <View
       onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
-      style={[styles.slide, { height, borderColor: `${color}55` }]}
+      style={[styles.slide, { height }]}
       accessibilityRole="adjustable"
       accessibilityLabel={label}
       accessibilityActions={[{ name: "activate", label }]}
       onAccessibilityAction={() => onConfirm()}
     >
-      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: color, opacity: x.interpolate({ inputRange: [0, Math.max(1, max)], outputRange: [0.08, 0.35] }), borderRadius: height / 2 }]} />
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: color, opacity: x.interpolate({ inputRange: [0, Math.max(1, max)], outputRange: [0, 0.18] }), borderRadius: height / 2 }]} />
       <Text style={[styles.slideText, { color: colors.fg }]}>{loading ? "…" : label}</Text>
       <Animated.View
         {...pan.panHandlers}
@@ -206,12 +219,12 @@ export function ScreenHeader({ title, right, onBack }: { title: string; right?: 
         <Ionicons name="chevron-back" size={22} color={colors.fg} />
       </Pressable>
       <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
-      <View style={{ minWidth: 44, alignItems: "flex-end" }}>{right}</View>
+      <View style={{ minWidth: control.sm, alignItems: "flex-end" }}>{right}</View>
     </View>
   );
 }
 
-/** Sélecteur à onglets (Centrale | Flotte, Jour | Semaine | Mois), avec pastille de non-lus optionnelle. */
+/** Sélecteur à onglets (Ma centrale | Chauffeurs, Jour | Semaine | Mois), avec pastille de non-lus optionnelle. */
 export function Segmented<T extends string>({
   options, value, onChange, style,
 }: { options: { value: T; label: string; badge?: number }[]; value: T; onChange: (v: T) => void; style?: StyleProp<ViewStyle> }) {
@@ -334,16 +347,16 @@ const styles = StyleSheet.create({
   button: { borderRadius: radius.md, alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
   buttonSecondary: { borderWidth: 1, borderColor: colors.lineStrong },
   buttonText: { letterSpacing: 0.1 },
-  slide: { borderRadius: 999, borderWidth: 1, backgroundColor: colors.surface2, justifyContent: "center", overflow: "hidden" },
+  slide: { borderRadius: 999, borderWidth: 1, borderColor: colors.lineStrong, backgroundColor: colors.surface2, justifyContent: "center", overflow: "hidden" },
   slideText: { position: "absolute", left: 0, right: 0, textAlign: "center", fontSize: type.headline + 1, fontWeight: weight.bold, paddingLeft: 40 },
   knob: { position: "absolute", left: 6, alignItems: "center", justifyContent: "center" },
   pill: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm, alignSelf: "flex-start" },
   pillText: { fontSize: type.footnote, fontWeight: weight.semibold },
   routeText: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.sm, backgroundColor: colors.surface2 },
-  chipText: { fontSize: type.subhead, fontWeight: weight.semibold },
+  chipText: { fontSize: type.body, fontWeight: weight.semibold },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
-  headerBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 },
+  headerBtn: { width: control.sm, height: control.sm, borderRadius: control.sm / 2, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 },
   headerTitle: { flex: 1, textAlign: "center", color: colors.fg, fontSize: type.headline, fontWeight: weight.semibold },
   segmented: { flexDirection: "row", padding: 4, borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line },
   segment: { flex: 1, height: 42, borderRadius: radius.sm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },

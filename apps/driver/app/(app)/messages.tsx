@@ -1,32 +1,42 @@
-// Messagerie chauffeur : fil direct avec la centrale + fil de la flotte (messages et signalements).
+// Messagerie chauffeur : conversation privée avec la centrale (« Ma centrale ») et fil commun à tous les
+// chauffeurs de la centrale (« Chauffeurs » : messages et signalements).
 import { Ionicons } from "@expo/vector-icons";
 import { FLEET_REPORT_META, formatTime, type ChatMessage } from "@rydar/shared";
 import { useFocusEffect, useIsFocused, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { QuickReportRow, ReportCard, type ReportView } from "@/components/fleet-report";
-import { hapticResult, Screen, ScreenHeader, Segmented, useFlash } from "@/components/ui";
+import { frTypo } from "@/components/centrale";
+import { ReportCard, ReportSheet, type ReportView } from "@/components/fleet-report";
+import { BigButton, hapticResult, Screen, ScreenHeader, Segmented, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { api } from "@/lib/api";
 import { chatSession, type ChatTab } from "@/lib/chat-session";
 import { useAppEvent } from "@/lib/events";
-import { colors } from "@/theme";
+import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
+
+type IconName = keyof typeof Ionicons.glyphMap;
+
+const NBSP = "\u00A0";
 
 const QUICK_REPLIES = ["J'arrive", "Bien reçu", "Client en retard", "Je suis sur place"];
 
 const dayKey = (d: string | Date, timeZone?: string) =>
   new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(d));
 
-/** « Aujourd'hui », « Hier », « lundi 22 septembre » */
+/** « Aujourd'hui », « Hier », « Lundi 22 septembre » (majuscule sur le premier mot seulement). */
 function dayLabel(d: string, timeZone?: string) {
   const key = dayKey(d, timeZone);
   const now = Date.now();
   if (key === dayKey(new Date(now), timeZone)) return "Aujourd'hui";
   if (key === dayKey(new Date(now - 86_400_000), timeZone)) return "Hier";
-  return new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone }).format(new Date(d));
+  const s = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone }).format(new Date(d));
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+/** « de Centrale Express », « d'Elite Paris » */
+const deName = (name: string) => (/^[aeiouyàâäéèêëîïôöûüœ]/i.test(name) ? `d'${name}` : `de ${name}`);
 
 type Pending = { key: string; body: string; tab: ChatTab };
 type Row =
@@ -46,9 +56,11 @@ export default function Messages() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<Pending[]>([]);
+  const [reporting, setReporting] = useState(false);
   const scroll = useRef<ScrollView>(null);
   const tz = home?.organization.timezone;
   const myId = home?.driver.id;
+  const orgName = home?.organization.name?.trim() || "votre centrale";
 
   useEffect(() => {
     if (params.tab === "fleet" || params.tab === "dispatch") setTab(params.tab);
@@ -129,7 +141,7 @@ export default function Messages() {
     } catch (e) {
       hapticResult(false);
       if (raw === text) setText(raw);
-      flash.show((e as Error).message, "error");
+      flash.show(frTypo((e as Error).message), "error");
     } finally {
       setPending((p) => p.filter((x) => x.key !== key));
       setSending(false);
@@ -138,6 +150,7 @@ export default function Messages() {
 
   const phone = home?.organization.phone;
   const empty = !rows.some((r) => r.kind !== "day");
+  const canSend = !!text.trim() && !sending;
 
   return (
     <Screen>
@@ -146,29 +159,42 @@ export default function Messages() {
           title="Messages"
           right={
             phone ? (
-              <Pressable onPress={() => void Linking.openURL(`tel:${phone}`)} style={styles.call} accessibilityLabel="Appeler la centrale" hitSlop={6}>
-                <Ionicons name="call" size={19} color={colors.brandFg} />
+              <Pressable
+                onPress={() => void Linking.openURL(`tel:${phone}`)}
+                style={({ pressed }) => [styles.call, pressed && { backgroundColor: colors.surface3 }]}
+                accessibilityRole="button"
+                accessibilityLabel={`Appeler ${orgName}`}
+                hitSlop={6}
+              >
+                <Ionicons name="call-outline" size={20} color={colors.fg} />
               </Pressable>
             ) : undefined
           }
         />
-        <Segmented
-          style={{ marginHorizontal: 16, marginBottom: 6 }}
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "dispatch", label: "Centrale", badge: chat?.dispatch.unread ?? 0 },
-            { value: "fleet", label: "Flotte", badge: chat?.fleet.unread ?? 0 },
-          ]}
-        />
+        <View style={styles.top}>
+          <Segmented
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: "dispatch", label: "Ma centrale", badge: chat?.dispatch.unread ?? 0 },
+              { value: "fleet", label: "Chauffeurs", badge: chat?.fleet.unread ?? 0 },
+            ]}
+          />
+          <Text style={styles.scope} numberOfLines={2}>
+            {tab === "dispatch" ? `Conversation privée avec ${orgName}` : `Visible par tous les chauffeurs ${deName(orgName)}`}
+          </Text>
+          {tab === "fleet" && (
+            <BigButton
+              title="Signaler un incident"
+              variant="secondary"
+              icon="flag-outline"
+              height={control.sm}
+              onPress={() => setReporting(true)}
+            />
+          )}
+        </View>
 
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          {tab === "fleet" && (
-            <View style={styles.quick}>
-              <QuickReportRow me={me} onError={flash.show} onSent={(t) => flash.show(`${FLEET_REPORT_META[t].emoji}  Signalé à la flotte`)} />
-            </View>
-          )}
-
           <ScrollView
             ref={scroll}
             style={{ flex: 1 }}
@@ -178,24 +204,14 @@ export default function Messages() {
             keyboardDismissMode="interactive"
           >
             {!chat ? (
-              <ActivityIndicator color={colors.brand} />
+              <ActivityIndicator color={colors.muted} accessibilityLabel="Chargement des messages" />
             ) : empty ? (
-              <View style={styles.empty}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons name={tab === "dispatch" ? "chatbubbles-outline" : "radio-outline"} size={30} color={colors.brand} />
-                </View>
-                <Text style={styles.emptyTitle}>{tab === "dispatch" ? "Aucun message" : "Rien à signaler"}</Text>
-                <Text style={styles.emptyText}>
-                  {tab === "dispatch"
-                    ? "Écrivez à votre centrale ou touchez une réponse rapide."
-                    : "Les signalements et messages de vos collègues apparaissent ici."}
-                </Text>
-              </View>
+              <Text style={styles.empty}>{tab === "dispatch" ? "Aucun message de la centrale." : "Aucun message des chauffeurs."}</Text>
             ) : (
               rows.map((row) => {
                 if (row.kind === "day") {
                   return (
-                    <View key={row.key} style={styles.day}>
+                    <View key={row.key} style={styles.day} accessibilityRole="header">
                       <View style={styles.dayLine} />
                       <Text style={styles.dayText}>{row.label}</Text>
                       <View style={styles.dayLine} />
@@ -203,14 +219,14 @@ export default function Messages() {
                   );
                 }
                 if (row.kind === "report") {
-                  return <ReportCard key={row.key} variant="feed" report={row.r} me={me} myDriverId={myId} onFlash={flash.show} style={{ marginVertical: 4 }} />;
+                  return <ReportCard key={row.key} variant="feed" report={row.r} me={me} myDriverId={myId} onFlash={flash.show} style={{ marginVertical: space.xs }} />;
                 }
                 if (row.kind === "pending") {
                   return (
-                    <View key={row.key} style={[styles.bubbleRow, { justifyContent: "flex-end" }]}>
-                      <View style={[styles.bubble, styles.mine, { opacity: 0.6 }]}>
-                        <Text style={[styles.body, { color: colors.brandFg }]}>{row.body}</Text>
-                        <Text style={[styles.time, { color: "rgba(11,13,4,0.6)" }]}>Envoi…</Text>
+                    <View key={row.key} style={[styles.bubbleRow, { justifyContent: "flex-end", marginTop: 2 }]}>
+                      <View style={[styles.bubble, styles.mine, { opacity: 0.6 }]} accessible accessibilityLabel={`Envoi en cours${NBSP}: ${row.body}`}>
+                        <Text style={[styles.body, styles.mineText]}>{row.body}</Text>
+                        <Text style={[styles.time, styles.mineTime]}>Envoi…</Text>
                       </View>
                     </View>
                   );
@@ -219,21 +235,23 @@ export default function Messages() {
                 if (m.author_type === "system") {
                   return <Text key={row.key} style={styles.system}>{m.body}</Text>;
                 }
+                const author = m.author_type === "user" ? `${m.author_name} · Centrale` : m.author_name;
+                const time = formatTime(m.created_at, tz);
                 return (
-                  <View key={row.key} style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start", marginTop: first ? 8 : 2 }]}>
+                  <View key={row.key} style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start", marginTop: first ? space.sm : 2 }]}>
                     <View style={{ maxWidth: "82%", alignItems: mine ? "flex-end" : "flex-start" }}>
-                      {!mine && first && (
-                        <Text style={styles.author}>
-                          {m.author_type === "user" ? `${m.author_name} · Centrale` : m.author_name}
-                        </Text>
-                      )}
-                      <View style={[styles.bubble, mine ? styles.mine : m.author_type === "user" ? styles.dispatch : styles.theirs]}>
-                        <Text style={[styles.body, mine && { color: colors.brandFg }]}>{m.body}</Text>
-                        <Text style={[styles.time, mine && { color: "rgba(11,13,4,0.6)" }]}>{formatTime(m.created_at, tz)}</Text>
+                      {!mine && first && <Text style={styles.author}>{author}</Text>}
+                      <View
+                        style={[styles.bubble, mine ? styles.mine : styles.theirs]}
+                        accessible
+                        accessibilityLabel={`${mine ? "Vous" : author}, ${time}${NBSP}: ${m.body}`}
+                      >
+                        <Text style={[styles.body, mine && styles.mineText]}>{m.body}</Text>
+                        <Text style={[styles.time, mine && styles.mineTime]}>{time}</Text>
                       </View>
                       {seen && (
                         <View style={styles.seen}>
-                          <Ionicons name="checkmark-done" size={14} color={colors.brand} />
+                          <Ionicons name="checkmark-done" size={14} color={colors.muted} />
                           <Text style={styles.seenText}>Vu par la centrale</Text>
                         </View>
                       )}
@@ -252,9 +270,10 @@ export default function Messages() {
                     key={q}
                     onPress={() => void send(q)}
                     disabled={sending}
-                    style={({ pressed }) => [styles.reply, { opacity: sending ? 0.5 : 1, transform: [{ scale: pressed ? 0.96 : 1 }] }]}
+                    style={({ pressed }) => [styles.reply, pressed && { backgroundColor: colors.surface3 }, sending && { opacity: 0.45 }]}
                     accessibilityRole="button"
-                    accessibilityLabel={`Réponse rapide : ${q}`}
+                    accessibilityLabel={`Réponse rapide${NBSP}: ${q}`}
+                    accessibilityState={{ disabled: sending }}
                   >
                     <Text style={styles.replyText}>{q}</Text>
                   </Pressable>
@@ -265,64 +284,85 @@ export default function Messages() {
               <TextInput
                 value={text}
                 onChangeText={setText}
-                placeholder={tab === "dispatch" ? "Message à la centrale…" : "Message à la flotte…"}
-                placeholderTextColor={colors.subtle}
+                placeholder={tab === "dispatch" ? "Message à la centrale" : "Message aux chauffeurs"}
+                placeholderTextColor={colors.muted}
                 style={styles.input}
                 multiline
                 maxLength={1000}
                 onSubmitEditing={() => void send(text)}
                 submitBehavior="submit"
                 returnKeyType="send"
-                accessibilityLabel="Votre message"
+                accessibilityLabel={tab === "dispatch" ? "Message à la centrale" : "Message aux chauffeurs"}
               />
               <Pressable
                 onPress={() => void send(text)}
-                disabled={!text.trim() || sending}
-                style={({ pressed }) => [styles.send, { opacity: !text.trim() ? 0.4 : 1, transform: [{ scale: pressed ? 0.94 : 1 }] }]}
+                disabled={!canSend}
+                style={({ pressed }) => [styles.send, canSend ? { backgroundColor: pressed ? alpha(colors.brand, 0.85) : colors.brand } : styles.sendOff]}
                 accessibilityRole="button"
                 accessibilityLabel="Envoyer"
+                accessibilityState={{ disabled: !canSend, busy: sending }}
               >
-                {sending ? <ActivityIndicator color={colors.brandFg} /> : <Ionicons name="arrow-up" size={24} color={colors.brandFg} />}
+                {sending ? (
+                  <ActivityIndicator color={colors.muted} />
+                ) : (
+                  <Ionicons name="arrow-up" size={22} color={canSend ? colors.brandFg : colors.subtle} />
+                )}
               </Pressable>
             </View>
           </SafeAreaView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
       {flash.node}
+
+      <ReportSheet
+        visible={reporting}
+        me={me}
+        onClose={() => setReporting(false)}
+        onSent={(t) => {
+          setReporting(false);
+          const meta = FLEET_REPORT_META[t] ?? FLEET_REPORT_META.other;
+          flash.show(`Signalement envoyé · ${meta.label}`, "success", meta.ionicon as IconName);
+        }}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  call: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.brand },
-  quick: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6, borderBottomWidth: 1, borderColor: colors.line },
-  list: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16, gap: 2 },
-  day: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 12 },
+  call: { width: 44, height: 44, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 },
+  top: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.sm, borderBottomWidth: 1, borderColor: colors.line },
+  scope: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium, lineHeight: 18, paddingHorizontal: 2 },
+  list: { paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.lg, gap: 2 },
+  empty: { color: colors.muted, fontSize: type.body, textAlign: "center", paddingHorizontal: space.xxl },
+  day: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: space.md },
   dayLine: { flex: 1, height: 1, backgroundColor: colors.line },
-  dayText: { color: colors.subtle, fontSize: 12.5, fontWeight: "700", textTransform: "capitalize" },
+  dayText: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium },
   bubbleRow: { flexDirection: "row" },
-  author: { color: colors.muted, fontSize: 12.5, fontWeight: "700", marginBottom: 4, marginLeft: 6 },
-  bubble: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: 7, borderRadius: 20, gap: 3 },
-  mine: { backgroundColor: colors.brand, borderBottomRightRadius: 6 },
-  dispatch: { backgroundColor: colors.surface3, borderBottomLeftRadius: 6, borderWidth: 1, borderColor: "rgba(179,157,250,0.28)" },
-  theirs: { backgroundColor: colors.surface2, borderBottomLeftRadius: 6, borderWidth: 1, borderColor: colors.line },
-  body: { color: colors.fg, fontSize: 16, lineHeight: 22 },
-  time: { color: colors.subtle, fontSize: 11, fontWeight: "600", alignSelf: "flex-end", fontVariant: ["tabular-nums"] },
-  seen: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4, marginRight: 4 },
-  seenText: { color: colors.subtle, fontSize: 11.5, fontWeight: "600" },
-  system: { color: colors.subtle, fontSize: 13, textAlign: "center", marginVertical: 6 },
-  empty: { alignItems: "center", gap: 10, paddingHorizontal: 30 },
-  emptyIcon: { width: 68, height: 68, borderRadius: 34, backgroundColor: "rgba(200,240,60,0.1)", alignItems: "center", justifyContent: "center", marginBottom: 4 },
-  emptyTitle: { color: colors.fg, fontSize: 19, fontWeight: "800" },
-  emptyText: { color: colors.muted, fontSize: 14.5, textAlign: "center", lineHeight: 20 },
+  author: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium, marginBottom: space.xs, marginLeft: space.xs },
+  bubble: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: 7, borderRadius: radius.lg, gap: 3 },
+  // Mes messages : fond clair neutre (la couleur de marque reste réservée à « en ligne » et à l'action principale)
+  mine: { backgroundColor: colors.fg, borderBottomRightRadius: radius.sm / 2 },
+  mineText: { color: colors.bg },
+  mineTime: { color: alpha(colors.bg, 0.6) },
+  theirs: { backgroundColor: colors.surface2, borderBottomLeftRadius: radius.sm / 2, borderWidth: 1, borderColor: colors.line },
+  body: { color: colors.fg, fontSize: type.callout, fontWeight: weight.regular, lineHeight: 22 },
+  time: { color: colors.muted, fontSize: type.caption, fontWeight: weight.medium, alignSelf: "flex-end", ...mono },
+  seen: { flexDirection: "row", alignItems: "center", gap: space.xs, marginTop: space.xs, marginRight: space.xs },
+  seenText: { color: colors.muted, fontSize: type.caption, fontWeight: weight.medium },
+  system: { color: colors.muted, fontSize: type.footnote, textAlign: "center", marginVertical: 6 },
   composer: { borderTopWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, paddingTop: 10, paddingBottom: 10, gap: 10 },
-  replies: { gap: 8, paddingHorizontal: 12 },
-  reply: { height: 40, paddingHorizontal: 16, borderRadius: 20, justifyContent: "center", backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong },
-  replyText: { color: colors.fg, fontSize: 14.5, fontWeight: "700" },
-  inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingHorizontal: 12 },
-  input: {
-    flex: 1, minHeight: 50, maxHeight: 130, borderRadius: 25, paddingHorizontal: 18, paddingTop: 14, paddingBottom: 14,
-    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line, color: colors.fg, fontSize: 16,
+  replies: { gap: space.sm, paddingHorizontal: space.md },
+  reply: {
+    height: control.sm, paddingHorizontal: space.lg, borderRadius: radius.md, justifyContent: "center",
+    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
   },
-  send: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  replyText: { color: colors.fg, fontSize: type.body, fontWeight: weight.medium },
+  inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingHorizontal: space.md },
+  input: {
+    flex: 1, minHeight: control.sm, maxHeight: 130, borderRadius: radius.md, paddingHorizontal: 14, paddingTop: 13, paddingBottom: 13,
+    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line, color: colors.fg, fontSize: type.callout,
+  },
+  send: { width: control.sm, height: control.sm, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  sendOff: { backgroundColor: colors.surface3 },
 });

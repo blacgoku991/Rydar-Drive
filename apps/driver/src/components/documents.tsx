@@ -1,5 +1,6 @@
 // Justificatifs du chauffeur (écran « Mes documents » et écran d'attente du candidat) : statut, échéance,
 // motif de refus ; dépôt par photo (driver_submit_document — autorisé aussi au candidat en attente).
+// Sobre : cartes neutres, pictogrammes gris ; seule l'étiquette de statut porte la couleur.
 import { Ionicons } from "@expo/vector-icons";
 import {
   DOCUMENT_STATE_META, DOCUMENT_TYPE_LABELS, documentStateLabel, formatDate,
@@ -7,31 +8,48 @@ import {
 } from "@rydar/shared";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { BigButton, hapticResult, Sheet } from "@/components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { AccessibilityInfo, Image, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
+import { frTypo } from "@/components/centrale";
+import { BigButton, BottomSheet, hapticResult, Pill } from "@/components/ui";
 import { api, STORAGE_UNAVAILABLE, type ApiError } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { assetBytes, extensionFor, formatIsoDay, maskDate, parseFrDate } from "@/lib/files";
-import { colors, toneColor } from "@/theme";
+import { colors, control, mono, overlay, radius, space, toneColor, type, weight } from "@/theme";
+
+/** Espace insécable (typographie française : avant « : ; ! ? », entre un nombre et son unité). */
+const NB = " ";
 
 const REQUIRED: DocumentType[] = ["vtc_card", "driving_license", "identity", "insurance", "vehicle_registration"];
 
 const TYPE_ICON: Record<DocumentType, keyof typeof Ionicons.glyphMap> = {
-  vtc_card: "id-card",
-  driving_license: "car",
-  identity: "person",
-  insurance: "shield-checkmark",
-  vehicle_registration: "document-text",
-  medical: "medkit",
-  other: "document",
+  vtc_card: "id-card-outline",
+  driving_license: "car-outline",
+  identity: "person-outline",
+  insurance: "shield-checkmark-outline",
+  vehicle_registration: "document-text-outline",
+  medical: "medkit-outline",
+  other: "document-outline",
 };
 
 export type DocEntry = { key: string; type: DocumentType; doc: DriverDocumentItem | null; state: DocumentDisplayState };
 
 /** États à traiter par le chauffeur (manquant, refusé, expiré, bientôt échu). */
 export const isTodo = (s: DocumentDisplayState) => s === "missing" || s === "rejected" || s === "expired" || s === "expiring";
+
+/** « 3 documents », « 1 manquant » : nombre et mot insécables, pluriel. */
+const count = (n: number, word: string) => `${n}${NB}${word}${n > 1 ? "s" : ""}`;
+
+/** Libellé du statut, « Expire dans 12 j » insécable. */
+const stateLabel = (state: DocumentDisplayState, daysLeft?: number | null) => documentStateLabel(state, daysLeft).replace(/(\d) j$/, `$1${NB}j`);
+
+function announce(message: string) {
+  try {
+    if (typeof AccessibilityInfo.announceForAccessibility === "function") AccessibilityInfo.announceForAccessibility(message);
+  } catch {
+    /* pas de lecteur d'écran sur cette plateforme */
+  }
+}
 
 /**
  * Une ligne par document, + « Manquant » pour chaque type exigé absent (ordre : à traiter d'abord,
@@ -68,68 +86,72 @@ export function useDriverDocuments(enabled = true) {
   return { data, error, load };
 }
 
-/** Bandeau de synthèse : « 3 documents à mettre à jour » / « Dossier complet ». */
+/** Synthèse : « 3 documents à mettre à jour » / « Dossier complet ». */
 export function DocumentsSummary({ data, entries }: { data: DriverDocuments; entries: DocEntry[] }) {
   const todo = entries.filter((e) => isTodo(e.state)).length;
   const s = data.summary;
+  const valid = s.valid + s.expiring;
+  const title = todo > 0 ? `${count(todo, "document")} à mettre à jour` : "Dossier complet";
+  const sub =
+    [
+      valid > 0 ? count(valid, "valide") : null,
+      s.pending > 0 ? `${s.pending}${NB}en validation` : null,
+      data.missing_types.length > 0 ? count(data.missing_types.length, "manquant") : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Ajoutez vos justificatifs";
   return (
-    <View style={[styles.summary, { borderColor: todo > 0 ? "rgba(245,181,68,0.35)" : "rgba(79,213,143,0.3)" }]}>
-      <View style={[styles.summaryIcon, { backgroundColor: todo > 0 ? "rgba(245,181,68,0.14)" : "rgba(79,213,143,0.14)" }]}>
-        <Ionicons name={todo > 0 ? "alert-circle" : "shield-checkmark"} size={24} color={todo > 0 ? colors.amber : colors.green} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.summaryTitle}>{todo > 0 ? `${todo} document${todo > 1 ? "s" : ""} à mettre à jour` : "Dossier complet"}</Text>
-        <Text style={styles.summarySub}>
-          {[
-            s.valid + s.expiring > 0 ? `${s.valid + s.expiring} valide${s.valid + s.expiring > 1 ? "s" : ""}` : null,
-            s.pending > 0 ? `${s.pending} en validation` : null,
-            data.missing_types.length > 0 ? `${data.missing_types.length} manquant${data.missing_types.length > 1 ? "s" : ""}` : null,
-          ].filter(Boolean).join(" · ") || "Ajoutez vos justificatifs"}
-        </Text>
+    <View style={styles.summary} accessible accessibilityLabel={`${title}. ${sub}`}>
+      <Ionicons name={todo > 0 ? "alert-circle-outline" : "checkmark-circle-outline"} size={20} color={colors.muted} style={styles.leadIcon} />
+      <View style={styles.flexText}>
+        <Text style={styles.summaryTitle}>{title}</Text>
+        <Text style={[styles.summarySub, mono]}>{sub}</Text>
       </View>
     </View>
   );
 }
 
 export function DocCard({ entry, tz, onUpdate }: { entry: DocEntry; tz?: string; onUpdate: () => void }) {
-  const { doc, state, type } = entry;
+  const { doc, state, type: docType } = entry;
   const meta = DOCUMENT_STATE_META[state];
   const color = state === "missing" ? colors.muted : toneColor(meta.tone);
-  const label = doc?.label ?? DOCUMENT_TYPE_LABELS[type] ?? "Document";
+  const label = doc?.label ?? DOCUMENT_TYPE_LABELS[docType] ?? "Document";
+  const status = stateLabel(state, doc?.days_left);
   const urgent = isTodo(state);
   const details = [
-    doc?.number ? `N° ${doc.number}` : null,
+    doc?.number ? `N°${NB}${doc.number}` : null,
     doc ? (doc.expires_at ? `Échéance ${formatIsoDay(doc.expires_at)}` : "Sans échéance") : "Obligatoire pour rouler",
   ].filter(Boolean).join(" · ");
+  const action = state === "missing" ? "Ajouter" : state === "pending" ? "Remplacer" : "Mettre à jour";
   return (
-    <View style={[styles.card, urgent && { borderColor: `${color}55` }]}>
-      <View style={styles.cardHead}>
-        <View style={[styles.cardIcon, { backgroundColor: `${color}1C` }]}>
-          <Ionicons name={TYPE_ICON[type] ?? "document"} size={20} color={color} />
-        </View>
-        <View style={{ flex: 1, gap: 3 }}>
-          <Text style={styles.cardTitle} numberOfLines={1}>{label}</Text>
-          <Text style={styles.cardSub} numberOfLines={1}>{details}</Text>
+    <View style={styles.card}>
+      <View style={styles.cardHead} accessible accessibilityLabel={`${label}. ${details}`}>
+        <Ionicons name={TYPE_ICON[docType] ?? "document-outline"} size={20} color={colors.muted} style={styles.leadIcon} />
+        <View style={styles.flexText}>
+          <Text style={styles.cardTitle} numberOfLines={2}>{label}</Text>
+          <Text style={[styles.cardSub, mono]} numberOfLines={1}>{details}</Text>
         </View>
       </View>
       <View style={styles.stateRow}>
-        <View style={[styles.state, { backgroundColor: `${color}1F` }]}>
-          <View style={[styles.stateDot, { backgroundColor: color }]} />
-          <Text style={[styles.stateText, { color }]}>{documentStateLabel(state, doc?.days_left)}</Text>
-        </View>
+        <Pill label={status} color={color} />
         {!urgent && (
-          <Pressable onPress={onUpdate} style={({ pressed }) => [styles.smallAction, pressed && { opacity: 0.7 }]} accessibilityRole="button" accessibilityLabel={`${state === "pending" ? "Remplacer l'envoi" : "Mettre à jour"} : ${label}`}>
-            <Ionicons name="camera-outline" size={16} color={colors.fg} />
-            <Text style={styles.smallActionText}>{state === "pending" ? "Remplacer" : "Mettre à jour"}</Text>
+          <Pressable
+            onPress={onUpdate}
+            style={({ pressed }) => [styles.smallAction, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel={`${state === "pending" ? "Remplacer l'envoi" : "Mettre à jour"}${NB}: ${label}`}
+          >
+            <Ionicons name="camera-outline" size={18} color={colors.fg} />
+            <Text style={styles.smallActionText}>{action}</Text>
           </Pressable>
         )}
       </View>
       {state === "rejected" && doc?.review_note ? (
-        <View style={styles.reason}>
-          <Ionicons name="chatbox-ellipses-outline" size={16} color={colors.red} />
+        <View style={styles.reason} accessible accessibilityLabel={`Motif du refus${NB}: ${doc.review_note}`}>
+          <Ionicons name="chatbox-ellipses-outline" size={20} color={colors.muted} style={styles.leadIcon} />
           <Text style={styles.reasonText}>
-            <Text style={{ fontWeight: "800" }}>Motif : </Text>
-            {doc.review_note}
+            <Text style={styles.reasonLabel}>Motif{NB}: </Text>
+            {frTypo(doc.review_note)}
           </Text>
         </View>
       ) : null}
@@ -138,10 +160,12 @@ export function DocCard({ entry, tz, onUpdate }: { entry: DocEntry; tz?: string;
       ) : null}
       {urgent && (
         <BigButton
-          title={state === "missing" ? "Ajouter" : "Mettre à jour"}
-          icon={state === "missing" ? "add-circle-outline" : "camera-outline"}
-          height={50}
+          title={action}
+          icon={state === "missing" ? "add-outline" : "camera-outline"}
+          variant="secondary"
+          height={control.md}
           onPress={onUpdate}
+          accessibilityLabel={`${action}${NB}: ${label}`}
         />
       )}
     </View>
@@ -150,11 +174,41 @@ export function DocCard({ entry, tz, onUpdate }: { entry: DocEntry; tz?: string;
 
 type Picked = { asset: ImagePicker.ImagePickerAsset; mime: string };
 
+/** Champ de la feuille : libellé au-dessus, cadre de 56 px, bordure lime au focus. */
+function SheetField({ label, style, onFocus, onBlur, ...input }: Omit<TextInputProps, "style"> & { label: string; style?: TextInputProps["style"] }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel} accessible={false} importantForAccessibility="no" accessibilityElementsHidden>
+        {label}
+      </Text>
+      <TextInput
+        placeholderTextColor={colors.muted}
+        selectionColor={colors.brand}
+        cursorColor={colors.brand}
+        keyboardAppearance="dark"
+        accessibilityLabel={label}
+        maxFontSizeMultiplier={1.4}
+        {...input}
+        onFocus={(e) => {
+          setFocused(true);
+          onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          onBlur?.(e);
+        }}
+        style={[styles.input, { borderColor: focused ? colors.brand : colors.lineStrong }, style]}
+      />
+    </View>
+  );
+}
+
 /** Feuille « Mettre à jour » : photo (appareil ou galerie ; fichier sur le web) + échéance + numéro → envoi. */
 export function UploadSheet({
   entry, orgId, driverId, onClose, onDone,
 }: { entry: DocEntry | null; orgId?: string; driverId?: string; onClose: () => void; onDone: (message: string) => void }) {
-  const anim = useRef(new Animated.Value(0)).current;
+  // Document affiché : reste celui de la dernière ouverture pendant l'animation de fermeture
   const [shown, setShown] = useState<DocEntry | null>(entry);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [expiry, setExpiry] = useState("");
@@ -163,18 +217,20 @@ export function UploadSheet({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (entry) {
-      setShown(entry);
-      setPicked(null);
-      setError(null);
-      setNumber(entry.doc?.number ?? "");
-      setExpiry("");
-      Animated.spring(anim, { toValue: 1, useNativeDriver: true, friction: 9, tension: 70 }).start();
-    } else Animated.timing(anim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => setShown(null));
-  }, [entry, anim]);
+    if (!entry) return;
+    setShown(entry);
+    setPicked(null);
+    setError(null);
+    setNumber(entry.doc?.number ?? "");
+    setExpiry("");
+  }, [entry]);
 
-  if (!shown) return null;
-  const label = shown.doc?.label ?? DOCUMENT_TYPE_LABELS[shown.type] ?? "Document";
+  useEffect(() => {
+    if (error) announce(error);
+  }, [error]);
+
+  const current = entry ?? shown;
+  const label = current ? (current.doc?.label ?? DOCUMENT_TYPE_LABELS[current.type] ?? "Document") : "";
 
   async function pick(source: "camera" | "library") {
     setError(null);
@@ -196,23 +252,23 @@ export function UploadSheet({
   }
 
   async function submit() {
-    if (!shown) return;
+    if (!current) return;
     if (!orgId || !driverId) return setError("Connexion impossible. Réessayez dans un instant.");
     if (!picked) return setError("Ajoutez une photo du document.");
     let expiresAt: string | null = null;
     if (expiry.trim()) {
       expiresAt = parseFrDate(expiry);
       if (!expiresAt) return setError("Date d'expiration invalide (JJ/MM/AAAA).");
-      if (expiresAt < new Date().toISOString().slice(0, 10)) return setError("Ce document est déjà expiré : envoyez le nouveau.");
+      if (expiresAt < new Date().toISOString().slice(0, 10)) return setError(`Ce document est déjà expiré${NB}: envoyez le nouveau.`);
     }
     setBusy(true);
     setError(null);
     try {
-      const path = `${orgId}/${driverId}/${shown.type}-${Date.now()}.${extensionFor(picked.mime)}`;
+      const path = `${orgId}/${driverId}/${current.type}-${Date.now()}.${extensionFor(picked.mime)}`;
       const bytes = await assetBytes(picked.asset);
-      if (bytes.byteLength > 10 * 1024 * 1024) throw new Error("Photo trop lourde (10 Mo maximum).");
+      if (bytes.byteLength > 10 * 1024 * 1024) throw new Error(`Photo trop lourde (10${NB}Mo maximum).`);
       await api.uploadDocument(path, bytes, picked.mime);
-      const res = await api.submitDocument({ type: shown.type, filePath: path, expiresAt, number: number.trim() || null });
+      const res = await api.submitDocument({ type: current.type, filePath: path, expiresAt, number: number.trim() || null });
       if (!res.ok) {
         hapticResult(false);
         setError(res.message ?? "Envoi refusé.");
@@ -231,128 +287,160 @@ export function UploadSheet({
 
   const web = Platform.OS === "web";
   return (
-    <View style={[StyleSheet.absoluteFill, { zIndex: 40 }]} pointerEvents="box-none">
-      <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, { opacity: anim }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={busy ? undefined : onClose} accessibilityLabel="Fermer" />
-      </Animated.View>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.sheetWrap} pointerEvents="box-none">
-        <Animated.View style={{ transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [640, 0] }) }] }}>
-          <Sheet>
-            <SafeAreaView edges={["bottom"]} style={{ gap: 14, paddingBottom: 14 }}>
-              <View style={styles.sheetHead}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.sheetTitle}>{label}</Text>
-                  <Text style={styles.sheetSub}>Photo nette, document entier, sans reflet.</Text>
-                </View>
-                <Pressable onPress={onClose} disabled={busy} style={styles.close} accessibilityLabel="Fermer" hitSlop={8}>
-                  <Ionicons name="close" size={22} color={colors.fg} />
+    <BottomSheet visible={!!entry} onClose={onClose} dismissable={!busy} keyboard>
+      {current && (
+        <>
+          <View style={styles.sheetHead}>
+            <View style={styles.flexText}>
+              <Text style={styles.sheetTitle} accessibilityRole="header">{label}</Text>
+              <Text style={styles.sheetSub}>Photo nette, document entier, sans reflet.</Text>
+            </View>
+            <Pressable
+              onPress={onClose}
+              disabled={busy}
+              style={({ pressed }) => [styles.close, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Fermer"
+              accessibilityState={{ disabled: busy }}
+            >
+              <Ionicons name="close" size={22} color={colors.fg} />
+            </Pressable>
+          </View>
+
+          {picked ? (
+            <View style={styles.preview}>
+              <Image source={{ uri: picked.asset.uri }} style={styles.previewImg} resizeMode="cover" accessibilityLabel="Aperçu du document" />
+              <Pressable
+                onPress={() => setPicked(null)}
+                disabled={busy}
+                style={({ pressed }) => [styles.previewReset, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Changer de photo"
+                accessibilityState={{ disabled: busy }}
+              >
+                <Ionicons name="refresh-outline" size={18} color={colors.fg} />
+                <Text style={styles.previewResetText}>Changer</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.pickRow}>
+              {!web && (
+                <Pressable
+                  onPress={() => void pick("camera")}
+                  style={({ pressed }) => [styles.pick, styles.pickMain, pressed && styles.pressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Prendre une photo"
+                >
+                  <Ionicons name="camera-outline" size={24} color={colors.brandFg} />
+                  <Text style={[styles.pickText, { color: colors.brandFg }]}>Prendre une photo</Text>
                 </Pressable>
-              </View>
-
-              {picked ? (
-                <View style={styles.preview}>
-                  <Image source={{ uri: picked.asset.uri }} style={styles.previewImg} resizeMode="cover" accessibilityLabel="Aperçu du document" />
-                  <Pressable onPress={() => setPicked(null)} style={styles.previewReset} accessibilityLabel="Changer de photo">
-                    <Ionicons name="refresh" size={16} color={colors.fg} />
-                    <Text style={styles.previewResetText}>Changer</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={styles.pickRow}>
-                  {!web && (
-                    <Pressable onPress={() => void pick("camera")} style={[styles.pick, styles.pickMain]} accessibilityRole="button">
-                      <Ionicons name="camera" size={26} color={colors.brandFg} />
-                      <Text style={[styles.pickText, { color: colors.brandFg }]}>Prendre une photo</Text>
-                    </Pressable>
-                  )}
-                  <Pressable onPress={() => void pick("library")} style={[styles.pick, web && styles.pickMain]} accessibilityRole="button">
-                    <Ionicons name={web ? "cloud-upload" : "images"} size={26} color={web ? colors.brandFg : colors.fg} />
-                    <Text style={[styles.pickText, web && { color: colors.brandFg }]}>{web ? "Choisir un fichier" : "Galerie"}</Text>
-                  </Pressable>
-                </View>
               )}
+              <Pressable
+                onPress={() => void pick("library")}
+                style={({ pressed }) => [styles.pick, web && styles.pickMain, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel={web ? "Choisir un fichier" : "Choisir dans la galerie"}
+              >
+                <Ionicons name={web ? "cloud-upload-outline" : "images-outline"} size={24} color={web ? colors.brandFg : colors.fg} />
+                <Text style={[styles.pickText, web && { color: colors.brandFg }]}>{web ? "Choisir un fichier" : "Galerie"}</Text>
+              </Pressable>
+            </View>
+          )}
 
-              <View style={styles.fields}>
-                <View style={{ flex: 1.1, gap: 6 }}>
-                  <Text style={styles.fieldLabel}>Date d&apos;expiration</Text>
-                  <TextInput
-                    value={expiry}
-                    onChangeText={(t) => setExpiry(maskDate(t))}
-                    placeholder="JJ/MM/AAAA"
-                    placeholderTextColor={colors.subtle}
-                    keyboardType="number-pad"
-                    maxLength={10}
-                    style={styles.input}
-                    accessibilityLabel="Date d'expiration"
-                  />
-                </View>
-                <View style={{ flex: 1, gap: 6 }}>
-                  <Text style={styles.fieldLabel}>Numéro (facultatif)</Text>
-                  <TextInput
-                    value={number}
-                    onChangeText={setNumber}
-                    placeholder="—"
-                    placeholderTextColor={colors.subtle}
-                    autoCapitalize="characters"
-                    maxLength={60}
-                    style={styles.input}
-                    accessibilityLabel="Numéro du document"
-                  />
-                </View>
-              </View>
+          <View style={styles.fields}>
+            <View style={{ flex: 1.1 }}>
+              <SheetField
+                label="Date d'expiration"
+                value={expiry}
+                onChangeText={(t) => setExpiry(maskDate(t))}
+                placeholder="JJ/MM/AAAA"
+                keyboardType="number-pad"
+                maxLength={10}
+                editable={!busy}
+                style={mono}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <SheetField
+                label="Numéro (facultatif)"
+                value={number}
+                onChangeText={setNumber}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={60}
+                editable={!busy}
+                accessibilityLabel="Numéro du document, facultatif"
+              />
+            </View>
+          </View>
 
-              {error && (
-                <View style={styles.error} accessibilityLiveRegion="assertive">
-                  <Ionicons name="alert-circle" size={20} color={colors.red} />
-                  <Text style={styles.errorBoxText}>{error}</Text>
-                </View>
-              )}
+          {error && (
+            <View style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+              <Ionicons name="alert-circle-outline" size={20} color={colors.red} style={styles.leadIcon} />
+              <Text style={styles.errorText}>{frTypo(error)}</Text>
+            </View>
+          )}
 
-              <BigButton title="Envoyer à la centrale" icon="send" height={60} onPress={() => void submit()} loading={busy} disabled={!picked} />
-            </SafeAreaView>
-          </Sheet>
-        </Animated.View>
-      </KeyboardAvoidingView>
-    </View>
+          <BigButton title="Envoyer à la centrale" height={control.md} onPress={() => void submit()} loading={busy} disabled={!picked} />
+        </>
+      )}
+    </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  summary: { flexDirection: "row", alignItems: "center", gap: 14, padding: 16, borderRadius: 22, backgroundColor: colors.surface, borderWidth: 1 },
-  summaryIcon: { width: 46, height: 46, borderRadius: 23, alignItems: "center", justifyContent: "center" },
-  summaryTitle: { color: colors.fg, fontSize: 17, fontWeight: "900" },
-  summarySub: { color: colors.muted, fontSize: 13.5, marginTop: 2 },
-  card: { backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 16, gap: 12 },
-  cardHead: { flexDirection: "row", alignItems: "center", gap: 12 },
-  cardIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  cardTitle: { color: colors.fg, fontSize: 17, fontWeight: "800" },
-  cardSub: { color: colors.subtle, fontSize: 13.5, fontVariant: ["tabular-nums"] },
-  stateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  smallAction: { flexDirection: "row", alignItems: "center", gap: 6, height: 38, paddingHorizontal: 14, borderRadius: 19, backgroundColor: colors.surface3 },
-  smallActionText: { color: colors.fg, fontSize: 14, fontWeight: "800" },
-  state: { flexDirection: "row", alignItems: "center", gap: 7, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 99 },
-  stateDot: { width: 7, height: 7, borderRadius: 4 },
-  stateText: { fontSize: 13.5, fontWeight: "800" },
-  reason: { flexDirection: "row", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(242,85,90,0.1)" },
-  reasonText: { flex: 1, color: colors.fg, fontSize: 14, lineHeight: 19 },
-  pendingText: { color: colors.muted, fontSize: 13.5 },
-  backdrop: { backgroundColor: "rgba(4,5,7,0.62)" },
-  sheetWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  sheetHead: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  sheetTitle: { color: colors.fg, fontSize: 23, fontWeight: "900", letterSpacing: -0.3 },
-  sheetSub: { color: colors.muted, fontSize: 14, marginTop: 4 },
-  close: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface3, alignItems: "center", justifyContent: "center" },
-  pickRow: { flexDirection: "row", gap: 10 },
-  pick: { flex: 1, height: 104, borderRadius: 20, alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong, borderStyle: "dashed" },
-  pickMain: { backgroundColor: colors.brand, borderColor: colors.brand, borderStyle: "solid" },
-  pickText: { color: colors.fg, fontSize: 15, fontWeight: "800" },
-  preview: { height: 170, borderRadius: 20, overflow: "hidden", backgroundColor: colors.surface2 },
+  pressed: { opacity: 0.7 },
+  flexText: { flex: 1, gap: 2 },
+  leadIcon: { marginTop: 1 },
+  summary: {
+    flexDirection: "row", alignItems: "flex-start", gap: space.md, padding: space.lg,
+    borderRadius: radius.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line,
+  },
+  summaryTitle: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold },
+  summarySub: { color: colors.muted, fontSize: type.subhead },
+  card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, padding: space.lg, gap: space.md },
+  cardHead: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
+  cardTitle: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold },
+  cardSub: { color: colors.muted, fontSize: type.subhead },
+  stateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm + 2 },
+  smallAction: {
+    flexDirection: "row", alignItems: "center", gap: space.sm - 2, height: control.sm, paddingHorizontal: space.lg,
+    borderRadius: radius.md, backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong,
+  },
+  smallActionText: { color: colors.fg, fontSize: type.subhead, fontWeight: weight.semibold },
+  reason: { flexDirection: "row", gap: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surface2 },
+  reasonLabel: { fontWeight: weight.semibold },
+  reasonText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
+  pendingText: { color: colors.muted, fontSize: type.subhead, lineHeight: 20 },
+  sheetHead: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
+  sheetTitle: { color: colors.fg, fontSize: type.title3, fontWeight: weight.bold, letterSpacing: -0.2 },
+  sheetSub: { color: colors.muted, fontSize: type.body, marginTop: 2 },
+  close: { width: control.sm, height: control.sm, borderRadius: radius.full, backgroundColor: colors.surface2, alignItems: "center", justifyContent: "center" },
+  pickRow: { flexDirection: "row", gap: space.sm + 2 },
+  pick: {
+    flex: 1, height: 96, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", gap: space.sm,
+    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong,
+  },
+  pickMain: { backgroundColor: colors.brand, borderColor: colors.brand },
+  pickText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
+  preview: { height: 170, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surface2 },
   previewImg: { width: "100%", height: "100%" },
-  previewReset: { position: "absolute", right: 10, bottom: 10, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, height: 36, borderRadius: 18, backgroundColor: "rgba(10,11,14,0.85)" },
-  previewResetText: { color: colors.fg, fontSize: 13.5, fontWeight: "800" },
-  fields: { flexDirection: "row", gap: 10 },
-  fieldLabel: { color: colors.subtle, fontSize: 12.5, fontWeight: "700" },
-  input: { height: 50, borderRadius: 14, paddingHorizontal: 14, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line, color: colors.fg, fontSize: 16, fontVariant: ["tabular-nums"] },
-  error: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: 16, backgroundColor: "rgba(242,85,90,0.12)", borderWidth: 1, borderColor: "rgba(242,85,90,0.3)" },
-  errorBoxText: { flex: 1, color: colors.fg, fontSize: 14.5, fontWeight: "700", lineHeight: 20 },
+  previewReset: {
+    ...overlay, position: "absolute", right: space.sm + 2, bottom: space.sm + 2, flexDirection: "row", alignItems: "center", gap: space.sm - 2,
+    paddingHorizontal: space.md + 2, height: control.sm, borderRadius: radius.md,
+  },
+  previewResetText: { color: colors.fg, fontSize: type.subhead, fontWeight: weight.semibold },
+  fields: { flexDirection: "row", gap: space.sm + 2 },
+  field: { gap: space.sm },
+  fieldLabel: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
+  input: {
+    height: control.md, borderRadius: radius.md, paddingHorizontal: space.md + 2, backgroundColor: colors.bg, borderWidth: 1,
+    color: colors.fg, fontSize: type.callout, fontWeight: weight.medium,
+    ...(Platform.OS === "web" ? { outlineWidth: 0 } : null),
+  },
+  error: {
+    flexDirection: "row", alignItems: "flex-start", gap: space.md, paddingHorizontal: space.lg, paddingVertical: 14,
+    borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
+  },
+  errorText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
 });

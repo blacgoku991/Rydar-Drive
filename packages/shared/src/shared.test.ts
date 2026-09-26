@@ -260,3 +260,56 @@ describe("adresse e-mail : longueur bornée", () => {
     expect(emailSchema.safeParse(`${"a".repeat(60)}@exemple.fr`).success).toBe(true);
   });
 });
+
+import { driverResetConfirmSchema, NEW_PASSWORD_MAX, NEW_PASSWORD_MIN } from "./schemas";
+describe("mot de passe oublié par code (app chauffeur)", () => {
+  const valid = { email: " Moussa@Exemple.FR ", code: "123 456", password: "nouveau-mdp-2026" };
+
+  it("normalise l'adresse et retire les espaces du code", () => {
+    expect(driverResetConfirmSchema.parse(valid)).toEqual({ email: "moussa@exemple.fr", code: "123456", password: "nouveau-mdp-2026" });
+    expect(driverResetConfirmSchema.parse({ ...valid, code: " 12345678 " }).code).toBe("12345678");
+    expect(driverResetConfirmSchema.parse({ ...valid, code: "1234567890" }).code).toBe("1234567890");
+  });
+
+  it("refuse un code trop court, trop long ou non numérique", () => {
+    for (const code of ["", "12345", "12345678901", "12a456", "123-456", "１２３４５６"]) {
+      expect(driverResetConfirmSchema.safeParse({ ...valid, code }).success, code).toBe(false);
+    }
+    expect(driverResetConfirmSchema.safeParse({ ...valid, code: 123456 }).success).toBe(false);
+    expect(driverResetConfirmSchema.safeParse({ ...valid, code: "1".repeat(41) }).success).toBe(false);
+  });
+
+  it("borne le nouveau mot de passe", () => {
+    expect(driverResetConfirmSchema.safeParse({ ...valid, password: "x".repeat(NEW_PASSWORD_MIN - 1) }).success).toBe(false);
+    expect(driverResetConfirmSchema.safeParse({ ...valid, password: "x".repeat(NEW_PASSWORD_MIN) }).success).toBe(true);
+    expect(driverResetConfirmSchema.safeParse({ ...valid, password: "x".repeat(NEW_PASSWORD_MAX) }).success).toBe(true);
+    expect(driverResetConfirmSchema.safeParse({ ...valid, password: "x".repeat(NEW_PASSWORD_MAX + 1) }).success).toBe(false);
+  });
+
+  it("exige l'adresse, le code et le mot de passe", () => {
+    expect(driverResetConfirmSchema.safeParse({ ...valid, email: "moussa" }).success).toBe(false);
+    expect(driverResetConfirmSchema.safeParse({ email: valid.email, code: valid.code }).success).toBe(false);
+    expect(driverResetConfirmSchema.safeParse({ email: valid.email, password: valid.password }).success).toBe(false);
+    expect(driverResetConfirmSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+import { navDistance, navInstruction } from "./navigation";
+describe("guidage : instructions en français", () => {
+  it("formule les manœuvres courantes", () => {
+    expect(navInstruction({ type: "turn", modifier: "right" }, "Rue de Berri")).toBe("Tournez à droite sur Rue de Berri");
+    expect(navInstruction({ type: "turn", modifier: "slight left" }, "")).toBe("Tournez légèrement à gauche");
+    expect(navInstruction({ type: "roundabout", exit: 2 }, "Avenue de la Redoute")).toBe("Au rond-point, prenez la 2e sortie sur Avenue de la Redoute");
+    expect(navInstruction({ type: "roundabout", exit: 1 })).toBe("Au rond-point, prenez la 1re sortie");
+    expect(navInstruction({ type: "continue", modifier: "straight" }, "Boulevard Haussmann")).toBe("Continuez sur Boulevard Haussmann");
+    expect(navInstruction({ type: "turn", modifier: "uturn" })).toBe("Faites demi-tour");
+    expect(navInstruction({ type: "fork", modifier: "slight right" }, "A86")).toBe("À l'embranchement, restez à droite sur A86");
+    expect(navInstruction({ type: "arrive" })).toBe("Vous êtes arrivé");
+  });
+  it("arrondit les distances annoncées", () => {
+    expect(navDistance(1234)).toBe("1,2 km");
+    expect(navDistance(763)).toBe("750 m");
+    expect(navDistance(47)).toBe("50 m");
+    expect(navDistance(3)).toBe("10 m");
+  });
+});

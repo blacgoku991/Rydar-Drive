@@ -12,14 +12,16 @@ import { useCallback, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { blockerInfo, driverSettlementLabel, dueText, formatWhen, frTypo } from "@/components/centrale";
-import { BigButton, BottomSheet, hapticResult, Screen, ScreenHeader, useFlash } from "@/components/ui";
+import { BigButton, BottomSheet, hapticResult, Label, Pill, Screen, ScreenHeader, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useNow } from "@/hooks/use-now";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useAppEvent } from "@/lib/events";
 import { settlementSession } from "@/lib/settlement-session";
-import { colors, mono, toneColor } from "@/theme";
+import { colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
+
+const NBSP = "\u00A0";
 
 /** Montants figés au moment du paiement : un règlement créé entre-temps n'est pas déclaré payé par erreur. */
 type PaySnapshot = { amount: number; ids: string[]; reference: string | null };
@@ -35,6 +37,8 @@ function pastWhen(iso: string | null | undefined, tz?: string) {
   return `le ${s}`;
 }
 
+const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? many : one}`;
+
 const METHOD_TITLE: Record<Exclude<SettlementMethod, "link">, string> = { cash: "Paiement en espèces", transfer: "Paiement par virement" };
 const METHOD_BUTTON: Record<Exclude<SettlementMethod, "link">, string> = { cash: "J'ai payé en espèces", transfer: "J'ai payé par virement" };
 
@@ -46,6 +50,7 @@ export default function Commissions() {
   const [data, setData] = useState<DriverSettlements | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -135,16 +140,26 @@ export default function Commissions() {
   const orgName = data?.organization.name ?? home?.organization.name ?? "la centrale";
   const open = data?.items.filter((i) => ["due", "declared", "disputed"].includes(i.status)) ?? [];
   const closed = data?.items.filter((i) => !["due", "declared", "disputed"].includes(i.status)) ?? [];
+  const dueLine = !data
+    ? ""
+    : disputed.length > 0
+      ? frTypo(`La centrale n'a pas reçu votre paiement de ${price(disputed.reduce((s, i) => s + i.amount_cents, 0))} : réglez-le de nouveau pour recevoir des courses`)
+      : late
+        ? frTypo(`${price(data.summary.overdue_cents)} en retard : réglez maintenant pour recevoir des courses`)
+        : data.summary.next_due_at
+          ? dueText(data.summary.next_due_at, tz, now).text
+          : `À régler dans les ${data.grace_hours}${NBSP}h après chaque course`;
+  const urgent = late || disputed.length > 0;
 
   return (
     <Screen>
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
         <ScreenHeader title="Commissions" />
         <ScrollView
-          contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 48 }}
+          contentContainerStyle={styles.content}
           refreshControl={
             <RefreshControl
-              tintColor={colors.brand}
+              tintColor={colors.muted}
               refreshing={refreshing}
               onRefresh={async () => {
                 setRefreshing(true);
@@ -156,11 +171,29 @@ export default function Commissions() {
         >
           {!data || !pay ? (
             <View style={styles.loading}>
-              {error ? <Text style={styles.error}>{error}</Text> : <ActivityIndicator color={colors.brand} />}
+              {error ? (
+                <>
+                  <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">{error}</Text>
+                  <BigButton
+                    title="Réessayer"
+                    variant="secondary"
+                    height={control.sm}
+                    loading={retrying}
+                    style={{ alignSelf: "center", minWidth: 160 }}
+                    onPress={async () => {
+                      setRetrying(true);
+                      await load();
+                      setRetrying(false);
+                    }}
+                  />
+                </>
+              ) : (
+                <ActivityIndicator color={colors.muted} accessibilityLabel="Chargement des commissions" />
+              )}
             </View>
           ) : data.model !== "centrale" ? (
             <View style={styles.empty}>
-              <Ionicons name="wallet-outline" size={40} color={colors.subtle} />
+              <Ionicons name="wallet-outline" size={32} color={colors.muted} />
               <Text style={styles.emptyTitle}>Pas de commission à régler</Text>
               <Text style={styles.emptyText}>Votre centrale ne fonctionne pas à la commission.</Text>
             </View>
@@ -168,56 +201,53 @@ export default function Commissions() {
             <>
               {/* Courses bloquées : commission en retard / contestée, plafond d'encours */}
               {blocked && (
-                <View style={styles.blocked} accessibilityRole="alert">
-                  <View style={styles.blockedIcon}>
-                    <Ionicons name="lock-closed" size={22} color={colors.red} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.blockedTitle}>Courses bloquées</Text>
-                    <Text style={styles.blockedText}>{blocked.message}</Text>
+                <View style={styles.card} accessibilityRole="alert" accessible accessibilityLabel={`Courses bloquées. ${blocked.message}`}>
+                  <View style={styles.cardRow}>
+                    <Ionicons name="lock-closed-outline" size={22} color={colors.red} style={styles.leadIcon} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.cardTitle, { color: colors.red }]}>Courses bloquées</Text>
+                      <Text style={styles.cardText}>{blocked.message}</Text>
+                    </View>
                   </View>
                 </View>
               )}
 
               {owed > 0 ? (
-                <View style={[styles.hero, { borderColor: late ? "rgba(242,85,90,0.45)" : "rgba(245,181,68,0.35)" }]}>
+                <View style={styles.hero}>
                   <Text style={styles.heroLabel} numberOfLines={1}>À régler à {orgName}</Text>
-                  <Text style={[styles.heroAmount, { color: late ? colors.red : colors.amber }]} numberOfLines={1} adjustsFontSizeToFit>
+                  <Text
+                    style={[styles.heroAmount, urgent && { color: colors.red }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    accessibilityLabel={`${price(owed)} à régler`}
+                  >
                     {price(owed)}
                   </Text>
                   <View style={styles.refRow}>
                     <Text style={styles.heroMeta}>
-                      {pay.count} course{pay.count > 1 ? "s" : ""}
-                      {pay.reference ? " · réf. " : ""}
+                      {plural(pay.count, "course", "courses")}
+                      {pay.reference ? " · référence" : ""}
                     </Text>
                     {pay.reference ? (
                       <Pressable
                         onPress={() => void copyReference(pay.reference)}
-                        style={({ pressed }) => [styles.refChip, pressed && { opacity: 0.7 }]}
+                        style={({ pressed }) => [styles.refChip, pressed && { backgroundColor: colors.surface3 }]}
                         accessibilityRole="button"
                         accessibilityLabel={`Copier la référence ${pay.reference}`}
                       >
                         <Text style={styles.refChipText} selectable>{pay.reference}</Text>
-                        <Ionicons name="copy-outline" size={15} color={colors.fg} />
+                        <Ionicons name="copy-outline" size={18} color={colors.muted} />
                       </Pressable>
                     ) : null}
                   </View>
                   <View style={styles.dueRow}>
-                    <Ionicons name={late ? "alert-circle" : "time-outline"} size={17} color={late ? colors.red : colors.muted} />
-                    <Text style={[styles.dueText, late && { color: colors.red }]}>
-                      {disputed.length > 0
-                        ? frTypo(`La centrale n'a pas reçu votre paiement de ${price(disputed.reduce((s, i) => s + i.amount_cents, 0))} : réglez-le de nouveau pour recevoir des courses`)
-                        : late
-                        ? frTypo(`${price(data.summary.overdue_cents)} en retard : réglez maintenant pour recevoir des courses`)
-                        : data.summary.next_due_at
-                          ? dueText(data.summary.next_due_at, tz, now).text
-                          : `À régler dans les ${data.grace_hours} h après chaque course`}
-                    </Text>
+                    <Ionicons name={urgent ? "alert-circle-outline" : "time-outline"} size={20} color={urgent ? colors.red : colors.muted} />
+                    <Text style={[styles.dueText, urgent && { color: colors.red }]}>{dueLine}</Text>
                   </View>
 
-                  <View style={{ gap: 10, marginTop: 4 }}>
+                  <View style={styles.actions}>
                     {canLink ? (
-                      <BigButton title={`Payer ${price(owed)}`} icon="open-outline" height={66} onPress={() => void payByLink()} />
+                      <BigButton title={`Payer ${price(owed)}`} icon="open-outline" height={control.lg} onPress={() => void payByLink()} />
                     ) : null}
                     {manual.map((m, i) => (
                       <BigButton
@@ -225,7 +255,7 @@ export default function Commissions() {
                         title={METHOD_BUTTON[m]}
                         icon={SETTLEMENT_METHOD_META[m].ionicon as keyof typeof Ionicons.glyphMap}
                         variant={!canLink && i === 0 ? "primary" : "secondary"}
-                        height={canLink ? 54 : 62}
+                        height={!canLink && i === 0 ? control.lg : control.md}
                         onPress={() => payManually(m)}
                       />
                     ))}
@@ -233,25 +263,29 @@ export default function Commissions() {
                 </View>
               ) : data.summary.declared_cents > 0 ? (
                 // Tout est signalé payé : reste la confirmation par la centrale
-                <View style={[styles.hero, styles.heroOk, styles.heroWaiting]}>
-                  <View style={[styles.okIcon, { backgroundColor: "rgba(106,166,255,0.14)" }]}>
-                    <Ionicons name="time" size={30} color={colors.blue} />
+                <View style={styles.card}>
+                  <View style={styles.cardRow}>
+                    <Ionicons name="time-outline" size={22} color={colors.blue} style={styles.leadIcon} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardTitle}>Paiement signalé</Text>
+                      <Text style={styles.cardText}>
+                        {price(data.summary.declared_cents)} en attente de confirmation par {orgName}. Vous serez prévenu dès sa validation.
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={styles.okTitle}>Paiement signalé</Text>
-                  <Text style={styles.okText}>
-                    {price(data.summary.declared_cents)} en attente de confirmation par {orgName}. Vous serez prévenu dès sa validation.
-                  </Text>
                 </View>
               ) : (
-                <View style={[styles.hero, styles.heroOk]}>
-                  <View style={styles.okIcon}>
-                    <Ionicons name="checkmark" size={30} color={colors.green} />
+                <View style={styles.card}>
+                  <View style={styles.cardRow}>
+                    <Ionicons name="checkmark-circle-outline" size={22} color={colors.green} style={styles.leadIcon} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardTitle}>Tout est réglé</Text>
+                      <Text style={styles.cardText}>
+                        Aucune commission à régler à {orgName}.
+                        {data.summary.to_receive_cents > 0 ? ` ${price(data.summary.to_receive_cents)} de gains à recevoir.` : ""}
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={styles.okTitle}>Tout est réglé</Text>
-                  <Text style={styles.okText}>
-                    Aucune commission à régler à {orgName}.
-                    {data.summary.to_receive_cents > 0 ? ` ${price(data.summary.to_receive_cents)} de gains à recevoir.` : ""}
-                  </Text>
                 </View>
               )}
 
@@ -260,30 +294,26 @@ export default function Commissions() {
                 <Tile
                   label="En retard"
                   value={price(data.summary.overdue_cents)}
-                  hint={data.summary.overdue_cents > 0 ? "bloque les courses" : "aucun retard"}
+                  hint={data.summary.overdue_cents > 0 ? "Bloque les courses" : "Aucun retard"}
                   color={data.summary.overdue_cents > 0 ? colors.red : colors.muted}
-                  icon="alert-circle-outline"
                 />
                 <Tile
                   label="Signalé payé"
                   value={price(data.summary.declared_cents)}
-                  hint="à confirmer"
+                  hint="À confirmer"
                   color={data.summary.declared_cents > 0 ? colors.blue : colors.muted}
-                  icon="time-outline"
                 />
                 <Tile
                   label="À recevoir"
                   value={price(data.summary.to_receive_cents)}
-                  hint="courses payées en ligne"
+                  hint="Courses payées en ligne"
                   color={data.summary.to_receive_cents > 0 ? colors.green : colors.muted}
-                  icon="arrow-down-circle-outline"
                 />
                 <Tile
                   label="Réglé ce mois"
                   value={price(data.summary.paid_month_cents)}
-                  hint={data.summary.received_month_cents > 0 ? `${price(data.summary.received_month_cents)} reçus` : "confirmées"}
+                  hint={data.summary.received_month_cents > 0 ? `${price(data.summary.received_month_cents)} reçus` : "Confirmées"}
                   color={colors.fg}
-                  icon="checkmark-done-outline"
                 />
               </View>
 
@@ -292,11 +322,11 @@ export default function Commissions() {
                 <Text style={styles.footnote}>Les commissions apparaissent ici après chaque course terminée.</Text>
               ) : (
                 <>
-                  {open.length > 0 && <Text style={styles.section}>En cours · {open.length}</Text>}
+                  {open.length > 0 && <Label style={styles.section}>En cours · {open.length}</Label>}
                   {open.map((item) => (
                     <SettlementRow key={item.id} item={item} tz={tz} now={now} />
                   ))}
-                  {closed.length > 0 && <Text style={styles.section}>Historique</Text>}
+                  {closed.length > 0 && <Label style={styles.section}>Historique</Label>}
                   {closed.length > 0 && (
                     <View style={styles.historyCard}>
                       {closed.map((item, i) => (
@@ -307,8 +337,9 @@ export default function Commissions() {
                 </>
               )}
               <Text style={styles.footnote}>
-                Moyens acceptés : {pay.methods.map((m) => SETTLEMENT_METHOD_META[m].label.toLowerCase()).join(", ") || "voir avec la centrale"}
-                {` · délai de ${data.grace_hours} h après chaque course encaissée.`}
+                {`Moyens acceptés${NBSP}: `}
+                {pay.methods.map((m) => SETTLEMENT_METHOD_META[m].label.toLowerCase()).join(", ") || "voir avec la centrale"}
+                {`. Délai de ${data.grace_hours}${NBSP}h après chaque course encaissée.`}
               </Text>
             </>
           )}
@@ -318,27 +349,20 @@ export default function Commissions() {
       {flash.node}
 
       {/* « Avez-vous payé ? » au retour du lien de paiement ; espèces / virement : instructions + référence */}
-      <BottomSheet visible={sheet != null} onClose={() => !busy && setSheet(null)} dismissable={!busy}>
+      <BottomSheet visible={sheet != null} onClose={() => !busy && setSheet(null)} dismissable={!busy} keyboard={sheet?.kind === "manual"}>
         {sheet && (
           <>
-            <View style={styles.sheetHead}>
-              <View style={[styles.sheetIcon, { backgroundColor: "rgba(200,240,60,0.12)" }]}>
-                <Ionicons
-                  name={sheet.kind === "link" ? "help-circle" : (SETTLEMENT_METHOD_META[sheet.method].ionicon as keyof typeof Ionicons.glyphMap)}
-                  size={26}
-                  color={colors.brand}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sheetTitle}>{sheet.kind === "link" ? `Avez-vous payé ${price(sheet.amount)} ?` : METHOD_TITLE[sheet.method]}</Text>
-                <Text style={styles.sheetSub}>
-                  {sheet.kind === "link"
-                    ? frTypo("Si le paiement est passé (Revolut, PayPal…), confirmez : la centrale le vérifiera.")
-                    : sheet.method === "cash"
-                      ? `Remettez ${price(sheet.amount)} en main propre à ${orgName}, puis confirmez.`
-                      : `Faites un virement de ${price(sheet.amount)} à ${orgName} avec la référence, puis confirmez.`}
-                </Text>
-              </View>
+            <View style={{ gap: space.xs }}>
+              <Text style={styles.sheetTitle} accessibilityRole="header">
+                {sheet.kind === "link" ? `Avez-vous payé ${price(sheet.amount)}${NBSP}?` : METHOD_TITLE[sheet.method]}
+              </Text>
+              <Text style={styles.sheetSub}>
+                {sheet.kind === "link"
+                  ? frTypo("Si le paiement est passé (Revolut, PayPal…), confirmez : la centrale le vérifiera.")
+                  : sheet.method === "cash"
+                    ? `Remettez ${price(sheet.amount)} en main propre à ${orgName}, puis confirmez.`
+                    : `Faites un virement de ${price(sheet.amount)} à ${orgName} avec la référence, puis confirmez.`}
+              </Text>
             </View>
 
             {sheet.kind === "manual" && (
@@ -347,7 +371,7 @@ export default function Commissions() {
             {sheet.reference ? (
               <Pressable
                 onPress={() => void copyReference(sheet.reference)}
-                style={({ pressed }) => [styles.refBox, pressed && { opacity: 0.8 }]}
+                style={({ pressed }) => [styles.refBox, pressed && { backgroundColor: colors.surface3 }]}
                 accessibilityRole="button"
                 accessibilityLabel={`Copier la référence ${sheet.reference}`}
               >
@@ -356,14 +380,14 @@ export default function Commissions() {
                   <Text style={styles.refValue} selectable>{sheet.reference}</Text>
                 </View>
                 <View style={styles.copyBtn}>
-                  <Ionicons name="copy-outline" size={18} color={colors.brandFg} />
+                  <Ionicons name="copy-outline" size={18} color={colors.fg} />
                   <Text style={styles.copyText}>Copier</Text>
                 </View>
               </Pressable>
             ) : null}
             {data?.pay.instructions ? (
               <View style={styles.instructions}>
-                <Ionicons name="information-circle-outline" size={18} color={colors.blue} />
+                <Ionicons name="information-circle-outline" size={20} color={colors.muted} />
                 <Text style={styles.instructionsText}>{data.pay.instructions}</Text>
               </View>
             ) : null}
@@ -372,24 +396,34 @@ export default function Commissions() {
                 value={note}
                 onChangeText={setNote}
                 placeholder={sheet.method === "cash" ? "Note pour la centrale (ex. remis à Mehdi)" : "Note pour la centrale (facultatif)"}
-                placeholderTextColor={colors.subtle}
+                placeholderTextColor={colors.muted}
                 maxLength={300}
+                editable={!busy}
                 style={styles.noteInput}
                 accessibilityLabel="Note pour la centrale"
               />
             )}
 
-            <BigButton
-              title={sheet.kind === "link" ? `Oui, j'ai payé ${price(sheet.amount)}` : `Je confirme avoir payé ${price(sheet.amount)}`}
-              icon="checkmark-circle"
-              height={62}
-              loading={busy}
-              onPress={() => void declare(sheet)}
-            />
-            {sheet.kind === "link" && data?.pay.link ? (
-              <BigButton title="Rouvrir le lien de paiement" icon="open-outline" variant="secondary" height={50} disabled={busy} onPress={() => void Linking.openURL(data.pay.link!).catch(() => null)} />
-            ) : null}
-            <BigButton title={sheet.kind === "link" ? "Pas encore" : "Annuler"} variant="ghost" height={46} disabled={busy} onPress={() => setSheet(null)} />
+            <View style={{ gap: space.sm }}>
+              <BigButton
+                title={sheet.kind === "link" ? `Oui, j'ai payé ${price(sheet.amount)}` : `Je confirme avoir payé ${price(sheet.amount)}`}
+                icon="checkmark"
+                height={control.lg}
+                loading={busy}
+                onPress={() => void declare(sheet)}
+              />
+              {sheet.kind === "link" && data?.pay.link ? (
+                <BigButton
+                  title="Rouvrir le lien de paiement"
+                  icon="open-outline"
+                  variant="secondary"
+                  height={control.md}
+                  disabled={busy}
+                  onPress={() => void Linking.openURL(data.pay.link!).catch(() => null)}
+                />
+              ) : null}
+              <BigButton title={sheet.kind === "link" ? "Pas encore" : "Annuler"} variant="ghost" height={control.sm} disabled={busy} onPress={() => setSheet(null)} />
+            </View>
           </>
         )}
       </BottomSheet>
@@ -397,13 +431,10 @@ export default function Commissions() {
   );
 }
 
-function Tile({ label, value, hint, color, icon }: { label: string; value: string; hint: string; color: string; icon: keyof typeof Ionicons.glyphMap }) {
+function Tile({ label, value, hint, color }: { label: string; value: string; hint: string; color: string }) {
   return (
-    <View style={styles.tile}>
-      <View style={styles.tileHead}>
-        <Ionicons name={icon} size={15} color={color} />
-        <Text style={styles.tileLabel} numberOfLines={1}>{label}</Text>
-      </View>
+    <View style={styles.tile} accessible accessibilityLabel={`${label}${NBSP}: ${value}, ${hint}`}>
+      <Text style={styles.tileLabel} numberOfLines={1}>{label}</Text>
       <Text style={[styles.tileValue, { color }]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
       <Text style={styles.tileHint} numberOfLines={1}>{hint}</Text>
     </View>
@@ -416,7 +447,7 @@ function SettlementRow({ item, tz, now, compact, first }: { item: DriverSettleme
   const tone = overdue ? colors.red : toneColor(SETTLEMENT_STATUS_META[item.status].tone);
   const label = driverSettlementLabel(item.status, item.direction, overdue);
   const settled = item.status === "paid" || item.status === "waived";
-  const amountColor = settled ? colors.muted : owes ? (overdue || item.status === "disputed" ? colors.red : colors.amber) : colors.green;
+  const amountColor = settled ? colors.muted : overdue || item.status === "disputed" ? colors.red : colors.fg;
   const currency = item.currency ?? "EUR";
 
   let detail: string | null = null;
@@ -425,43 +456,39 @@ function SettlementRow({ item, tz, now, compact, first }: { item: DriverSettleme
     const how = item.declared_method ? SETTLEMENT_METHOD_META[item.declared_method].label.toLowerCase() : null;
     detail = `${pastWhen(item.declared_at, tz).replace(/^./, (c) => c.toUpperCase())}${how ? ` (${how})` : ""} · à confirmer par la centrale`;
   } else if (item.status === "paid") detail = `${owes ? "Réglé" : "Versé"} ${pastWhen(item.settled_at, tz)}`;
-  else if (item.status === "waived") detail = item.note ? `Annulé : ${item.note}` : "Annulé par la centrale";
+  else if (item.status === "waived") detail = item.note ? frTypo(`Annulé : ${item.note}`) : "Annulé par la centrale";
 
   return (
     <View
-      style={[compact ? styles.rowCompact : styles.row, compact && !first && styles.rowBorder, !compact && (overdue || item.status === "disputed") && { borderColor: "rgba(242,85,90,0.4)" }]}
-      accessibilityLabel={`Course ${item.ride.number}, ${owes ? "commission" : "part à recevoir"} ${formatPrice(item.amount_cents, currency)}, ${label}`}
+      style={[compact ? styles.rowCompact : styles.row, compact && !first && styles.rowBorder]}
+      accessible
+      accessibilityLabel={`Course ${item.ride.number}, ${owes ? "commission" : "part à recevoir"} ${formatPrice(item.amount_cents, currency)}, ${label}${detail ? `, ${detail}` : ""}`}
     >
       <View style={styles.rowHead}>
-        <View style={[styles.rowIcon, { backgroundColor: `${owes ? colors.amber : colors.green}1A` }]}>
-          <Ionicons name={owes ? "arrow-up" : "arrow-down"} size={17} color={settled ? colors.muted : owes ? colors.amber : colors.green} />
-        </View>
+        <Ionicons name={owes ? "arrow-up-outline" : "arrow-down-outline"} size={20} color={colors.muted} style={styles.rowIcon} />
         <View style={{ flex: 1, gap: 2 }}>
           <Text style={styles.rowTitle} numberOfLines={1}>
-            Course #{item.ride.number}
-            <Text style={styles.rowKind}>  ·  {owes ? "commission" : "votre part"}</Text>
+            Course {item.ride.number}
+            <Text style={styles.rowKind}>{` · ${owes ? "commission" : "votre part"}`}</Text>
           </Text>
           <Text style={styles.rowRoute} numberOfLines={1}>{item.ride.pickup} → {item.ride.dropoff}</Text>
           <Text style={styles.rowMeta} numberOfLines={1}>
             {formatRideDate(item.ride.completed_at ?? item.created_at, tz)} · {formatPrice(item.price_cents, currency)} · {PAYMENT_METHOD_LABELS[item.payment_method] ?? ""}
           </Text>
         </View>
-        <Text style={[styles.rowAmount, { color: amountColor }, settled && styles.rowAmountSettled]}>
+        <Text style={[styles.rowAmount, { color: amountColor }]}>
           {owes ? "−" : "+"}{formatPrice(item.amount_cents, currency)}
         </Text>
       </View>
       <View style={styles.rowFoot}>
-        <View style={[styles.pill, { backgroundColor: `${tone}1F` }]}>
-          <View style={[styles.pillDot, { backgroundColor: tone }]} />
-          <Text style={[styles.pillText, { color: tone }]}>{label}</Text>
-        </View>
+        <Pill label={label} color={tone} />
         {detail ? <Text style={[styles.rowDetail, overdue && { color: colors.red }]} numberOfLines={2}>{detail}</Text> : null}
       </View>
       {item.status === "disputed" ? (
         <View style={styles.dispute}>
-          <Ionicons name="chatbox-ellipses-outline" size={16} color={colors.red} />
+          <Ionicons name="alert-circle-outline" size={20} color={colors.red} />
           <Text style={styles.disputeText}>
-            <Text style={{ fontWeight: "900" }}>La centrale n&apos;a pas reçu ce paiement{item.note ? " : " : "."}</Text>
+            <Text style={{ fontWeight: weight.semibold }}>{`La centrale n'a pas reçu ce paiement${item.note ? `${NBSP}: ` : "."}`}</Text>
             {frTypo(item.note ?? "")}
           </Text>
         </View>
@@ -471,67 +498,76 @@ function SettlementRow({ item, tz, now, compact, first }: { item: DriverSettleme
 }
 
 const styles = StyleSheet.create({
-  loading: { paddingVertical: 80, alignItems: "center" },
-  error: { color: colors.red, fontSize: 15, textAlign: "center" },
-  empty: { alignItems: "center", gap: 10, paddingVertical: 60 },
-  emptyTitle: { color: colors.fg, fontSize: 19, fontWeight: "900" },
-  emptyText: { color: colors.muted, fontSize: 14.5, textAlign: "center" },
-  blocked: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 20, backgroundColor: "rgba(242,85,90,0.13)", borderWidth: 1, borderColor: "rgba(242,85,90,0.45)" },
-  blockedIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(242,85,90,0.18)", alignItems: "center", justifyContent: "center" },
-  blockedTitle: { color: colors.red, fontSize: 16, fontWeight: "900" },
-  blockedText: { color: colors.fg, fontSize: 14, lineHeight: 19, marginTop: 2, fontWeight: "600" },
-  hero: { borderRadius: 26, padding: 20, gap: 10, backgroundColor: colors.surface, borderWidth: 1 },
-  heroOk: { alignItems: "center", borderColor: "rgba(79,213,143,0.3)", paddingVertical: 26 },
-  heroLabel: { color: colors.muted, fontSize: 13.5, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.6 },
-  heroAmount: { fontSize: 60, fontWeight: "900", letterSpacing: -2, marginTop: -4, ...mono },
-  heroMeta: { color: colors.muted, fontSize: 14.5, fontWeight: "700" },
-  refRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4, marginTop: -4 },
-  refChip: { flexDirection: "row", alignItems: "center", gap: 6, height: 30, paddingHorizontal: 10, borderRadius: 15, backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong },
-  refChipText: { color: colors.fg, fontSize: 14, fontWeight: "900", letterSpacing: 0.5, ...mono },
-  dueRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  dueText: { flex: 1, color: colors.muted, fontSize: 14, fontWeight: "700", lineHeight: 19 },
-  heroWaiting: { borderColor: "rgba(106,166,255,0.35)" },
-  okIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: "rgba(79,213,143,0.14)", alignItems: "center", justifyContent: "center" },
-  okTitle: { color: colors.fg, fontSize: 22, fontWeight: "900" },
-  okText: { color: colors.muted, fontSize: 14.5, textAlign: "center", lineHeight: 20 },
-  tiles: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  tile: { flexBasis: "47%", flexGrow: 1, padding: 14, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, gap: 4 },
-  tileHead: { flexDirection: "row", alignItems: "center", gap: 6 },
-  tileLabel: { color: colors.muted, fontSize: 13, fontWeight: "800" },
-  tileValue: { fontSize: 24, fontWeight: "900", ...mono },
-  tileHint: { color: colors.subtle, fontSize: 12, fontWeight: "600" },
-  section: { color: colors.subtle, fontSize: 13, fontWeight: "800", letterSpacing: 0.6, textTransform: "uppercase", marginTop: 6 },
-  historyCard: { backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14 },
-  row: { backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 14, gap: 10 },
-  rowCompact: { paddingVertical: 12, gap: 8 },
+  content: { padding: space.lg, gap: space.md, paddingBottom: 48 },
+  loading: { paddingVertical: 80, alignItems: "center", gap: space.lg },
+  error: { color: colors.red, fontSize: type.body, textAlign: "center", lineHeight: 21 },
+  empty: { alignItems: "center", gap: space.sm, paddingVertical: 60, paddingHorizontal: space.xl },
+  emptyTitle: { color: colors.fg, fontSize: type.title3, fontWeight: weight.semibold, marginTop: space.xs },
+  emptyText: { color: colors.muted, fontSize: type.body, textAlign: "center", lineHeight: 21 },
+  card: { padding: space.lg, borderRadius: radius.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line },
+  cardRow: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
+  leadIcon: { marginTop: 1 },
+  cardTitle: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold },
+  cardText: { color: colors.muted, fontSize: type.body, lineHeight: 21, marginTop: 2 },
+  hero: { borderRadius: radius.lg, padding: 20, gap: space.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line },
+  heroLabel: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
+  heroAmount: { color: colors.fg, fontSize: type.display, fontWeight: weight.bold, letterSpacing: -0.5, marginTop: -space.xs, ...mono },
+  heroMeta: { color: colors.muted, fontSize: type.body, ...mono },
+  refRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: space.sm },
+  refChip: {
+    flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44, paddingHorizontal: space.md, borderRadius: radius.sm,
+    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong,
+  },
+  refChipText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold, letterSpacing: 0.5, ...mono },
+  dueRow: { flexDirection: "row", alignItems: "flex-start", gap: space.sm },
+  dueText: { flex: 1, color: colors.muted, fontSize: type.body, lineHeight: 21, ...mono },
+  actions: { gap: space.sm, marginTop: space.xs },
+  tiles: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
+  tile: {
+    flexBasis: "47%", flexGrow: 1, paddingHorizontal: space.lg, paddingVertical: space.md, borderRadius: radius.lg,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, gap: 2,
+  },
+  tileLabel: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
+  tileValue: { fontSize: type.title3, fontWeight: weight.bold, marginTop: 2, ...mono },
+  tileHint: { color: colors.muted, fontSize: type.footnote },
+  section: { marginTop: space.sm },
+  historyCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, paddingHorizontal: space.lg },
+  row: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, padding: space.lg, gap: space.md },
+  rowCompact: { paddingVertical: space.md, gap: space.sm },
   rowBorder: { borderTopWidth: 1, borderColor: colors.line },
-  rowHead: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  rowIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", marginTop: 2 },
-  rowTitle: { color: colors.fg, fontSize: 16, fontWeight: "900" },
-  rowKind: { color: colors.subtle, fontSize: 13.5, fontWeight: "700" },
-  rowRoute: { color: colors.fg, fontSize: 14.5, fontWeight: "600" },
-  rowMeta: { color: colors.subtle, fontSize: 12.5 },
-  rowAmount: { fontSize: 19, fontWeight: "900", ...mono },
-  rowAmountSettled: { fontSize: 16 },
-  rowFoot: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, paddingLeft: 48 },
-  pill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99 },
-  pillDot: { width: 7, height: 7, borderRadius: 4 },
-  pillText: { fontSize: 12.5, fontWeight: "900" },
-  rowDetail: { flex: 1, minWidth: 140, color: colors.muted, fontSize: 13, fontWeight: "600" },
-  dispute: { flexDirection: "row", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(242,85,90,0.1)", marginLeft: 48 },
-  disputeText: { flex: 1, color: colors.fg, fontSize: 14, lineHeight: 19 },
-  footnote: { color: colors.subtle, fontSize: 12.5, textAlign: "center", marginTop: 4, paddingHorizontal: 14, lineHeight: 18 },
-  sheetHead: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  sheetIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
-  sheetTitle: { color: colors.fg, fontSize: 23, fontWeight: "900", letterSpacing: -0.3 },
-  sheetSub: { color: colors.muted, fontSize: 14.5, marginTop: 4, lineHeight: 20 },
-  sheetAmount: { color: colors.fg, fontSize: 48, fontWeight: "900", letterSpacing: -1.5, textAlign: "center", ...mono },
-  refBox: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 18, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong },
-  refLabel: { color: colors.subtle, fontSize: 12.5, fontWeight: "800" },
-  refValue: { color: colors.fg, fontSize: 24, fontWeight: "900", letterSpacing: 1, marginTop: 2, ...mono },
-  copyBtn: { flexDirection: "row", alignItems: "center", gap: 6, height: 42, paddingHorizontal: 14, borderRadius: 21, backgroundColor: colors.brand },
-  copyText: { color: colors.brandFg, fontSize: 14.5, fontWeight: "900" },
-  instructions: { flexDirection: "row", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(106,166,255,0.1)" },
-  instructionsText: { flex: 1, color: colors.fg, fontSize: 14, lineHeight: 19 },
-  noteInput: { height: 52, borderRadius: 14, paddingHorizontal: 14, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line, color: colors.fg, fontSize: 15.5 },
+  rowHead: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
+  rowIcon: { marginTop: 1 },
+  rowTitle: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold, ...mono },
+  rowKind: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.regular },
+  rowRoute: { color: colors.fg, fontSize: type.body },
+  rowMeta: { color: colors.muted, fontSize: type.footnote, ...mono },
+  rowAmount: { fontSize: type.headline, fontWeight: weight.bold, ...mono },
+  rowFoot: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: space.sm, paddingLeft: 32 },
+  rowDetail: { flex: 1, minWidth: 140, color: colors.muted, fontSize: type.footnote, ...mono },
+  dispute: {
+    flexDirection: "row", alignItems: "flex-start", gap: space.sm, padding: space.md, borderRadius: radius.md,
+    backgroundColor: colors.surface2, marginLeft: 32,
+  },
+  disputeText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
+  footnote: { color: colors.muted, fontSize: type.footnote, marginTop: space.xs, lineHeight: 18 },
+  sheetTitle: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, ...mono },
+  sheetSub: { color: colors.muted, fontSize: type.body, lineHeight: 21 },
+  sheetAmount: { color: colors.fg, fontSize: type.display, fontWeight: weight.bold, letterSpacing: -0.5, ...mono },
+  refBox: {
+    flexDirection: "row", alignItems: "center", gap: space.md, padding: space.lg, borderRadius: radius.md,
+    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong,
+  },
+  refLabel: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
+  refValue: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, letterSpacing: 0.5, marginTop: 2, ...mono },
+  copyBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6, height: control.sm, paddingHorizontal: space.lg, borderRadius: radius.md,
+    backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong,
+  },
+  copyText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
+  instructions: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surface2 },
+  instructionsText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
+  noteInput: {
+    height: control.md, borderRadius: radius.md, paddingHorizontal: space.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
+    color: colors.fg, fontSize: type.callout,
+  },
 });

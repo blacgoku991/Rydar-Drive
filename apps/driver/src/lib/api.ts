@@ -86,7 +86,8 @@ export async function signIn(email: string, password: string): Promise<SignInRes
 }
 
 /**
- * « Mot de passe oublié » : le serveur envoie un lien (page web où choisir le nouveau mot de passe).
+ * « Mot de passe oublié » : le serveur envoie un e-mail avec un code (saisi dans l'app : confirmPasswordReset)
+ * et un lien de secours (page web où choisir le nouveau mot de passe).
  * Réponse identique que le compte existe ou non ; erreurs : adresse invalide, trop de demandes, réseau.
  */
 export async function requestPasswordReset(email: string): Promise<void> {
@@ -100,6 +101,31 @@ export async function requestPasswordReset(email: string): Promise<void> {
   if (res.ok) return;
   const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
   throw new ApiError(json.error ?? "Envoi impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
+}
+
+/**
+ * « Mot de passe oublié », étape 2 : code reçu par e-mail + nouveau mot de passe. Le serveur change le mot de
+ * passe, contrôle le compte (mêmes refus que la connexion) et renvoie une session, installée comme par signIn.
+ * Codes d'erreur : OTP_INVALID (code faux ou expiré), SAME_PASSWORD / WEAK_PASSWORD / PASSWORD_UPDATE_FAILED
+ * (code consommé : en demander un nouveau), BANNED, REJECTED…, RATE_LIMITED, NETWORK.
+ */
+export async function confirmPasswordReset(email: string, code: string, password: string): Promise<SignInResult> {
+  if (!appConfig.apiUrl) throw new ApiError("Réinitialisation indisponible : contactez votre centrale.", "CONFIG");
+  const res = await fetch(`${appConfig.apiUrl}/api/auth/driver-password-reset/confirm`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.replace(/\s+/g, ""), password }),
+  }).catch(() => null);
+  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  const json = (await res.json().catch(() => ({}))) as {
+    access_token?: string; refresh_token?: string; state?: DriverAccountStateKind; error?: string; code?: string;
+  };
+  if (!res.ok || !json.access_token || !json.refresh_token) {
+    throw new ApiError(json.error ?? "Changement impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
+  }
+  const { error } = await supabase.auth.setSession({ access_token: json.access_token, refresh_token: json.refresh_token });
+  if (error) throw new ApiError("Session invalide.", "SESSION");
+  return { state: json.state ?? null };
 }
 
 export const api = {

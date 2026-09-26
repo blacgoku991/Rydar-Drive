@@ -391,6 +391,22 @@ export const driverPasswordResetSchema = z.object({ email: emailSchema });
 
 /** Nouveau mot de passe (réinitialisation, invitation) : même règle que l'inscription par lien. */
 export const NEW_PASSWORD_MIN = 10;
+/** Au-delà, Supabase Auth (bcrypt) ignore les caractères suivants : refusé plutôt que tronqué en silence. */
+export const NEW_PASSWORD_MAX = 72;
+
+/**
+ * « Mot de passe oublié » de l'application chauffeur, étape 2 (POST /api/auth/driver-password-reset/confirm) :
+ * code reçu par e-mail (6 à 10 chiffres selon la configuration Supabase, espaces retirés) + nouveau mot de passe.
+ */
+export const driverResetConfirmSchema = z.object({
+  email: emailSchema,
+  code: z
+    .string()
+    .max(40)
+    .transform((v) => v.replace(/\s+/g, ""))
+    .pipe(z.string().regex(/^\d{6,10}$/, "Code invalide")),
+  password: z.string().min(NEW_PASSWORD_MIN).max(NEW_PASSWORD_MAX),
+});
 
 /** Aplatit les erreurs zod : { "pickup.address": "Adresse requise" }. */
 export function fieldErrors(error: z.ZodError): Record<string, string> {

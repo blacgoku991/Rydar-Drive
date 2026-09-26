@@ -2,7 +2,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { FLIGHT_STATUS_META, flightCode, formatDelay, formatTime, type Ride } from "@rydar/shared";
 import { StyleSheet, Text, View } from "react-native";
-import { colors, toneColor } from "@/theme";
+import { Pill } from "@/components/ui";
+import { colors, mono, radius, space, toneColor, type, weight } from "@/theme";
 
 type FlightRide = Pick<Ride, "flight_number" | "pickup_at"> & Partial<Pick<Ride,
   "flight_mode" | "flight_status" | "flight_scheduled_arrival" | "flight_estimated_arrival" | "flight_actual_arrival" |
@@ -10,13 +11,13 @@ type FlightRide = Pick<Ride, "flight_number" | "pickup_at"> & Partial<Pick<Ride,
 
 const minutesBetween = (a?: string | null, b?: string | null) => (a && b ? Math.round((new Date(a).getTime() - new Date(b).getTime()) / 60000) : 0);
 
-/** ✈ AF1234 · de Rome — Arrivée estimée 14:52 · T2E · +35 min, avec le statut du vol. */
+/** Vol AF1234 de Rome : arrivée estimée 14:52, terminal 2E, retard +35 min, avec le statut du vol. */
 export function FlightCard({ ride, tz }: { ride: FlightRide; tz?: string }) {
   const code = flightCode(ride.flight_number);
   if (!code) return null;
   const status = ride.flight_status ?? null;
   const meta = status ? FLIGHT_STATUS_META[status] : null;
-  const color = meta ? toneColor(meta.tone) : colors.cyan;
+  const color = meta ? toneColor(meta.tone) : colors.muted;
   const departure = ride.flight_mode === "departure";
   const landed = status === "landed";
   const estimated = ride.flight_estimated_arrival ?? null;
@@ -29,27 +30,24 @@ export function FlightCard({ ride, tz }: { ride: FlightRide; tz?: string }) {
   const showDelay = delay != null && Math.abs(delay) >= 5 && status !== "cancelled" && status !== "diverted";
   const shifted = !landed && estimated && scheduled && Math.abs(minutesBetween(estimated, scheduled)) >= 5;
   const terminal = ride.flight_terminal ? `T${ride.flight_terminal.replace(/^T/i, "")}` : null;
-  const place = ride.flight_origin ? `${departure ? "vers" : "de"} ${ride.flight_origin}` : departure ? "Vol au départ" : "Vol à l'arrivée";
+  const place = ride.flight_origin ? `${departure ? "Vers" : "De"} ${ride.flight_origin}` : departure ? "Vol au départ" : "Vol à l'arrivée";
 
   return (
-    <View style={[styles.card, { borderColor: `${color}40` }]} accessibilityLabel={`Vol ${code}${meta ? `, ${meta.label}` : ""}`}>
+    <View style={styles.card} accessibilityLabel={`Vol ${code}${meta ? `, ${meta.label}` : ""}`}>
       <View style={styles.head}>
-        <View style={[styles.icon, { backgroundColor: `${color}1F` }]}>
-          <Ionicons name="airplane" size={20} color={color} />
-        </View>
+        <Ionicons name="airplane-outline" size={20} color={colors.muted} />
         <View style={{ flex: 1 }}>
           <Text style={styles.code}>{code}</Text>
           <Text style={styles.place} numberOfLines={1}>{place}</Text>
         </View>
-        <View style={[styles.status, { backgroundColor: `${color}1F` }]}>
-          <View style={[styles.dot, { backgroundColor: color }]} />
-          <Text style={[styles.statusText, { color }]}>{meta?.label ?? "Suivi du vol"}</Text>
+        <View style={styles.status}>
+          <Pill label={meta?.label ?? "Suivi du vol"} color={color} />
         </View>
       </View>
       {status === "cancelled" ? (
-        <Text style={styles.alert}>Vol annulé — attendez les consignes de la centrale.</Text>
+        <Text style={styles.alert} accessibilityRole="alert">Vol annulé. Attendez les consignes de la centrale.</Text>
       ) : status === "diverted" ? (
-        <Text style={styles.alert}>Vol dérouté — attendez les consignes de la centrale.</Text>
+        <Text style={styles.alert} accessibilityRole="alert">Vol dérouté. Attendez les consignes de la centrale.</Text>
       ) : time ? (
         <View style={styles.line}>
           <View style={{ flex: 1 }}>
@@ -57,7 +55,7 @@ export function FlightCard({ ride, tz }: { ride: FlightRide; tz?: string }) {
             <Text style={styles.time}>{formatTime(time, tz)}</Text>
             {shifted && scheduled ? (
               <Text style={styles.wasLine}>
-                prévu <Text style={styles.was}>{formatTime(scheduled, tz)}</Text>
+                Prévu <Text style={styles.was}>{formatTime(scheduled, tz)}</Text>
               </Text>
             ) : null}
           </View>
@@ -68,7 +66,7 @@ export function FlightCard({ ride, tz }: { ride: FlightRide; tz?: string }) {
             </View>
           )}
           {showDelay && (
-            <View style={[styles.box, { backgroundColor: delay! > 0 ? "rgba(245,181,68,0.14)" : "rgba(106,166,255,0.14)" }]}>
+            <View style={styles.box}>
               <Text style={styles.boxLabel}>{delay! > 0 ? "Retard" : "Avance"}</Text>
               <Text style={[styles.boxValue, { color: delay! > 0 ? colors.amber : colors.blue }]}>{formatDelay(delay)}</Text>
             </View>
@@ -81,7 +79,7 @@ export function FlightCard({ ride, tz }: { ride: FlightRide; tz?: string }) {
   );
 }
 
-/** « Prise en charge décalée à 15:20 (vol retardé) — au lieu de 14:45 » quand le suivi du vol a déplacé l'heure. */
+/** « Prise en charge décalée à 15:20 (vol retardé) », heure demandée 14:45, quand le suivi du vol a déplacé l'heure. */
 export function PickupShiftBanner({ ride, tz }: { ride: FlightRide; tz?: string }) {
   const original = ride.pickup_at_original ?? null;
   if (!original || Math.abs(minutesBetween(ride.pickup_at, original)) < 1) return null;
@@ -90,14 +88,14 @@ export function PickupShiftBanner({ ride, tz }: { ride: FlightRide; tz?: string 
   const reason = delay >= 5 ? "vol retardé" : delay <= -5 ? "vol en avance" : "horaire du vol";
   const color = later ? colors.amber : colors.blue;
   return (
-    <View style={[styles.banner, { backgroundColor: `${color}17`, borderColor: `${color}4D` }]} accessibilityLiveRegion="polite">
-      <Ionicons name="time" size={22} color={color} />
+    <View style={styles.banner} accessibilityLiveRegion="polite">
+      <Ionicons name="time-outline" size={20} color={colors.muted} style={styles.bannerIcon} />
       <View style={{ flex: 1 }}>
         <Text style={styles.bannerTitle}>
-          Prise en charge décalée à <Text style={{ color }}>{formatTime(ride.pickup_at, tz)}</Text> ({reason})
+          Prise en charge décalée à <Text style={[styles.bannerTime, { color }]}>{formatTime(ride.pickup_at, tz)}</Text> ({reason})
         </Text>
         <Text style={styles.bannerSub}>
-          heure demandée <Text style={{ textDecorationLine: "line-through" }}>{formatTime(original, tz)}</Text>
+          Heure demandée <Text style={styles.was}>{formatTime(original, tz)}</Text>
         </Text>
       </View>
     </View>
@@ -105,24 +103,26 @@ export function PickupShiftBanner({ ride, tz }: { ride: FlightRide; tz?: string 
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: 18, borderWidth: 1, backgroundColor: colors.surface2, padding: 14, gap: 12 },
-  head: { flexDirection: "row", alignItems: "center", gap: 12 },
-  icon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  code: { color: colors.fg, fontSize: 18, fontWeight: "900", letterSpacing: 0.5, fontVariant: ["tabular-nums"] },
-  place: { color: colors.subtle, fontSize: 13, marginTop: 1 },
-  status: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99 },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { fontSize: 12.5, fontWeight: "800" },
-  line: { flexDirection: "row", alignItems: "center", gap: 8 },
-  label: { color: colors.subtle, fontSize: 12.5, fontWeight: "700" },
-  time: { color: colors.fg, fontSize: 24, fontWeight: "900", fontVariant: ["tabular-nums"], marginTop: 1 },
-  wasLine: { color: colors.subtle, fontSize: 12.5, fontWeight: "600", marginTop: 1 },
-  was: { textDecorationLine: "line-through", fontVariant: ["tabular-nums"] },
-  box: { alignItems: "center", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: colors.surface3, minWidth: 64 },
-  boxLabel: { color: colors.subtle, fontSize: 11, fontWeight: "700" },
-  boxValue: { color: colors.fg, fontSize: 16, fontWeight: "900", fontVariant: ["tabular-nums"] },
-  alert: { color: colors.red, fontSize: 14.5, fontWeight: "700" },
-  banner: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 16, borderWidth: 1 },
-  bannerTitle: { color: colors.fg, fontSize: 15.5, fontWeight: "800", lineHeight: 21 },
-  bannerSub: { color: colors.muted, fontSize: 13, marginTop: 2 },
+  card: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface2, padding: space.lg, gap: space.md },
+  head: { flexDirection: "row", alignItems: "center", gap: space.md },
+  code: { color: colors.fg, fontSize: type.headline, fontWeight: weight.bold, letterSpacing: 0.3, ...mono },
+  place: { color: colors.muted, fontSize: type.body, marginTop: 1 },
+  status: { alignSelf: "center" },
+  line: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  label: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium },
+  time: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, marginTop: 1, ...mono },
+  wasLine: { color: colors.muted, fontSize: type.footnote, marginTop: 1 },
+  was: { textDecorationLine: "line-through", ...mono },
+  box: { alignItems: "center", paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.md, backgroundColor: colors.surface3, minWidth: 68 },
+  boxLabel: { color: colors.muted, fontSize: type.caption, fontWeight: weight.medium },
+  boxValue: { color: colors.fg, fontSize: type.callout, fontWeight: weight.bold, ...mono },
+  alert: { color: colors.red, fontSize: type.body, fontWeight: weight.semibold, lineHeight: 21 },
+  banner: {
+    flexDirection: "row", alignItems: "flex-start", gap: space.md, padding: space.lg, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface2,
+  },
+  bannerIcon: { marginTop: 1 },
+  bannerTitle: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold, lineHeight: 21 },
+  bannerTime: { fontWeight: weight.bold, ...mono },
+  bannerSub: { color: colors.muted, fontSize: type.subhead, marginTop: 2 },
 });

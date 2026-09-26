@@ -74,11 +74,16 @@ export function canReadText(): boolean {
   return typeof nativeClipboard()?.getString === "function";
 }
 
-/** Texte du presse-papiers (iOS peut demander l'autorisation de coller) ; null si indisponible ou refusé. */
+/**
+ * Texte du presse-papiers (iOS peut demander l'autorisation de coller), sans espaces autour ;
+ * null si vide, indisponible ou refusé. Android renvoie parfois la chaîne littérale « null »
+ * pour un presse-papiers vide : traitée comme vide.
+ */
 export async function readText(): Promise<string | null> {
   try {
-    if (Platform.OS === "web") return (await navigator.clipboard.readText()) || null;
-    return (await nativeClipboard()?.getString?.()) || null;
+    const raw = Platform.OS === "web" ? await navigator.clipboard.readText() : await nativeClipboard()?.getString?.();
+    const text = typeof raw === "string" ? raw.trim() : "";
+    return text && text !== "null" ? text : null;
   } catch {
     return null;
   }

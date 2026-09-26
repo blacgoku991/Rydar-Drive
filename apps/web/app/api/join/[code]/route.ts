@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { driverAppCors } from "@/lib/driver-app-cors";
 import { applyWithJoinLink, loadJoinInfo } from "@/lib/join";
 import { rateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
@@ -8,25 +9,31 @@ export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
+export function OPTIONS(req: Request) {
+  return new NextResponse(null, { status: 204, headers: driverAppCors(req) });
+}
+
 /** Carte de la centrale affichée dans l'app avant l'inscription. */
-export async function GET(_req: Request, { params }: { params: Promise<{ code: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ code: string }> }) {
+  const headers = { ...NO_STORE, ...driverAppCors(req) };
   const limit = await rateLimit(`join:info:${await clientIp()}`, 60, 900);
-  if (!limit.ok) return NextResponse.json({ ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes." }, { status: 429, headers: NO_STORE });
+  if (!limit.ok) return NextResponse.json({ ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes." }, { status: 429, headers });
   const info = await loadJoinInfo((await params).code);
   if (!info?.organization) {
-    return NextResponse.json({ ok: false, error: "Ce lien d'inscription n'est plus actif. Demandez un nouveau lien à la centrale." }, { status: 404, headers: NO_STORE });
+    return NextResponse.json({ ok: false, error: "Ce lien d'inscription n'est plus actif. Demandez un nouveau lien à la centrale." }, { status: 404, headers });
   }
   const o = info.organization;
   return NextResponse.json(
     { ok: true, autoApprove: !!info.auto_approve, organization: { name: o.name, logoUrl: o.logo_url, brandColor: o.brand_color, city: o.city, phone: o.phone } },
-    { headers: NO_STORE },
+    { headers },
   );
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ code: string }> }) {
+  const headers = { ...NO_STORE, ...driverAppCors(req) };
   const body = await req.json().catch(() => null);
-  if (!body || typeof body !== "object") return NextResponse.json({ ok: false, error: "Requête invalide." }, { status: 400, headers: NO_STORE });
+  if (!body || typeof body !== "object") return NextResponse.json({ ok: false, error: "Requête invalide." }, { status: 400, headers });
   const result = await applyWithJoinLink((await params).code, body);
   const status = result.ok ? 200 : /Trop de tentatives/.test(result.error) ? 429 : 400;
-  return NextResponse.json(result, { status, headers: NO_STORE });
+  return NextResponse.json(result, { status, headers });
 }

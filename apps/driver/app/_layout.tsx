@@ -15,7 +15,7 @@ function Gate() {
     if (ready) void SplashScreen.hideAsync().catch(() => null);
   }, [ready]);
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg }, animation: "fade" }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg }, animation: "fade", fullScreenGestureEnabled: false }}>
       <Stack.Screen name="login" />
       <Stack.Screen name="account" />
       <Stack.Screen name="rejoindre/[code]" />
