@@ -3,7 +3,7 @@
 # Usage : bash deploy/update-production.sh
 set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="${RYDAR_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 BRANCH="${RYDAR_BRANCH:-claude/confident-clarke-rpfwmo}"
 REMOTE="${RYDAR_REMOTE:-origin}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
