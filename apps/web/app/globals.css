@@ -358,6 +358,10 @@
 .rd-car[data-selected="true"] .rd-car__body {
   box-shadow: 0 0 0 3px rgb(255 255 255 / 0.9), 0 6px 18px rgb(0 0 0 / 0.6);
 }
+/* Sélectionné : l'anneau blanc (corps agrandi + 3 px) recouvrirait la flèche de cap → flèche éloignée du centre */
+.rd-car[data-selected="true"] .rd-car__dir::before {
+  top: -27px;
+}
 .rd-car__label {
   position: absolute;
   left: 50%;

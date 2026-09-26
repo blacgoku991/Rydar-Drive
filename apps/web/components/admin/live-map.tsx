@@ -334,10 +334,6 @@ export const LiveMap = forwardRef<LiveMapHandle, Props>(function LiveMap(
         dim: d.stale,
       });
       setOrgTag(m.el, org, "car", d.location.heading != null && !d.stale ? d.location.heading : null);
-      // Sélectionné : l'anneau blanc (.rd-car, globals.css) recouvre la flèche de cap → flèche éloignée du centre
-      const dir = m.el.querySelector<HTMLElement>(".rd-car__dir");
-      const dirTransform = selected ? "rotate(var(--h)) translateY(-6px)" : "";
-      if (dir && dir.style.transform !== dirTransform) dir.style.transform = dirTransform;
       m.el.setAttribute("aria-label", `${d.first_name} ${d.last_name}, ${org?.name ?? ""}`);
       m.el.style.zIndex = selected ? "8" : d.stale ? "2" : "4";
       applyDetail(d.id, m.el);

@@ -243,7 +243,12 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   }, [fitPoints]);
 
   useImperativeHandle(ref, () => ({
-    flyTo: (lng, lat, zoom = 14) => mapRef.current?.flyTo({ center: [lng, lat], zoom, padding: paddingRef.current, speed: 1.4, essential: true }),
+    // Décalage plutôt que padding : flyTo({ padding }) laisse la marge sur la carte, qui s'ajoute ensuite à celle de
+    // fitBounds (« Recentrer » ne bougeait plus après avoir centré un chauffeur)
+    flyTo: (lng, lat, zoom = 14) => {
+      const p = paddingRef.current;
+      mapRef.current?.flyTo({ center: [lng, lat], zoom, offset: [(p.left - p.right) / 2, (p.top - p.bottom) / 2], speed: 1.4, essential: true });
+    },
     fitAll,
     fitPoints,
   }), [fitAll, fitPoints, mapRef]);
@@ -360,7 +365,10 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         seenEnds.add(r.id);
         let e = ends.current.get(r.id);
         if (!e) {
-          e = new lib.Marker({ element: stopElement("end"), anchor: "center" }).setLngLat([r.dropoff_lng, r.dropoff_lat]).addTo(map);
+          const endEl = stopElement("end");
+          // Clic sur l'arrivée : la course reste sélectionnée (sinon le clic atteint la carte, qui désélectionne)
+          endEl.addEventListener("click", (ev) => ev.stopPropagation());
+          e = new lib.Marker({ element: endEl, anchor: "center" }).setLngLat([r.dropoff_lng, r.dropoff_lat]).addTo(map);
           ends.current.set(r.id, e);
         }
         e.setLngLat([r.dropoff_lng, r.dropoff_lat]);
