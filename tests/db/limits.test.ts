@@ -49,10 +49,30 @@ describe("Limites des offres SaaS", () => {
   });
 });
 
-describe("Données de référence présentes sans le seed", () => {
-  it("les offres Starter, Pro et Business existent après les seules migrations", async () => {
-    const rows = await sql(`select code, is_active, is_public from public.plans where code in ('starter', 'pro', 'business') order by sort_order`);
-    expect(rows.map((r) => r.code)).toEqual(["starter", "pro", "business"]);
-    expect(rows.every((r) => r.is_active && r.is_public)).toBe(true);
+describe("Offre facultative", () => {
+  it("les migrations n'imposent aucune offre (le propriétaire définit les siennes)", async () => {
+    const [{ n }] = await sql(`select count(*)::int as n from public.plans where code in ('starter', 'pro', 'business')`);
+    expect(n).toBe(0);
+  });
+
+  it("centrale sans offre : ni limite ni restriction (API, mini-site, domaine)", async () => {
+    const org = await createOrg("SansOffre");
+    await sql("update public.organizations set plan_id = null where id = $1", [org.id]);
+    const [{ limits }] = await sql("select private.org_limits($1) as limits", [org.id]);
+    expect(limits).toMatchObject({ api_access: true, booking_site: true, custom_domain: true, advanced_stats: true });
+    expect(limits.max_drivers ?? null).toBeNull();
+    await sql("insert into public.api_keys (organization_id, name, prefix, last4) values ($1, 'site', 'rdk_live_y', '5678')", [org.id]);
+    await sql("update public.booking_sites set enabled = true, custom_domain = 'reservation.sans-offre.test' where organization_id = $1", [org.id]);
+    for (let i = 0; i < 3; i += 1) await createDriver(org);
+  });
+
+  it("les surcharges du super admin s'appliquent aussi sans offre", async () => {
+    const org = await createOrg("SansOffreBornee");
+    await sql(`update public.organizations set plan_id = null, limits_override = '{"max_drivers":1,"api_access":false}' where id = $1`, [org.id]);
+    await createDriver(org);
+    await expect(createDriver(org)).rejects.toThrow(/PLAN_LIMIT_DRIVERS/);
+    await expect(
+      sql("insert into public.api_keys (organization_id, name, prefix, last4) values ($1, 'site', 'rdk_live_z', '9012')", [org.id]),
+    ).rejects.toThrow(/PLAN_FEATURE_API/);
   });
 });

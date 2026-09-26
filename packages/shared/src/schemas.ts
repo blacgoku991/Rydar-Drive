@@ -257,7 +257,8 @@ export const slugSchema = z
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   slug: slugSchema,
-  planCode: z.string().trim().min(1, "Choisissez une offre").max(40),
+  // Facultative : sans offre, aucune limite (tests, offres pas encore définies)
+  planCode: z.string().trim().max(40).optional(),
   email: emailSchema,
   phone: z.union([phoneSchema, z.literal("")]).optional(),
   city: optionalText(80),

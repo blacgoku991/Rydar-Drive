@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Logo, RadarMark } from "@/components/brand/logo";
 import { RadarScene } from "@/components/marketing/radar-scene";
 import { Button } from "@/components/ui/button";
+import { env } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -34,6 +35,9 @@ const TIMELINE = [
   ["14:32:12", "4 autres offres fermées", "text-fg-muted"],
 ] as const;
 
+/** Contact commercial : contact@ le domaine de la plateforme. */
+const CONTACT = `contact@${env.rootDomain}`;
+
 export default async function Landing() {
   const supabase = await createClient();
   const { data: plans } = await supabase
@@ -60,7 +64,7 @@ export default async function Landing() {
         </nav>
         <div className="flex items-center gap-2">
           <Button asChild variant="ghost" size="sm"><Link href="/login">Connexion</Link></Button>
-          <Button asChild variant="primary" size="sm" className="hidden sm:inline-flex"><a href="mailto:contact@rydar.app?subject=Démo Rydar Drive">Demander une démo</a></Button>
+          <Button asChild variant="primary" size="sm" className="hidden sm:inline-flex"><a href={`mailto:${CONTACT}?subject=Démo Rydar Drive`}>Demander une démo</a></Button>
         </div>
       </header>
 
@@ -80,7 +84,7 @@ export default async function Landing() {
             flotte les plus proches — le premier qui accepte obtient la course. Vous suivez tout, en temps réel.
           </p>
           <div className="mt-9 flex flex-wrap gap-3">
-            <Button asChild variant="primary" size="lg"><a href="mailto:contact@rydar.app?subject=Démo Rydar Drive">Voir une démo <ArrowRight /></a></Button>
+            <Button asChild variant="primary" size="lg"><a href={`mailto:${CONTACT}?subject=Démo Rydar Drive`}>Voir une démo <ArrowRight /></a></Button>
             <Button asChild variant="outline" size="lg"><Link href="/login">Accéder à mon espace</Link></Button>
           </div>
           <dl className="mt-12 grid max-w-lg grid-cols-3 gap-6 border-t border-line pt-6">
@@ -193,6 +197,17 @@ export default async function Landing() {
           <p className="text-center text-[12px] font-semibold uppercase tracking-[0.18em] text-brand">Tarifs</p>
           <h2 className="mt-3 text-center text-[36px] font-semibold tracking-tight">Une offre pour chaque centrale</h2>
           <p className="mx-auto mt-3 max-w-xl text-center text-[15px] text-fg-muted">Sans engagement · 14 jours d&apos;essai · migration de vos chauffeurs offerte</p>
+          {!plans?.length && (
+            <div className="surface mx-auto mt-12 flex max-w-xl flex-col items-center rounded-2xl p-8 text-center">
+              <p className="text-[17px] font-semibold">Tarif sur mesure</p>
+              <p className="mt-2 text-[13.5px] leading-relaxed text-fg-muted">
+                Selon la taille de votre flotte ou de votre réseau de chauffeurs. Parlons-en : essai gratuit et mise en place offerte.
+              </p>
+              <Button asChild variant="primary" className="mt-6">
+                <a href={`mailto:${CONTACT}?subject=Tarifs Rydar Drive`}>Demander un tarif</a>
+              </Button>
+            </div>
+          )}
           <div className="mt-12 grid gap-4 lg:grid-cols-3">
             {(plans ?? []).map((p) => (
               <div key={p.id} className={`surface relative flex flex-col rounded-2xl p-7 ${p.highlighted ? "border-brand/40 shadow-[0_0_0_1px_rgb(200_240_60/0.25),0_40px_100px_-50px_rgb(200_240_60/0.6)]" : ""}`}>
@@ -206,7 +221,7 @@ export default async function Landing() {
                   ))}
                 </ul>
                 <Button asChild variant={p.highlighted ? "primary" : "secondary"} className="mt-8 w-full">
-                  <a href={`mailto:contact@rydar.app?subject=Offre ${p.name}`}>Démarrer avec {p.name}</a>
+                  <a href={`mailto:${CONTACT}?subject=Offre ${p.name}`}>Démarrer avec {p.name}</a>
                 </Button>
               </div>
             ))}

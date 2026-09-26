@@ -27,7 +27,8 @@ Sources de course : dashboard rattacheur | API `POST /api/v1/rides` (API key →
 - API keys : `rdk_live_{prefix8}_{secret}` ; stocké prefix + sha256(pepper+key) ; rate limit Redis (fallback mémoire) ; `api_logs`.
 - Presence chauffeur : offline|available|offered|en_route|arrived|on_trip (maintenue par fonctions SQL).
 - Catégories : standard, business, first, van, green ; upgrade optionnel (`allow_category_upgrade`).
-- Plans STARTER/PRO/BUSINESS : limites jsonb, appliquées par triggers SQL (`private.enforce_plan_limit`).
+- Offres (plans) FACULTATIVES, créées par le super admin (/admin/plans) ; aucune par défaut en prod (Starter/Pro/Business : démo seed.sql).
+  Limites jsonb appliquées par triggers SQL (`private.enforce_plan_limits`) via `private.org_limits` ; sans offre = ni limite ni restriction (mig 002800).
 
 ## Design
 Sombre premium « radar ». bg #07080B, surfaces #0C0E12/#12151B/#191D25, texte #F4F5F7, muted #8B93A1.
@@ -118,7 +119,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
-- Données indispensables en production (offres…) : par MIGRATION (ex. 002700 default_plans), jamais seulement dans seed.sql.
+- Données indispensables en production : par MIGRATION, jamais seulement dans seed.sql (jamais chargé en prod).
 - Formulaires web : `onSubmit={submitWith(fn)}` (`lib/utils`), jamais `<form action={fn}>` (React 19 vide le formulaire même
   si le serveur répond une erreur) ; erreurs serveur : `fieldErrors(err)` + `describeError(err, LABELS)` (« Champ : message »).
 - Supabase hébergé : `postgres` NON super-utilisateur (BYPASSRLS) ; `auth.*`, `storage.*`, `realtime.messages` appartiennent

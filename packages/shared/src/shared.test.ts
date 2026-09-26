@@ -213,12 +213,17 @@ describe("messages de validation lisibles", () => {
     ownerName: "Karim Benali", ownerEmail: "karim@mans.fr", ownerPassword: "",
   };
 
-  it("création de centrale sans offre : le champ est nommé, plus de message technique", () => {
-    const res = organizationCreateSchema.safeParse({ ...valid, planCode: "" });
+  it("création de centrale sans offre acceptée (offre facultative)", () => {
+    expect(organizationCreateSchema.safeParse({ ...valid, planCode: "" }).success).toBe(true);
+    expect(organizationCreateSchema.safeParse({ ...valid, planCode: undefined }).success).toBe(true);
+  });
+
+  it("erreur nommée par son champ, plus de message technique", () => {
+    const res = organizationCreateSchema.safeParse({ ...valid, email: "" });
     expect(res.success).toBe(false);
     if (res.success) return;
-    expect(describeError(res.error, ORGANIZATION_CREATE_LABELS)).toBe("Offre : choisissez une offre");
-    expect(fieldErrors(res.error)).toEqual({ planCode: "Choisissez une offre" });
+    expect(describeError(res.error, ORGANIZATION_CREATE_LABELS)).toMatch(/^E-mail de la centrale : /);
+    expect(Object.keys(fieldErrors(res.error))).toEqual(["email"]);
   });
 
   it("messages simples pour les cas courants, champ par champ", () => {

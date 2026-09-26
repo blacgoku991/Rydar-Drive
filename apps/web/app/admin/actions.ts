@@ -42,12 +42,17 @@ export async function createOrganization(
   const v: OrganizationCreateInput = parsed.data;
   const m: DispatchModelInput = model.data;
   const admin = createAdminClient();
-  const { data: plan } = await admin.from("plans").select("id").eq("code", v.planCode).maybeSingle();
-  if (!plan) return { ok: false, error: "Offre introuvable : choisissez-en une dans la liste.", fieldErrors: { planCode: "Choisissez une offre" } };
+  // Offre facultative : sans offre, aucune limite (tests, offres pas encore définies)
+  let planId: string | null = null;
+  if (v.planCode) {
+    const { data: plan } = await admin.from("plans").select("id").eq("code", v.planCode).maybeSingle();
+    if (!plan) return { ok: false, error: "Offre introuvable : choisissez-en une dans la liste.", fieldErrors: { planCode: "Offre introuvable" } };
+    planId = (plan as { id: string }).id;
+  }
 
   const { data: org, error } = await admin
     .from("organizations")
-    .insert({ name: v.name, slug: v.slug, plan_id: (plan as any).id, email: v.email, phone: v.phone || null, city: v.city ?? null, created_by: session.user.id } as never)
+    .insert({ name: v.name, slug: v.slug, plan_id: planId, email: v.email, phone: v.phone || null, city: v.city ?? null, created_by: session.user.id } as never)
     .select("id")
     .single();
   if (error || !org) return { ok: false, error: error?.code === "23505" ? "Ce slug est déjà utilisé." : "Création impossible." };
@@ -76,13 +81,15 @@ export async function createOrganization(
     ownerId = res.data.user.id;
   }
   await admin.from("organization_users").insert({ organization_id: orgId, user_id: ownerId, role: "owner", invited_by: session.user.id } as never);
-  await admin.from("subscriptions").insert({
-    organization_id: orgId, plan_id: (plan as any).id, status: "trialing",
-    trial_ends_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
-  } as never);
+  if (planId) {
+    await admin.from("subscriptions").insert({
+      organization_id: orgId, plan_id: planId, status: "trialing",
+      trial_ends_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    } as never);
+  }
   await audit({
     organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: "organization.created", entityType: "organizations", entityId: orgId,
-    metadata: { plan: v.planCode, owner: v.ownerEmail, dispatch_model: m.dispatchModel, platform_fee_percent: m.platformFeePercent, platform_fee_fixed_cents: m.platformFeeFixedCents },
+    metadata: { plan: v.planCode || null, owner: v.ownerEmail, dispatch_model: m.dispatchModel, platform_fee_percent: m.platformFeePercent, platform_fee_fixed_cents: m.platformFeeFixedCents },
   });
   revalidatePath("/admin");
   revalidatePath("/admin/organizations");
@@ -401,11 +408,14 @@ export async function setOrganizationStatus(orgId: string, status: "active" | "s
 
 const limitsOverrideSchema = z.record(z.string(), z.union([z.number().int().min(0), z.boolean(), z.null()]));
 
-export async function updateOrganizationPlan(orgId: string, planId: string, limitsOverride: Record<string, unknown>): Promise<Result> {
+/** Offre d'une centrale (planId vide = sans offre : aucune limite) + surcharges de limites. */
+export async function updateOrganizationPlan(orgId: string, planId: string | null, limitsOverride: Record<string, unknown>): Promise<Result> {
   const session = await requireSuperAdmin();
+  if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
+  if (planId && !uuid.safeParse(planId).success) return { ok: false, error: "Offre inconnue." };
   const parsed = limitsOverrideSchema.safeParse(limitsOverride);
   if (!parsed.success) return { ok: false, error: "Limites invalides." };
-  const { error } = await createAdminClient().from("organizations").update({ plan_id: planId, limits_override: parsed.data } as never).eq("id", orgId);
+  const { error } = await createAdminClient().from("organizations").update({ plan_id: planId || null, limits_override: parsed.data } as never).eq("id", orgId);
   if (error) return { ok: false, error: "Mise à jour impossible." };
   await audit({ organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: "organization.plan_changed", entityType: "organizations", entityId: orgId, metadata: { planId, limitsOverride: parsed.data } });
   revalidatePath(`/admin/organizations/${orgId}`);

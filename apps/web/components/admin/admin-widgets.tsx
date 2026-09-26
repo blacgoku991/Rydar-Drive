@@ -82,11 +82,9 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
             <Field label="Identifiant (slug)" hint={`${slug || "slug"}.rydar.app`} error={errors.slug}>
               <Input value={slug} required onChange={(e) => { setTouched(true); setSlug(slugify(e.target.value)); }} className="num" />
             </Field>
-            <Field
-              label="Offre"
-              error={errors.planCode ?? (plans.length ? undefined : "Aucune offre active : créez-en une dans « Offres ».")}
-            >
-              <NativeSelect name="plan" defaultValue={plans[0]?.code} required>
+            <Field label="Offre" optional hint="Sans offre : aucune limite" error={errors.planCode}>
+              <NativeSelect name="plan" defaultValue="">
+                <option value="">Sans offre</option>
                 {plans.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
               </NativeSelect>
             </Field>
@@ -162,16 +160,20 @@ const LIMIT_FIELDS = [
   { key: "advanced_stats", label: "Stats avancées", type: "bool" },
 ] as const;
 
+const NO_PLAN_LIMITS: Record<string, unknown> = { api_access: true, booking_site: true, custom_domain: true, advanced_stats: true };
+
 export function OrganizationPlanForm({ orgId, plans, planId, override }: { orgId: string; plans: { id: string; name: string; limits: any }[]; planId: string | null; override: Record<string, any> }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [plan, setPlan] = useState(planId ?? plans[0]?.id ?? "");
+  const [plan, setPlan] = useState(planId ?? "");
   const [o, setO] = useState<Record<string, any>>(override ?? {});
-  const base = plans.find((p) => p.id === plan)?.limits ?? {};
+  // Sans offre : aucune limite, toutes les options (comme private.org_limits)
+  const base = plan ? (plans.find((p) => p.id === plan)?.limits ?? {}) : NO_PLAN_LIMITS;
   return (
     <div className="space-y-4">
-      <Field label="Offre">
+      <Field label="Offre" hint={plan ? undefined : "Sans offre : aucune limite, toutes les options"}>
         <NativeSelect value={plan} onChange={(e) => setPlan(e.target.value)}>
+          <option value="">Sans offre</option>
           {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </NativeSelect>
       </Field>
@@ -200,7 +202,7 @@ export function OrganizationPlanForm({ orgId, plans, planId, override }: { orgId
         <Button
           variant="primary"
           loading={pending}
-          onClick={() => start(async () => { const r = await updateOrganizationPlan(orgId, plan, o); if (r.ok) { toast.success("Offre mise à jour"); router.refresh(); } else toast.error(r.error); })}
+          onClick={() => start(async () => { const r = await updateOrganizationPlan(orgId, plan || null, o); if (r.ok) { toast.success("Offre mise à jour"); router.refresh(); } else toast.error(r.error); })}
         >
           Enregistrer
         </Button>
