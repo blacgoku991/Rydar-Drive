@@ -2,9 +2,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { FLEET_REPORT_META } from "@rydar/shared";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import MapView, { Circle, Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
 import { colors } from "@/theme";
+import { MeMarker } from "./me-marker";
 import type { MapReport, RydarMapProps } from "./types";
 
 const darkMap = [
@@ -74,31 +75,6 @@ function ahead(p: { lat: number; lng: number }, heading: number, m: number) {
     latitude: p.lat + (m * Math.cos(r)) / 111_320,
     longitude: p.lng + (m * Math.sin(r)) / (111_320 * Math.cos((p.lat * Math.PI) / 180)),
   };
-}
-
-/** Position du chauffeur : point bleu, flèche de cap quand il roule (mapHeading : orientation de la carte). */
-function MeMarker({ me, mapHeading }: { me: NonNullable<RydarMapProps["me"]>; mapHeading: number }) {
-  const heading = me.heading ?? null;
-  const ios = Platform.OS === "ios";
-  return (
-    <Marker
-      // Android : vue rendue en image — nouvelle image quand la flèche apparaît / disparaît
-      key={heading == null ? "dot" : "dir"}
-      coordinate={toLL(me)}
-      anchor={{ x: 0.5, y: 0.5 }}
-      // Rotation native réservée à Google Maps (Android) ; sur iPhone la vue elle-même tourne
-      flat={!ios}
-      rotation={!ios && heading != null ? heading : undefined}
-      tracksViewChanges={ios}
-      zIndex={40}
-      accessibilityLabel="Votre position"
-    >
-      <View style={[styles.meWrap, ios && heading != null && { transform: [{ rotate: `${heading - mapHeading}deg` }] }]}>
-        {heading != null && <View style={styles.meArrow} />}
-        <View style={styles.meDot} />
-      </View>
-    </Marker>
-  );
 }
 
 function RydarMapImpl({
@@ -175,16 +151,16 @@ function RydarMapImpl({
     frame();
   }, [key, frame]);
 
-  // Suivi : la carte accompagne le chauffeur (guidage : cap et zoom ; sinon centre seulement, zoom choisi conservé)
+  // Suivi : la carte accompagne le chauffeur. Guidage : position, cap et zoom
   useEffect(() => {
-    if (!follow || !me || focus) return;
-    if (navigation) {
-      if (Date.now() - lastNavCamera.current >= NAV_CAMERA_MS) navCamera(900);
-      return;
-    }
-    if (framed) return;
+    if (!follow || !me || focus || !navigation) return;
+    if (Date.now() - lastNavCamera.current >= NAV_CAMERA_MS) navCamera(900);
+  }, [follow, me?.lat, me?.lng, me?.heading, focus, navigation, navCamera]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Hors guidage : centre seulement, zoom choisi conservé (un changement de cap, boussole comprise, ne bouge pas la carte)
+  useEffect(() => {
+    if (!follow || !me || focus || navigation || framed) return;
     ref.current?.animateCamera({ center: toLL(me) }, { duration: 500 });
-  }, [follow, me?.lat, me?.lng, me?.heading, framed, focus, navigation, navCamera]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [follow, me?.lat, me?.lng, framed, focus, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const accuracy = me?.accuracy ?? null;
   return (
@@ -243,7 +219,7 @@ function RydarMapImpl({
         {me && accuracy != null && accuracy > 15 && (
           <Circle center={toLL(me)} radius={Math.min(accuracy, 500)} strokeWidth={1} strokeColor="rgba(106,166,255,0.45)" fillColor="rgba(106,166,255,0.10)" zIndex={1} />
         )}
-        {me && <MeMarker me={me} mapHeading={camHeading} />}
+        {me && <MeMarker me={me} mapHeading={camHeading} navigation={navigation} />}
       </MapView>
       {dim && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(6,7,9,0.55)" }]} />}
       {!follow && (me || framed) && (
@@ -270,11 +246,6 @@ export const RydarMap = memo(RydarMapImpl);
 const styles = StyleSheet.create({
   pickup: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.brand, borderWidth: 5, borderColor: "#0b0d10" },
   dropoff: { width: 16, height: 16, borderRadius: 3, backgroundColor: colors.fg, borderWidth: 4, borderColor: "#0b0d10" },
-  meWrap: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  meDot: {
-    width: 20, height: 20, borderRadius: 10, backgroundColor: colors.blue, borderWidth: 3, borderColor: "#FFFFFF",
-    shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 4,
-  },
   recenter: {
     position: "absolute", right: 16, width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center",
     backgroundColor: "rgba(17,19,24,0.94)", borderWidth: 1, borderColor: colors.lineStrong,
@@ -283,9 +254,4 @@ const styles = StyleSheet.create({
   report: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surface, borderWidth: 2, alignItems: "center", justifyContent: "center" },
   reportSelected: { transform: [{ scale: 1.18 }], backgroundColor: colors.surface3 },
   reportTip: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 7, borderLeftColor: "transparent", borderRightColor: "transparent", marginTop: -1 },
-  // Flèche de cap au-dessus du point (la vue entière tourne selon le cap)
-  meArrow: {
-    position: "absolute", top: 0, width: 0, height: 0, borderLeftWidth: 7, borderRightWidth: 7, borderBottomWidth: 11,
-    borderLeftColor: "transparent", borderRightColor: "transparent", borderBottomColor: colors.blue,
-  },
 });

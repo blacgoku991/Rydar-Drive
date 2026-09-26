@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { colors } from "@/theme";
+import { ME_SIZE, meLabel, meMarkerSvg, meMode, type MeMode } from "./me-marker-shape";
 import type { MapReport, RydarMapProps } from "./types";
 
 type MLMap = import("maplibre-gl").Map;
@@ -66,6 +67,27 @@ function reportElement(r: MapReport, onPress: (id: string) => void) {
   return root;
 }
 
+/** Cercle de précision du GPS (rayon en mètres), comme le cercle natif : polygone de 48 côtés. */
+function accuracyCircle(me: RydarMapProps["me"]) {
+  const r = me?.accuracy ?? null;
+  if (!me || r == null || r <= 15) return { type: "FeatureCollection" as const, features: [] };
+  const radius = Math.min(r, 500);
+  const dLat = radius / 111_320;
+  const dLng = radius / (111_320 * Math.cos((me.lat * Math.PI) / 180));
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= 48; i++) {
+    const a = (i / 48) * 2 * Math.PI;
+    ring.push([me.lng + dLng * Math.sin(a), me.lat + dLat * Math.cos(a)]);
+  }
+  return {
+    type: "FeatureCollection" as const,
+    features: [{ type: "Feature" as const, properties: {}, geometry: { type: "Polygon" as const, coordinates: [ring] } }],
+  };
+}
+
+/** Identifiant unique du dégradé du faisceau (plusieurs cartes peuvent coexister dans la pile d'écrans). */
+let meGradientSeq = 0;
+
 /** Guidage : zoom selon la vitesse (m/s) — tuiles MapLibre de 512 px : un cran de moins que la carte native. */
 const navZoom = (speed: number | null) => ((speed ?? 0) < 8 ? 16 : (speed ?? 0) < 19 ? 15 : 14);
 
@@ -76,7 +98,8 @@ export function RydarMap({
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
   const lib = useRef<typeof import("maplibre-gl") | null>(null);
-  const markers = useRef<{ me?: MLMarker; pickup?: MLMarker; dropoff?: MLMarker }>({});
+  const markers = useRef<{ pickup?: MLMarker; dropoff?: MLMarker }>({});
+  const meMarker = useRef<{ marker: MLMarker; el: HTMLElement; mode: MeMode | null; gradient: string } | null>(null);
   const reportMarkers = useRef(new Map<string, { marker: MLMarker; el: HTMLElement; type: string }>());
   const onReportRef = useRef(onReportPress);
   onReportRef.current = onReportPress;
@@ -111,6 +134,10 @@ export function RydarMap({
         instance.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         instance.addLayer({ id: "route-casing", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#0b0d10", "line-width": 10 } });
         instance.addLayer({ id: "route-line", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": colors.brand, "line-width": 5 } });
+        // Précision réelle du GPS : cercle accroché à la position (rien quand elle est précise)
+        instance.addSource("me-accuracy", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        instance.addLayer({ id: "me-accuracy-fill", type: "fill", source: "me-accuracy", paint: { "fill-color": "rgba(106,166,255,0.10)" } });
+        instance.addLayer({ id: "me-accuracy-line", type: "line", source: "me-accuracy", paint: { "line-color": "rgba(106,166,255,0.45)", "line-width": 1 } });
         if (!disposed) setReady(true);
       });
     })();
@@ -120,6 +147,7 @@ export function RydarMap({
       map.current?.remove();
       map.current = null;
       markers.current = {};
+      meMarker.current = null;
       reportMarkers.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,25 +157,17 @@ export function RydarMap({
     const m = map.current;
     const L = lib.current;
     if (!ready || !m || !L) return;
-    const place = (key: "me" | "pickup" | "dropoff", p: { lat: number; lng: number } | null | undefined, make: () => HTMLElement) => {
+    const place = (key: "pickup" | "dropoff", p: { lat: number; lng: number } | null | undefined, make: () => HTMLElement) => {
       if (!p) {
         markers.current[key]?.remove();
         markers.current[key] = undefined;
         return;
       }
-      // Position du chauffeur : flèche orientée par rapport au nord (la carte tourne pendant le guidage)
-      if (!markers.current[key]) markers.current[key] = new L.Marker({ element: make(), anchor: "center", rotationAlignment: key === "me" ? "map" : "auto" }).setLngLat([p.lng, p.lat]).addTo(m);
+      if (!markers.current[key]) markers.current[key] = new L.Marker({ element: make(), anchor: "center" }).setLngLat([p.lng, p.lat]).addTo(m);
       else markers.current[key]!.setLngLat([p.lng, p.lat]);
     };
     place("pickup", pickup, () => dot({ width: "20px", height: "20px", borderRadius: "999px", background: colors.brand, border: "5px solid #0b0d10", boxShadow: "0 0 0 2px " + colors.brand }));
     place("dropoff", dropoff, () => dot({ width: "16px", height: "16px", borderRadius: "4px", background: colors.fg, border: "4px solid #0b0d10", boxShadow: "0 0 0 2px " + colors.fg }));
-    place("me", me, () =>
-      dot(
-        { width: "30px", height: "30px", borderRadius: "999px", background: colors.blue, border: "4px solid #0b0d10", boxShadow: "0 0 0 2px rgba(106,166,255,0.5), 0 6px 16px rgba(0,0,0,.6)", display: "grid", placeItems: "center" },
-        dot({ width: "0", height: "0", borderLeft: "5px solid transparent", borderRight: "5px solid transparent", borderBottom: "8px solid #fff", marginTop: "-2px" }),
-      ),
-    );
-    if (me && markers.current.me) markers.current.me.setRotation(me.heading ?? 0);
 
     const line = (coords: [number, number][] | null | undefined) => ({
       type: "FeatureCollection" as const,
@@ -176,6 +196,37 @@ export function RydarMap({
     } else if (me) m.easeTo({ center: [me.lng, me.lat], zoom, duration: 600 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, me?.lat, me?.lng, me?.heading, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, route, routeMuted, navigation, focus?.lat, focus?.lng]);
+
+  // Position du chauffeur : même dessin que l'app (point + faisceau d'orientation, flèche en guidage), orienté par
+  // rapport au nord (rotationAlignment « map » : il reste juste quand la carte tourne pendant le guidage)
+  useEffect(() => {
+    const m = map.current;
+    const L = lib.current;
+    if (!ready || !m || !L) return;
+    (m.getSource("me-accuracy") as import("maplibre-gl").GeoJSONSource | undefined)?.setData(accuracyCircle(me));
+    if (!me) {
+      meMarker.current?.marker.remove();
+      meMarker.current = null;
+      return;
+    }
+    let entry = meMarker.current;
+    if (!entry) {
+      const el = dot({ width: `${ME_SIZE}px`, height: `${ME_SIZE}px`, pointerEvents: "none", zIndex: "4" });
+      el.setAttribute("role", "img");
+      const marker = new L.Marker({ element: el, anchor: "center", rotationAlignment: "map", pitchAlignment: "map" }).setLngLat([me.lng, me.lat]).addTo(m);
+      entry = meMarker.current = { marker, el, mode: null, gradient: `rydar-me-beam-${++meGradientSeq}` };
+    } else entry.marker.setLngLat([me.lng, me.lat]);
+    const heading = me.heading ?? null;
+    const mode = meMode(heading, navigation);
+    if (entry.mode !== mode) {
+      // Chaîne constante (me-marker-shape), aucune donnée externe
+      entry.el.innerHTML = meMarkerSvg(mode, entry.gradient);
+      entry.mode = mode;
+    }
+    // Guidage sans cap connu : flèche dans l'axe de la carte (elle-même tournée selon le dernier cap)
+    entry.marker.setRotation(heading ?? (mode === "nav" ? m.getBearing() : 0));
+    entry.el.setAttribute("aria-label", meLabel(heading));
+  }, [ready, me?.lat, me?.lng, me?.heading, me?.accuracy, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Signalements de la flotte : un marqueur par id (ajout, déplacement, retrait à l'expiration)
   useEffect(() => {
