@@ -243,3 +243,12 @@ describe("messages de validation lisibles", () => {
     expect(organizationCreateSchema.safeParse(valid).success).toBe(true);
   });
 });
+
+import { driverPasswordResetSchema } from "./schemas";
+describe("mot de passe oublié (app chauffeur)", () => {
+  it("normalise l'adresse et refuse une adresse invalide", () => {
+    expect(driverPasswordResetSchema.parse({ email: "  Moussa@Exemple.FR " })).toEqual({ email: "moussa@exemple.fr" });
+    expect(driverPasswordResetSchema.safeParse({ email: "moussa" }).success).toBe(false);
+    expect(driverPasswordResetSchema.safeParse({}).success).toBe(false);
+  });
+});

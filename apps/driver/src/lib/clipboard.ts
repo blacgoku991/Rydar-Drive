@@ -1,10 +1,19 @@
 // Copie d'un texte court (référence de paiement) sans dépendance supplémentaire :
 // module natif « Clipboard » du cœur React Native s'il est présent, sinon feuille de partage
-// (qui propose « Copier ») ; sur le web, API Clipboard du navigateur puis execCommand.
+// (qui propose « Copier ») ; sur le web, API Clipboard du navigateur puis execCommand. Lecture : readText().
 import { Platform, Share, TurboModuleRegistry, type TurboModule } from "react-native";
 
 interface ClipboardModule extends TurboModule {
   setString(content: string): void;
+  getString?(): Promise<string>;
+}
+
+function nativeClipboard(): ClipboardModule | null {
+  try {
+    return TurboModuleRegistry.get<ClipboardModule>("Clipboard");
+  } catch {
+    return null;
+  }
 }
 
 function webCopy(text: string): boolean {
@@ -43,7 +52,7 @@ export async function copyText(text: string): Promise<"copied" | "shared" | "fai
     return webCopy(text) ? "copied" : "failed";
   }
   try {
-    const native = TurboModuleRegistry.get<ClipboardModule>("Clipboard");
+    const native = nativeClipboard();
     if (native) {
       native.setString(text);
       return "copied";
@@ -56,5 +65,21 @@ export async function copyText(text: string): Promise<"copied" | "shared" | "fai
     return "shared";
   } catch {
     return "failed";
+  }
+}
+
+/** Lecture du presse-papiers possible sur cet appareil (bouton « Coller » affiché seulement dans ce cas). */
+export function canReadText(): boolean {
+  if (Platform.OS === "web") return typeof navigator !== "undefined" && typeof navigator.clipboard?.readText === "function";
+  return typeof nativeClipboard()?.getString === "function";
+}
+
+/** Texte du presse-papiers (iOS peut demander l'autorisation de coller) ; null si indisponible ou refusé. */
+export async function readText(): Promise<string | null> {
+  try {
+    if (Platform.OS === "web") return (await navigator.clipboard.readText()) || null;
+    return (await nativeClipboard()?.getString?.()) || null;
+  } catch {
+    return null;
   }
 }

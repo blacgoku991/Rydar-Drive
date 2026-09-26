@@ -1,6 +1,7 @@
 import { loginSchema } from "@rydar/shared";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { driverAppCors } from "@/lib/driver-app-cors";
 import { env } from "@/lib/env";
 import { rateLimit, resetRateLimit } from "@/lib/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -30,17 +31,8 @@ type DriverRow = {
   organization: { status: string } | { status: string }[] | null;
 };
 
-// L'app mobile n'est pas concernée par le CORS ; seules les origines listées
-// (aperçu web de l'app chauffeur, ex. http://localhost:8081) sont autorisées.
-function corsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get("origin");
-  const allowed = (process.env.DRIVER_APP_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
-  if (!origin || !allowed.includes(origin)) return {};
-  return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", Vary: "Origin" };
-}
-
 export function OPTIONS(req: Request) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
+  return new NextResponse(null, { status: 204, headers: driverAppCors(req) });
 }
 
 /**
@@ -55,7 +47,7 @@ export function OPTIONS(req: Request) {
  */
 export async function POST(req: Request) {
   const res = await login(req);
-  for (const [k, v] of Object.entries(corsHeaders(req))) res.headers.set(k, v);
+  for (const [k, v] of Object.entries(driverAppCors(req))) res.headers.set(k, v);
   return res;
 }
 

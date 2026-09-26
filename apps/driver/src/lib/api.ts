@@ -85,6 +85,23 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   return { state: null };
 }
 
+/**
+ * « Mot de passe oublié » : le serveur envoie un lien (page web où choisir le nouveau mot de passe).
+ * Réponse identique que le compte existe ou non ; erreurs : adresse invalide, trop de demandes, réseau.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  if (!appConfig.apiUrl) throw new ApiError("Réinitialisation indisponible : contactez votre centrale.", "CONFIG");
+  const res = await fetch(`${appConfig.apiUrl}/api/auth/driver-password-reset`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+  }).catch(() => null);
+  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  if (res.ok) return;
+  const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  throw new ApiError(json.error ?? "Envoi impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
+}
+
 export const api = {
   home: () => rpc<DriverHome>("driver_home"),
   offers: () => rpc<DriverOffer[]>("driver_offers"),

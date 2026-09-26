@@ -385,6 +385,12 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Mot de passe requis").max(200),
 });
 
+/** « Mot de passe oublié » de l'application chauffeur (POST /api/auth/driver-password-reset). */
+export const driverPasswordResetSchema = z.object({ email: emailSchema });
+
+/** Nouveau mot de passe (réinitialisation, invitation) : même règle que l'inscription par lien. */
+export const NEW_PASSWORD_MIN = 10;
+
 /** Aplatit les erreurs zod : { "pickup.address": "Adresse requise" }. */
 export function fieldErrors(error: z.ZodError): Record<string, string> {
   const out: Record<string, string> = {};
