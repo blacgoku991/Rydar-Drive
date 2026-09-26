@@ -203,6 +203,21 @@ export function remainingTrack(t: NavTrack, pos: TrackPosition): Coord[] {
   return [start, ...t.coords.slice(pos.index + 1)];
 }
 
+/**
+ * Position affichée « collée » au tracé (comme Waze / Google Maps) : point projeté sur la route et cap du
+ * tronçon parcouru (plus stable que le cap GPS). À n'utiliser que tant que le chauffeur est sur l'itinéraire.
+ */
+export function snapToTrack(t: NavTrack, pos: TrackPosition): { lat: number; lng: number; heading: number | null } {
+  const a = t.coords[pos.index]!;
+  const b = t.coords[pos.index + 1] ?? a;
+  const lng = a[0] + (b[0] - a[0]) * pos.k;
+  const lat = a[1] + (b[1] - a[1]) * pos.k;
+  if (a[0] === b[0] && a[1] === b[1]) return { lat, lng, heading: null };
+  const y = Math.sin((b[0] - a[0]) * RAD) * Math.cos(b[1] * RAD);
+  const x = Math.cos(a[1] * RAD) * Math.sin(b[1] * RAD) - Math.sin(a[1] * RAD) * Math.cos(b[1] * RAD) * Math.cos((b[0] - a[0]) * RAD);
+  return { lat, lng, heading: ((Math.atan2(y, x) / RAD) + 360) % 360 };
+}
+
 /** Pictogramme d'une manœuvre (dessin choisi par l'app). */
 export type ManeuverGlyph =
   | "straight" | "left" | "right" | "slight-left" | "slight-right" | "sharp-left" | "sharp-right"

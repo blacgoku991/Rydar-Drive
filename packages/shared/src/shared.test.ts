@@ -294,7 +294,7 @@ describe("mot de passe oublié par code (app chauffeur)", () => {
   });
 });
 
-import { buildNavTrack, locateOnTrack, maneuverGlyph, navDistance, navInstruction, nextManeuver, remainingTrack, type NavStep } from "./navigation";
+import { buildNavTrack, locateOnTrack, maneuverGlyph, navDistance, navInstruction, nextManeuver, remainingTrack, snapToTrack, type NavStep } from "./navigation";
 describe("guidage : instructions en français", () => {
   it("formule les manœuvres courantes", () => {
     expect(navInstruction({ type: "turn", modifier: "right" }, "Rue de Berri")).toBe("Tournez à droite sur Rue de Berri");
@@ -347,6 +347,16 @@ describe("guidage : suivi sur le tracé", () => {
     const after = nextManeuver(track, locateOnTrack(track, at(500, 20))!.along)!;
     expect(after.step.type).toBe("arrive");
     expect(Math.round(after.distance)).toBe(280);
+  });
+
+  it("colle la position affichée sur la route, dans le sens du tronçon", () => {
+    // GPS 12 m au sud de la rue (imprécision) : point affiché sur la rue, cap est (90°)
+    const snap = snapToTrack(track, locateOnTrack(track, at(120, -12))!);
+    expect(snap.lat).toBeCloseTo(at(120, 0).lat, 6);
+    expect(snap.lng).toBeCloseTo(at(120, 0).lng, 6);
+    expect(snap.heading).toBeCloseTo(90, 0);
+    // Après le virage : cap nord (0°)
+    expect(snapToTrack(track, locateOnTrack(track, at(505, 200))!).heading).toBeCloseTo(0, 0);
   });
 
   it("détecte la sortie d'itinéraire", () => {

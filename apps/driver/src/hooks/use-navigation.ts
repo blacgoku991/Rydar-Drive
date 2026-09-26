@@ -1,5 +1,5 @@
 import {
-  buildNavTrack, decodePolyline, haversine, locateOnTrack, maneuverGlyph, nextManeuver, remainingTrack,
+  buildNavTrack, decodePolyline, haversine, locateOnTrack, maneuverGlyph, nextManeuver, remainingTrack, snapToTrack,
   type Coord, type LatLng, type ManeuverGlyph, type NavTrack,
 } from "@rydar/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -35,9 +35,17 @@ export type Navigation = {
   remainingS: number | null;
   /** Chauffeur sorti de l'itinéraire : nouveau calcul en cours */
   rerouting: boolean;
+  /**
+   * Position à afficher, posée sur la route suivie (imprécision du GPS gommée, cap du tronçon) ; null hors
+   * itinéraire : la position GPS brute est affichée.
+   */
+  position: { lat: number; lng: number; heading: number | null } | null;
 };
 
-const EMPTY: Navigation = { route: null, next: null, then: null, remainingM: null, remainingS: null, rerouting: false };
+/** Sur l'itinéraire : écart au tracé dans la marge (40 m + imprécision du point, 30 m au plus). */
+const onRoute = (off: number, accuracy: number | null) => off <= OFF_ROUTE_M + Math.min(accuracy ?? 0, 30);
+
+const EMPTY: Navigation = { route: null, next: null, then: null, remainingM: null, remainingS: null, rerouting: false, position: null };
 const keyOf = (p: LatLng) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
 
 /**
@@ -96,7 +104,7 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
   // Sortie d'itinéraire (plusieurs points de suite) : nouveau calcul ; sinon recalcul périodique
   useEffect(() => {
     if (!enabled || !current || !pos || !me) return;
-    const off = pos.off > OFF_ROUTE_M + Math.min(me.accuracy ?? 0, 30);
+    const off = !onRoute(pos.off, me.accuracy);
     const count = off ? offCount + 1 : 0;
     if (count !== offCount) setOffCount(count);
     const since = Date.now() - lastFetch.current;
@@ -131,6 +139,7 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
       remainingM: Math.round(remainingM),
       remainingS,
       rerouting: offCount >= OFF_ROUTE_FIXES,
+      position: onRoute(pos.off, me.accuracy) ? snapToTrack(t, pos) : null,
     };
   }, [enabled, current, pos, me, target, offCount]);
 }

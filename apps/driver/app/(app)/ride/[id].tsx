@@ -118,6 +118,12 @@ export default function RideScreen() {
   // Trait principal : trajet guidé restant (sinon trajet de la course une fois le client à bord) ; en pointillé,
   // pendant l'approche, le trajet du client
   const mapRoute = navOn ? (nav.route ?? (headingToPickup ? null : rideRoute)) : rideRoute;
+  // Guidage : véhicule posé sur la route suivie, orienté comme elle (sans cercle d'imprécision), comme Waze
+  const snapped = nav.position;
+  const shownMe = useMemo(
+    () => (me && snapped ? { ...me, lat: snapped.lat, lng: snapped.lng, heading: snapped.heading ?? me.heading, accuracy: null } : me),
+    [me, snapped],
+  );
   const mutedRoute = navOn && headingToPickup ? rideRoute : null;
 
   if (!ride) {
@@ -169,7 +175,7 @@ export default function RideScreen() {
     <Screen>
       <View style={[styles.mapBox, navOn && styles.mapBoxNav]}>
         <RydarMap
-          me={me}
+          me={shownMe}
           pickup={pickup}
           dropoff={dropoff}
           route={mapRoute}
