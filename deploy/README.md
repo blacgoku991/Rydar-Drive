@@ -12,20 +12,21 @@ Internet ──► Caddy (HTTPS auto) ──► web (Next.js)  ──► Supabas
 
 ## Le plus simple : installation par Claude Code
 
-Claude Code, lancé sur le VPS, fait l'installation et vous guide pour le reste. Connectez-vous en SSH (`ssh ubuntu@IP_DU_VPS` chez OVH, ou `ssh root@IP_DU_VPS`), puis collez ce premier bloc :
+Claude Code, lancé sur le VPS, fait l'installation et vous guide pour le reste. Connectez-vous en SSH (`ssh ubuntu@IP_DU_VPS` chez OVH, ou `ssh root@IP_DU_VPS`), puis tapez **une commande à la fois**, en attendant la fin de chacune :
 
 ```bash
-sudo apt-get update && sudo apt-get install -y git tmux curl
 sudo git clone https://github.com/blacgoku991/Rydar-Drive.git /opt/rydar && sudo chown -R "$USER": /opt/rydar
 curl -fsSL https://claude.ai/install.sh | bash
-tmux new -s claude                  # session qui reste ouverte après la déconnexion SSH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc && claude --version
 ```
 
-`tmux` ouvre un nouvel écran : collez alors le second bloc, dedans (les lignes collées après `tmux` ne s'exécutent pas).
+Si la dernière commande répond `claude: command not found`, installez Claude Code par npm : `sudo apt-get update && sudo apt-get install -y nodejs npm && sudo npm install -g @anthropic-ai/claude-code`.
+
+Ouvrez ensuite une session `tmux`, qui reste active après la déconnexion SSH, et lancez Claude dedans :
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH" && cd /opt/rydar
-claude                              # 1re fois : connexion à votre compte Claude, puis /exit
+tmux new -s claude
+cd /opt/rydar && claude             # 1re fois : connexion à votre compte Claude, puis /exit
 claude remote-control               # la session apparaît dans l'app Claude (Code)
 ```
 
