@@ -44,14 +44,19 @@ if ! swapon --show | grep -q .; then
 fi
 
 if [ ! -f "$ENV_FILE" ]; then
-  cp "$ROOT/deploy/.env.example" "$ENV_FILE"
-  sed -i "s/^API_KEY_PEPPER=.*/API_KEY_PEPPER=$(openssl rand -hex 32)/" "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-  echo
-  echo "✓ Fichier $ENV_FILE créé."
-  echo "  Complétez-le (domaine, Supabase…) : nano $ENV_FILE"
-  echo "  puis relancez : sudo bash deploy/install.sh"
-  exit 0
+  if [ -t 0 ]; then
+    # Dans un terminal : questions posées directement (clés saisies sans affichage)
+    bash "$ROOT/deploy/configure.sh"
+  else
+    cp "$ROOT/deploy/.env.example" "$ENV_FILE"
+    sed -i "s/^API_KEY_PEPPER=.*/API_KEY_PEPPER=$(openssl rand -hex 32)/" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo
+    echo "✓ Fichier $ENV_FILE créé."
+    echo "  Renseignez-le dans un terminal (clés saisies sans affichage) : sudo bash $ROOT/deploy/configure.sh"
+    echo "  puis relancez : sudo bash $ROOT/deploy/install.sh"
+    exit 0
+  fi
 fi
 
 value() { grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2-; }
@@ -59,7 +64,7 @@ missing=0
 for v in DOMAIN ACME_EMAIL NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY DATABASE_URL API_KEY_PEPPER; do
   if [ -z "$(value "$v")" ]; then echo "✗ $v manquant dans $ENV_FILE"; missing=1; fi
 done
-[ "$missing" = 0 ] || exit 1
+[ "$missing" = 0 ] || { echo "  → complétez dans un terminal : sudo bash $ROOT/deploy/configure.sh"; exit 1; }
 DOMAIN="$(value DOMAIN)"
 
 # DNS : le certificat HTTPS n'est délivré que si le domaine pointe vers ce serveur (simple avertissement,

@@ -109,7 +109,11 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
     seed « Centrale Express Paris » contact@centrale-express.fr (tous les états, candidatures, 1 banni signalé), lien express2026demo
 
 - [x] Kit VPS `deploy/` : docker-compose (web standalone `apps/web/Dockerfile`, worker, redis, Caddy HTTPS auto + TLS à la demande
-  via `/api/tls/allowed`), `install.sh` (Docker, ufw, swap, .env, migrations, build), `migrate.sh` (registre CLI Supabase), `osrm-prepare.sh`
+  via `/api/tls/allowed`), `install.sh` (Docker, ufw + port SSH réel, swap, DNS, migrations, build), `migrate.sh` (registre CLI Supabase,
+  1 transaction/migration), `configure.sh` (assistant .env : secrets saisis masqués au terminal, vérifiés en direct), `create-admin.sh`
+  (Super Admin via API admin), `osrm-prepare.sh`
+- **Session Claude sur le VPS de production (`/opt/rydar`) : suivre `deploy/CLAUDE-VPS.md`** (secrets jamais dans le chat, pas de seed,
+  pas de code modifié sur le serveur).
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

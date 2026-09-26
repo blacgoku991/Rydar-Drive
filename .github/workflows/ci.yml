@@ -164,4 +164,4 @@ jobs:
           docker run --rm -e DOMAIN=rydar.example -e ACME_EMAIL=ci@rydar.example \
             -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-          bash -n deploy/install.sh && bash -n deploy/migrate.sh && bash -n deploy/osrm-prepare.sh
+          for f in deploy/*.sh; do bash -n "$f"; done

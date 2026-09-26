@@ -16,7 +16,8 @@ async function resolveBookingSlug(host: string): Promise<string | null> {
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/resolve_booking_host`, {
       method: "POST",
-      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+      // apikey seul : rôle anon pour une ancienne clé JWT comme pour une clé publishable (sb_publishable_…, pas un JWT)
+      headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ p_host: host, p_root_domain: ROOT_DOMAIN }),
       cache: "no-store",
     });
