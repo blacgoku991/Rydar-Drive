@@ -9,3 +9,4 @@ export * from "./map-style";
 export * from "./features";
 export * from "./centrale";
 export * from "./navigation";
+export * from "./platform-fees";

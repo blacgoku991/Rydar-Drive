@@ -1005,15 +1005,29 @@ export interface AdminCentraleRow {
   volume_cents: number;
   commission_cents: number;
   platform_fee_cents: number;
+  /** Dû par les chauffeurs à la centrale (commission + frais) */
   outstanding_cents: number;
   overdue_cents: number;
+  /** Dette de la centrale envers Rydar (frais plateforme, 20260924003000) */
+  platform_balance_cents: number;
+  platform_due_cents: number;
+  platform_declared_cents: number;
+  platform_overdue_since: Iso | null;
 }
 
-/** RPC admin_centrale_overview(p_from) (super admin) */
+/** RPC admin_centrale_overview(p_from) (super admin) : mois [from, to) */
 export interface AdminCentraleOverview {
   from: Iso;
+  to: Iso;
   organizations: AdminCentraleRow[];
-  totals: { centrales: number; rides: number; volume_cents: number; platform_fee_cents: number };
+  totals: {
+    centrales: number;
+    rides: number;
+    volume_cents: number;
+    platform_fee_cents: number;
+    platform_due_cents: number;
+    platform_balance_cents: number;
+  };
   reports_open: number;
   platform_bans: number;
 }

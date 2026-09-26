@@ -103,6 +103,7 @@ export async function POST(req: Request) {
       }
       const code = /([A-Z_]{5,}):/.exec(error.message)?.[1];
       if (code?.startsWith("PLAN_LIMIT")) throw new ApiError(402, code, "Limite de l'offre atteinte.");
+      if (code === "PLATFORM_FEES_OVERDUE") throw new ApiError(402, code, "Frais plateforme en retard : création de courses suspendue.");
       if (code === "PICKUP_IN_PAST" || code === "PICKUP_TOO_FAR") throw new ApiError(422, code, "Date de prise en charge invalide.");
       throw new ApiError(500, "RIDE_CREATION_FAILED", "Impossible de créer la course.");
     }

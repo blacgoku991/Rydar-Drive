@@ -867,6 +867,45 @@ begin
 end;
 $$;
 
+-- Frais plateforme (20260924003000) : coordonnées de Rydar, frais du mois précédent échus le 5,
+-- un paiement reçu (confirmé par le super admin) et un paiement déclaré à confirmer
+do $$
+declare
+  c constant uuid := '10000000-0000-4000-a000-00000000000c';
+  v_prev timestamptz;
+  i int;
+begin
+  if exists (select 1 from public.platform_payments where organization_id = c) then
+    return;
+  end if;
+  update public.platform_billing
+     set payee_name = 'Rydar Drive SAS (démo)', iban = 'FR7630006000011234567890189', bic = 'AGRIFRPP',
+         payment_link = 'https://revolut.me/rydardrive/{montant}?ref={reference}',
+         instructions = 'Indiquez la référence RYD-… dans le libellé du virement.', updated_at = now()
+   where id;
+
+  -- Mois précédent : 6 courses réglées par les chauffeurs → 30 € de frais, échus le 5 de ce mois
+  perform set_config('rydar.bypass_ride_rules', 'on', false);
+  v_prev := (date_trunc('month', now() at time zone 'Europe/Paris') - interval '1 month' + interval '9 days 14 hours') at time zone 'Europe/Paris';
+  for i in 0..5 loop
+    perform pg_temp.centrale_ride((array['amine@centrale-express.fr', 'bilal@centrale-express.fr', 'rachid@centrale-express.fr'])[1 + i % 3],
+      v_prev + make_interval(days => i * 3), i, (i + 4) % 10, 4500 + i * 500, null, 'cash', 'paid',
+      (array['M. Ryan Morel', 'Mme Lina Haddad', 'M. Omar Diallo'])[1 + i % 3]);
+  end loop;
+  perform set_config('rydar.bypass_ride_rules', 'off', false);
+
+  -- Reçu : 20 € (confirmés par le super admin) → 10 € du mois précédent encore en retard
+  insert into public.platform_payments (organization_id, amount_cents, received_cents, method, reference, paid_on, status, source,
+    declared_by, declared_at, reviewed_by, reviewed_at)
+  values (c, 2000, 2000, 'transfer', private.platform_reference(c), (now() - interval '3 days')::date, 'confirmed', 'centrale',
+    '00000000-0000-4000-a000-000000000005', now() - interval '3 days', '00000000-0000-4000-a000-000000000001', now() - interval '2 days');
+  -- Déclaré par la centrale, en attente de confirmation
+  insert into public.platform_payments (organization_id, amount_cents, method, reference, note, paid_on, status, source, declared_by, declared_at)
+  values (c, 1000, 'link', private.platform_reference(c), 'Reste du mois dernier, payé par Revolut', current_date, 'declared', 'centrale',
+    '00000000-0000-4000-a000-000000000005', now() - interval '2 hours');
+end;
+$$;
+
 select
   (select count(*) from public.organizations) as organizations,
   (select count(*) from public.drivers) as drivers,

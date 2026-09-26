@@ -7,7 +7,7 @@ export function httpFromPgError(error: PgLikeError): { status: number; code: str
   const code = extractErrorCode(error?.message) ?? error?.code ?? "UNKNOWN";
   if (error?.code === "42501" || code.startsWith("FORBIDDEN")) return { status: 403, code: "FORBIDDEN", message: "Accès refusé." };
   if (error?.code === "PGRST116") return { status: 404, code: "NOT_FOUND", message: "Ressource introuvable." };
-  if (code.startsWith("PLAN_")) return { status: 402, code, message: humanizeError(error?.message) };
+  if (code.startsWith("PLAN_") || code === "PLATFORM_FEES_OVERDUE") return { status: 402, code, message: humanizeError(error?.message) };
   if (error?.code === "23505") return { status: 409, code: "CONFLICT", message: "Cette valeur existe déjà." };
   if (error?.code === "23514" || error?.code === "22023" || error?.code === "22P02")
     return { status: 422, code, message: humanizeError(error?.message, "Données invalides.") };
