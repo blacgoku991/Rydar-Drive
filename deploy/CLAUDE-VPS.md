@@ -42,6 +42,7 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
 - *Authentication → Sign In / Providers* : désactiver **Allow new users to sign up**.
 - *Authentication → URL Configuration* : Site URL `https://DOMAINE` ; Redirect URLs `https://DOMAINE/auth/callback` et `https://DOMAINE/auth/set-password`.
 - *Authentication → Emails → SMTP Settings* : SMTP personnalisé avec sa boîte mail (hôte, port 465 ou 587, identifiant, mot de passe fournis par son hébergeur mail ; expéditeur `noreply@DOMAINE` ou `contact@DOMAINE`). Demande-lui l'hébergeur de sa boîte pour lui donner les bons réglages. Sans SMTP, les invitations par e-mail et « mot de passe oublié » ne partent pas.
+- *Authentication → Emails → Templates* : traduire en français « Reset password » (mot de passe oublié des chauffeurs et des centrales) et « Invite user ». Garder le lien `{{ .ConfirmationURL }}` tel quel (ne pas le remplacer par un lien `token_hash`). Exemple : sujet « Rydar Drive — nouveau mot de passe », texte « Touchez ce lien depuis votre téléphone pour choisir un nouveau mot de passe : {{ .ConfirmationURL }} — il expire dans une heure. Pas à l'origine de la demande ? Ignorez ce message. »
 - *Realtime → Settings* : désactiver **Allow public access**. Rydar n'utilise que des canaux privés.
 - Il garde sous la main, sans te les envoyer : l'URL du projet, la clé **publishable**, la clé **secret** et la chaîne **Session pooler** (bouton *Connect*).
 

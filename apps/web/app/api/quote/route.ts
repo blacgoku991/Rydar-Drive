@@ -11,7 +11,7 @@ const point = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-
 const schema = z.object({
   pickup: point,
   dropoff: point.nullish(),
-  category: vehicleCategorySchema.default("business"),
+  category: vehicleCategorySchema.default("standard"),
   passengers: z.number().int().min(1).max(20).default(1),
   pickupAt: z.iso.datetime({ offset: true }).optional(),
   pickupAddress: z.string().max(300).optional(),

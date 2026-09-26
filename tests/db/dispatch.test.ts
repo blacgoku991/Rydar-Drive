@@ -379,3 +379,47 @@ describe("Dispatch instantané (PostGIS)", () => {
     ).rejects.toThrow(/PICKUP_IN_PAST/);
   });
 });
+
+describe("Recherche sans chauffeur : explication dans la chronologie (migration 002900)", () => {
+  it("liste les chauffeurs en ligne non sollicités, les plus proches d'abord, avec la raison", async () => {
+    const org = await createOrg("Explication");
+    await createDriver(org, { firstName: "Berline", at: north(CHAMPS_ELYSEES, 300), category: "standard" });
+    await createDriver(org, { firstName: "Ancien", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 900 });
+    await createDriver(org, { firstName: "Occupe", at: north(CHAMPS_ELYSEES, 700), presence: "on_trip" });
+    await createDriver(org, { firstName: "Petit", at: north(CHAMPS_ELYSEES, 900), seats: 2 });
+    await createDriver(org, { firstName: "Loin", at: north(CHAMPS_ELYSEES, 30000) });
+    await createDriver(org, { firstName: "Horsligne", at: north(CHAMPS_ELYSEES, 100), presence: "offline" });
+
+    const ride = await createRideAsOwner(org, { vehicle_category: "business", passengers: 3 });
+    const { ride: r, events } = await rideState(ride.id);
+    expect(r.status).toBe("SEARCHING_DRIVER");
+
+    const retry = events.findIndex((e) => e.type === "dispatch.retry");
+    const explained = events.findIndex((e) => e.type === "dispatch.excluded");
+    expect(retry).toBeGreaterThan(-1);
+    expect(explained).toBe(retry + 1);
+    const ev = events[explained];
+    expect(ev.level).toBe("warning");
+    expect(ev.category).toBe("timeline");
+    expect(ev.message).toMatch(/^5 chauffeurs en ligne non sollicités — Berline T\. \(300 m\) : véhicule Berline, course Business · Ancien T\. \(500 m\) : position GPS vieille de 15 min · Occupe T\. \(700 m\) : déjà en course · et 2 autres$/);
+    expect(ev.data.counts).toEqual({ category: 1, stale: 1, busy: 1, seats: 1, far: 1 });
+    const labels = Object.fromEntries(ev.data.excluded.map((x: { name: string; label: string }) => [x.name, x.label]));
+    expect(labels["Petit T."]).toBe("2 places, 3 passagers");
+    expect(labels["Loin T."]).toBe("à 30 km, au-delà du rayon de 16 km");
+    expect(labels["Horsligne T."]).toBeUndefined();
+  });
+
+  it("n'ajoute rien quand aucun chauffeur n'est en ligne, ni quand la course est proposée", async () => {
+    const empty = await createOrg("Explication vide");
+    await createDriver(empty, { firstName: "Dort", at: north(CHAMPS_ELYSEES, 200), presence: "offline" });
+    const lonely = await createRideAsOwner(empty);
+    expect((await rideState(lonely.id)).events.some((e) => e.type === "dispatch.excluded")).toBe(false);
+
+    const busy = await createOrg("Explication proposée");
+    await createDriver(busy, { firstName: "Proche", at: north(CHAMPS_ELYSEES, 200) });
+    const offered = await createRideAsOwner(busy);
+    const state = await rideState(offered.id);
+    expect(state.ride.status).toBe("OFFERED");
+    expect(state.events.some((e) => e.type === "dispatch.excluded")).toBe(false);
+  });
+});

@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { after, NextResponse } from "next/server";
 import { driverAppCors } from "@/lib/driver-app-cors";
 import { env } from "@/lib/env";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimitAll } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
 
 export const dynamic = "force-dynamic";
@@ -38,9 +38,13 @@ async function requestReset(req: Request): Promise<NextResponse> {
   }
   const { email } = parsed.data;
 
-  const [byIp, byEmail] = await Promise.all([rateLimit(`dreset:ip:${await clientIp()}`, 10, HOUR), rateLimit(`dreset:email:${email}`, 3, HOUR)]);
-  if (!byIp.ok || !byEmail.ok) {
-    const minutes = Math.max(1, Math.ceil((Math.max(byIp.resetAt, byEmail.resetAt) - Date.now()) / 60_000));
+  // IP d'abord : une requête refusée pour son IP ne consomme pas le quota de l'adresse visée
+  const limit = await rateLimitAll([
+    { key: `dreset:ip:${await clientIp()}`, limit: 10, windowSec: HOUR },
+    { key: `dreset:email:${email}`, limit: 3, windowSec: HOUR },
+  ]);
+  if (!limit.ok) {
+    const minutes = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 60_000));
     return NextResponse.json(
       { ok: false, code: "RATE_LIMITED", error: `Trop de demandes. Réessayez dans ${minutes} min.` },
       { status: 429, headers: { ...NO_STORE, "Retry-After": String(minutes * 60) } },

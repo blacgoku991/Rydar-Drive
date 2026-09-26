@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { extractApiKey, hashApiKey, parseApiKey, safeEqualHex } from "@/lib/api-keys";
 import { serverEnv } from "@/lib/env";
 import { rateLimit } from "@/lib/rate-limit";
+import { ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type ApiContext = {
@@ -26,7 +27,7 @@ export class ApiError extends Error {
 }
 
 function clientIpOf(req: Request) {
-  return req.headers.get("cf-connecting-ip") ?? req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  return ipFromHeaders(req.headers);
 }
 
 export const CORS_HEADERS = {

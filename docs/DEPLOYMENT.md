@@ -28,6 +28,7 @@ Architecture cible :
    - *Site URL* = `https://app.votre-domaine` ;
    - *Redirect URLs* : `https://app.votre-domaine/auth/callback` et `/auth/set-password` ;
    - SMTP personnalisé, pour les invitations des chauffeurs et des rattacheurs.
+   - *Emails → Templates* : « Reset password » et « Invite user » en français, en gardant le lien `{{ .ConfirmationURL }}` (mot de passe oublié de l'app chauffeur : page `/auth/set-password?app=driver`).
 4. **Realtime** (*Realtime → Settings*) : désactivez *Allow public access*. Rydar n'utilise que des canaux privés ; la policy `rydar_realtime_receive` (migrations 0600 et 2300) gère les droits d'écoute des canaux `org:*`, `driver:*` et `fleet:*`.
 5. **Storage** : les buckets `org-assets`, `driver-photos` et `driver-documents` et leurs policies sont créés par la migration 0800.
 6. Créez le premier **Super Admin** : invitez l'utilisateur depuis le dashboard Supabase, puis exécutez `update public.users set is_super_admin = true where email = '…';` dans le SQL editor.

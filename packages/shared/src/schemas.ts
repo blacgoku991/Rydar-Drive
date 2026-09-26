@@ -46,7 +46,8 @@ export const phoneSchema = z
     return normalized;
   });
 
-export const emailSchema = z.string().trim().toLowerCase().pipe(z.email("Adresse e-mail invalide"));
+// 254 caractères maximum (RFC 5321) : refusé avant l'expression régulière et avant toute clé de limitation
+export const emailSchema = z.string().trim().max(254).toLowerCase().pipe(z.email("Adresse e-mail invalide"));
 const optionalEmail = z
   .union([emailSchema, z.literal("")])
   .optional()

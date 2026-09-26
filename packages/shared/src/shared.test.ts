@@ -252,3 +252,11 @@ describe("mot de passe oublié (app chauffeur)", () => {
     expect(driverPasswordResetSchema.safeParse({}).success).toBe(false);
   });
 });
+
+import { emailSchema } from "./schemas";
+describe("adresse e-mail : longueur bornée", () => {
+  it("refuse une adresse de plus de 254 caractères", () => {
+    expect(emailSchema.safeParse(`${"a".repeat(250)}@x.fr`).success).toBe(false);
+    expect(emailSchema.safeParse(`${"a".repeat(60)}@exemple.fr`).success).toBe(true);
+  });
+});

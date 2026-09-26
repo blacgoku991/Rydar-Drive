@@ -23,7 +23,7 @@ export function DriverFormSheet() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [access, setAccess] = useState<"password" | "invite">("password");
   const [password, setPassword] = useState(generatePassword);
-  const [category, setCategory] = useState<(typeof VEHICLE_CATEGORIES)[number]>("business");
+  const [category, setCategory] = useState<(typeof VEHICLE_CATEGORIES)[number]>("standard");
 
   function submit(form: FormData) {
     const g = (k: string) => String(form.get(k) ?? "");

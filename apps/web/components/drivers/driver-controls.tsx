@@ -176,7 +176,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
             <Field label="Plaque" error={errors["vehicle.plate"]}><Input name="plate" defaultValue={driver.vehicle?.plate ?? ""} className="num uppercase" /></Field>
             <Field label="Couleur" optional><Input name="color" defaultValue={driver.vehicle?.color ?? ""} /></Field>
             <Field label="Catégorie">
-              <NativeSelect name="category" defaultValue={driver.vehicle?.category ?? "business"}>
+              <NativeSelect name="category" defaultValue={driver.vehicle?.category ?? "standard"}>
                 {VEHICLE_CATEGORIES.map((c) => <option key={c} value={c}>{VEHICLE_CATEGORY_META[c].label}</option>)}
               </NativeSelect>
             </Field>

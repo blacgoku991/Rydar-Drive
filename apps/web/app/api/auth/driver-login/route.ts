@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { driverAppCors } from "@/lib/driver-app-cors";
 import { env } from "@/lib/env";
-import { rateLimit, resetRateLimit } from "@/lib/rate-limit";
+import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
+import { ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -58,13 +59,16 @@ function isAuthBanned(error: { message?: string; code?: string } | null) {
 }
 
 async function login(req: Request): Promise<NextResponse> {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip") ?? "0.0.0.0";
+  const ip = ipFromHeaders(req.headers) ?? "0.0.0.0";
   const parsed = loginSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ code: "INVALID_INPUT", error: "Identifiants invalides." }, { status: 400 });
   const { email, password } = parsed.data;
 
-  const [byIp, byEmail] = await Promise.all([rateLimit(`dlogin:ip:${ip}`, 30, WINDOW), rateLimit(`dlogin:email:${email}`, 6, WINDOW)]);
-  if (!byIp.ok || !byEmail.ok) {
+  const limit = await rateLimitAll([
+    { key: `dlogin:ip:${ip}`, limit: 30, windowSec: WINDOW },
+    { key: `dlogin:email:${email}`, limit: 6, windowSec: WINDOW },
+  ]);
+  if (!limit.ok) {
     return NextResponse.json(
       { code: "RATE_LIMITED", error: "Trop de tentatives. Réessayez dans quelques minutes." },
       { status: 429, headers: { "Retry-After": "900" } },

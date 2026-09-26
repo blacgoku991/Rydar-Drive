@@ -86,6 +86,9 @@ bash "$ROOT/deploy/migrate.sh"
 echo "→ construction et démarrage (plusieurs minutes la première fois)"
 cd "$ROOT/deploy"
 docker compose up -d --build --remove-orphans
+# Caddyfile monté en volume : relu à chaque mise à jour (sinon ses changements attendraient un redémarrage)
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
+  || docker compose restart caddy >/dev/null
 docker image prune -f >/dev/null
 docker compose ps
 

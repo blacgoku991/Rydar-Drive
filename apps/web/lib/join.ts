@@ -6,7 +6,7 @@ import "server-only";
 import { fieldErrors, joinApplicationSchema, type DriverApplyResult, type IdentityCheck, type JoinInfo } from "@rydar/shared";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimitAll } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -39,8 +39,11 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
 
   // Limitation de débit : par adresse IP et par e-mail
   const ip = await clientIp();
-  const [byIp, byEmail] = await Promise.all([rateLimit(`join:ip:${ip}`, 8, 900), rateLimit(`join:email:${v.email}`, 4, 3600)]);
-  if (!byIp.ok || !byEmail.ok) return { ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes ou contactez la centrale." };
+  const limit = await rateLimitAll([
+    { key: `join:ip:${ip}`, limit: 8, windowSec: 900 },
+    { key: `join:email:${v.email}`, limit: 4, windowSec: 3600 },
+  ]);
+  if (!limit.ok) return { ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes ou contactez la centrale." };
 
   const admin = createAdminClient();
   const { data: infoData } = await admin.rpc("svc_join_info", { p_code: joinCode });

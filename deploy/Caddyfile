@@ -11,7 +11,11 @@
 # Plateforme : dashboard, super admin, API v1, inscription des chauffeurs (/rejoindre/…)
 {$DOMAIN} {
 	encode zstd gzip
-	reverse_proxy web:3000
+	reverse_proxy web:3000 {
+		# IP réelle de la connexion (limitations de débit) ; un client ne choisit pas son IP par en-tête
+		header_up X-Real-IP {remote_host}
+		header_up -Cf-Connecting-Ip
+	}
 }
 
 www.{$DOMAIN} {
@@ -24,5 +28,9 @@ https:// {
 		on_demand
 	}
 	encode zstd gzip
-	reverse_proxy web:3000
+	reverse_proxy web:3000 {
+		# IP réelle de la connexion (limitations de débit) ; un client ne choisit pas son IP par en-tête
+		header_up X-Real-IP {remote_host}
+		header_up -Cf-Connecting-Ip
+	}
 }

@@ -25,7 +25,14 @@ type Quote = {
   meteredCents: number | null;
   pricingRule: string | null;
   fixedFare: { label: string; price_cents: number } | null;
-  nearby: { total: number; firstRadiusM: number; withinFirstRadius: number; drivers: { id: string; name: string; vehicle: string | null; lat: number; lng: number; distanceM: number; etaS: number }[] };
+  nearby: {
+    total: number;
+    firstRadiusM: number;
+    withinFirstRadius: number;
+    drivers: { id: string; name: string; vehicle: string | null; lat: number; lng: number; distanceM: number; etaS: number }[];
+    available: number;
+    byCategory: Record<VehicleCategory, number>;
+  };
 };
 
 const QUICK_PLACES = ["Aéroport CDG — Terminal 2E", "Aéroport d'Orly — Terminal 4", "Gare de Lyon", "Gare du Nord", "La Défense — Parvis"]
@@ -83,7 +90,8 @@ export function NewRideSheet({
   const [customerEmail, setCustomerEmail] = useState("");
   const [passengers, setPassengers] = useState(1);
   const [luggage, setLuggage] = useState(1);
-  const [category, setCategory] = useState<VehicleCategory>("business");
+  // Berline : la catégorie la plus courante, servie par tous les véhicules quand le surclassement est permis
+  const [category, setCategory] = useState<VehicleCategory>("standard");
   const [price, setPrice] = useState("");
   // Mode centrale : commission saisie à la course (vide = automatique selon les réglages)
   const [commission, setCommission] = useState("");
@@ -135,6 +143,11 @@ export function NewRideSheet({
   const routeCoords = useMemo<Coord[] | null>(() => (quote?.route?.polyline ? decodePolyline(quote.route.polyline) : null), [quote?.route?.polyline]);
   const suggested = quote?.priceCents ?? null;
   const nearest = quote?.nearby.drivers[0];
+  // Catégorie choisie sans chauffeur compatible alors que d'autres chauffeurs sont en ligne : suggestion
+  const betterCategory =
+    quote && quote.nearby.total === 0 && quote.nearby.available > 0
+      ? ([...VEHICLE_CATEGORIES].filter((c) => quote.nearby.byCategory[c] > 0).sort((a, b) => quote.nearby.byCategory[b] - quote.nearby.byCategory[a])[0] ?? null)
+      : null;
   const isAirport = /a[ée]roport|terminal|cdg|orly|bourget|beauvais/i.test(`${pickup.address} ${dropoff.address}`);
   const finalPrice = price.trim() ? Math.round(Number(price.replace(",", ".")) * 100) : suggested;
   const commissionCents = eurosToCents(commission);
@@ -317,10 +330,27 @@ export function NewRideSheet({
                       )}
                     >
                       <span className="text-[12.5px] font-semibold">{VEHICLE_CATEGORY_META[c].label}</span>
-                      <span className="text-[11px] text-fg-subtle">{VEHICLE_CATEGORY_META[c].seats} pl.</span>
+                      {quote ? (
+                        <span className={cn("text-[11px] tabular-nums", quote.nearby.byCategory[c] > 0 ? "text-brand" : "text-fg-subtle")}>
+                          {quote.nearby.byCategory[c]} dispo.
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-fg-subtle">{VEHICLE_CATEGORY_META[c].seats} pl.</span>
+                      )}
                     </button>
                   ))}
                 </div>
+                {betterCategory && quote && (
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-amber/30 bg-amber/[0.06] px-3 py-2 text-[12.5px] text-fg-muted" role="status">
+                    <span>
+                      <span className="font-semibold text-amber">Aucun chauffeur compatible {VEHICLE_CATEGORY_META[category].label}</span> à proximité ·{" "}
+                      {quote.nearby.available} en ligne avec un autre véhicule.
+                    </span>
+                    <button type="button" onClick={() => setCategory(betterCategory)} className="font-semibold text-brand hover:underline">
+                      Passer en {VEHICLE_CATEGORY_META[betterCategory].label}
+                    </button>
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <Stepper value={passengers} onChange={setPassengers} min={1} max={20} label="Passagers" icon={Users} />
                   <Stepper value={luggage} onChange={setLuggage} min={0} max={30} label="Bagages" icon={Car} />
