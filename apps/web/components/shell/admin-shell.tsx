@@ -19,6 +19,7 @@ export function AdminShell({
       title: "Plateforme",
       items: [
         { href: "/admin", label: "Vue d'ensemble", icon: "dashboard", exact: true },
+        { href: "/admin/carte", label: "Carte en direct", icon: "globe" },
         { href: "/admin/organizations", label: "Rattacheurs", icon: "building" },
         {
           href: "/admin/centrales",

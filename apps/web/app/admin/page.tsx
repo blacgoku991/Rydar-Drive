@@ -1,10 +1,13 @@
 import { ORG_STATUS_META, formatCompactPrice, formatNumber, formatRelative, type OrgStatus } from "@rydar/shared";
-import { AlertTriangle, Building2, Car, CreditCard, Radar, Route, ShieldAlert, Users } from "lucide-react";
+import { AlertTriangle, Building2, Car, CreditCard, Globe, Radar, Route, ShieldAlert, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PlatformDailyChart } from "@/components/admin/admin-widgets";
+import { HeadcountCards, OrgHeadcountTable } from "@/components/admin/headcount";
+import { getPlatformHeadcount, type PlatformHeadcount } from "@/components/admin/platform-data";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
 import { requireSuperAdmin } from "@/lib/auth";
@@ -14,12 +17,33 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminOverview() {
   const session = await requireSuperAdmin();
-  const { data } = await session.supabase.rpc("platform_overview");
+  const [{ data }, headcount] = await Promise.all([
+    session.supabase.rpc("platform_overview"),
+    // Effectifs (organisations, chauffeurs, membres, super admins) : lecture RLS du super admin
+    getPlatformHeadcount(session.supabase).catch((err: unknown): PlatformHeadcount | null => {
+      console.error("[admin] effectifs", err);
+      return null;
+    }),
+  ]);
   const o = (data ?? {}) as any;
   const t = o.totals ?? {};
+  // Courses du jour par organisation : déjà calculées par platform_overview
+  const ridesToday = Object.fromEntries(((o.organizations ?? []) as { id: string; rides_today: number }[]).map((x) => [x.id, Number(x.rides_today ?? 0)]));
+  const perOrg = (headcount?.perOrg ?? []).map((r) => ({ ...r, rides_today: ridesToday[r.id] ?? 0 }));
   return (
     <>
-      <PageHeader eyebrow="Rydar Drive" title="Vue d'ensemble de la plateforme" description="Tous les rattacheurs, leur flotte, leur activité et la santé du dispatch." />
+      <PageHeader
+        eyebrow="Rydar Drive"
+        title="Vue d'ensemble de la plateforme"
+        description="Tous les rattacheurs, leurs effectifs, leur activité et la santé du dispatch."
+        actions={
+          <Button asChild variant="secondary" size="sm">
+            <Link href="/admin/carte">
+              <Globe /> Carte en direct
+            </Link>
+          </Button>
+        }
+      />
       <PageBody className="space-y-6">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <StatCard label="Rattacheurs" value={formatNumber(t.organizations_active)} sub={`${t.organizations_suspended ?? 0} suspendus`} icon={<Building2 />} />
@@ -31,6 +55,22 @@ export default async function AdminOverview() {
           <StatCard label="Sans chauffeur" value={formatNumber(t.no_driver_24h)} sub={`24 h · ${t.dispatch_errors_24h ?? 0} erreurs`} icon={<AlertTriangle />} tone={t.no_driver_24h ? "red" : undefined} />
           <StatCard label="Sécurité 7 j" value={formatNumber(t.security_events_7d)} sub={`${t.notifications_failed_24h ?? 0} push en échec 24 h`} icon={<ShieldAlert />} tone={t.security_events_7d ? "amber" : undefined} />
         </div>
+
+        <section aria-labelledby="effectifs" className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 id="effectifs" className="text-[15px] font-semibold tracking-tight">Effectifs</h2>
+              <p className="text-[12.5px] text-fg-muted">Organisations, chauffeurs et comptes des tableaux de bord, en ce moment.</p>
+            </div>
+          </div>
+          {headcount ? (
+            <HeadcountCards hc={headcount} />
+          ) : (
+            <p className="surface rounded-xl px-4 py-3 text-[13px] text-amber">Effectifs indisponibles pour le moment : rechargez la page.</p>
+          )}
+        </section>
+
+        {headcount && <OrgHeadcountTable rows={perOrg} />}
 
         <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
           <Card>
@@ -52,7 +92,7 @@ export default async function AdminOverview() {
         </div>
 
         <Card className="overflow-hidden">
-          <CardHeader title="Rattacheurs" description="Activité par tenant." action={<Link href="/admin/organizations" className="text-[12.5px] text-brand hover:underline">Tout gérer</Link>} />
+          <CardHeader title="Activité des rattacheurs" description="Courses, dispatch et dernière activité par tenant." action={<Link href="/admin/organizations" className="text-[12.5px] text-brand hover:underline">Tout gérer</Link>} />
           <Table>
             <THead>
               <tr>
