@@ -28,11 +28,13 @@ Architecture cible :
    - *Site URL* = `https://app.votre-domaine` ;
    - *Redirect URLs* : `https://app.votre-domaine/auth/callback` et `/auth/set-password` ;
    - SMTP personnalisé, pour les invitations des chauffeurs et des rattacheurs.
-4. **Realtime** : laissez l'option *private channels* activée. La policy `rydar_realtime_receive` (migration 0600) gère les droits d'écoute des canaux `org:*` et `driver:*`.
+4. **Realtime** (*Realtime → Settings*) : désactivez *Allow public access*. Rydar n'utilise que des canaux privés ; la policy `rydar_realtime_receive` (migrations 0600 et 2300) gère les droits d'écoute des canaux `org:*`, `driver:*` et `fleet:*`.
 5. **Storage** : les buckets `org-assets`, `driver-photos` et `driver-documents` et leurs policies sont créés par la migration 0800.
 6. Créez le premier **Super Admin** : invitez l'utilisateur depuis le dashboard Supabase, puis exécutez `update public.users set is_super_admin = true where email = '…';` dans le SQL editor.
 
 > Les migrations sont testées en CI sur PostgreSQL 16 + PostGIS, avec des stubs des schémas Supabase (`scripts/sql/local-supabase-stubs.sql`). Elles utilisent uniquement des API Supabase standard : `auth.uid()`, `auth.jwt()`, `realtime.send()` et `storage.buckets`.
+>
+> Sur Supabase, le rôle `postgres` qui applique les migrations n'est pas super-utilisateur, et les tables `auth.*`, `storage.*` et `realtime.messages` appartiennent aux services. Les migrations n'y créent donc que des policies (autorisées par l'extension supautils) et deux déclencheurs sur `auth.users`, sans jamais modifier ces tables. Elles ont été rejouées avec les droits d'un projet hébergé : image `supabase/postgres`, supautils, schémas Storage, Auth et Realtime.
 
 ## 2. Application web (Vercel)
 
@@ -162,6 +164,7 @@ Aperçu navigateur (démo) : `pnpm --filter @rydar/driver web`, ou `export:web` 
 ## 6. Checklist de mise en production
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
+- [ ] Realtime : *Allow public access* désactivé (canaux privés uniquement)
 - [ ] Premier Super Admin créé, offres Stripe reliées
 - [ ] `API_KEY_PEPPER` long et secret, `SUPABASE_SERVICE_ROLE_KEY` uniquement côté serveur
 - [ ] `REDIS_URL` configuré (sinon le rate limiting reste en mémoire, instance par instance)

@@ -12,7 +12,10 @@ Internet ──► Caddy (HTTPS auto) ──► web (Next.js)  ──► Supabas
 
 ## 1. Nom de domaine
 
-Chez votre registraire, créez trois enregistrements **A** vers l'adresse IP du VPS :
+Chez votre registraire, dans la zone DNS du domaine :
+
+1. **Supprimez** les enregistrements déjà présents sur `@` et `www` (A, **AAAA**, CNAME de la page de parking du registraire) : une ancienne adresse IPv6 suffit à bloquer le certificat HTTPS.
+2. Créez trois enregistrements **A** vers l'adresse IP du VPS :
 
 | Nom | Type | Valeur |
 | --- | --- | --- |
@@ -20,13 +23,19 @@ Chez votre registraire, créez trois enregistrements **A** vers l'adresse IP du 
 | `www` | A | IP du VPS |
 | `*` | A | IP du VPS (mini-sites `{centrale}.votre-domaine`) |
 
+La propagation prend de quelques minutes à quelques heures. `install.sh` vous prévient tant que le domaine ne pointe pas vers le serveur ; le certificat HTTPS arrive tout seul dès que c'est le cas.
+
 ## 2. Supabase
 
-1. Sur [supabase.com](https://supabase.com), créez un projet, **région Europe** (Paris ou Francfort), plan Pro conseillé en production (sauvegardes quotidiennes).
+1. Sur [supabase.com](https://supabase.com), créez un projet :
+   - **région Europe** (Paris de préférence), plan Pro conseillé en production (sauvegardes quotidiennes) ;
+   - mot de passe de la base : **lettres et chiffres uniquement** (un caractère spécial casserait l'adresse de connexion), à conserver ;
+   - gardez l'API de données (*Data API*) activée, sur le schéma `public`.
 2. Notez :
-   - *Project Settings → API* : URL du projet, clé `anon`, clé `service_role` ;
+   - l'URL du projet (`https://xxxx.supabase.co`) et les deux clés d'API, dans *Project Settings → API Keys* : la clé **publishable** (`sb_publishable_…`, ou `anon` dans l'onglet *Legacy*) et la clé **secret** (`sb_secret_…`, ou `service_role`) ;
    - *Connect → Session pooler* : chaîne de connexion **port 5432**, à terminer par `?sslmode=no-verify`.
 3. *Authentication → Sign In / Providers* : désactivez *Allow new users to sign up*. *URL Configuration* : Site URL `https://votre-domaine`, Redirect URLs `https://votre-domaine/auth/callback` et `https://votre-domaine/auth/set-password`. Configurez un SMTP (invitations par e-mail).
+4. *Realtime → Settings* : désactivez *Allow public access*. Rydar n'utilise que des canaux privés, réservés par des règles d'accès à la bonne centrale ou au bon chauffeur.
 
 Les tables, droits et fonctions sont installés par le script du VPS (étape 3).
 
@@ -35,10 +44,13 @@ Les tables, droits et fonctions sont installés par le script du VPS (étape 3).
 Connectez-vous en SSH (`ssh root@IP_DU_VPS`), puis :
 
 ```bash
+apt-get update -qq && apt-get install -y -qq git
+
 # Accès au dépôt GitHub (s'il est privé) : clé de déploiement en lecture seule
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
 cat ~/.ssh/id_ed25519.pub
 #   → GitHub : dépôt → Settings → Deploy keys → Add deploy key (lecture seule)
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
 
 git clone git@github.com:blacgoku991/Rydar-Drive.git /opt/rydar
 cd /opt/rydar
@@ -49,6 +61,8 @@ sudo bash deploy/install.sh      # migrations, construction, démarrage (5 à 10
 ```
 
 Le site répond sur `https://votre-domaine` (certificat HTTPS automatique) et `https://votre-domaine/api/health` renvoie `{"ok":true}`.
+
+Le pare-feu n'ouvre que SSH (y compris un port SSH personnalisé), HTTP et HTTPS. Chaque migration de la base est appliquée en une seule transaction : si l'une échoue, elle est annulée entièrement et il suffit de relancer `install.sh` après correction.
 
 ## 4. Premier compte Super Admin
 
