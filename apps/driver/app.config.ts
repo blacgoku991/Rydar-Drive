@@ -12,7 +12,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   userInterfaceStyle: "dark",
   backgroundColor: "#07080B",
   ios: {
-    bundleIdentifier: process.env.APNS_BUNDLE_ID ?? "app.rydar.driver",
+    bundleIdentifier: process.env.APNS_BUNDLE_ID || "app.rydar.driver",
     supportsTablet: false,
     infoPlist: {
       UIBackgroundModes: ["location", "remote-notification", "audio"],
@@ -25,7 +25,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     entitlements: { "com.apple.developer.usernotifications.time-sensitive": true },
   },
   android: {
-    package: process.env.ANDROID_PACKAGE ?? "app.rydar.driver",
+    package: process.env.ANDROID_PACKAGE || "app.rydar.driver",
     adaptiveIcon: { foregroundImage: "./assets/images/adaptive-icon.png", backgroundColor: "#07080B" },
     permissions: [
       "ACCESS_COARSE_LOCATION",
@@ -37,7 +37,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "VIBRATE",
       "WAKE_LOCK",
     ],
-    config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_ANDROID_KEY ?? "" } },
+    config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_ANDROID_KEY || "" } },
   },
   web: { bundler: "metro", output: "single", favicon: "./assets/images/icon.png" },
   plugins: [
