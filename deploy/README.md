@@ -12,14 +12,19 @@ Internet ──► Caddy (HTTPS auto) ──► web (Next.js)  ──► Supabas
 
 ## Le plus simple : installation par Claude Code
 
-Claude Code, lancé sur le VPS, fait l'installation et vous guide pour le reste. Connectez-vous en SSH (`ssh root@IP_DU_VPS`), puis :
+Claude Code, lancé sur le VPS, fait l'installation et vous guide pour le reste. Connectez-vous en SSH (`ssh ubuntu@IP_DU_VPS` chez OVH, ou `ssh root@IP_DU_VPS`), puis collez ce premier bloc :
 
 ```bash
-apt-get update && apt-get install -y git tmux curl
-git clone https://github.com/blacgoku991/Rydar-Drive.git /opt/rydar
-curl -fsSL https://claude.ai/install.sh | bash && export PATH="$HOME/.local/bin:$PATH"
+sudo apt-get update && sudo apt-get install -y git tmux curl
+sudo git clone https://github.com/blacgoku991/Rydar-Drive.git /opt/rydar && sudo chown -R "$USER": /opt/rydar
+curl -fsSL https://claude.ai/install.sh | bash
 tmux new -s claude                  # session qui reste ouverte après la déconnexion SSH
-cd /opt/rydar
+```
+
+`tmux` ouvre un nouvel écran : collez alors le second bloc, dedans (les lignes collées après `tmux` ne s'exécutent pas).
+
+```bash
+export PATH="$HOME/.local/bin:$PATH" && cd /opt/rydar
 claude                              # 1re fois : connexion à votre compte Claude, puis /exit
 claude remote-control               # la session apparaît dans l'app Claude (Code)
 ```

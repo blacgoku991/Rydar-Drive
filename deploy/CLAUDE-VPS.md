@@ -1,6 +1,6 @@
 # Mise en production — consignes pour Claude sur le VPS
 
-Tu tournes sur le **serveur de production** (Ubuntu, root, dossier `/opt/rydar`), piloté à distance depuis l'app Claude par le propriétaire du projet. Il n'est pas développeur : parle en français, simplement, une étape à la fois, et dis-lui exactement quoi cliquer ou taper.
+Tu tournes sur le **serveur de production** (Ubuntu, dossier `/opt/rydar`), piloté à distance depuis l'app Claude par le propriétaire du projet. Il n'est pas développeur : parle en français, simplement, une étape à la fois, et dis-lui exactement quoi cliquer ou taper.
 
 **But** : Rydar Drive en ligne sur `https://DOMAINE` (site, dashboard des centrales, super admin, API), mini-sites sur `https://{centrale}.DOMAINE`, worker (dispatch, notifications). Base de données, comptes, temps réel et documents chez **Supabase** (cloud, Europe). Aucune donnée de démonstration.
 
@@ -13,11 +13,19 @@ Tu tournes sur le **serveur de production** (Ubuntu, root, dossier `/opt/rydar`)
 5. **Pare-feu** : ne retire jamais l'accès SSH. Avant toute action risquée (suppression, autre site sur la machine, modification DNS), demande.
 6. Explique chaque commande en une phrase avant de la lancer : le propriétaire la valide dans l'app.
 
+## Utilisateur non root (ex. `ubuntu` chez OVH)
+
+Vérifie `id -un` et `sudo -n true && echo sudo-ok`. Si tu n'es pas root :
+
+- préfixe par `sudo` : `install.sh`, `configure.sh`, `create-admin.sh`, `migrate.sh`, `docker compose …`, `apt-get`, `ufw` (`deploy/.env` n'est lisible que par root, et Docker demande root) ;
+- `git pull` sans `sudo` : le dépôt appartient à l'utilisateur (sinon `sudo chown -R "$USER": /opt/rydar`) ;
+- si `sudo` demande un mot de passe, tu ne peux pas le saisir : donne au propriétaire la commande exacte à taper dans son terminal.
+
 ## Étapes
 
 ### 0. État des lieux (lecture seule)
 
-`cd /opt/rydar && git pull`, puis `lsb_release -ds`, `free -h`, `df -h /`, `nproc`, l'IP publique (`curl -4 -s https://api.ipify.org`) et les ports web : `ss -ltnp '( sport = :80 or sport = :443 )'`. Si 80 ou 443 sont déjà pris (autre site), arrête-toi et demande.
+`cd /opt/rydar && git pull`, puis `lsb_release -ds`, `free -h`, `df -h /`, `nproc`, l'IP publique (`curl -4 -s https://api.ipify.org`) et les ports web : `ss -ltnp '( sport = :80 or sport = :443 )'`. Si 80 ou 443 sont déjà pris (autre site), arrête-toi et demande. Ne te fie pas au 1er message de connexion SSH : c'est normal qu'un avertissement `xauth` apparaisse.
 
 ### 1. Nom de domaine
 
@@ -45,12 +53,12 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
 
 ### 4. Vérifications
 
-- `cd /opt/rydar/deploy && docker compose ps` : web, worker, redis et caddy en marche.
+- `cd /opt/rydar/deploy && sudo docker compose ps` : web, worker, redis et caddy en marche.
 - `curl -fsS https://DOMAINE/api/health` renvoie `{"ok":true,…}`.
 - `curl -sI https://www.DOMAINE | head -3` : redirection 301 vers `https://DOMAINE`.
-- `docker compose logs --tail 80 caddy | grep -i -E "certificate obtained|error"` : certificat obtenu.
-- `docker compose logs --tail 80 worker` : pas d'erreur en boucle.
-- `bash /opt/rydar/deploy/migrate.sh` : « 0 migration(s) appliquée(s) ».
+- `sudo docker compose logs --tail 80 caddy | grep -i -E "certificate obtained|error"` : certificat obtenu.
+- `sudo docker compose logs --tail 80 worker` : pas d'erreur en boucle.
+- `sudo bash /opt/rydar/deploy/migrate.sh` : « 0 migration(s) appliquée(s) ».
 
 ### 5. Super Admin
 
@@ -83,6 +91,6 @@ Termine par un résumé pour le propriétaire : ce qui fonctionne (adresses), ce
 ## Au quotidien
 
 - Mise à jour : `cd /opt/rydar && git pull && sudo bash deploy/install.sh`
-- Journaux : `cd /opt/rydar/deploy && docker compose logs -f --tail 100 web worker`
-- Redémarrer : `docker compose restart web worker`
+- Journaux : `cd /opt/rydar/deploy && sudo docker compose logs -f --tail 100 web worker`
+- Redémarrer : `sudo docker compose restart web worker`
 - Changer une clé : `sudo bash deploy/configure.sh`, puis `sudo bash deploy/install.sh`
