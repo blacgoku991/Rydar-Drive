@@ -1,5 +1,16 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
+// Domaine des liens d'inscription (https://DOMAINE/rejoindre/{code} ouvre l'app) : celui de l'API web
+function linkDomain() {
+  if (process.env.APP_LINK_DOMAIN) return process.env.APP_LINK_DOMAIN;
+  try {
+    return new URL(process.env.EXPO_PUBLIC_API_URL || "").hostname;
+  } catch {
+    return "";
+  }
+}
+const LINK_DOMAIN = linkDomain();
+
 // Application chauffeur Rydar Drive — iOS & Android.
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -14,6 +25,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     bundleIdentifier: process.env.APNS_BUNDLE_ID || "app.rydar.driver",
     supportsTablet: false,
+    associatedDomains: LINK_DOMAIN ? [`applinks:${LINK_DOMAIN}`] : [],
     infoPlist: {
       UIBackgroundModes: ["location", "remote-notification", "audio"],
       NSLocationWhenInUseUsageDescription: "Rydar Drive utilise votre position pour vous proposer les courses les plus proches.",
@@ -37,6 +49,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "VIBRATE",
       "WAKE_LOCK",
     ],
+    intentFilters: LINK_DOMAIN
+      ? [{ action: "VIEW", autoVerify: true, data: [{ scheme: "https", host: LINK_DOMAIN, pathPrefix: "/rejoindre/" }], category: ["BROWSABLE", "DEFAULT"] }]
+      : [],
     config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_ANDROID_KEY || "" } },
   },
   web: { bundler: "metro", output: "single", favicon: "./assets/images/icon.png" },

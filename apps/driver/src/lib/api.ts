@@ -193,3 +193,50 @@ export const api = {
     return (data ?? []) as Ride[];
   },
 };
+
+/** Centrale derrière un lien d'inscription (GET /api/join/{code}). */
+export type JoinCentrale = {
+  autoApprove: boolean;
+  organization: { name: string; logoUrl: string | null; brandColor: string | null; city: string | null; phone: string | null };
+};
+
+/** Formulaire d'inscription par lien (mêmes champs que la page web, validés par le serveur). */
+export type JoinInput = {
+  firstName: string; lastName: string; phone: string; email: string; password: string; vtcCardNumber?: string;
+  vehicle: { brand?: string; model: string; color?: string; plate: string; category: string; seats: number; luggageCapacity: number };
+  acceptTerms: boolean;
+};
+
+export type JoinResponse =
+  | { ok: true; status: "PENDING" | "APPROVED"; organizationName: string; email: string }
+  | { ok: false; error: string; fieldErrors?: Record<string, string> };
+
+function joinUrl(code: string) {
+  if (!appConfig.apiUrl) throw new ApiError("Inscription indisponible : serveur non configuré.", "CONFIG");
+  return `${appConfig.apiUrl}/api/join/${encodeURIComponent(code.trim().toLowerCase())}`;
+}
+
+export async function fetchJoinCentrale(code: string): Promise<JoinCentrale> {
+  const res = await fetch(joinUrl(code)).catch(() => null);
+  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  const json = (await res.json().catch(() => ({}))) as Partial<JoinCentrale> & { ok?: boolean; error?: string };
+  if (!res.ok || !json.ok || !json.organization) throw new ApiError(json.error ?? "Lien d'inscription invalide.", "JOIN_LINK_INVALID");
+  return { autoApprove: !!json.autoApprove, organization: json.organization };
+}
+
+export async function joinCentrale(code: string, input: JoinInput): Promise<JoinResponse> {
+  const res = await fetch(joinUrl(code), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  }).catch(() => null);
+  if (!res) return { ok: false, error: "Réseau indisponible." };
+  return ((await res.json().catch(() => null)) as JoinResponse | null) ?? { ok: false, error: "Inscription impossible pour le moment. Réessayez." };
+}
+
+/** Code d'inscription tiré d'un lien collé (https://…/rejoindre/{code}) ou du code seul. */
+export function parseJoinCode(text: string): string | null {
+  const t = text.trim().toLowerCase();
+  const m = /rejoindre\/([a-z0-9]{10,32})/.exec(t) ?? /^([a-z0-9]{10,32})$/.exec(t);
+  return m?.[1] ?? null;
+}

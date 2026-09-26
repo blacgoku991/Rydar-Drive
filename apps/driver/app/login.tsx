@@ -1,13 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Redirect } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { frTypo } from "@/components/centrale";
 import { RadarPulse } from "@/components/radar";
 import { BigButton, Screen } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { signIn, type ApiError } from "@/lib/api";
+import { parseJoinCode, signIn, type ApiError } from "@/lib/api";
 import { colors, radius } from "@/theme";
 
 /** Refus de connexion (codes de /api/auth/driver-login) : titre, icône et couleur du message. */
@@ -26,6 +26,9 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ message: string; code: string | null } | null>(null);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [joinLink, setJoinLink] = useState("");
+  const joinCode = parseJoinCode(joinLink);
   // Connecté et état du compte connu : accueil, ou écran d'attente / de blocage
   if (session && ready) return <Redirect href={canDrive ? "/home" : "/account"} />;
 
@@ -76,6 +79,19 @@ export default function Login() {
             )}
             <BigButton title="Se connecter" onPress={submit} loading={loading} disabled={!email || !password} icon="arrow-forward" />
             <Text style={styles.footer}>Identifiants fournis par votre centrale, ou créés lors de votre inscription par lien.</Text>
+            {joinOpen ? (
+              <View style={{ gap: 10 }}>
+                <View style={styles.field}>
+                  <Ionicons name="link-outline" size={18} color={colors.subtle} />
+                  <TextInput value={joinLink} onChangeText={setJoinLink} placeholder="Collez le lien de la centrale" placeholderTextColor={colors.subtle} autoCapitalize="none" autoCorrect={false} style={styles.input} />
+                </View>
+                <BigButton title="S'inscrire" variant="secondary" height={52} disabled={!joinCode} onPress={() => joinCode && router.push(`/rejoindre/${joinCode}`)} />
+              </View>
+            ) : (
+              <Pressable onPress={() => setJoinOpen(true)} hitSlop={8} accessibilityRole="button">
+                <Text style={styles.joinLink}>J&apos;ai un lien d&apos;inscription d&apos;une centrale</Text>
+              </Pressable>
+            )}
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -93,5 +109,6 @@ const styles = StyleSheet.create({
   errorBox: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1 },
   errorTitle: { fontSize: 15, fontWeight: "900" },
   errorText: { color: colors.fg, fontSize: 14.5, lineHeight: 20, fontWeight: "600" },
+  joinLink: { color: colors.brand, fontSize: 14, fontWeight: "700", textAlign: "center" },
   footer: { color: colors.subtle, fontSize: 12, textAlign: "center", marginTop: 6 },
 });

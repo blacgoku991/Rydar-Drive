@@ -47,6 +47,8 @@ services:
       MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
       DRIVER_APP_ORIGINS: ${DRIVER_APP_ORIGINS:-}
+      APPLE_APP_IDS: ${APPLE_APP_IDS:-}
+      IOS_APP_URL: ${IOS_APP_URL:-}
     depends_on:
       - redis
 

@@ -4,21 +4,15 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import { Logo, RadarMark } from "@/components/brand/logo";
 import { JoinForm } from "@/components/network/join-form";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { OpenInApp } from "@/components/network/open-in-app";
+import { loadJoinInfo } from "@/lib/join";
 
 export const dynamic = "force-dynamic";
 
-const CODE_RE = /^[a-z0-9]{10,32}$/;
 const NOINDEX: Metadata["robots"] = { index: false, follow: false, nocache: true, googleBot: { index: false, follow: false } };
 
 /** Centrale derrière un code d'inscription (service role, une seule lecture par requête). */
-const loadJoin = cache(async (raw: string): Promise<JoinInfo | null> => {
-  const code = String(raw ?? "").trim().toLowerCase();
-  if (!CODE_RE.test(code)) return null;
-  const { data } = await createAdminClient().rpc("svc_join_info", { p_code: code });
-  const info = data as JoinInfo | null;
-  return info?.ok && info.organization ? info : null;
-});
+const loadJoin = cache(async (raw: string): Promise<JoinInfo | null> => loadJoinInfo(raw));
 
 export async function generateMetadata({ params }: { params: Promise<{ code: string }> }): Promise<Metadata> {
   const info = await loadJoin((await params).code);
@@ -115,6 +109,8 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
             </a>
           )}
         </header>
+
+        <OpenInApp code={code.toLowerCase()} appStoreUrl={process.env.IOS_APP_URL || null} />
 
         <div className="mt-8 grid gap-8 lg:mt-14 lg:grid-cols-[1fr_520px] lg:gap-12">
           <section className="lg:sticky lg:top-10 lg:self-start lg:pt-6">

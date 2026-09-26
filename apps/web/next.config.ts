@@ -40,6 +40,10 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@rydar/shared"],
   poweredByHeader: false,
   reactStrictMode: true,
+  async rewrites() {
+    // Liens universels iOS (inscription chauffeur dans l'application)
+    return [{ source: "/.well-known/apple-app-site-association", destination: "/api/app-links/apple" }];
+  },
   async headers() {
     return [
       {
