@@ -113,6 +113,23 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   via `/api/tls/allowed`), `install.sh` (Docker, ufw + port SSH réel, swap, DNS, migrations, build), `migrate.sh` (registre CLI Supabase,
   1 transaction/migration), `configure.sh` (assistant .env : secrets saisis masqués au terminal, vérifiés en direct), `create-admin.sh`
   (Super Admin via API admin), `osrm-prepare.sh`
+- [x] Retours terrain (sept. 2026) :
+  - dispatch : Berline par défaut (nouvelle course, devis, fiche chauffeur ; Business par défaut excluait les Berline) ;
+    compteurs « N dispo. » par catégorie dans le formulaire ; mig 002900 `dispatch.excluded` (chronologie : chauffeurs en ligne
+    non sollicités + raison) ; durcissement auth (emailSchema max 254, clés de limitation hachées, `rateLimitAll` IP→compte,
+    `ipFromHeaders` : X-Forwarded-For d'abord, Caddy impose X-Real-IP et retire CF-Connecting-IP)
+  - app chauffeur : GPS partagé (`use-my-position.ts`, BestForNavigation, filtre des points imprécis), cercle de précision
+    accroché à la position, suivi + « Recentrer », carte à plat ; en ligne/hors ligne OPTIMISTE (seul l'appel serveur est
+    attendu, suivi GPS sans attendre de premier point) ; rechargements regroupés (`refresh` une seule à la fois) ; effets
+    liés à `userId` (pas à l'objet session) ; session chiffrée en cache mémoire
+  - mot de passe oublié chauffeur : API `/api/auth/driver-password-reset` (réponse neutre, `after()`, flux implicite) → code
+    à 6 chiffres dans l'app (`/confirm`, verifyOtp recovery) ou lien `/auth/set-password?app=driver` (client isolé sans cookie)
+  - À FAIRE (demandé « par la suite ») : code e-mail à l'inscription par lien (OTP GoTrue : createUser email_confirm:false +
+    resend signup, verifyOtp type email ; `drivers.email_verified_at` + trigger sur auth.users ; modèle « Confirm signup » avec {{ .Token }})
+- **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;
+  aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
+  lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;
+  espace insécable avant ? : ; ! ; cibles ≥ 48 px (56 en conduite) ; texte d'information en `muted`, jamais `subtle`.
 - **Session Claude sur le VPS de production (`/opt/rydar`) : suivre `deploy/CLAUDE-VPS.md`** (secrets jamais dans le chat, pas de seed,
   pas de code modifié sur le serveur).
 
