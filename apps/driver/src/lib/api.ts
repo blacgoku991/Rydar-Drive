@@ -111,6 +111,28 @@ export async function requestPasswordReset(email: string): Promise<void> {
   throw new ApiError(json.error ?? "Envoi impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
 }
 
+/** Pages légales publiques du serveur web (App Store / Google Play) ; null sans URL d'API configurée. */
+export const legalUrl = (page: "confidentialite" | "suppression-compte") => (appConfig.apiUrl ? `${appConfig.apiUrl}/${page}` : null);
+
+/**
+ * Suppression définitive du compte chauffeur (route web /api/driver/delete-account, confirmation « SUPPRIMER »).
+ * Codes d'erreur : RIDES_ASSIGNED (course attribuée, message à afficher), UNAUTHORIZED, RATE_LIMITED, NETWORK…
+ */
+export async function deleteAccount(): Promise<void> {
+  if (!appConfig.apiUrl) throw new ApiError("Suppression indisponible : contactez votre centrale.", "CONFIG");
+  const token = (await supabase.auth.getSession()).data.session?.access_token;
+  if (!token) throw new ApiError("Session expirée : reconnectez-vous.", "UNAUTHORIZED");
+  const res = await fetch(`${appConfig.apiUrl}/api/driver/delete-account`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ confirm: "SUPPRIMER" }),
+  }).catch(() => null);
+  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  if (res.ok) return;
+  const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  throw new ApiError(json.error ?? "Suppression impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
+}
+
 /**
  * « Mot de passe oublié », étape 2 : code reçu par e-mail + nouveau mot de passe. Le serveur change le mot de
  * passe, contrôle le compte (mêmes refus que la connexion) et renvoie une session, installée comme par signIn.

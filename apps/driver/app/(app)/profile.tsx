@@ -9,7 +9,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { TrustBadge } from "@/components/centrale";
 import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { api } from "@/lib/api";
+import { api, legalUrl } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { colors, control, mono, radius, space, type, weight } from "@/theme";
 
@@ -182,6 +182,14 @@ export default function Profile() {
               </Group>
             </>
           )}
+
+          <Text style={styles.section} accessibilityRole="header">Confidentialité</Text>
+          <Group>
+            {legalUrl("confidentialite") ? (
+              <Row icon="shield-checkmark-outline" title="Politique de confidentialité" onPress={() => void Linking.openURL(legalUrl("confidentialite")!)} />
+            ) : null}
+            <Row icon="trash-outline" title="Supprimer mon compte" onPress={() => router.push("/delete-account")} />
+          </Group>
 
           <View style={styles.footer}>
             <BigButton

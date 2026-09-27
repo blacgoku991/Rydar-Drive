@@ -20,6 +20,7 @@ function Gate() {
       <Stack.Screen name="account" />
       <Stack.Screen name="rejoindre/[code]" />
       <Stack.Screen name="(app)" />
+      <Stack.Screen name="delete-account" options={{ animation: "slide_from_right" }} />
     </Stack>
   );
 }

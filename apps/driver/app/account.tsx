@@ -198,6 +198,7 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
                 router.replace("/login");
               }}
             />
+            <BigButton title="Supprimer mon compte" variant="ghost" height={control.sm} onPress={() => router.push("/delete-account")} />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -394,6 +395,7 @@ function AccountBlocked({ account }: { account: DriverAccountState }) {
                 router.replace("/login");
               }}
             />
+            <BigButton title="Supprimer mon compte" variant="ghost" height={control.sm} onPress={() => router.push("/delete-account")} />
           </View>
         </ScrollView>
       </SafeAreaView>

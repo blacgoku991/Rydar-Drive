@@ -6,7 +6,7 @@ import { NEW_PASSWORD_MAX, NEW_PASSWORD_MIN } from "@rydar/shared";
 import { LinearGradient } from "expo-linear-gradient";
 import { Redirect, router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View, type TextInput } from "react-native";
+import { Animated, BackHandler, Keyboard, Linking, Platform, Pressable, StyleSheet, Text, View, type TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   announce, AuthField, EnterView, FormScroll, Glyph, LogoMark, Notice, PanelHeader, panelTransition, TEXT_SCALE, TextLink, TITLE_SCALE,
@@ -16,7 +16,7 @@ import { frTypo } from "@/components/centrale";
 import { RydarMap } from "@/components/map/rydar-map";
 import { BigButton, hapticResult } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { confirmPasswordReset, parseJoinCode, requestPasswordReset, signIn, type ApiError } from "@/lib/api";
+import { confirmPasswordReset, legalUrl, parseJoinCode, requestPasswordReset, signIn, type ApiError } from "@/lib/api";
 import { canReadText, readText } from "@/lib/clipboard";
 import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
 
@@ -24,6 +24,8 @@ type Mode = "login" | "forgot" | "join";
 type Failure = { message: string; code: string | null };
 
 /** Espace insécable avant « ? : ; ! » (typographie française). */
+/** Politique de confidentialité (exigée par les stores, accessible sans compte). */
+const PRIVACY_URL = legalUrl("confidentialite");
 const NB = " ";
 /** Dernière adresse utilisée (pré-remplie à la prochaine connexion). */
 const LAST_EMAIL_KEY = "rydar.driver.lastEmail";
@@ -269,6 +271,9 @@ function LoginPanel({
             Nouveau chauffeur{NB}? <Text style={styles.joinStrong}>Rejoindre une centrale</Text>
           </Text>
         </Pressable>
+      )}
+      {PRIVACY_URL && (
+        <TextLink title="Politique de confidentialité" onPress={() => void Linking.openURL(PRIVACY_URL)} align="center" muted disabled={loading} />
       )}
     </EnterView>
   );

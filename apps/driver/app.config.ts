@@ -11,6 +11,9 @@ function linkDomain() {
 }
 const LINK_DOMAIN = linkDomain();
 
+// Projet EAS (eas init) : builds, envoi aux stores et mises à jour à distance (EAS Update)
+const EAS_PROJECT_ID = process.env.EAS_PROJECT_ID || "";
+
 // Application chauffeur Rydar Drive — iOS & Android.
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -28,7 +31,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     supportsTablet: false,
     associatedDomains: LINK_DOMAIN ? [`applinks:${LINK_DOMAIN}`] : [],
     infoPlist: {
-      UIBackgroundModes: ["location", "remote-notification", "audio"],
+      // Seul mode d'arrière-plan utilisé : la position EN LIGNE (Apple refuse les modes déclarés sans usage)
+      UIBackgroundModes: ["location"],
       NSLocationWhenInUseUsageDescription: "Rydar Drive utilise votre position pour vous proposer les courses les plus proches.",
       NSLocationAlwaysAndWhenInUseUsageDescription:
         "Lorsque vous êtes EN LIGNE, votre position est partagée avec votre centrale même application fermée, pour recevoir les courses proches.",
@@ -40,18 +44,18 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   android: {
     package: process.env.ANDROID_PACKAGE || "app.rydar.driver",
     adaptiveIcon: { foregroundImage: "./assets/images/adaptive-icon.png", backgroundColor: "#07080B" },
+    // Position EN LIGNE par un service de premier plan démarré app ouverte : ni « position en arrière-plan »
+    // (ACCESS_BACKGROUND_LOCATION, déclaration Google Play), ni exemption de batterie ne sont nécessaires
     permissions: [
       "ACCESS_COARSE_LOCATION",
       "ACCESS_FINE_LOCATION",
-      "ACCESS_BACKGROUND_LOCATION",
       "FOREGROUND_SERVICE",
       "FOREGROUND_SERVICE_LOCATION",
       "POST_NOTIFICATIONS",
       "VIBRATE",
       "WAKE_LOCK",
-      // Fenêtre « toujours s'exécuter en arrière-plan » : position en direct écran éteint (src/lib/battery.ts)
-      "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
     ],
+    blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION", "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"],
     intentFilters: LINK_DOMAIN
       ? [{ action: "VIEW", autoVerify: true, data: [{ scheme: "https", host: LINK_DOMAIN, pathPrefix: "/rejoindre/" }], category: ["BROWSABLE", "DEFAULT"] }]
       : [],
@@ -66,7 +70,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         locationAlwaysAndWhenInUsePermission:
           "Lorsque vous êtes EN LIGNE, votre position est partagée avec votre centrale pour recevoir les courses proches.",
-        isAndroidBackgroundLocationEnabled: true,
+        isAndroidBackgroundLocationEnabled: false,
         isAndroidForegroundServiceEnabled: true,
       },
     ],
@@ -90,10 +94,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ],
   ],
   experiments: { typedRoutes: false },
+  // Mises à jour à distance (JavaScript seulement) : « eas update --channel production ». Une mise à jour ne
+  // s'installe que sur les builds de la MÊME version (runtimeVersion = version) : tout changement natif
+  // (module, permission, icône…) exige une nouvelle version et un nouveau build publié sur les stores.
+  ...(EAS_PROJECT_ID
+    ? { updates: { url: `https://u.expo.dev/${EAS_PROJECT_ID}`, fallbackToCacheTimeout: 0 }, runtimeVersion: { policy: "appVersion" as const } }
+    : {}),
   extra: {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     apiUrl: process.env.EXPO_PUBLIC_API_URL,
-    eas: { projectId: process.env.EAS_PROJECT_ID },
+    eas: { projectId: EAS_PROJECT_ID || undefined },
   },
 });

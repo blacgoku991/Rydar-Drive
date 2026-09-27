@@ -41,8 +41,11 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   async rewrites() {
-    // Liens universels iOS (inscription chauffeur dans l'application)
-    return [{ source: "/.well-known/apple-app-site-association", destination: "/api/app-links/apple" }];
+    // Liens universels iOS et liens d'application Android (inscription chauffeur dans l'application)
+    return [
+      { source: "/.well-known/apple-app-site-association", destination: "/api/app-links/apple" },
+      { source: "/.well-known/assetlinks.json", destination: "/api/app-links/android" },
+    ];
   },
   async headers() {
     return [

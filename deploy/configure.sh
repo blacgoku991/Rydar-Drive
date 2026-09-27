@@ -197,6 +197,26 @@ echo
 ask EXPO_ACCESS_TOKEN "Jeton Expo pour les notifications push (facultatif, Entrée pour passer)" secret
 put EXPO_ACCESS_TOKEN "$answer"
 
+echo
+echo "Éditeur de l'application — pages /confidentialite et /suppression-compte (exigées par l'App Store et Google Play)"
+ask LEGAL_NAME "Société éditrice (ex. Rydar SAS)"
+put LEGAL_NAME "$answer"
+ask LEGAL_EMAIL "E-mail de contact pour les données personnelles"
+put LEGAL_EMAIL "$answer"
+ask LEGAL_ADDRESS "Adresse du siège (facultatif)"
+put LEGAL_ADDRESS "$answer"
+
+echo
+echo "Application chauffeur publiée (facultatif, Entrée pour passer)"
+ask IOS_APP_URL "Lien App Store"
+put IOS_APP_URL "$answer"
+ask APPLE_APP_IDS "Identifiant Apple de l'app pour les liens /rejoindre (TEAMID.app.rydar.driver)"
+put APPLE_APP_IDS "$answer"
+ask ANDROID_APP_URL "Lien Google Play"
+put ANDROID_APP_URL "$answer"
+ask ANDROID_CERT_SHA256 "Empreinte SHA-256 du certificat de signature Google Play (liens /rejoindre)"
+put ANDROID_CERT_SHA256 "$answer"
+
 # Poivre des clés API : généré une seule fois, ne jamais le changer ensuite
 [ -n "$(get API_KEY_PEPPER)" ] || put API_KEY_PEPPER "$(openssl rand -hex 32)"
 

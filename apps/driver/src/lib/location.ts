@@ -205,13 +205,10 @@ async function firstFix(): Promise<Location.LocationObject | null> {
   return high ?? Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
 }
 
-/** « Toujours » demandé une fois par lancement : iOS fait patienter 1,5 s quand la fenêtre n'est plus proposée. */
-let backgroundAsked = false;
-
 /**
- * Autorisations avant de passer EN LIGNE. « Pendant l'utilisation » suffit : app ouverte, le suivi continue en
- * arrière-plan et téléphone verrouillé (indicateur iOS, service de premier plan Android) ; « Toujours » est
- * demandé mais facultatif. Position exacte obligatoire.
+ * Autorisations avant de passer EN LIGNE : position « Pendant l'utilisation », exacte. Elle suffit : le suivi,
+ * démarré app ouverte, continue en arrière-plan et téléphone verrouillé (indicateur iOS, service de premier plan
+ * Android) ; fermer l'app met hors ligne. « Toujours » n'est donc jamais demandé.
  * Lecture d'abord (instantanée, sans fenêtre) : la demande n'a lieu que si l'autorisation manque.
  */
 export async function requestLocationPermissions(): Promise<PermissionState> {
@@ -220,13 +217,13 @@ export async function requestLocationPermissions(): Promise<PermissionState> {
   if (!fg || fg.status !== "granted") return "denied";
   // Position approximative (Android) / « Position exacte » désactivée (iOS) : inexploitable pour le dispatch
   if (fg.android?.accuracy === "coarse" || fg.ios?.accuracy === "reduced") return "coarse";
-  if (isWeb) return "foreground-only";
-  const bgNow = await Location.getBackgroundPermissionsAsync().catch(() => null);
-  if (bgNow?.status === "granted") return "granted";
-  if (backgroundAsked) return "foreground-only";
-  backgroundAsked = true;
-  const bg = await Location.requestBackgroundPermissionsAsync().catch(() => ({ status: "denied" as const }));
-  return bg.status === "granted" ? "granted" : "foreground-only";
+  return isWeb ? "foreground-only" : "granted";
+}
+
+/** Autorisation de position pas encore accordée (la fenêtre du système va s'ouvrir). */
+export async function locationPermissionNeeded() {
+  const fg = await Location.getForegroundPermissionsAsync().catch(() => null);
+  return fg?.status !== "granted";
 }
 
 async function startForegroundWatch() {

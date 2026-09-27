@@ -17,6 +17,8 @@ apps/driver/.expo/
 apps/driver/ios/
 apps/driver/android/
 apps/driver/web-build/
+# Clés des stores (compte de service Google Play, clés App Store Connect) : jamais dans le dépôt
+apps/driver/secrets/
 # local artefacts
 .vercel/
 supabase/.temp/

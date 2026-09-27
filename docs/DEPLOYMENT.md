@@ -160,6 +160,9 @@ Une course avec un numéro de vol est suivie de 24 h avant à 3 h après la pris
 
 ## 5. Application chauffeur (EAS)
 
+Publication sur l'App Store et Google Play, fiches, confidentialité, compte de démonstration et mises à jour :
+**[docs/STORES.md](STORES.md)**.
+
 ```bash
 cd apps/driver
 eas init                     # renseigne EAS_PROJECT_ID
@@ -175,7 +178,7 @@ eas submit -p ios
 | `GOOGLE_MAPS_ANDROID_KEY` | Carte Android (react-native-maps) |
 | `EXPO_PUBLIC_MAP_TILES_URL`, `EXPO_PUBLIC_MAP_GLYPHS_URL` | Carte de l'aperçu web uniquement |
 
-La **localisation en arrière-plan** exige un *development build* ou un build de production : elle ne fonctionne pas dans Expo Go. Sur Android, une notification de service au premier plan indique que le chauffeur est EN LIGNE. Sur iOS, l'autorisation « Toujours » est demandée au premier passage en ligne.
+La **localisation en arrière-plan** exige un *development build* ou un build de production : elle ne fonctionne pas dans Expo Go. Seule l'autorisation « Pendant l'utilisation » est demandée : app ouverte, le suivi continue en arrière-plan (service de premier plan Android avec la notification « Rydar Drive — EN LIGNE », indicateur de localisation iOS) ; fermer l'app met hors ligne.
 
 Aperçu navigateur (démo) : `pnpm --filter @rydar/driver web`, ou `export:web` pour une version statique.
 

@@ -1,6 +1,4 @@
-import * as Application from "expo-application";
 import * as Battery from "expo-battery";
-import * as IntentLauncher from "expo-intent-launcher";
 import { Linking, Platform } from "react-native";
 
 /**
@@ -13,16 +11,9 @@ export async function batteryRestricted() {
 }
 
 /**
- * Fenêtre système « Autoriser Rydar Drive à toujours s'exécuter en arrière-plan ? » (permission
- * REQUEST_IGNORE_BATTERY_OPTIMIZATIONS) ; à défaut, les réglages de l'app (Batterie › Non restreinte).
+ * Réglages de l'app (Batterie › Non restreinte) : sans permission spéciale (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+ * est encadrée par Google Play).
  */
 export async function requestBatteryExemption() {
-  if (Platform.OS !== "android") return;
-  try {
-    await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, {
-      data: `package:${Application.applicationId}`,
-    });
-  } catch {
-    await Linking.openSettings().catch(() => null);
-  }
+  await Linking.openSettings().catch(() => null);
 }

@@ -173,8 +173,15 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   (colonnes gps_* supprimées). App `location.ts` : trackingState on/off/unknown (relance sans interface = arrêt), battement
   porté par la tâche GPS + heartbeat sans point, jamais de point > 2 min, arrêt si presence=offline ou SIGNED_OUT,
   `killServiceOnDestroy: true` ; `supabase.ts` : écriture de session en 3 temps (clé .next), délai 20 s (hors storage) ;
-  `api.ts` rpc : nouvel essai après JWT expiré ; Android : fenêtre batterie (`lib/battery.ts`, expo-intent-launcher).
+  `api.ts` rpc : nouvel essai après JWT expiré ; Android : conseil batterie « Non restreinte » (`lib/battery.ts`).
   Revue 003200 corrigée dans 003300 (audit, relance après « Relancer », refus tardif).
+- [x] Publication stores (mig 003500, 238 tests DB) : suppression du compte dans l'app (`app/delete-account.tsx`, route
+  `/api/driver/delete-account` → `svc_delete_driver_account` : données perso supprimées, fiche anonymisée, courses/règlements
+  gardés sans identité, refus si course attribuée, compte Auth conservé s'il gère une centrale) ; pages publiques `/confidentialite`
+  et `/suppression-compte` (LEGAL_NAME/EMAIL/ADDRESS, configure.sh) ; `/.well-known/assetlinks.json` (ANDROID_CERT_SHA256) ;
+  EAS Update (runtimeVersion = version, `eas update --channel production`) ; eas.json submit ; iOS UIBackgroundModes = location
+  seul ; Android SANS ACCESS_BACKGROUND_LOCATION ni exemption batterie (service de premier plan) ; « Toujours » jamais demandé ;
+  information préalable avant la 1re demande de position. Guide : docs/STORES.md.
 - **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;
   aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
   lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;

@@ -110,7 +110,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           )}
         </header>
 
-        <OpenInApp code={code.toLowerCase()} appStoreUrl={process.env.IOS_APP_URL || null} />
+        <OpenInApp code={code.toLowerCase()} appStoreUrl={process.env.IOS_APP_URL || null} playStoreUrl={process.env.ANDROID_APP_URL || null} />
 
         <div className="mt-8 grid gap-8 lg:mt-14 lg:grid-cols-[1fr_520px] lg:gap-12">
           <section className="lg:sticky lg:top-10 lg:self-start lg:pt-6">

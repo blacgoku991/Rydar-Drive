@@ -34,8 +34,8 @@ async function reachabilityHint() {
   reachHintShown = true;
   Alert.alert(
     "Restez en ligne",
-    "Pour que votre position reste en direct écran éteint ou dans une autre application, autorisez Rydar Drive à fonctionner en arrière-plan sans restriction de batterie.",
-    [{ text: "Plus tard", style: "cancel" }, { text: "Autoriser", onPress: () => void requestBatteryExemption() }],
+    frTypo(`Pour que votre position reste en direct écran éteint ou dans une autre application, réglez la batterie de Rydar Drive sur « Non restreinte » : Réglages › Batterie.`),
+    [{ text: "Plus tard", style: "cancel" }, { text: "Ouvrir les réglages", onPress: () => void requestBatteryExemption() }],
   );
 }
 /** Écart entre les boutons posés sur la carte et le panneau du bas. */
@@ -144,6 +144,7 @@ export default function Home() {
   async function toggle() {
     if (!home) return;
     const res = await setOnline(!online);
+    if (res.code === "cancelled") return;
     if (res.code === "coarse") {
       Alert.alert("Activez la position exacte", frTypo(res.message ?? ""), [
         { text: "Plus tard", style: "cancel" },
