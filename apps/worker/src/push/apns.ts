@@ -1,8 +1,18 @@
-import { connect, type ClientHttp2Session } from "node:http2";
+import { connect, constants, type ClientHttp2Session } from "node:http2";
 import { SignJWT, importPKCS8 } from "jose";
 import { appData, presentation, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
 
-type ApnsConfig = { key: string; keyId: string; teamId: string; bundleId: string; production: boolean };
+type ApnsConfig = {
+  key: string;
+  keyId: string;
+  teamId: string;
+  bundleId: string;
+  production: boolean;
+  /** Tests : serveur HTTP/2 local à la place d'Apple. */
+  host?: string;
+  /** Délai maximal d'une requête (APNs répond en moins d'une seconde). */
+  timeoutMs?: number;
+};
 
 /**
  * Charge utile APNs au format lu par expo-notifications iOS : les données de l'app sous
@@ -24,7 +34,8 @@ export function apnsPayload(payload: PushPayload, now = Date.now()) {
 
 /** Envoi direct Apple Push Notification service (HTTP/2, jeton .p8) pour des jetons APNs natifs (build spécifique, provider « apns »). */
 export function apnsProvider(cfg: ApnsConfig): PushProvider {
-  const host = cfg.production ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com";
+  const host = cfg.host || (cfg.production ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com");
+  const timeoutMs = cfg.timeoutMs || 10_000;
   let session: ClientHttp2Session | null = null;
   let jwt: { token: string; iat: number } | null = null;
 
@@ -47,18 +58,28 @@ export function apnsProvider(cfg: ApnsConfig): PushProvider {
     return session;
   }
 
+  /** Toujours résolue (le premier événement l'emporte) : réponse, erreur, flux fermé ou délai dépassé (status 0 → réessai). */
   function post(token: string, headers: Record<string, string>, body: string) {
     return new Promise<{ status: number; body: string; id?: string }>((resolve) => {
-      const req = client().request({ ":method": "POST", ":path": `/3/device/${token}`, ...headers });
+      const s = client();
+      const req = s.request({ ":method": "POST", ":path": `/3/device/${token}`, ...headers });
       let data = "";
       let status = 0;
       let id: string | undefined;
+      req.setTimeout(timeoutMs, () => {
+        resolve({ status: 0, body: JSON.stringify({ reason: "APNS_TIMEOUT" }) });
+        req.close(constants.NGHTTP2_CANCEL);
+        // Connexion sans doute morte (coupure sans RST) : la requête suivante repart d'une session neuve
+        if (session === s) session = null;
+        s.destroy();
+      });
       req.on("response", (h) => {
         status = Number(h[":status"]);
         id = h["apns-id"] as string | undefined;
       });
       req.on("data", (c) => (data += c));
       req.on("end", () => resolve({ status, body: data, id }));
+      req.on("close", () => resolve({ status, body: data || JSON.stringify({ reason: "APNS_STREAM_CLOSED" }), id }));
       req.on("error", (e) => resolve({ status: 0, body: JSON.stringify({ reason: e.message }) }));
       req.end(body);
     });

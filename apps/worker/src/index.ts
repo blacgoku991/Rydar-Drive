@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { accountDeletionStats, processAccountDeletions, supabaseApi } from "./account-deletions";
-import { config, log } from "./config";
+import { config, dbTlsHint, log } from "./config";
 import { listen, pool } from "./db";
 import { selectFlightProvider, withCache } from "./flights";
 import { flightJob, type QueryFn } from "./flights/job";
@@ -56,7 +56,7 @@ async function dispatchTick() {
     if (r.waves || r.escalated) run(processNotifications);
   } catch (error) {
     state.errors++;
-    log("error", "dispatch tick failed", { error: (error as Error).message });
+    log("error", "dispatch tick failed", { error: (error as Error).message, ...dbTlsHint(error) });
   }
 }
 
@@ -200,6 +200,7 @@ function within(p: Promise<unknown>, ms: number): Promise<boolean> {
 async function main() {
   log("info", "rydar worker starting", {
     tickMs: config.dispatchTickMs,
+    dbSsl: config.databaseSslMode || "url",
     dryRun: config.dryRun,
     fcm: !!config.fcmServiceAccount,
     apns: !!config.apns,

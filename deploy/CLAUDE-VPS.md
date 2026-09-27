@@ -95,7 +95,8 @@ Termine par un résumé pour le propriétaire : ce qui fonctionne (adresses), ce
 ## Pièges connus
 
 - Supabase : le rôle `postgres` n'est pas super-utilisateur ; les migrations en tiennent compte. Une erreur « must be owner of … » est à signaler, pas à contourner.
-- `DATABASE_URL` : Session pooler, **port 5432** (le worker écoute `LISTEN/NOTIFY`, impossible avec le port 6543 du mode transaction). La connexion directe `db.xxx.supabase.co` est en IPv6, injoignable depuis Docker. `?sslmode=no-verify` est obligatoire. `configure.sh` gère tout cela.
+- `DATABASE_URL` : Session pooler, **port 5432** (le worker écoute `LISTEN/NOTIFY`, impossible avec le port 6543 du mode transaction). La connexion directe `db.xxx.supabase.co` est en IPv6, injoignable depuis Docker. `configure.sh` gère tout cela.
+- Certificat de la base : le worker et `migrate.sh` le vérifient avec `deploy/supabase-ca.crt` (`DATABASE_SSLMODE=verify-full`, défaut). Si `migrate.sh` affiche « certificat du serveur de la base NON vérifié », rien n'est modifié : suivre le contrôle de `docs/DEPLOYMENT.md` (« Connexion chiffrée à la base ») avec le propriétaire ; le repli `DATABASE_SSLMODE=no-verify` (ancien mode, sans vérification) est sa décision, jamais un réflexe.
 - HTTPS en échec : un enregistrement AAAA qui pointe ailleurs, ou un DNS pas encore propagé. Caddy réessaie tout seul (voir ses journaux).
 - Les variables `NEXT_PUBLIC_*` sont intégrées à la construction du site : après un changement de domaine, d'URL ou de clé publishable, relancer `sudo bash deploy/install.sh`, qui reconstruit.
 - Mini-sites : un certificat n'est délivré que pour une centrale existante (`/api/tls/allowed`). Un sous-domaine inconnu reste sans certificat, c'est voulu.

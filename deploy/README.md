@@ -59,7 +59,7 @@ La propagation prend de quelques minutes à quelques heures. `install.sh` vous p
    - gardez l'API de données (*Data API*) activée, sur le schéma `public`.
 2. Notez :
    - l'URL du projet (`https://xxxx.supabase.co`) et les deux clés d'API, dans *Project Settings → API Keys* : la clé **publishable** (`sb_publishable_…`, ou `anon` dans l'onglet *Legacy*) et la clé **secret** (`sb_secret_…`, ou `service_role`) ;
-   - *Connect → Session pooler* : chaîne de connexion **port 5432** (l'assistant `configure.sh` y insère le mot de passe et ajoute `?sslmode=no-verify`).
+   - *Connect → Session pooler* : chaîne de connexion **port 5432** (l'assistant `configure.sh` y insère le mot de passe). La connexion est chiffrée et le certificat du serveur vérifié avec la racine publique Supabase fournie dans `deploy/supabase-ca.crt` (`DATABASE_SSLMODE=verify-full`) ; contrôle et repli : `docs/DEPLOYMENT.md`, « Connexion chiffrée à la base ».
 3. *Authentication → Sign In / Providers* : désactivez *Allow new users to sign up*. *URL Configuration* : Site URL `https://votre-domaine`, Redirect URLs `https://votre-domaine/auth/callback` et `https://votre-domaine/auth/set-password`. Configurez un SMTP (invitations par e-mail).
 4. *Realtime → Settings* : désactivez *Allow public access*. Rydar n'utilise que des canaux privés, réservés par des règles d'accès à la bonne centrale ou au bon chauffeur.
 

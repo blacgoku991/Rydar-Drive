@@ -50,8 +50,10 @@ export function fcmFailure(token: string, httpStatus: number, err: FcmError): Pu
 }
 
 /** Envoi direct Firebase Cloud Messaging (HTTP v1) pour des jetons FCM natifs (build spécifique, provider « fcm »). */
-export function fcmProvider(sa: ServiceAccount): PushProvider {
+export function fcmProvider(sa: ServiceAccount, opts: { timeoutMs?: number } = {}): PushProvider {
   let cached: { token: string; exp: number } | null = null;
+  /** Délai maximal de chaque requête (réponse comprise) : une requête sans réponse ne bloque plus la file. */
+  const timeoutMs = opts.timeoutMs || 10_000;
 
   async function accessToken() {
     if (cached && cached.exp > Date.now() + 60_000) return cached.token;
@@ -68,6 +70,7 @@ export function fcmProvider(sa: ServiceAccount): PushProvider {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const json = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string };
     if (!res.ok || !json.access_token) throw new Error(`FCM_OAUTH_${json.error ?? res.status}`);
@@ -92,6 +95,7 @@ export function fcmProvider(sa: ServiceAccount): PushProvider {
               method: "POST",
               headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
               body: JSON.stringify({ message: fcmMessage(t.token, payload) }),
+              signal: AbortSignal.timeout(timeoutMs),
             });
           } catch (error) {
             return { token: t.token, ok: false, error: (error as Error).message, retryable: true };

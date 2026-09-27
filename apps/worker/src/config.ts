@@ -4,8 +4,45 @@ function num(name: string, fallback: number) {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
+/** Modes TLS acceptés pour DATABASE_SSLMODE (kit VPS : verify-full par défaut, deploy/docker-compose.yml). */
+export const DATABASE_SSL_MODES = ["verify-full", "no-verify"] as const;
+
+/**
+ * DATABASE_URL avec le mode TLS imposé par DATABASE_SSLMODE (vide : chaîne inchangée) :
+ *  - verify-full : certificat du serveur vérifié (nom compris) avec la racine DATABASE_CA_FILE (sslrootcert) —
+ *    racine publique Supabase versionnée dans deploy/supabase-ca.crt ;
+ *  - no-verify : ancien mode, chiffré SANS vérification (repli seulement, docs/DEPLOYMENT.md).
+ * Les sslmode / sslrootcert de la chaîne sont remplacés (le sslmode de l'URL l'emporte sur toute option `ssl` de pg).
+ */
+export function withSslMode(url: string, mode?: string, caFile?: string): string {
+  const m = (mode || "").trim();
+  if (!m) return url;
+  if (!(DATABASE_SSL_MODES as readonly string[]).includes(m)) {
+    throw new Error(`DATABASE_SSLMODE invalide : « ${m} » (attendu : ${DATABASE_SSL_MODES.join(" ou ")})`);
+  }
+  const q = url.indexOf("?");
+  const params = (q < 0 ? "" : url.slice(q + 1)).split("&").filter((p) => p && !/^(sslmode|sslrootcert)=/i.test(p));
+  params.push(`sslmode=${m}`);
+  if (m === "verify-full" && caFile) params.push(`sslrootcert=${encodeURIComponent(caFile)}`);
+  return `${q < 0 ? url : url.slice(0, q)}?${params.join("&")}`;
+}
+
+/** Échec de la vérification du certificat de la base : indication de contrôle / repli ajoutée au journal. */
+export function dbTlsHint(error: unknown): { hint?: string } {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /certificate|self[- ]signed|altnames|sslrootcert|supabase-ca/i.test(msg)
+    ? { hint: "certificat de la base non vérifié (DATABASE_SSLMODE=verify-full) : contrôle et repli dans docs/DEPLOYMENT.md, « Connexion chiffrée à la base »" }
+    : {};
+}
+
 export const config = {
-  databaseUrl: process.env.DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/rydar",
+  databaseUrl: withSslMode(
+    process.env.DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/rydar",
+    process.env.DATABASE_SSLMODE,
+    process.env.DATABASE_CA_FILE,
+  ),
+  /** Mode TLS imposé (journal de démarrage) ; vide = celui de DATABASE_URL. */
+  databaseSslMode: (process.env.DATABASE_SSLMODE || "").trim(),
   dispatchTickMs: num("DISPATCH_TICK_MS", 2000),
   notificationPollMs: num("NOTIFICATION_POLL_MS", 3000),
   housekeepingMs: num("HOUSEKEEPING_MS", 5 * 60_000),

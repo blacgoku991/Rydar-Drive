@@ -48,8 +48,10 @@ if [ ! -f "$ENV_FILE" ]; then
     # Dans un terminal : questions posées directement (clés saisies sans affichage)
     bash "$ROOT/deploy/configure.sh"
   else
-    cp "$ROOT/deploy/.env.example" "$ENV_FILE"
-    sed -i "s/^API_KEY_PEPPER=.*/API_KEY_PEPPER=$(openssl rand -hex 32)/" "$ENV_FILE"
+    # Fichier créé lisible par root seul (umask) ; poivre transmis à awk par l'environnement, jamais en ligne de commande
+    umask 077
+    PEPPER="$(openssl rand -hex 32)" awk 'index($0, "API_KEY_PEPPER=") == 1 { print "API_KEY_PEPPER=" ENVIRON["PEPPER"]; next } { print }' \
+      "$ROOT/deploy/.env.example" > "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     echo
     echo "✓ Fichier $ENV_FILE créé."
@@ -93,9 +95,24 @@ docker image prune -f >/dev/null
 docker compose ps
 
 echo "→ vérification"
+# Worker (dispatch, notifications) : sain dès que le tick du dispatch passe, donc connecté à la base
+worker_ok=0
+for _ in $(seq 1 30); do
+  if docker compose exec -T worker wget -qO- http://127.0.0.1:8080 >/dev/null 2>&1; then worker_ok=1; break; fi
+  sleep 2
+done
+if [ "$worker_ok" = 0 ]; then
+  echo "✗ le worker (dispatch, notifications) ne répond pas : cd $ROOT/deploy && docker compose logs --tail 100 worker"
+  worker_logs="$(docker compose logs --tail 100 worker 2>&1 || true)"
+  if grep -qiE 'certificate|self[- ]signed|altnames|supabase-ca' <<<"$worker_logs"; then
+    echo "  Certificat de la base refusé : contrôle et repli (DATABASE_SSLMODE=no-verify) dans docs/DEPLOYMENT.md,"
+    echo "  « Connexion chiffrée à la base »."
+  fi
+fi
 for _ in $(seq 1 30); do
   if docker compose exec -T web wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
     echo "✓ Rydar Drive tourne : https://$DOMAIN  (santé : https://$DOMAIN/api/health)"
+    [ "$worker_ok" = 1 ] || exit 1
     exit 0
   fi
   sleep 2

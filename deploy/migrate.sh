@@ -12,19 +12,36 @@ ENV_FILE="$ROOT/deploy/.env"
 [ -f "$ENV_FILE" ] || { echo "✗ $ENV_FILE introuvable (lancez d'abord deploy/install.sh)"; exit 1; }
 DATABASE_URL="$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
 [ -n "$DATABASE_URL" ] || { echo "✗ DATABASE_URL manquant dans $ENV_FILE"; exit 1; }
-# libpq ne connaît pas « no-verify » (option du pilote Node) : chiffrement sans vérification = require
-PGURL="${DATABASE_URL/sslmode=no-verify/sslmode=require}"
+# Certificat du serveur vérifié (verify-full, racine deploy/supabase-ca.crt) sauf repli DATABASE_SSLMODE=no-verify
+SSLMODE="$(grep -E '^DATABASE_SSLMODE=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+SSLMODE="${SSLMODE//[[:space:]\"\']/}"
+SSLMODE="${SSLMODE:-verify-full}"
+# shellcheck source=pg-url.sh
+. "$ROOT/deploy/pg-url.sh"
+pg_prepare "$DATABASE_URL" "$SSLMODE" || exit 1
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-# psql 17 : compatible avec les bases Supabase en Postgres 15 et 17
+# psql 17 : compatible avec les bases Supabase en Postgres 15 et 17. Mot de passe par l'environnement (PGPASSWORD),
+# jamais dans une ligne de commande.
 psql() {
-  docker run --rm -i --network host -e PGURL="$PGURL" \
+  docker run --rm -i --network host -e PGURL -e PGPASSWORD "${PG_MOUNT[@]}" \
     -v "$ROOT/supabase/migrations:/migrations:ro" postgres:17-alpine \
     sh -c 'psql "$PGURL" -X -v ON_ERROR_STOP=1 -q "$@"' psql "$@"
 }
 
-if ! psql -tAc "select 1" >/dev/null; then
-  echo "✗ connexion à la base impossible : vérifiez DATABASE_URL dans $ENV_FILE"
-  echo "  (Supabase → Connect → Session pooler, port 5432, mot de passe de la base, terminée par ?sslmode=no-verify)"
+if ! psql -tAc "select 1" >/dev/null 2>"$TMP/err"; then
+  cat "$TMP/err"
+  if [ "$SSLMODE" = verify-full ] && pg_tls_error "$TMP/err"; then
+    echo "✗ certificat du serveur de la base NON vérifié avec deploy/supabase-ca.crt (racine Supabase 2021)."
+    echo "  Rien n'a été modifié : ni la base, ni les services déjà en place."
+    echo "  Contrôle : docs/DEPLOYMENT.md, « Connexion chiffrée à la base ». Repli (ancien mode, chiffré SANS"
+    echo "  vérification du certificat) : une seule ligne DATABASE_SSLMODE=no-verify dans $ENV_FILE"
+    echo "  (ou sudo bash deploy/configure.sh), puis relancez : sudo bash deploy/install.sh"
+  else
+    echo "✗ connexion à la base impossible : vérifiez DATABASE_URL dans $ENV_FILE"
+    echo "  (Supabase → Connect → Session pooler, port 5432, mot de passe de la base)"
+  fi
   exit 1
 fi
 
