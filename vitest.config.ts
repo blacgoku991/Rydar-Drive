@@ -11,6 +11,7 @@ export default defineConfig({
             "apps/web/lib/**/*.test.ts",
             "apps/web/components/**/*.test.ts",
             "apps/worker/src/**/*.test.ts",
+            "apps/driver/src/**/*.test.ts",
           ],
           environment: "node",
         },
