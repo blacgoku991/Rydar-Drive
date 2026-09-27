@@ -164,6 +164,17 @@ export async function rideState(rideId: string) {
 }
 
 /**
+ * Délai de la vague en cours écoulé : tick du dispatch (vague suivante, relance ou fin), `times` fois.
+ * Les vagues sont strictes (20260924003200) : une vague par délai, même sans chauffeur.
+ */
+export async function nextWave(rideId: string, times = 1) {
+  for (let i = 0; i < times; i++) {
+    await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [rideId]);
+    await sql("select private.dispatch_tick()");
+  }
+}
+
+/**
  * Insère une course « historique » (statut et horodatages libres) via le mode
  * import du seed : connexion directe + GUC rydar.bypass_ride_rules, sans JWT.
  */

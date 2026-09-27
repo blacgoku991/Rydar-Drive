@@ -76,6 +76,7 @@ export function RideFocus({
   driver,
   drivers,
   offers,
+  firstPassWaves = 4,
   approachS,
   liveEvents,
   alert,
@@ -89,6 +90,7 @@ export function RideFocus({
   driver?: LiveDriver;
   drivers: LiveDriver[];
   offers: number;
+  firstPassWaves?: number;
   approachS: number | null;
   liveEvents: Event[];
   alert?: LiveAlert;
@@ -162,7 +164,7 @@ export function RideFocus({
           <p className="mt-1 text-[12.5px] text-fg-muted">
             {SEARCHING.has(status)
               ? ride.type === "instant" || ride.dispatch_mode === "geo"
-                ? `Vague ${ride.dispatch_wave || 1} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])} · ${offers} chauffeur${offers > 1 ? "s" : ""} sollicité${offers > 1 ? "s" : ""}`
+                ? `${(ride.dispatch_wave ?? 0) > firstPassWaves ? "Relance" : `Vague ${ride.dispatch_wave || 1}`} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])} · ${offers} chauffeur${offers > 1 ? "s" : ""} sollicité${offers > 1 ? "s" : ""}`
                 : `Proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`
               : eta != null
                 ? `Arrivée au départ dans ~${formatDuration(eta)} (${formatTime(new Date(Date.now() + eta * 1000))})`

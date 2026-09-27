@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import {
   as, CHAMPS_ELYSEES, createDriver, createMember, createOrg, createRideAsOwner, expectPgError, inMinutes, north, pool,
-  rideState, sql, type Driver, type Org,
+  nextWave, rideState, sql, type Driver, type Org,
 } from "./helpers";
 
 afterAll(async () => {
@@ -66,7 +66,12 @@ async function addHistory(org: Org, d: Driver, point: [number, number], secondsA
 /** Course instantanée acceptée par le chauffeur (offre GPS). */
 async function acceptedInstant(org: Org, d: Driver) {
   const ride = await createRideAsOwner(org);
-  const offer = (await rideState(ride.id)).offers.find((o) => o.driver_id === d.id);
+  // Vagues strictes : une vague par délai jusqu'à celle qui couvre le chauffeur
+  let offer = (await rideState(ride.id)).offers.find((o) => o.driver_id === d.id);
+  for (let w = 1; !offer && w < 4; w++) {
+    await nextWave(ride.id);
+    offer = (await rideState(ride.id)).offers.find((o) => o.driver_id === d.id);
+  }
   expect(offer).toBeDefined();
   const res = await rpc(d.userId, "accept_ride_offer", [offer.id]);
   expect(res.code).toBe("ACCEPTED");

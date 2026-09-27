@@ -11,6 +11,8 @@ export const config = {
   housekeepingMs: num("HOUSEKEEPING_MS", 5 * 60_000),
   /** Surveillance des courses en cours (retard, immobile, GPS muet, pas démarrée) : private.watch_rides(). */
   watchRidesMs: num("WATCH_RIDES_MS", 30_000),
+  /** Chauffeurs en ligne dont la position n'arrive plus (5 min) : push au chauffeur, private.watch_driver_gps(). */
+  watchDriverGpsMs: num("WATCH_DRIVER_GPS_MS", 60_000),
   /** Échéances des documents chauffeur (au démarrage puis toutes les 6 h) : private.document_reminders(). */
   documentRemindersMs: num("DOCUMENT_REMINDERS_MS", 6 * 3600_000),
   /** Mode centrale : relance des commissions en retard (au démarrage puis toutes les 15 min) : private.settlement_reminders(). */

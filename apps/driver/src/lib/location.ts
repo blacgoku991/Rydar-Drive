@@ -13,6 +13,7 @@ export const MAX_ACCURACY_M = 1500;
 let lastSent = 0;
 let lastPoint: { lat: number; lng: number } | null = null;
 let lastAccuracy: number | null = null;
+let lastLocation: Location.LocationObject | null = null;
 let intervalS = 10;
 
 function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
@@ -24,6 +25,7 @@ function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: n
 }
 
 export async function pushLocation(loc: Location.LocationObject, force = false) {
+  lastLocation = loc;
   const point = { lat: loc.coords.latitude, lng: loc.coords.longitude };
   const accuracy = loc.coords.accuracy ?? null;
   const elapsed = (Date.now() - lastSent) / 1000;
@@ -56,6 +58,35 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
 const isWeb = Platform.OS === "web";
 let foregroundWatch: Location.LocationSubscription | null = null;
 
+/**
+ * Battement : une position part au moins toutes les minutes tant que le chauffeur est en ligne, même
+ * téléphone immobile et verrouillé (iOS ne livre plus de point quand rien ne bouge). Sans cela le serveur
+ * le croit injoignable (alerte « position non reçue » à 5 min, hors ligne à 30 min).
+ */
+const HEARTBEAT_MS = 60_000;
+let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+async function beat() {
+  if (Date.now() - lastSent < HEARTBEAT_MS - 5_000) return;
+  // Point récent si le système en donne un vite ; sinon le dernier connu (téléphone à l'arrêt)
+  const fresh = await Promise.race([
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
+  ]);
+  const loc = fresh ?? lastLocation ?? (await Location.getLastKnownPositionAsync().catch(() => null));
+  if (loc) await pushLocation(loc, true);
+}
+
+function startHeartbeat() {
+  if (heartbeat || isWeb) return;
+  heartbeat = setInterval(() => void beat(), HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeat) clearInterval(heartbeat);
+  heartbeat = null;
+}
+
 // Tâche d'arrière-plan : définie au chargement du module, importé en tête de index.ts
 // (avant le routeur) pour exister aussi lors d'une relance sans interface.
 if (!isWeb) {
@@ -63,6 +94,8 @@ if (!isWeb) {
     if (error) return;
     const { locations } = (data ?? {}) as { locations?: Location.LocationObject[] };
     const last = locations?.[locations.length - 1];
+    // Relance sans interface (iOS : déplacement important, app fermée par le système) : battement aussi
+    startHeartbeat();
     if (last) await pushLocation(last);
   });
 }
@@ -170,6 +203,7 @@ export async function startTracking(): Promise<TrackingResult> {
     }
     foregroundWatch?.remove();
     foregroundWatch = null;
+    startHeartbeat();
     return { firstAccuracy, background: true };
   } catch (e) {
     // Tâche refusée (services de localisation, configuration native) : repli premier plan
@@ -183,12 +217,31 @@ export async function startTracking(): Promise<TrackingResult> {
 }
 
 export async function stopTracking() {
+  stopHeartbeat();
   foregroundWatch?.remove();
   foregroundWatch = null;
   if (isWeb) return;
   if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false)) {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK);
   }
+}
+
+/**
+ * Chauffeur EN LIGNE qui revient dans l'app (ou alerte « position non reçue ») : suivi relancé s'il a été
+ * arrêté (système, économie de batterie), et position envoyée tout de suite.
+ */
+export async function ensureTracking() {
+  if (isWeb) return;
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => true);
+  if (!started) {
+    await startTracking().catch(() => null);
+    return;
+  }
+  startHeartbeat();
+  if (Date.now() - lastSent < 20_000) return;
+  const cached = await Location.getLastKnownPositionAsync({ maxAge: 60_000 }).catch(() => null);
+  if (cached) void pushLocation(cached, true);
+  else void beat();
 }
 
 /**

@@ -2,9 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   DRIVER_FLOW, FLEET_REPORT_META, RIDE_STATUS_META, formatPrice, formatRideDate, haversine, shortAddress, type Ride, type RideStatus,
 } from "@rydar/shared";
+import * as Battery from "expo-battery";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { frTypo, SettlementBanner } from "@/components/centrale";
 import { ReportCard, ReportSheet } from "@/components/fleet-report";
@@ -20,6 +21,36 @@ import { colors, control, mono, overlay, presenceColor, radius, space, type, wei
 
 type IconName = keyof typeof Ionicons.glyphMap;
 const NBSP = " ";
+
+/** Conseils « rester joignable » : une fois par lancement de l'app. */
+let reachHintShown = false;
+
+/**
+ * Chauffeur passé EN LIGNE : ce qui l'empêcherait de recevoir les courses téléphone verrouillé ou dans une autre
+ * app — position « Pendant l'utilisation » seulement (iPhone : plus rien si l'app est fermée), économie de
+ * batterie Android (le système coupe l'app en arrière-plan).
+ */
+async function reachabilityHint(foregroundOnly: boolean) {
+  if (reachHintShown || Platform.OS === "web") return;
+  const open = { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) };
+  if (foregroundOnly) {
+    reachHintShown = true;
+    Alert.alert(
+      "Restez joignable",
+      frTypo(`Pour recevoir les courses même application fermée, autorisez la position «${NBSP}Toujours${NBSP}» : Réglages → Rydar Drive → Position.`),
+      [{ text: "Plus tard", style: "cancel" }, open],
+    );
+    return;
+  }
+  if (Platform.OS === "android" && (await Battery.isBatteryOptimizationEnabledAsync().catch(() => false))) {
+    reachHintShown = true;
+    Alert.alert(
+      "Restez joignable",
+      frTypo(`Pour recevoir les courses écran éteint ou dans une autre application, réglez la batterie de Rydar Drive sur «${NBSP}Non restreinte${NBSP}» : Réglages → Batterie.`),
+      [{ text: "Plus tard", style: "cancel" }, open],
+    );
+  }
+}
 /** Écart entre les boutons posés sur la carte et le panneau du bas. */
 const GAP = space.md;
 
@@ -134,9 +165,7 @@ export default function Home() {
       return;
     }
     if (!res.ok) Alert.alert("Action impossible", frTypo(res.message ?? "Réessayez."));
-    else if (res.code === "foreground-only") {
-      flash.show(`Autorisez «${NBSP}Toujours${NBSP}» la localisation pour rester en ligne application fermée.`, "info", "location-outline");
-    }
+    else if (!online) void reachabilityHint(res.code === "foreground-only");
   }
 
   const measure = useCallback(

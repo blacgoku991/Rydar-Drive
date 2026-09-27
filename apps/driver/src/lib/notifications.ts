@@ -6,12 +6,19 @@ import { api } from "./api";
 import { isChatNotificationMuted } from "./chat-session";
 import { appConfig } from "./config";
 import { installationId } from "./device";
+import { ensureTracking } from "./location";
 
 // Affichage des notifications même application ouverte (le modal d'offre prend ensuite le relais),
 // sauf un message ou un signalement qui s'affiche déjà dans le fil ouvert de l'écran Messages.
 if (Platform.OS !== "web") Notifications.setNotificationHandler({
   handleNotification: async (n) => {
-    const muted = isChatNotificationMuted((n.request.content.data as Record<string, unknown> | undefined)?.type);
+    const type = (n.request.content.data as Record<string, unknown> | undefined)?.type;
+    // « Position non reçue » application ouverte : le suivi est relancé, rien à afficher
+    if (type === "gps_lost") {
+      void ensureTracking();
+      return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
+    }
+    const muted = isChatNotificationMuted(type);
     return { shouldShowBanner: !muted, shouldShowList: !muted, shouldPlaySound: !muted, shouldSetBadge: false };
   },
 });

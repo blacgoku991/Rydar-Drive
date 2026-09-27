@@ -24,7 +24,7 @@
   2. La **création manuelle** dans le dashboard (« Nouvelle course » : téléphone, hôtel, conciergerie…).
 
   En option, un **mini-site de réservation** aux couleurs de l'organisation : `slug.rydar.app` ou domaine personnalisé.
-- **Dispatch instantané** : chauffeurs de l'organisation, en ligne, disponibles, de catégorie compatible, à moins de **4 km** (PostGIS `ST_DWithin`). S'il n'y a personne, ou si personne ne répond, le rayon s'élargit par vagues **4 → 8 → 12 → 16 km** (configurable) : les premiers sollicités gardent leur offre. Toutes les offres partent en même temps, avec sonnerie, vibration et bouton ACCEPTER.
+- **Dispatch instantané** : chauffeurs de l'organisation, en ligne, disponibles, de catégorie compatible, à moins de **4 km** (PostGIS `ST_DWithin`). Si personne n'accepte dans le délai (30 s), le rayon s'élargit, une vague par délai : **4 → 8 → 12 → 16 km**, puis relance **4 → 8 km**, enfin alerte « personne n'a pris » au dispatch (configurable) ; les premiers sollicités gardent leur offre. Les offres d'une vague partent en même temps, avec sonnerie, vibration et bouton ACCEPTER, même téléphone verrouillé.
 - **Acceptation atomique** : verrou transactionnel PostgreSQL et index unique partiel. Les autres chauffeurs reçoivent « Course déjà attribuée. ».
 - **Courses planifiées** proposées à toute la flotte (en ligne ou non), avec rappels à 24 h, 3 h, 1 h et 30 min. Sans preneur à H-1, recherche GPS à partir de 4 km.
 - **Alertes du rattacheur** : nouvelle course, attribution, « aucun chauffeur » ou planifiée sans preneur. Chaque alerte arrive avec un son, un toast et une notification du navigateur, et un compteur s'affiche dans l'onglet.
@@ -131,7 +131,7 @@ pnpm typecheck    # shared, web, worker, app chauffeur
 Les tests `tests/db` prouvent notamment :
 
 - **isolation** : le rattacheur A ne lit ni ne modifie rien de B. Changer `organization_id` est refusé en 42501, soit 403 côté API.
-- **dispatch** : seuls les chauffeurs éligibles à moins de 4 km reçoivent l'offre, les vagues s'élargissent, `NO_DRIVER_FOUND` à l'échéance.
+- **dispatch** : seuls les chauffeurs éligibles à moins de 4 km reçoivent l'offre, une vague par délai, relance, `NO_DRIVER_FOUND` en fin de séquence.
 - **concurrence** : 10 chauffeurs acceptent en même temps et **un seul** obtient la course.
 - **limites des offres, rôles, audit, file de notifications, indicateurs**.
 

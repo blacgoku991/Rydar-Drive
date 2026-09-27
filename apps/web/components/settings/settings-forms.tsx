@@ -1,6 +1,6 @@
 "use client";
 import {
-  PAYMENT_METHOD_LABELS, PAYMENT_METHODS, VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, formatDistance, formatPrice,
+  DEFAULT_RETRY_RADII_M, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, dispatchPlan, VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, formatDistance, formatPrice,
   type OrgSettings, type VehicleCategory,
 } from "@rydar/shared";
 import { BellRing, Percent, Plane, Plus, Trash2, UserPlus } from "lucide-react";
@@ -91,8 +91,48 @@ function RadiiPreview({ radii }: { radii: number[] }) {
   );
 }
 
-/** Réglages ajoutés par les migrations 002100 / 002200 / 002400 : valeurs par défaut si la ligne est ancienne. */
+/** Liste de rayons (km) éditable : premier passage (1 à 8) ou relance (0 à 4). */
+function RadiiEditor({ value, onChange, readOnly, min, max, addLabel }: {
+  value: number[];
+  onChange: (v: number[]) => void;
+  readOnly: boolean;
+  min: number;
+  max: number;
+  addLabel: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {value.map((m, i) => (
+        <div key={i} className="flex items-center gap-1">
+          <Input
+            type="number"
+            step="0.5"
+            min={0.5}
+            value={m / 1000}
+            disabled={readOnly}
+            onChange={(e) => onChange(value.map((x, j) => (j === i ? Math.round(Number(e.target.value) * 1000) : x)))}
+            className="num h-9 w-20 text-center"
+          />
+          {!readOnly && value.length > min && (
+            <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-red" aria-label="Retirer">
+              <Trash2 className="size-3.5" />
+            </button>
+          )}
+          {i < value.length - 1 && <span className="px-1 text-fg-subtle">→</span>}
+        </div>
+      ))}
+      {!readOnly && value.length < max && (
+        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...value, Math.min(100000, (value.at(-1) ?? 0) + 4000)])}>
+          <Plus /> {addLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** Réglages ajoutés par les migrations 002100 / 002200 / 002400 / 003200 : valeurs par défaut si la ligne est ancienne. */
 const SETTINGS_DEFAULTS = {
+  dispatch_retry_radii_m: [...DEFAULT_RETRY_RADII_M],
   flight_tracking_enabled: true,
   flight_pickup_buffer_minutes: 15,
   late_alert_tolerance_minutes: 5,
@@ -126,6 +166,9 @@ function SwitchRow({ title, hint, checked, onChange, disabled }: { title: string
   );
 }
 
+/** 90 → « 1 min 30 », 45 → « 45 s ». */
+const formatWaveTime = (s: number) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min${s % 60 ? ` ${String(s % 60).padStart(2, "0")}` : ""}`);
+
 const num = (v: string) => (v.trim() === "" ? Number.NaN : Number(v.replace(",", ".")));
 
 export function DispatchSettingsForm({
@@ -145,7 +188,7 @@ export function DispatchSettingsForm({
   const [s, setS] = useState<OrgSettings>(initial);
   const [commission, setCommission] = useState(initial.driver_commission_percent == null ? "" : String(initial.driver_commission_percent).replace(".", ","));
   const set = <K extends keyof OrgSettings>(k: K, v: OrgSettings[K]) => setS((cur) => ({ ...cur, [k]: v }));
-  const radiiKm = s.dispatch_radii_m.map((m) => m / 1000);
+  const plan = dispatchPlan(s.dispatch_radii_m, s.dispatch_retry_radii_m);
   const dirty = JSON.stringify(s) !== JSON.stringify(baseline);
   const pct = s.driver_commission_percent;
   const sample = 5000;
@@ -178,41 +221,19 @@ export function DispatchSettingsForm({
           </label>
 
           <div>
-            <p className="mb-2 text-[12.5px] font-medium text-fg-muted">Rayons de recherche (km), par vague</p>
-            <div className="flex flex-wrap items-center gap-2">
-              {radiiKm.map((km, i) => (
-                <div key={i} className="flex items-center gap-1">
-                  <Input
-                    type="number"
-                    step="0.5"
-                    min={0.5}
-                    value={km}
-                    disabled={readOnly}
-                    onChange={(e) => set("dispatch_radii_m", s.dispatch_radii_m.map((m, j) => (j === i ? Math.round(Number(e.target.value) * 1000) : m)))}
-                    className="num h-9 w-20 text-center"
-                  />
-                  {!readOnly && s.dispatch_radii_m.length > 1 && (
-                    <button type="button" onClick={() => set("dispatch_radii_m", s.dispatch_radii_m.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-red" aria-label="Retirer">
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  )}
-                  {i < radiiKm.length - 1 && <span className="px-1 text-fg-subtle">→</span>}
-                </div>
-              ))}
-              {!readOnly && s.dispatch_radii_m.length < 8 && (
-                <Button type="button" variant="outline" size="sm" onClick={() => set("dispatch_radii_m", [...s.dispatch_radii_m, Math.min(100000, (s.dispatch_radii_m.at(-1) ?? 0) + 4000)])}>
-                  <Plus /> Vague
-                </Button>
-              )}
-            </div>
+            <p className="mb-2 text-[12.5px] font-medium text-fg-muted">Rayons de recherche (km), une vague par délai</p>
+            <RadiiEditor value={s.dispatch_radii_m} onChange={(v) => set("dispatch_radii_m", v)} readOnly={readOnly} min={1} max={8} addLabel="Vague" />
+          </div>
+
+          <div>
+            <p className="mb-1 text-[12.5px] font-medium text-fg-muted">Relance si personne n&apos;a accepté (km)</p>
+            <p className="mb-2 text-[12px] text-fg-subtle">Les chauffeurs restés sans réponse sont sollicités de nouveau. Sans relance : fin de la recherche après le dernier rayon.</p>
+            <RadiiEditor value={s.dispatch_retry_radii_m} onChange={(v) => set("dispatch_retry_radii_m", v)} readOnly={readOnly} min={0} max={4} addLabel="Relance" />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Délai de réponse par vague (s)" hint="Au-delà, la vague suivante élargit le rayon.">
+            <Field label="Délai de réponse par vague (s)" hint="Chaque vague dure ce délai, même sans chauffeur ; ensuite la suivante élargit le rayon.">
               <Input type="number" min={10} max={600} value={s.offer_timeout_seconds} disabled={readOnly} onChange={(e) => set("offer_timeout_seconds", Number(e.target.value))} className="num" />
-            </Field>
-            <Field label="Durée maximale de recherche (min)" hint="Ensuite : statut « Sans chauffeur » et alerte.">
-              <Input type="number" min={1} max={120} value={Math.round(s.max_search_seconds / 60)} disabled={readOnly} onChange={(e) => set("max_search_seconds", Number(e.target.value) * 60)} className="num" />
             </Field>
             <Field label="Course instantanée si départ dans moins de (min)">
               <Input type="number" min={0} max={720} value={s.instant_threshold_minutes} disabled={readOnly} onChange={(e) => set("instant_threshold_minutes", Number(e.target.value))} className="num" />
@@ -223,7 +244,7 @@ export function DispatchSettingsForm({
             <Field label="Chauffeurs notifiés max. par vague">
               <Input type="number" min={1} max={500} value={s.max_offers_per_wave} disabled={readOnly} onChange={(e) => set("max_offers_per_wave", Number(e.target.value))} className="num" />
             </Field>
-            <Field label="Position GPS considérée fraîche (s)">
+            <Field label="Position GPS récente (s)" hint="Au-delà, signalée comme ancienne. Un chauffeur en ligne reste sollicité (hors ligne après 30 min sans position).">
               <Input type="number" min={30} max={3600} value={s.location_max_age_seconds} disabled={readOnly} onChange={(e) => set("location_max_age_seconds", Number(e.target.value))} className="num" />
             </Field>
           </div>
@@ -406,15 +427,15 @@ export function DispatchSettingsForm({
         <CardBody className="space-y-4">
           <RadiiPreview radii={s.dispatch_radii_m} />
           <ol className="space-y-1.5 text-[12.5px] text-fg-muted">
-            {s.dispatch_radii_m.map((r, i) => (
-              <li key={i} className="flex justify-between">
-                <span>Vague {i + 1} · rayon {formatDistance(r)}</span>
-                <span className="num text-fg-subtle">T+{i * s.offer_timeout_seconds} s</span>
+            {plan.waves.map((r, i) => (
+              <li key={i} className={cn("flex justify-between", i === plan.first.length && "border-t border-line pt-1.5")}>
+                <span>{i < plan.first.length ? `Vague ${i + 1}` : "Relance"} · rayon {formatDistance(r)}</span>
+                <span className="num text-fg-subtle">T+{formatWaveTime(i * s.offer_timeout_seconds)}</span>
               </li>
             ))}
-            <li className="flex justify-between border-t border-line pt-1.5">
-              <span>Puis nouvelles tentatives</span>
-              <span className="num text-fg-subtle">≤ {Math.round(s.max_search_seconds / 60)} min</span>
+            <li className="flex justify-between border-t border-line pt-1.5 text-fg">
+              <span>Personne n&apos;a accepté : alerte au dispatch</span>
+              <span className="num text-fg-subtle">T+{formatWaveTime(plan.waves.length * s.offer_timeout_seconds)}</span>
             </li>
           </ol>
         </CardBody>

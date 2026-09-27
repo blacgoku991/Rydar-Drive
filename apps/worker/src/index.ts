@@ -56,6 +56,20 @@ async function dispatchTick() {
   }
 }
 
+/** Toutes les minutes : chauffeurs en ligne dont la position n'arrive plus depuis 5 min → push « POSITION NON REÇUE ». */
+const watchDriverGps = single("watchDriverGps", async () => {
+  try {
+    const { rows } = await pool.query<{ r: { gps_lost?: number } }>("select private.watch_driver_gps() as r");
+    const r = rows[0]?.r ?? {};
+    if (r.gps_lost) {
+      log("info", "driver gps lost", r);
+      run(processNotifications);
+    }
+  } catch (error) {
+    log("error", "watch driver gps failed", { error: (error as Error).message });
+  }
+});
+
 async function housekeeping() {
   try {
     const { rows } = await pool.query("select private.housekeeping() as r");
@@ -183,6 +197,7 @@ async function main() {
     setInterval(() => run(checkPushReceipts), RECEIPT_POLL_MS),
     setInterval(() => run(housekeeping), config.housekeepingMs),
     setInterval(() => run(watchRides), config.watchRidesMs),
+    setInterval(() => run(watchDriverGps), config.watchDriverGpsMs),
     setInterval(() => run(documentReminders), config.documentRemindersMs),
     setInterval(() => run(settlementReminders), config.settlementRemindersMs),
     ...(flights ? [setInterval(() => run(flightCheck), config.flights.pollMs)] : []),

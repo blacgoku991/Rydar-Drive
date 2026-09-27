@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  as, CHAMPS_ELYSEES, createDriver, createOrg, createRideAsOwner, north, pool, rideState, sql, type Org,
+  as, CHAMPS_ELYSEES, createDriver, createOrg, createRideAsOwner, nextWave, north, pool, rideState, sql, type Org,
 } from "./helpers";
 
 let A: Org;
@@ -23,7 +23,8 @@ describe("Dispatch instantané (PostGIS)", () => {
     const near2 = await createDriver(org, { firstName: "Near2", at: north(CHAMPS_ELYSEES, 2500) });
     await createDriver(org, { firstName: "Far", at: north(CHAMPS_ELYSEES, 4600) });
     await createDriver(org, { firstName: "Offline", at: north(CHAMPS_ELYSEES, 300), presence: "offline" });
-    await createDriver(org, { firstName: "Stale", at: north(CHAMPS_ELYSEES, 300), locationAgeSeconds: 900 });
+    // Plus aucune position depuis 40 min (au-delà de la fenêtre « en ligne » de 30 min)
+    await createDriver(org, { firstName: "Stale", at: north(CHAMPS_ELYSEES, 300), locationAgeSeconds: 2400 });
     await createDriver(org, { firstName: "Van", at: north(CHAMPS_ELYSEES, 200), category: "van", seats: 7 });
     await createDriver(org, { firstName: "Inactive", at: north(CHAMPS_ELYSEES, 100), status: "inactive" });
     const foreign = await createDriver(other, { firstName: "Foreign", at: north(CHAMPS_ELYSEES, 50) });
@@ -54,16 +55,39 @@ describe("Dispatch instantané (PostGIS)", () => {
     expect(presences.every((p) => p.presence === "offered")).toBe(true);
   });
 
-  it("élargit immédiatement le rayon (4 → 8 km) quand personne n'est proche", async () => {
+  it("chauffeur en ligne, téléphone verrouillé (position de 10 min) : sollicité quand même ; sans position depuis 40 min : non", async () => {
+    const org = await createOrg("Locked phone");
+    const locked = await createDriver(org, { firstName: "Locked", at: north(CHAMPS_ELYSEES, 1200), locationAgeSeconds: 600 });
+    await createDriver(org, { firstName: "Gone", at: north(CHAMPS_ELYSEES, 800), locationAgeSeconds: 2400 });
+    const ride = await createRideAsOwner(org);
+    const { offers } = await rideState(ride.id);
+    expect(offers.map((o) => o.driver_id)).toEqual([locked.id]);
+  });
+
+  it("vague vide : le rayon ne s'élargit qu'une fois le délai écoulé (4 km, puis 8 km)", async () => {
     const org = await createOrg("Waves");
     const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 4300) });
     const ride = await createRideAsOwner(org);
-    const { ride: r, offers, events } = await rideState(ride.id);
-    expect(r.status).toBe("OFFERED");
-    expect(r.dispatch_wave).toBe(2);
-    expect(r.dispatch_radius_m).toBe(8000);
-    expect(offers.map((o) => o.driver_id)).toEqual([d.id]);
-    expect(events.map((e) => e.message)).toContain("0 chauffeur à moins de 4 km");
+    let state = await rideState(ride.id);
+    expect(state.ride.status).toBe("SEARCHING_DRIVER");
+    expect(state.ride.dispatch_wave).toBe(1);
+    expect(state.ride.dispatch_radius_m).toBe(4000);
+    expect(state.offers).toHaveLength(0);
+    const [due] = await sql("select next_dispatch_at > now() + interval '25 seconds' as later from public.rides where id = $1", [ride.id]);
+    expect(due.later).toBe(true);
+    // Délai non écoulé : rien ne bouge
+    await sql("select private.dispatch_tick()");
+    expect((await rideState(ride.id)).ride.dispatch_wave).toBe(1);
+
+    await nextWave(ride.id);
+    state = await rideState(ride.id);
+    expect(state.ride.status).toBe("OFFERED");
+    expect(state.ride.dispatch_wave).toBe(2);
+    expect(state.ride.dispatch_radius_m).toBe(8000);
+    expect(state.offers.map((o) => o.driver_id)).toEqual([d.id]);
+    const messages = state.events.map((e) => e.message);
+    expect(messages).toContain("0 chauffeur à moins de 4 km");
+    expect(messages.indexOf("Personne n'a accepté — rayon élargi à 8 km")).toBeGreaterThan(messages.indexOf("0 chauffeur à moins de 4 km"));
   });
 
   it("diffuse en dernier l'état à jour de la course (pas un « CREATED » périmé)", async () => {
@@ -88,6 +112,11 @@ describe("Dispatch instantané (PostGIS)", () => {
     const org = await createOrg(`Waves ${distance}`);
     const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, distance) });
     const ride = await createRideAsOwner(org);
+    // Une vague par délai : personne n'est sollicité avant la vague qui couvre sa distance
+    for (let w = 1; w < wave; w++) {
+      expect((await rideState(ride.id)).offers).toHaveLength(0);
+      await nextWave(ride.id);
+    }
     const { ride: r, offers } = await rideState(ride.id);
     expect(r.status).toBe("OFFERED");
     expect(r.dispatch_wave).toBe(wave);
@@ -95,15 +124,31 @@ describe("Dispatch instantané (PostGIS)", () => {
     expect(offers.map((o) => [o.driver_id, o.wave, o.radius_m])).toEqual([[d.id, wave, radius]]);
   });
 
-  it("au-delà de 16 km, personne n'est sollicité et la course reste en recherche", async () => {
+  it("personne : 4 → 8 → 12 → 16 km puis relance 4 → 8 km, une vague par délai, enfin NO_DRIVER_FOUND", async () => {
     const org = await createOrg("Too far");
     await createDriver(org, { at: north(CHAMPS_ELYSEES, 17500) });
     const ride = await createRideAsOwner(org);
+    const radii: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const { ride: r } = await rideState(ride.id);
+      expect(r.status).toBe("SEARCHING_DRIVER");
+      expect(r.dispatch_wave).toBe(i + 1);
+      radii.push(r.dispatch_radius_m);
+      await nextWave(ride.id);
+    }
+    expect(radii).toEqual([4000, 8000, 12000, 16000, 4000, 8000]);
     const { ride: r, offers, events } = await rideState(ride.id);
-    expect(r.status).toBe("SEARCHING_DRIVER");
+    expect(r.status).toBe("NO_DRIVER_FOUND");
+    expect(r.no_driver_at).not.toBeNull();
     expect(offers).toHaveLength(0);
     const messages = events.map((e) => e.message);
-    for (const km of [4, 8, 12, 16]) expect(messages).toContain(`0 chauffeur à moins de ${km} km`);
+    [4, 8, 12, 16].forEach((km, i) => expect(messages).toContain(`Recherche GPS — rayon ${km} km (vague ${i + 1})`));
+    expect(messages).toContain("Aucun chauffeur disponible jusqu'à 16 km — relance à 4 km");
+    expect(messages).toContain("Relance — rayon 4 km (vague 5)");
+    expect(messages).toContain("Relance — rayon 8 km (vague 6)");
+    const end = events.find((e) => e.type === "dispatch.no_driver");
+    expect(end?.message).toBe("Personne n'a accepté la course (4 km → 8 km → 12 km → 16 km, relance 4 km → 8 km) — attribuez-la ou relancez");
+    expect(end?.level).toBe("error");
   });
 
   it("respecte catégorie, upgrade et nombre de places", async () => {
@@ -117,8 +162,8 @@ describe("Dispatch instantané (PostGIS)", () => {
     expect((await rideState(r2.id)).offers.map((o) => o.driver_id)).toEqual([van.id]);
   });
 
-  it("tick : l'offre reste ouverte (prolongée), le rayon s'élargit, puis NO_DRIVER_FOUND", async () => {
-    const org = await createOrg("Tick", { settings: { max_search_seconds: 60 } });
+  it("tick : l'offre reste ouverte (prolongée), le rayon s'élargit, puis NO_DRIVER_FOUND après la relance", async () => {
+    const org = await createOrg("Tick");
     const d1 = await createDriver(org, { at: north(CHAMPS_ELYSEES, 1000) });
     const ride = await createRideAsOwner(org);
     let state = await rideState(ride.id);
@@ -141,15 +186,19 @@ describe("Dispatch instantané (PostGIS)", () => {
     const notifs = await sql("select count(*)::int as n from public.notifications where ride_id = $1 and driver_id = $2", [ride.id, d1.id]);
     expect(notifs[0].n).toBe(1);
 
-    await sql(
-      "update public.rides set next_dispatch_at = now() - interval '1 second', dispatch_started_at = now() - interval '2 minutes' where id = $1",
-      [ride.id],
-    );
-    await sql("select private.dispatch_tick()");
+    // 12, 16 km puis relance 4 et 8 km : l'offre encore ouverte n'est pas re-sonnée
+    await nextWave(ride.id, 4);
+    state = await rideState(ride.id);
+    expect(state.ride.dispatch_wave).toBe(6);
+    expect(state.ride.status).toBe("OFFERED");
+    expect(state.events.map((e) => e.message)).toContain("Personne n'a accepté jusqu'à 16 km — relance à 4 km");
+    await nextWave(ride.id);
     state = await rideState(ride.id);
     expect(state.ride.status).toBe("NO_DRIVER_FOUND");
-    expect(state.offers[0].status).toBe("expired");
-    expect(state.events.at(-1)?.level).toBe("error");
+    expect(state.offers.map((o) => [o.status, o.closed_reason])).toEqual([["expired", "timeout"]]);
+    expect(state.events.find((e) => e.type === "dispatch.no_driver")?.level).toBe("error");
+    // Explication : le chauffeur sollicité n'a pas répondu
+    expect(state.events.at(-1)?.message).toMatch(/^1 chauffeur en ligne n'a pas pris la course — Chauffeur\w+ T\. \(1(,0)? km\) : n'a pas répondu à l'offre$/);
     const [p2] = await sql("select presence from public.drivers where id = $1", [d1.id]);
     expect(p2.presence).toBe("available");
   });
@@ -178,27 +227,52 @@ describe("Dispatch instantané (PostGIS)", () => {
     expect(res.r.code).toBe("ACCEPTED");
   });
 
-  it("après 16 km : pas de nouvelle sonnerie pour les mêmes chauffeurs, seulement pour les nouveaux", async () => {
-    const org = await createOrg("NoSpam", { settings: { max_search_seconds: 600 } });
-    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 1000) });
+  it("relance : le chauffeur resté sans réponse est re-sonné à 4 km, pas celui qui a refusé ; un nouveau venu est sollicité", async () => {
+    const org = await createOrg("Relance");
+    const quiet = await createDriver(org, { firstName: "Quiet", at: north(CHAMPS_ELYSEES, 1000) });
+    const no = await createDriver(org, { firstName: "No", at: north(CHAMPS_ELYSEES, 1500) });
     const ride = await createRideAsOwner(org);
-    for (let i = 0; i < 6; i++) {
-      await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [ride.id]);
-      await sql("select private.dispatch_tick()");
-    }
-    const late = await createDriver(org, { firstName: "Late", at: north(CHAMPS_ELYSEES, 9000) });
-    await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [ride.id]);
-    await sql("select private.dispatch_tick()");
-    const counts = await sql(
-      "select driver_id, count(*)::int as n from public.notifications where ride_id = $1 and type = 'ride_offer' group by driver_id",
+    const first = (await rideState(ride.id)).offers;
+    const noOffer = first.find((o) => o.driver_id === no.id);
+    const [dec] = await as({ sub: no.userId }, (q) => q("select public.decline_ride_offer($1) as r", [noOffer.id]));
+    expect(dec.r.ok).toBe(true);
+    // Quiet ne répond pas pendant deux délais : offre « ignorée », pas re-sonnée au premier passage
+    await sql("update public.ride_offers set sent_at = sent_at - interval '10 minutes' where ride_id = $1", [ride.id]);
+    await sql("update public.rides set dispatch_started_at = dispatch_started_at - interval '10 minutes' where id = $1", [ride.id]);
+    await nextWave(ride.id);
+    let state = await rideState(ride.id);
+    expect(state.offers.filter((o) => o.driver_id === quiet.id).map((o) => o.closed_reason)).toEqual(["ignored"]);
+
+    await nextWave(ride.id, 2);
+    const late = await createDriver(org, { firstName: "Late", at: north(CHAMPS_ELYSEES, 3000) });
+    await nextWave(ride.id); // relance 4 km
+    state = await rideState(ride.id);
+    expect(state.ride.dispatch_wave).toBe(5);
+    expect(state.ride.dispatch_radius_m).toBe(4000);
+    const pending = state.offers.filter((o) => o.status === "pending").map((o) => [o.driver_id, o.wave]);
+    expect(pending.sort()).toEqual([[quiet.id, 5], [late.id, 5]].sort());
+    const notifs = await sql(
+      "select driver_id, title from public.notifications where ride_id = $1 and type = 'ride_offer' order by created_at",
       [ride.id],
     );
-    const n = Object.fromEntries(counts.map((c) => [c.driver_id, c.n]));
-    expect(n[d.id]).toBe(1);
-    expect(n[late.id]).toBe(1);
-    const state = await rideState(ride.id);
-    expect(state.ride.status).toBe("OFFERED");
-    expect(state.offers.filter((o) => o.status === "pending")).toHaveLength(2);
+    expect(notifs.filter((x) => x.driver_id === quiet.id).map((x) => x.title)).toEqual(["NOUVELLE COURSE", "COURSE TOUJOURS DISPONIBLE"]);
+    expect(notifs.filter((x) => x.driver_id === late.id).map((x) => x.title)).toEqual(["NOUVELLE COURSE"]);
+    expect(notifs.filter((x) => x.driver_id === no.id)).toHaveLength(1);
+
+    const offer = state.offers.find((o) => o.driver_id === quiet.id && o.status === "pending");
+    const [res] = await as({ sub: quiet.userId }, (q) => q("select public.accept_ride_offer($1) as r", [offer.id]));
+    expect(res.r.code).toBe("ACCEPTED");
+  });
+
+  it("relance réglable : sans relance, fin de la recherche après 16 km", async () => {
+    const org = await createOrg("No relance", { settings: { dispatch_retry_radii_m: [] } });
+    const ride = await createRideAsOwner(org);
+    await nextWave(ride.id, 4);
+    const { ride: r, events } = await rideState(ride.id);
+    expect(r.status).toBe("NO_DRIVER_FOUND");
+    expect(events.find((e) => e.type === "dispatch.no_driver")?.message).toBe(
+      "Personne n'a accepté la course (4 km → 8 km → 12 km → 16 km) — attribuez-la ou relancez",
+    );
   });
 
   it("tick : l'offre d'un chauffeur parti sur une autre course est fermée, pas prolongée", async () => {
@@ -221,8 +295,13 @@ describe("Dispatch instantané (PostGIS)", () => {
     await sql("set statement_timeout = '5s'");
     try {
       const ride = await createRideAsOwner(org);
-      const { ride: r } = await rideState(ride.id);
+      expect((await rideState(ride.id)).ride.dispatch_radius_m).toBe(4000);
+      await nextWave(ride.id);
+      const { ride: r, offers } = await rideState(ride.id);
       expect(r.dispatch_radius_m).toBe(8000);
+      expect(offers).toHaveLength(1);
+      await nextWave(ride.id, 5);
+      expect((await rideState(ride.id)).ride.status).toBe("NO_DRIVER_FOUND");
     } finally {
       await sql("set statement_timeout = 0");
     }
@@ -259,14 +338,10 @@ describe("Dispatch instantané (PostGIS)", () => {
   });
 
   it("« Relancer » après NO_DRIVER_FOUND repart de 4 km (le chauffeur proche est resollicité)", async () => {
-    const org = await createOrg("Relaunch", { settings: { max_search_seconds: 60 } });
+    const org = await createOrg("Relaunch");
     const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 1000) });
     const ride = await createRideAsOwner(org);
-    await sql(
-      "update public.rides set next_dispatch_at = now() - interval '1 second', dispatch_started_at = now() - interval '2 minutes' where id = $1",
-      [ride.id],
-    );
-    await sql("select private.dispatch_tick()");
+    await nextWave(ride.id, 6);
     expect((await rideState(ride.id)).ride.status).toBe("NO_DRIVER_FOUND");
 
     const [res] = await as({ sub: org.ownerId }, (q) => q("select public.redispatch_ride($1) as r", [ride.id]));
@@ -384,15 +459,19 @@ describe("Recherche sans chauffeur : explication dans la chronologie (migration 
   it("liste les chauffeurs en ligne non sollicités, les plus proches d'abord, avec la raison", async () => {
     const org = await createOrg("Explication");
     await createDriver(org, { firstName: "Berline", at: north(CHAMPS_ELYSEES, 300), category: "standard" });
-    await createDriver(org, { firstName: "Ancien", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 900 });
+    await createDriver(org, { firstName: "Ancien", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 2400 });
     await createDriver(org, { firstName: "Occupe", at: north(CHAMPS_ELYSEES, 700), presence: "on_trip" });
     await createDriver(org, { firstName: "Petit", at: north(CHAMPS_ELYSEES, 900), seats: 2 });
     await createDriver(org, { firstName: "Loin", at: north(CHAMPS_ELYSEES, 30000) });
     await createDriver(org, { firstName: "Horsligne", at: north(CHAMPS_ELYSEES, 100), presence: "offline" });
 
     const ride = await createRideAsOwner(org, { vehicle_category: "business", passengers: 3 });
+    // Explication à la fin du premier passage (personne n'a été sollicité jusqu'à 16 km)
+    expect((await rideState(ride.id)).events.some((e) => e.type === "dispatch.excluded")).toBe(false);
+    await nextWave(ride.id, 4);
     const { ride: r, events } = await rideState(ride.id);
     expect(r.status).toBe("SEARCHING_DRIVER");
+    expect(r.dispatch_wave).toBe(5);
 
     const retry = events.findIndex((e) => e.type === "dispatch.retry");
     const explained = events.findIndex((e) => e.type === "dispatch.excluded");
@@ -401,7 +480,9 @@ describe("Recherche sans chauffeur : explication dans la chronologie (migration 
     const ev = events[explained];
     expect(ev.level).toBe("warning");
     expect(ev.category).toBe("timeline");
-    expect(ev.message).toMatch(/^5 chauffeurs en ligne non sollicités — Berline T\. \(300 m\) : véhicule Berline, course Business · Ancien T\. \(500 m\) : position GPS vieille de 15 min · Occupe T\. \(700 m\) : déjà en course · et 2 autres$/);
+    expect(ev.message).toBe(
+      "5 chauffeurs en ligne n'ont pas pris la course — Berline T. (300 m) : véhicule Berline, course Business · Ancien T. (500 m) : aucune position reçue depuis 40 min (application fermée ?) · Occupe T. (700 m) : déjà en course · et 2 autres",
+    );
     expect(ev.data.counts).toEqual({ category: 1, stale: 1, busy: 1, seats: 1, far: 1 });
     const labels = Object.fromEntries(ev.data.excluded.map((x: { name: string; label: string }) => [x.name, x.label]));
     expect(labels["Petit T."]).toBe("2 places, 3 passagers");
@@ -413,6 +494,7 @@ describe("Recherche sans chauffeur : explication dans la chronologie (migration 
     const empty = await createOrg("Explication vide");
     await createDriver(empty, { firstName: "Dort", at: north(CHAMPS_ELYSEES, 200), presence: "offline" });
     const lonely = await createRideAsOwner(empty);
+    await nextWave(lonely.id, 6);
     expect((await rideState(lonely.id)).events.some((e) => e.type === "dispatch.excluded")).toBe(false);
 
     const busy = await createOrg("Explication proposée");
@@ -421,5 +503,56 @@ describe("Recherche sans chauffeur : explication dans la chronologie (migration 
     const state = await rideState(offered.id);
     expect(state.ride.status).toBe("OFFERED");
     expect(state.events.some((e) => e.type === "dispatch.excluded")).toBe(false);
+  });
+});
+
+describe("Chauffeur joignable h24 : position coupée (migration 003200)", () => {
+  it("plus de position depuis 5 min : push « POSITION NON REÇUE », une seule fois par coupure", async () => {
+    const org = await createOrg("GPS perdu");
+    const lost = await createDriver(org, { firstName: "Perdu", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 400 });
+    const fresh = await createDriver(org, { firstName: "Frais", at: north(CHAMPS_ELYSEES, 600) });
+    // Repassé en ligne il y a 2 min, position d'hier : pas encore d'alerte
+    const back = await createDriver(org, { firstName: "Revenu", at: north(CHAMPS_ELYSEES, 700), locationAgeSeconds: 86_400 });
+    const off = await createDriver(org, { firstName: "Horsligne", at: north(CHAMPS_ELYSEES, 800), locationAgeSeconds: 900, presence: "offline" });
+    const ids = [lost.id, fresh.id, back.id, off.id];
+    await sql("update public.drivers set online_since = now() - interval '1 hour' where id = any($1) and presence <> 'offline'", [ids]);
+    await sql("update public.drivers set online_since = now() - interval '2 minutes' where id = $1", [back.id]);
+
+    await sql("select private.watch_driver_gps()");
+    await sql("select private.watch_driver_gps()");
+    const alerts = async () =>
+      sql("select driver_id, title, priority from public.notifications where type = 'gps_lost' and driver_id = any($1) order by created_at", [ids]);
+    expect(await alerts()).toEqual([{ driver_id: lost.id, title: "POSITION NON REÇUE", priority: "high" }]);
+
+    // La position est revenue après l'alerte, puis s'est de nouveau coupée : nouvelle alerte
+    await sql("update public.drivers set gps_lost_notified_at = now() - interval '20 minutes' where id = $1", [lost.id]);
+    await sql("update public.driver_locations set updated_at = now() - interval '6 minutes' where driver_id = $1", [lost.id]);
+    await sql("select private.watch_driver_gps()");
+    expect(await alerts()).toHaveLength(2);
+  });
+
+  it("sans position depuis 30 min : hors ligne automatique et prévenu ; 20 min : toujours en ligne", async () => {
+    const org = await createOrg("Fantôme");
+    const ghost = await createDriver(org, { firstName: "Fantome", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 1900 });
+    const locked = await createDriver(org, { firstName: "Verrouille", at: north(CHAMPS_ELYSEES, 600), locationAgeSeconds: 1200 });
+    await sql("update public.drivers set online_since = now() - interval '2 hours' where id = any($1)", [[ghost.id, locked.id]]);
+    await sql("select private.housekeeping()");
+    const rows = await sql("select id, presence, online_since from public.drivers where id = any($1)", [[ghost.id, locked.id]]);
+    const byId = Object.fromEntries(rows.map((x) => [x.id, x]));
+    expect(byId[ghost.id].presence).toBe("offline");
+    expect(byId[ghost.id].online_since).toBeNull();
+    expect(byId[locked.id].presence).toBe("available");
+    const notifs = await sql("select driver_id, title from public.notifications where type = 'driver_offline' and driver_id = any($1)", [[ghost.id, locked.id]]);
+    expect(notifs).toEqual([{ driver_id: ghost.id, title: "VOUS ÊTES HORS LIGNE" }]);
+  });
+
+  it("rayons de relance : croissants, 4 au plus, bornés", async () => {
+    const org = await createOrg("Relance réglages");
+    await as({ sub: org.ownerId }, (q) => q("update public.organization_settings set dispatch_retry_radii_m = '{2000,6000}' where organization_id = $1", [org.id]));
+    for (const bad of ["{8000,4000}", "{100}", "{1000,2000,3000,4000,5000}"]) {
+      await expect(
+        as({ sub: org.ownerId }, (q) => q("update public.organization_settings set dispatch_retry_radii_m = $2 where organization_id = $1", [org.id, bad])),
+      ).rejects.toThrow(/organization_settings_retry_radii_check/);
+    }
   });
 });

@@ -291,7 +291,13 @@ export const orgSettingsSchema = z.object({
     .min(1)
     .max(8)
     .refine((a) => a.every((v, i) => i === 0 || v > a[i - 1]!), "Les rayons doivent être croissants"),
+  // Relance après le dernier rayon (migration 003200) : 0 à 4 rayons croissants, [] = pas de relance
+  dispatch_retry_radii_m: z
+    .array(z.number().int().min(500).max(100_000))
+    .max(4)
+    .refine((a) => a.every((v, i) => i === 0 || v > a[i - 1]!), "Les rayons doivent être croissants"),
   offer_timeout_seconds: z.number().int().min(10).max(600),
+  // N'est plus utilisé par le dispatch GPS (la séquence de vagues fixe la fin de la recherche) ; conservé
   max_search_seconds: z.number().int().min(30).max(7200),
   max_offers_per_wave: z.number().int().min(1).max(500),
   instant_threshold_minutes: z.number().int().min(0).max(720),
@@ -308,16 +314,6 @@ export const orgSettingsSchema = z.object({
   stalled_alert_minutes: z.number({ error: "Immobilité : nombre de minutes" }).int("Immobilité : minutes entières").min(2, "Immobilité : 2 min au minimum").max(30, "Immobilité : 30 min au maximum"),
   // Commission de la centrale sur le prix de la course, pour le « net chauffeur » (migration 002400) ; null = aucune
   driver_commission_percent: z.number({ error: "Commission : pourcentage" }).min(0, "Commission : 0 % au minimum").max(100, "Commission : 100 % au maximum").nullable(),
-}).superRefine((v, ctx) => {
-  // La recherche doit laisser à chaque vague (4 → 8 → 12 → 16 km) son délai de réponse complet
-  const min = v.dispatch_radii_m.length * v.offer_timeout_seconds;
-  if (v.max_search_seconds < min) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["max_search_seconds"],
-      message: `Durée de recherche trop courte : au moins ${Math.ceil(min / 60)} min pour ${v.dispatch_radii_m.length} vagues de ${v.offer_timeout_seconds} s.`,
-    });
-  }
 });
 export type OrgSettings = z.output<typeof orgSettingsSchema>;
 

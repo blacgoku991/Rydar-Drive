@@ -30,9 +30,11 @@ Les paramètres de dispatch sont réglables par organisation (`organization_sett
 
 | Paramètre | Défaut | Effet |
 | --- | --- | --- |
-| `dispatch_radii_m` | `{4000, 8000, 12000, 16000}` | Rayons successifs des vagues GPS |
-| `offer_timeout_seconds` | 30 | Durée de vie d'une offre instantanée |
-| `max_search_seconds` | 300 | Au-delà : `NO_DRIVER_FOUND` |
+| `dispatch_radii_m` | `{4000, 8000, 12000, 16000}` | Rayons successifs des vagues GPS (une vague par délai) |
+| `dispatch_retry_radii_m` | `{4000, 8000}` | Relance quand personne n'a accepté après le dernier rayon (`{}` : pas de relance) |
+| `offer_timeout_seconds` | 30 | Durée d'une vague (et d'une offre instantanée) |
+| `max_search_seconds` | 300 | N'est plus utilisé par le dispatch GPS (la séquence de vagues fixe la fin) |
+| `location_max_age_seconds` | 180 | Position « récente » (affichage). Le dispatch garde la dernière position d'un chauffeur en ligne 30 min au moins |
 | `max_offers_per_wave` | 25 | Chauffeurs notifiés au plus par vague |
 | `instant_threshold_minutes` | 45 | Prise en charge ≤ maintenant + 45 min : course **instantanée**, sinon **planifiée** |
 | `scheduled_dispatch_lead_minutes` | 60 | Planifiée encore libre à T-60 min : bascule en recherche GPS |
@@ -66,12 +68,12 @@ Qu'elle vienne de l'API, du dashboard ou du mini-site, une course passe par le t
 
 - ils appartiennent à la **même organisation** ;
 - ils sont `active` et `available` ;
-- leur position a moins de `location_max_age_seconds` et une précision meilleure que 1,5 km ;
+- ils sont EN LIGNE : leur dernière position a moins de 30 min (`private.dispatch_location_window`, ou `location_max_age_seconds` s'il est plus long) et une précision meilleure que 1,5 km. Téléphone verrouillé ou application en arrière-plan, le chauffeur reste sollicité : l'offre part par push et sonne ;
 - leur véhicule est de catégorie compatible et a assez de places ;
 - ils n'ont pas déjà décliné cette course ;
 - ils se trouvent à moins de R mètres : `ST_DWithin(driver_locations.location, rides.pickup_location, R)`.
 
-Ils sont triés par distance, dans la limite de `max_offers_per_wave`. S'il n'y a personne dans 4 km, la vague suivante (8 km, puis 12, puis 16) est lancée **immédiatement**, dans la même transaction.
+Ils sont triés par distance, dans la limite de `max_offers_per_wave`. **Une vague par délai** : même sans personne dans 4 km, la vague dure `offer_timeout_seconds` avant de passer à 8 km (migration 003200).
 
 Pour les chauffeurs retenus, le moteur crée dans une seule transaction :
 
@@ -81,7 +83,11 @@ Pour les chauffeurs retenus, le moteur crée dans une seule transaction :
 
 La course passe à `OFFERED`. La timeline enregistre par exemple : « Recherche GPS — rayon 4 km (vague 1) », « 12 chauffeurs en ligne », « 5 chauffeurs à moins de 4 km », « 5 notifications envoyées ».
 
-Toutes les 2 s, le worker appelle `private.dispatch_tick()`. Cette fonction verrouille les courses dues avec `FOR UPDATE SKIP LOCKED`, ce qui permet de lancer plusieurs workers. Quand une vague reste sans réponse après `offer_timeout_seconds`, le rayon s'élargit et les vagues sont **cumulatives** : les chauffeurs déjà sollicités **gardent leur offre** (prolongée, sans nouvelle sonnerie) et la vague ajoute ceux du rayon suivant. À 8 km, ce sont donc bien tous les chauffeurs à moins de 8 km qui peuvent accepter. Après la dernière vague, seuls les chauffeurs nouvellement disponibles dans la zone sont notifiés. Si la recherche dépasse `max_search_seconds`, les offres sont fermées et la course passe à `NO_DRIVER_FOUND`. « Relancer » et la bascule d'une planifiée repartent de 4 km.
+Toutes les 2 s, le worker appelle `private.dispatch_tick()`. Cette fonction verrouille les courses dues avec `FOR UPDATE SKIP LOCKED`, ce qui permet de lancer plusieurs workers. Quand personne n'a accepté pendant `offer_timeout_seconds` (ou que tous ont refusé), le rayon s'élargit et les vagues sont **cumulatives** : les chauffeurs déjà sollicités **gardent leur offre** une vague de plus (prolongée, sans nouvelle sonnerie), puis elle est fermée « ignorée » ; la vague ajoute ceux du rayon suivant.
+
+Séquence par défaut : **4 → 8 → 12 → 16 km**, puis **relance 4 → 8 km** (`dispatch_retry_radii_m`) où les chauffeurs restés sans réponse sont re-sonnés (« COURSE TOUJOURS DISPONIBLE ») ; un refus ou un retrait par la centrale n'est jamais re-sonné. Après la dernière vague, les offres sont fermées, la course passe à `NO_DRIVER_FOUND` et le dispatch est alerté (`dispatch.no_driver`, son + notification navigateur), avec l'explication des chauffeurs en ligne qui n'ont pas pris la course. « Relancer » et la bascule d'une planifiée repartent de 4 km.
+
+Chauffeur injoignable : position non reçue depuis 5 min → push « POSITION NON REÇUE » au chauffeur (`private.watch_driver_gps`, une fois par coupure) ; 30 min → hors ligne automatique et push « VOUS ÊTES HORS LIGNE » (`private.housekeeping`). L'app renvoie sa position au moins toutes les minutes, même immobile (battement).
 
 ### 3. Course planifiée : offre à la flotte
 

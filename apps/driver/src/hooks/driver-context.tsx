@@ -9,7 +9,9 @@ import { Alert, AppState, Platform, Vibration } from "react-native";
 import { api, ApiError } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
-import { locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking } from "@/lib/location";
+import {
+  ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking,
+} from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
 import { settlementSession } from "@/lib/settlement-session";
@@ -200,6 +202,16 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     const sub = AppState.addEventListener("change", (s) => s === "active" && void checkAccount());
     return () => sub.remove();
   }, [userId, checkAccount]);
+
+  // Retour dans l'app EN LIGNE : suivi GPS relancé s'il a été arrêté (système, économie de batterie) et
+  // position envoyée aussitôt — le chauffeur reste sollicité tant qu'il est en ligne
+  useEffect(() => {
+    if (!canDrive) return;
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active" && (homeRef.current?.driver.presence ?? "offline") !== "offline") void ensureTracking();
+    });
+    return () => sub.remove();
+  }, [canDrive]);
 
   // Chauffeur actif : le canal driver:{id} n'est plus lisible dès la suspension (RLS realtime.messages →
   // current_driver_id()), le dernier « driver.updated » n'arrive donc pas. Relecture légère de l'état du compte.

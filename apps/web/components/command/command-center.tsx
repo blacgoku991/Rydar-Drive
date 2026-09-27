@@ -153,14 +153,17 @@ export function CommandCenter({
   pricing,
   offerTimeout,
   locationMaxAgeS = 180,
+  firstPassWaves = 4,
   defaultPayment,
 }: {
   initial: LiveSnapshot;
   orgName: string;
   pricing: PricingRule[];
   offerTimeout: number;
-  /** Au-delà, la position n'est plus prise en compte par le dispatch (réglage de l'organisation). */
+  /** Au-delà, la position est affichée comme ancienne (le dispatch la garde tant que le chauffeur est en ligne). */
   locationMaxAgeS?: number;
+  /** Nombre de vagues du premier passage : au-delà, la recherche est en relance */
+  firstPassWaves?: number;
   defaultPayment: string;
 }) {
   const [state, dispatch] = useReducer(reducer, initial, (s) =>
@@ -553,6 +556,7 @@ export function CommandCenter({
             driver={rideDriver}
             drivers={drivers}
             offers={offersByRide[ride.id] ?? 0}
+            firstPassWaves={firstPassWaves}
             approachS={approach?.rideId === ride.id ? approach.durationS : null}
             liveEvents={rideFeed}
             alert={alertByRide[ride.id]}

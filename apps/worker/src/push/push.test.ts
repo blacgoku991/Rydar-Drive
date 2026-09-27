@@ -247,6 +247,15 @@ describe("nouveaux types (messagerie, signalements, vols, documents, retrait)", 
     expect(fcmMessage("t", report, NOW).android).toMatchObject({ priority: "NORMAL", ttl: "2700s", notification: { channel_id: "fleet-reports" } });
   });
 
+  it("position non reçue / hors ligne : « ride-updates », time-sensitive, regroupées ; alerte GPS inutile après 15 min", () => {
+    expect(presentation(n("gps_lost", { type: "gps_lost" }), NOW)).toMatchObject({
+      channelId: "ride-updates", interruptionLevel: "time-sensitive", threadId: "presence", ttlSeconds: 900, categoryId: undefined,
+    });
+    expect(presentation(n("driver_offline", { type: "driver_offline" }), NOW)).toMatchObject({
+      channelId: "ride-updates", interruptionLevel: "time-sensitive", threadId: "presence", ttlSeconds: 3600,
+    });
+  });
+
   it("vol : « ride-updates » ; time-sensitive seulement si la prise en charge bouge ou si le vol est annulé / dérouté", () => {
     for (const e of ["flight.delayed", "flight.early", "flight.updated", "flight.cancelled", "flight.diverted"]) {
       expect(presentation(flight(e), NOW), e).toMatchObject({ channelId: "ride-updates", interruptionLevel: "time-sensitive", threadId: "r9" });

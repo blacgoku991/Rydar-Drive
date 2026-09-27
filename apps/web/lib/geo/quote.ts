@@ -1,6 +1,6 @@
 import "server-only";
 import {
-  DEFAULT_DISPATCH_RADII_M, estimatePrice, haversine, isCategoryCompatible, matchFixedFare, VEHICLE_CATEGORIES, type LatLng, type PricingRule,
+  DEFAULT_DISPATCH_RADII_M, dispatchLocationWindowS, estimatePrice, haversine, isCategoryCompatible, matchFixedFare, VEHICLE_CATEGORIES, type LatLng, type PricingRule,
   type VehicleCategory,
 } from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -72,7 +72,8 @@ export async function quoteRide(
   const priceCents = fixedFare?.price_cents ?? meteredCents;
 
   const allowUpgrade = settings.data?.allow_category_upgrade ?? true;
-  const maxAgeMs = (settings.data?.location_max_age_seconds ?? 180) * 1000;
+  // Même règle que le dispatch : dernière position d'un chauffeur en ligne (30 min au plus par défaut)
+  const maxAgeMs = dispatchLocationWindowS(settings.data?.location_max_age_seconds) * 1000;
   const radii = (settings.data?.dispatch_radii_m as number[] | undefined) ?? [...DEFAULT_DISPATCH_RADII_M];
   const maxRadius = Math.max(...radii);
   const now = Date.now();
