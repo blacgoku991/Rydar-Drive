@@ -16,7 +16,7 @@ import { notFound } from "next/navigation";
 import { formatPlatformFee } from "@/components/admin/fees";
 import { PageBody } from "@/components/layout/page-header";
 import { AccountActions, TermsForm } from "@/components/platform-fees/admin-account-actions";
-import { MONTH_RE, ago, formatDay, lastMonths, monthKey, overdueInfo } from "@/components/platform-fees/admin-platform-format";
+import { MONTH_RE, ago, cancelledOnboard, formatDay, lastMonths, monthKey, overdueInfo } from "@/components/platform-fees/admin-platform-format";
 import { PlatformLive } from "@/components/platform-fees/admin-platform-live";
 import { Metric } from "@/components/platform-fees/admin-platform-metric";
 import { OriginBreakdown, PaymentsHistory, PaymentsToConfirm, PendingReductions, StatementView } from "@/components/platform-fees/admin-platform-sections";
@@ -61,6 +61,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
   const basePath = `/admin/frais/${orgId}`;
   const fee = formatPlatformFee(a.fee_percent, a.fee_fixed_cents);
   const feeText = fee === "Aucun" ? "aucun frais par course" : `frais ${fee} par course`;
+  const onboard = cancelledOnboard(a);
 
   return (
     <>
@@ -153,10 +154,12 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
             <span className="font-medium text-amber">À surveiller ce mois-ci&nbsp;:</span>{" "}
             {[
               a.month.zero_price_rides
-                ? `${a.month.zero_price_rides} course${a.month.zero_price_rides > 1 ? "s" : ""} terminée${a.month.zero_price_rides > 1 ? "s" : ""} à 0 € ou sans prix (aucun frais)`
+                ? `${a.month.zero_price_rides} course${a.month.zero_price_rides > 1 ? "s" : ""} terminée${a.month.zero_price_rides > 1 ? "s" : ""} à 0 €, sans prix ou à un prix symbolique (frais nuls ou plafonnés au prix)`
                 : null,
               a.month.cancelled_assigned_rides
-                ? `${a.month.cancelled_assigned_rides} course${a.month.cancelled_assigned_rides > 1 ? "s" : ""} annulée${a.month.cancelled_assigned_rides > 1 ? "s" : ""} après attribution à un chauffeur`
+                ? `${a.month.cancelled_assigned_rides} course${a.month.cancelled_assigned_rides > 1 ? "s" : ""} annulée${a.month.cancelled_assigned_rides > 1 ? "s" : ""} après attribution à un chauffeur${
+                    onboard ? `, dont ${onboard} après la prise en charge du client (aucun frais)` : ""
+                  }`
                 : null,
             ]
               .filter(Boolean)
