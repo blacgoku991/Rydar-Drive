@@ -29,8 +29,11 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
   const [reason, setReason] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [docType, setDocType] = useState("vtc_card");
+  // Pièces à échéance : date obligatoire (sinon masquées derrière l'ancienne pièce)
+  const expiryRequired = ["vtc_card", "driving_license", "insurance", "identity"].includes(docType);
 
-  const run = (fn: () => Promise<{ ok: boolean; error?: string; fieldErrors?: Record<string, string> }>, msg: string) =>
+  const run = (fn: () => Promise<{ ok: boolean; error?: string; message?: string; fieldErrors?: Record<string, string> }>, msg: string) =>
     start(async () => {
       const res = await fn();
       if (!res.ok) {
@@ -38,7 +41,8 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
         toast.error(res.error);
         return;
       }
-      toast.success(msg);
+      setErrors({});
+      toast.success(res.message ?? msg);
       setDialog(null);
       router.refresh();
     });
@@ -78,7 +82,10 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
       )}
 
       <Dialog open={dialog === "suspend"} onOpenChange={(o) => !o && setDialog(null)}>
-        <DialogContent title="Suspendre le chauffeur" description="Accès révoqué immédiatement : il ne reçoit plus aucune course et ne peut plus se connecter.">
+        <DialogContent
+          title="Suspendre le chauffeur"
+          description="Accès coupé immédiatement : il ne reçoit plus de courses et ses courses attribuées pas encore commencées sont remises en recherche. Impossible pendant une course avec client à bord."
+        >
           <Field label="Motif (visible dans l'audit)">
             <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Document expiré, comportement…" />
           </Field>
@@ -122,21 +129,20 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
             className="grid grid-cols-2 gap-3"
           >
             <Field label="Type" className="col-span-2">
-              <NativeSelect name="type" defaultValue="vtc_card">
+              <NativeSelect name="type" value={docType} onChange={(e) => setDocType(e.target.value)}>
                 <option value="vtc_card">Carte VTC</option>
                 <option value="driving_license">Permis de conduire</option>
                 <option value="insurance">Assurance RC Pro</option>
                 <option value="vehicle_registration">Carte grise</option>
                 <option value="identity">Pièce d&apos;identité</option>
-                <option value="medical">Visite médicale</option>
                 <option value="other">Autre</option>
               </NativeSelect>
             </Field>
             <Field label="Numéro" optional>
               <Input name="number" />
             </Field>
-            <Field label="Expire le" optional>
-              <Input name="expiresAt" type="date" className="[color-scheme:dark]" />
+            <Field label="Expire le" optional={!expiryRequired} error={errors.expiresAt}>
+              <Input name="expiresAt" type="date" required={expiryRequired} className="[color-scheme:dark]" aria-invalid={!!errors.expiresAt} />
             </Field>
             <div className="col-span-2 mt-4 flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setDialog(null)}>Annuler</Button>
@@ -184,7 +190,9 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
               <Field label="Places"><Input name="seats" type="number" defaultValue={driver.vehicle?.seats ?? 4} /></Field>
               <Field label="Bagages"><Input name="luggage" type="number" defaultValue={driver.vehicle?.luggage_capacity ?? 3} /></Field>
             </div>
-            <Field label="Notes internes" optional className="col-span-2"><Textarea name="notes" defaultValue={driver.notes ?? ""} /></Field>
+            <Field label="Notes (visibles par le chauffeur)" optional hint="Le chauffeur peut les lire : n'y notez rien de confidentiel." className="col-span-2">
+              <Textarea name="notes" defaultValue={driver.notes ?? ""} />
+            </Field>
             <div className="col-span-2 mt-4 flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setDialog(null)}>Annuler</Button>
               <Button type="submit" variant="primary" loading={pending}>Enregistrer</Button>

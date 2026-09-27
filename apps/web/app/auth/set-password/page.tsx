@@ -1,7 +1,7 @@
 "use client";
 import { NEW_PASSWORD_MIN } from "@rydar/shared";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { CheckCircle2, KeyRound, Smartphone } from "lucide-react";
+import { CheckCircle2, KeyRound, Smartphone, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { StatusScreen } from "@/components/auth/status-screen";
@@ -20,11 +20,32 @@ function OpenAppButton() {
   );
 }
 
+/** Compte visé par un jeton d'accès (charge utile du JWT, non vérifiée : sert seulement à prévenir l'utilisateur). */
+function tokenAccount(token: string): { sub: string | null; email: string | null } {
+  try {
+    const part = token.split(".")[1] ?? "";
+    const json = decodeURIComponent(
+      Array.from(atob(part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=")))
+        .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+        .join(""),
+    );
+    const claims = JSON.parse(json) as { sub?: unknown; email?: unknown };
+    return { sub: typeof claims.sub === "string" ? claims.sub : null, email: typeof claims.email === "string" ? claims.email : null };
+  } catch {
+    return { sub: null, email: null };
+  }
+}
+
+type AcceptResult = { ok: boolean; code: string; activated?: number; message?: string };
+
 /**
  * Définition du mot de passe après invitation ou réinitialisation.
  * `?app=driver` : lien « Mot de passe oublié » de l'application chauffeur (flux implicite, jetons dans le
  * fragment). Client Supabase ISOLÉ, sans cookie : la session de réinitialisation ne vit que dans cette page
  * (jamais celle d'un compte déjà connecté au dashboard dans ce navigateur), et elle est révoquée à la fin.
+ * Tableau de bord : le lien ne remplace JAMAIS en silence la session d'un autre compte déjà ouverte dans ce navigateur
+ * (confirmation explicite) ; l'adresse du compte concerné est affichée. Mot de passe enregistré → les invitations en
+ * attente du compte sont activées (accept_member_invitations : session ouverte par ce lien seulement).
  */
 export default function SetPasswordPage() {
   const router = useRouter();
@@ -34,8 +55,23 @@ export default function SetPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [linkInvalid, setLinkInvalid] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [account, setAccount] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{ current: string; target: string } | null>(null);
   const driverClient = useRef<SupabaseClient | null>(null);
+  const pendingTokens = useRef<{ access_token: string; refresh_token: string } | null>(null);
   const started = useRef(false);
+
+  /** Session du lien installée dans le navigateur (tableau de bord), adresse du compte affichée. */
+  const installLinkSession = async (tokens: { access_token: string; refresh_token: string } | null) => {
+    const supabase = getBrowserClient();
+    if (tokens && (await supabase.auth.setSession(tokens)).error) {
+      setLinkInvalid("Lien invalide ou expiré. Demandez une nouvelle invitation.");
+      return;
+    }
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) setLinkInvalid("Lien invalide ou expiré. Demandez une nouvelle invitation.");
+    else setAccount(data.session.user.email ?? null);
+  };
 
   useEffect(() => {
     // Une seule lecture des jetons (le fragment est effacé aussitôt ; effets doublés en développement)
@@ -57,13 +93,18 @@ export default function SetPasswordPage() {
         driverClient.current = client;
         const ok = !linkError && !!access_token && !!refresh_token && !(await client.auth.setSession({ access_token, refresh_token })).error;
         if (!ok) setLinkInvalid("Ce lien a expiré ou a déjà servi. Demandez-en un nouveau dans l'application : « Mot de passe oublié ? ».");
+      } else if (linkError) {
+        setLinkInvalid("Lien invalide ou expiré. Demandez une nouvelle invitation.");
       } else {
-        const supabase = getBrowserClient();
-        if (linkError) setLinkInvalid("Lien invalide ou expiré. Demandez une nouvelle invitation.");
-        else {
-          if (access_token && refresh_token) await supabase.auth.setSession({ access_token, refresh_token });
-          const { data } = await supabase.auth.getSession();
-          if (!data.session) setLinkInvalid("Lien invalide ou expiré. Demandez une nouvelle invitation.");
+        const tokens = access_token && refresh_token ? { access_token, refresh_token } : null;
+        // Un autre compte est déjà connecté dans ce navigateur : on ne le remplace pas sans le dire
+        const { data: current } = await getBrowserClient().auth.getSession();
+        const target = tokens ? tokenAccount(tokens.access_token) : null;
+        if (tokens && current.session && target?.sub && current.session.user.id !== target.sub) {
+          pendingTokens.current = tokens;
+          setConflict({ current: current.session.user.email ?? "un autre compte", target: target.email ?? "un autre compte" });
+        } else {
+          await installLinkSession(tokens);
         }
       }
       setReady(true);
@@ -86,6 +127,42 @@ export default function SetPasswordPage() {
     );
   }
 
+  if (conflict) {
+    return (
+      <StatusScreen
+        icon={<UserRound />}
+        title="Changer de compte ?"
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => router.replace("/dashboard")}>
+              Annuler
+            </Button>
+            <Button
+              variant="primary"
+              loading={loading}
+              onClick={async () => {
+                setLoading(true);
+                // Session de l'autre compte fermée sur CE navigateur seulement
+                await getBrowserClient().auth.signOut({ scope: "local" }).catch(() => undefined);
+                await installLinkSession(pendingTokens.current);
+                pendingTokens.current = null;
+                setConflict(null);
+                setLoading(false);
+              }}
+            >
+              Changer de compte
+            </Button>
+          </>
+        }
+      >
+        <p className="[overflow-wrap:anywhere]">
+          Vous êtes connecté avec <span className="font-medium text-fg">{conflict.current}</span>. Ce lien concerne le compte{" "}
+          <span className="font-medium text-fg">{conflict.target}</span> : changer de compte ferme votre session actuelle sur ce navigateur.
+        </p>
+      </StatusScreen>
+    );
+  }
+
   return (
     <StatusScreen icon={<KeyRound />} title={forDriver ? "Nouveau mot de passe" : "Choisissez votre mot de passe"}>
       {!ready ? (
@@ -104,7 +181,8 @@ export default function SetPasswordPage() {
             setLoading(true);
             const supabase = forDriver ? driverClient.current : getBrowserClient();
             const { error: err } = supabase ? await supabase.auth.updateUser({ password }) : { error: { code: "no_session" } };
-            if (err) {
+            // Tableau de bord : même mot de passe qu'avant = déjà le sien, on continue (activation des invitations)
+            if (err && !(err.code === "same_password" && !forDriver)) {
               setLoading(false);
               return setError(
                 err.code === "same_password"
@@ -120,9 +198,26 @@ export default function SetPasswordPage() {
               setLoading(false);
               return setDone(true);
             }
+            // Invitations en attente (accès à une centrale) : activées par cette session ouverte depuis le lien
+            const { data: accepted, error: acceptError } = await getBrowserClient().rpc("accept_member_invitations");
+            const res = (accepted ?? null) as AcceptResult | null;
+            if (acceptError || (res && !res.ok && res.code === "EMAIL_PROOF_REQUIRED")) {
+              setLoading(false);
+              return setError(
+                acceptError
+                  ? "Mot de passe enregistré, mais l'activation de votre accès a échoué : demandez à la centrale de renvoyer l'invitation."
+                  : "Mot de passe enregistré. Pour activer votre accès à la centrale, ouvrez le lien reçu par e-mail.",
+              );
+            }
             router.replace("/dashboard");
+            router.refresh();
           }}
         >
+          {!forDriver && account && (
+            <p className="rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-[13px] text-fg-muted [overflow-wrap:anywhere]">
+              Compte : <span className="font-medium text-fg">{account}</span>
+            </p>
+          )}
           <div className="space-y-1.5">
             <Input name="password" type="password" required placeholder="Nouveau mot de passe" className="h-12 text-base" autoComplete="new-password" aria-label="Nouveau mot de passe" aria-describedby="password-rule" />
             <p id="password-rule" className="px-1 text-[13px] text-fg-muted">{NEW_PASSWORD_MIN} caractères minimum.</p>

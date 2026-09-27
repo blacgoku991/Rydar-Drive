@@ -53,7 +53,10 @@ export function DriverFormSheet() {
         return;
       }
       toast.success("Chauffeur créé", {
-        description: access === "password" ? `Identifiants : ${g("email")} / ${password}` : "Invitation envoyée par e-mail.",
+        description:
+          access === "password"
+            ? `Identifiants : ${g("email")} / ${password}`
+            : "Invitation envoyée par e-mail : le chauffeur choisit son mot de passe avec le lien, puis se connecte à l'application.",
         duration: 15000,
       });
       setOpen(false);

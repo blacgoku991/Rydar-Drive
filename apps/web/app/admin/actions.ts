@@ -8,6 +8,7 @@ import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { findUserIdByEmail, sendMemberInvitationEmail } from "@/lib/member-invite";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; fieldErrors?: Record<string, string> };
@@ -15,8 +16,6 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; field
 const uuid = z.string().uuid();
 /** Motif / note libre (≤ 500 caractères, vide → null). */
 const note = (v: string | null | undefined) => v?.trim().slice(0, 500) || null;
-/** Échappe % et _ pour une recherche ilike exacte (insensible à la casse). */
-const likeExact = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
 /** Ban Auth « définitif » (100 ans) / levée. */
 const BAN_FOREVER = "876000h";
 /** Noms des champs pour les messages d'erreur (« Frais plateforme (%) : maximum 50 »). */
@@ -27,11 +26,16 @@ const PLAN_LABELS = {
   limits: "Limites", features: "Avantages",
 };
 
-/** Crée un rattacheur + son compte propriétaire + abonnement d'essai, avec son modèle d'exploitation. */
+/**
+ * Crée un rattacheur + son compte propriétaire + abonnement d'essai, avec son modèle d'exploitation.
+ * Propriétaire dont l'adresse a DÉJÀ un compte (autre que le super admin lui-même) : adhésion « invitée » + lien
+ * envoyé à l'adresse ; la personne active son accès en choisissant son mot de passe (le mot de passe provisoire saisi
+ * n'est pas appliqué). Jamais de rattachement direct d'un compte dont le mot de passe peut être connu d'un tiers.
+ */
 export async function createOrganization(
   input: z.input<typeof organizationCreateSchema>,
   dispatch?: z.input<typeof dispatchModelSchema>,
-): Promise<Result<{ id: string; password?: string }>> {
+): Promise<Result<{ id: string; ownerInvited: boolean; emailSent: boolean; passwordIgnored: boolean }>> {
   const session = await requireSuperAdmin();
   const parsed = organizationCreateSchema.safeParse(input);
   if (!parsed.success) {
@@ -68,8 +72,10 @@ export async function createOrganization(
     return { ok: false, error: "Modèle d'exploitation impossible à enregistrer." };
   }
 
-  const { data: existing } = await admin.from("users").select("id").ilike("email", likeExact(v.ownerEmail)).maybeSingle();
-  let ownerId = (existing as any)?.id as string | undefined;
+  let ownerId = (await findUserIdByEmail(v.ownerEmail)) ?? undefined;
+  const existingOwner = !!ownerId;
+  // Compte existant : invitation prouvée par l'adresse, sauf le super admin qui se nomme lui-même
+  const ownerInvited = existingOwner && ownerId !== session.user.id;
   if (!ownerId) {
     const res = v.ownerPassword
       ? await admin.auth.admin.createUser({ email: v.ownerEmail, password: v.ownerPassword, email_confirm: true, user_metadata: { full_name: v.ownerName } })
@@ -80,7 +86,16 @@ export async function createOrganization(
     }
     ownerId = res.data.user.id;
   }
-  await admin.from("organization_users").insert({ organization_id: orgId, user_id: ownerId, role: "owner", invited_by: session.user.id } as never);
+  const { error: ownerError } = await admin
+    .from("organization_users")
+    .insert({ organization_id: orgId, user_id: ownerId, role: "owner", invited_by: session.user.id, status: ownerInvited ? "invited" : "active" } as never);
+  if (ownerError) {
+    // Centrale sans propriétaire : annulée (et le compte créé ici supprimé)
+    if (!existingOwner) await admin.auth.admin.deleteUser(ownerId).catch(() => null);
+    await admin.from("organizations").delete().eq("id", orgId);
+    return { ok: false, error: humanizeError(ownerError.message, "Compte propriétaire impossible à rattacher.") };
+  }
+  const emailSent = ownerInvited ? await sendMemberInvitationEmail(v.ownerEmail) : false;
   if (planId) {
     await admin.from("subscriptions").insert({
       organization_id: orgId, plan_id: planId, status: "trialing",
@@ -89,12 +104,15 @@ export async function createOrganization(
   }
   await audit({
     organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: "organization.created", entityType: "organizations", entityId: orgId,
-    metadata: { plan: v.planCode || null, owner: v.ownerEmail, dispatch_model: m.dispatchModel, platform_fee_percent: m.platformFeePercent, platform_fee_fixed_cents: m.platformFeeFixedCents },
+    metadata: {
+      plan: v.planCode || null, owner: v.ownerEmail, dispatch_model: m.dispatchModel, platform_fee_percent: m.platformFeePercent, platform_fee_fixed_cents: m.platformFeeFixedCents,
+      owner_existing_account: existingOwner, owner_invited: ownerInvited, invitation_email_sent: emailSent,
+    },
   });
   revalidatePath("/admin");
   revalidatePath("/admin/organizations");
   revalidatePath("/admin/centrales");
-  return { ok: true, id: orgId };
+  return { ok: true, id: orgId, ownerInvited, emailSent, passwordIgnored: existingOwner && !!v.ownerPassword };
 }
 
 /**
@@ -172,13 +190,16 @@ const accessSchema = z.object({
 });
 
 /**
- * « Donner un accès » : crée (ou réutilise) le compte Auth, puis l'adhésion à l'organisation.
+ * « Donner un accès » : crée le compte Auth (adresse sans compte) ou réutilise le compte existant, puis l'adhésion.
  * Compte créé ici puis adhésion refusée (limite de l'offre…) → le compte est supprimé (compensation).
+ * Compte EXISTANT sans adhésion (autre que le super admin lui-même) : adhésion « invitée » + lien envoyé à l'adresse,
+ * activée par la personne (mot de passe provisoire non appliqué) ; invitation déjà en attente : lien renvoyé.
+ * Adhésion désactivée : rétablie (la personne avait déjà eu cet accès).
  */
 export async function grantOrganizationAccess(
   orgId: string,
   input: z.input<typeof accessSchema>,
-): Promise<Result<{ created: boolean; invited: boolean; reactivated: boolean }>> {
+): Promise<Result<{ created: boolean; invited: boolean; reactivated: boolean; pending: boolean; emailSent: boolean; passwordIgnored: boolean }>> {
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
   const parsed = accessSchema.safeParse(input);
@@ -188,8 +209,8 @@ export async function grantOrganizationAccess(
   const { data: org } = await admin.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
   if (!org) return { ok: false, error: "Organisation introuvable." };
 
-  const { data: existing } = await admin.from("users").select("id").ilike("email", likeExact(v.email)).maybeSingle();
-  let userId = (existing as { id: string } | null)?.id;
+  let userId = (await findUserIdByEmail(v.email)) ?? undefined;
+  const existingAccount = !!userId;
   let created = false;
   let invited = false;
   if (!userId && input.password !== undefined && !v.password) {
@@ -226,9 +247,16 @@ export async function grantOrganizationAccess(
   if (current?.status === "active" && current.role === v.role) {
     return { ok: false, error: "Cette personne a déjà cet accès.", fieldErrors: { email: "Déjà membre avec ce rôle" } };
   }
+  // Compte existant jamais membre (sauf le super admin lui-même) ou invitation en attente : preuve par l'adresse exigée
+  const pending = !created && (current ? current.status === "invited" : userId !== session.user.id);
   const { error } = current
-    ? await admin.from("organization_users").update({ role: v.role, status: "active" } as never).eq("id", current.id)
-    : await admin.from("organization_users").insert({ organization_id: orgId, user_id: userId, role: v.role, invited_by: session.user.id, status: "active" } as never);
+    ? await admin
+        .from("organization_users")
+        .update((current.status === "invited" ? { role: v.role } : { role: v.role, status: "active" }) as never)
+        .eq("id", current.id)
+    : await admin
+        .from("organization_users")
+        .insert({ organization_id: orgId, user_id: userId, role: v.role, invited_by: session.user.id, status: pending ? "invited" : "active" } as never);
   if (error) {
     if (created) await admin.auth.admin.deleteUser(userId).catch(() => null);
     const limit = /PLAN_LIMIT_ADMINS/.test(error.message ?? "");
@@ -237,19 +265,48 @@ export async function grantOrganizationAccess(
       error: limit ? "Limite d'administrateurs de l'offre atteinte : augmentez-la dans « Offre & limites »." : humanizeError(error.message, "Accès impossible à enregistrer."),
     };
   }
+  const emailSent = pending ? await sendMemberInvitationEmail(v.email) : false;
 
   await audit({
     organizationId: orgId,
     actorUserId: session.user.id,
     actorType: "super_admin",
-    action: current ? "member.access_restored" : "member.access_granted",
+    action: pending ? "member.invited" : current ? "member.access_restored" : "member.access_granted",
     entityType: "organization_users",
     entityId: userId,
     severity: v.role === "dispatcher" ? "info" : "warning",
-    metadata: { email: v.email, role: v.role, previous_role: current?.role ?? null, account_created: created, invitation: invited },
+    metadata: {
+      email: v.email, role: v.role, previous_role: current?.role ?? null, account_created: created, invitation: invited,
+      existing_account: existingAccount, pending_invitation: pending, invitation_email_sent: emailSent,
+    },
   });
   revalidatePath(`/admin/organizations/${orgId}`);
-  return { ok: true, created, invited, reactivated: !!current };
+  return {
+    ok: true, created, invited, reactivated: !!current && !pending, pending, emailSent,
+    passwordIgnored: existingAccount && !!v.password,
+  };
+}
+
+/** « Renvoyer l'invitation » (super admin) : nouveau lien envoyé à l'adresse d'un compte invité. */
+export async function resendOrganizationInvitation(orgId: string, memberId: string): Promise<Result> {
+  const session = await requireSuperAdmin();
+  if (!uuid.safeParse(orgId).success || !uuid.safeParse(memberId).success) return { ok: false, error: "Demande invalide." };
+  const { data } = await createAdminClient()
+    .from("organization_users")
+    .select("user_id, role, status, user:users!organization_users_user_id_fkey(email)")
+    .eq("id", memberId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  const m = data as { user_id: string; role: string; status: string; user: { email: string } | { email: string }[] | null } | null;
+  if (!m || m.status !== "invited") return { ok: false, error: "Invitation introuvable (déjà acceptée ou annulée ?)." };
+  const email = (Array.isArray(m.user) ? m.user[0] : m.user)?.email;
+  if (!email) return { ok: false, error: "Adresse du compte introuvable." };
+  if (!(await sendMemberInvitationEmail(email))) return { ok: false, error: "Envoi impossible pour le moment : réessayez dans une minute." };
+  await audit({
+    organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: "member.invitation_resent",
+    entityType: "organization_users", entityId: m.user_id, metadata: { email, role: m.role },
+  });
+  return { ok: true };
 }
 
 /** « Retirer l'accès » / « Rétablir » : statut de l'adhésion (les sessions sont révoquées par trigger SQL). */
@@ -268,6 +325,18 @@ export async function setOrganizationMemberStatus(orgId: string, memberId: strin
   if (!member) return { ok: false, error: "Membre introuvable." };
   const m = member as unknown as { user_id: string; role: string; status: string; user: { email: string } | { email: string }[] | null };
   if (m.status === status) return { ok: true };
+  if (m.status === "invited") {
+    // Invitation en attente : seule la personne l'active (lien reçu par e-mail) ; « Retirer » = l'annuler (suppression)
+    if (status === "active") return { ok: false, error: "Invitation en attente : seule la personne invitée peut l'activer, avec le lien reçu par e-mail." };
+    const { error: delError } = await admin.from("organization_users").delete().eq("id", memberId).eq("status", "invited");
+    if (delError) return { ok: false, error: humanizeError(delError.message, "Annulation impossible.") };
+    await audit({
+      organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: "member.invitation_cancelled",
+      entityType: "organization_users", entityId: m.user_id, metadata: { email: (Array.isArray(m.user) ? m.user[0] : m.user)?.email ?? null, role: m.role },
+    });
+    revalidatePath(`/admin/organizations/${orgId}`);
+    return { ok: true };
+  }
   const { error } = await admin.from("organization_users").update({ status } as never).eq("id", memberId);
   if (error) {
     const limit = /PLAN_LIMIT_ADMINS/.test(error.message ?? "");
@@ -444,26 +513,55 @@ export async function liftPlatformBan(reportId: string, reason?: string): Promis
 // -----------------------------------------------------------------------------
 // Statut, offre, plans
 // -----------------------------------------------------------------------------
-/** Suspendre / réactiver / archiver : effet immédiat via la RLS + ban des comptes Auth. */
+type DriverBanRow = { user_id: string | null; status: string; application_status: string | null; banned_at: string | null; deleted_at: string | null };
+/** Fiche qui autorise la connexion à l'app : active ou candidature en attente, non bannie, non supprimée. */
+const driverMayLogin = (d: DriverBanRow) => !d.banned_at && !d.deleted_at && (d.status === "active" || d.application_status === "pending");
+
+/**
+ * Réactivation : comptes dont un ANCIEN bannissement Auth hérité de la suspension est levé — membres actifs et chauffeurs
+ * autorisés de la centrale ; jamais un compte dont la fiche chauffeur est bannie, suspendue ou inactive.
+ */
+async function inheritedBanUserIds(orgId: string) {
+  const admin = createAdminClient();
+  const [{ data: members }, { data: drivers }] = await Promise.all([
+    admin.from("organization_users").select("user_id").eq("organization_id", orgId).eq("status", "active"),
+    admin.from("drivers").select("user_id, status, application_status, banned_at, deleted_at").eq("organization_id", orgId).not("user_id", "is", null),
+  ]);
+  // Une seule fiche par compte (drivers.user_id unique) : celle des chauffeurs d'ici est déjà lue
+  const candidates = new Set<string>(((drivers ?? []) as DriverBanRow[]).filter(driverMayLogin).map((d) => d.user_id!));
+  const memberIds = ((members ?? []) as { user_id: string }[]).map((m) => m.user_id);
+  if (memberIds.length) {
+    // Membre qui est aussi chauffeur (ici ou ailleurs) : sa fiche décide
+    const { data: rows } = await admin.from("drivers").select("user_id, status, application_status, banned_at, deleted_at").in("user_id", memberIds);
+    const blocked = new Set(((rows ?? []) as DriverBanRow[]).filter((d) => !driverMayLogin(d)).map((d) => d.user_id));
+    for (const id of memberIds) if (!blocked.has(id)) candidates.add(id);
+  }
+  return [...candidates];
+}
+
+/**
+ * Suspendre / réactiver / archiver : effet immédiat via la RLS (données, actions, connexion chauffeur refusée avec le
+ * motif « centrale suspendue ») et le déclencheur SQL des sessions. Plus aucun bannissement Auth : l'équipe doit pouvoir
+ * ouvrir /suspended pour régler ses frais, et un membre d'une autre centrale active ou le super admin ne sont jamais
+ * verrouillés. Réactivation : levée des anciens bannissements hérités (membres, chauffeurs autorisés).
+ */
 export async function setOrganizationStatus(orgId: string, status: "active" | "suspended" | "archived", reason?: string): Promise<Result> {
   const session = await requireSuperAdmin();
+  if (!uuid.safeParse(orgId).success || !["active", "suspended", "archived"].includes(status)) return { ok: false, error: "Demande invalide." };
   const admin = createAdminClient();
+  const motive = note(reason);
   const patch: Record<string, unknown> = { status };
-  if (status === "suspended") Object.assign(patch, { suspended_at: new Date().toISOString(), suspended_reason: reason ?? null });
+  if (status === "suspended") Object.assign(patch, { suspended_at: new Date().toISOString(), suspended_reason: motive });
   if (status === "archived") Object.assign(patch, { archived_at: new Date().toISOString() });
   if (status === "active") Object.assign(patch, { suspended_at: null, suspended_reason: null, archived_at: null });
   const { error } = await admin.from("organizations").update(patch as never).eq("id", orgId);
   if (error) return { ok: false, error: "Mise à jour impossible." };
 
-  const [{ data: members }, { data: drivers }] = await Promise.all([
-    admin.from("organization_users").select("user_id").eq("organization_id", orgId),
-    admin.from("drivers").select("user_id").eq("organization_id", orgId).not("user_id", "is", null),
-  ]);
-  const userIds = [...(members ?? []), ...(drivers ?? [])].map((x: any) => x.user_id as string);
-  await Promise.all(userIds.map((id) => admin.auth.admin.updateUserById(id, { ban_duration: status === "active" ? "none" : BAN_FOREVER }).catch(() => null)));
-  if (status !== "active") await admin.from("drivers").update({ presence: "offline", online_since: null } as never).eq("organization_id", orgId);
+  let unbanned = 0;
+  if (status === "active") unbanned = await setAuthBan(await inheritedBanUserIds(orgId), false);
+  else await admin.from("drivers").update({ presence: "offline", online_since: null } as never).eq("organization_id", orgId);
 
-  await audit({ organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: `organization.${status}`, entityType: "organizations", entityId: orgId, severity: status === "active" ? "info" : "warning", metadata: { reason, users: userIds.length } });
+  await audit({ organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: `organization.${status}`, entityType: "organizations", entityId: orgId, severity: status === "active" ? "info" : "warning", metadata: { reason: motive, auth_unbanned: unbanned } });
   revalidatePath(`/admin/organizations/${orgId}`);
   revalidatePath("/admin");
   return { ok: true };

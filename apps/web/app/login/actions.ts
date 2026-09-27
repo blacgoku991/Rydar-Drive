@@ -1,8 +1,11 @@
 "use server";
 import { loginSchema } from "@rydar/shared";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { ORG_COOKIE } from "@/lib/auth";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
+import { safeNext } from "@/lib/safe-next";
 import { createClient } from "@/lib/supabase/server";
 
 export type LoginState = { error?: string; email?: string };
@@ -32,12 +35,16 @@ export async function signIn(_prev: LoginState, formData: FormData): Promise<Log
   }
   await resetRateLimit(`login:email:${parsed.data.email}`, WINDOW);
 
-  const next = String(formData.get("next") ?? "");
-  redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard");
+  redirect(safeNext(formData.get("next")));
 }
 
+/**
+ * Déconnexion de CE navigateur seulement (l'application chauffeur et les autres postes restent connectés) ;
+ * la centrale choisie est oubliée (un autre compte sur ce navigateur ne l'hérite pas).
+ */
 export async function signOut() {
   const supabase = await createClient();
-  await supabase.auth.signOut();
+  await supabase.auth.signOut({ scope: "local" });
+  (await cookies()).delete(ORG_COOKIE);
   redirect("/login");
 }

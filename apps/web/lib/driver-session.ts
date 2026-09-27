@@ -28,6 +28,11 @@ export const DRIVER_DENIED: Record<DriverLoginDenied, string> = {
  */
 export const DRIVER_LOGIN_WINDOW = 15 * 60;
 export const driverLoginEmailKey = (email: string) => `dlogin:email:${email}`;
+/**
+ * Compteur strict par couple (adresse, IP) : un tiers qui connaît l'adresse d'un chauffeur ne bloque plus sa connexion
+ * depuis une autre IP ; le compteur par adresse (driverLoginEmailKey) garde un plafond global plus haut.
+ */
+export const driverLoginPairKey = (email: string, ip: string) => `dloginip:${ip}:${email}`;
 
 /** Compte Auth banni (bannissement plateforme / centrale répercuté sur Supabase Auth). */
 export function isAuthBanned(error: { message?: string; code?: string } | null) {
@@ -51,25 +56,18 @@ type DriverRow = {
 };
 
 /**
- * Fiche chauffeur de l'utilisateur (client service role) → état accepté, ou refus.
- * En cas de refus ou d'erreur, la session ouverte sur `auth` (client anonyme sans persistance) est révoquée.
+ * État du compte chauffeur d'après sa fiche (client service role), sans toucher à aucune session : accepté, ou refus.
+ * Sert aussi quand Supabase Auth refuse la connexion d'un compte banni : le vrai motif (inactif, centrale suspendue…)
+ * est donné une fois le mot de passe vérifié.
  */
-export async function checkDriverAccount(auth: SupabaseClient, userId: string): Promise<DriverAccountCheck> {
-  const deny = async (code: DriverLoginDenied): Promise<DriverAccountCheck> => {
-    // Session ouverte par la vérification du mot de passe (ou du code) : révoquée aussitôt
-    await auth.auth.signOut().catch(() => undefined);
-    return { ok: false, status: 403, code, error: DRIVER_DENIED[code] };
-  };
-
+export async function driverAccountDecision(userId: string): Promise<DriverAccountCheck> {
+  const deny = (code: DriverLoginDenied): DriverAccountCheck => ({ ok: false, status: 403, code, error: DRIVER_DENIED[code] });
   const { data: row, error: rowError } = await createAdminClient()
     .from("drivers")
     .select("id, status, application_status, banned_at, deleted_at, organization:organizations(status)")
     .eq("user_id", userId)
     .maybeSingle();
-  if (rowError) {
-    await auth.auth.signOut().catch(() => undefined);
-    return { ok: false, status: 503, code: "UNAVAILABLE", error: "Connexion impossible pour le moment. Réessayez." };
-  }
+  if (rowError) return { ok: false, status: 503, code: "UNAVAILABLE", error: "Connexion impossible pour le moment. Réessayez." };
   const driver = row as DriverRow | null;
   if (!driver) return deny("NOT_DRIVER");
   // Fiche supprimée (en principe déjà détachée du compte) : jamais d'accès, même « en attente »
@@ -82,4 +80,15 @@ export async function checkDriverAccount(auth: SupabaseClient, userId: string): 
   if (driver.application_status === "rejected") return deny("REJECTED");
   if (driver.status === "active") return { ok: true, state: "active" };
   return deny("INACTIVE");
+}
+
+/**
+ * Fiche chauffeur de l'utilisateur → état accepté, ou refus.
+ * En cas de refus ou d'erreur, la session ouverte sur `auth` (client anonyme sans persistance) est révoquée — ELLE
+ * SEULE (scope « local ») : les sessions du tableau de bord d'un gérant qui s'est trompé d'application restent ouvertes.
+ */
+export async function checkDriverAccount(auth: SupabaseClient, userId: string): Promise<DriverAccountCheck> {
+  const decision = await driverAccountDecision(userId);
+  if (!decision.ok) await auth.auth.signOut({ scope: "local" }).catch(() => undefined);
+  return decision;
 }
