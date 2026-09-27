@@ -7,6 +7,7 @@ import { Children, Fragment, useCallback, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { TrustBadge } from "@/components/centrale";
+import { buildDocEntries, needsAction } from "@/components/documents";
 import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { api, legalUrl } from "@/lib/api";
@@ -61,14 +62,12 @@ export default function Profile() {
   // Déconnexion hors réseau : jusqu'à ~30 s (renouvellement du jeton tenté) — bouton en attente
   const [leaving, setLeaving] = useState(false);
 
-  // Pastille « à mettre à jour » : manquants, refusés, expirés ou bientôt échus
+  // Pastille « à mettre à jour » : manquants, refusés, expirés ou bientôt échus, déposables dans l'application
+  // (visite médicale : plus déposable, jamais comptée)
   const loadDocs = useCallback(() => {
     api
       .documents()
-      .then((d) => {
-        const shown = new Set(d.documents.map((x) => x.type));
-        setDocsTodo(d.summary.expired + d.summary.expiring + d.summary.rejected + d.missing_types.filter((t) => !shown.has(t)).length);
-      })
+      .then((d) => setDocsTodo(buildDocEntries(d).filter(needsAction).length))
       .catch(() => setDocsTodo(null));
   }, []);
   useFocusEffect(useCallback(() => loadDocs(), [loadDocs]));

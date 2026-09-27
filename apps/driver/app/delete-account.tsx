@@ -1,14 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View, type TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AuthField, FormScroll, Notice } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
 import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { ApiError, deleteAccount, LAST_EMAIL_KEY, legalUrl, type DeleteAccountResult } from "@/lib/api";
+import { api, ApiError, deleteAccount, LAST_EMAIL_KEY, legalUrl, type DeleteAccountResult } from "@/lib/api";
+import { openDebt, openDebtNotice, type OpenDebt } from "@/lib/debt";
 import { forgetLocalAcceptance } from "@/lib/legal";
 import { stopTracking } from "@/lib/location";
 import { unregisterPush } from "@/lib/notifications";
@@ -48,6 +49,24 @@ export default function DeleteAccount() {
   const confirmed = useRef(false);
   const passwordRef = useRef<TextInput>(null);
   const policy = legalUrl("suppression-compte");
+  const userId = session?.user.id;
+
+  // Commissions encore dues à la centrale (lisibles par un chauffeur actif) : montant rappelé avant la suppression,
+  // qui reste possible (la dette demeure ; empreintes gardées tant qu'elle est ouverte, private.debtor_identities)
+  const [debt, setDebt] = useState<OpenDebt | null>(null);
+  useEffect(() => {
+    setDebt(null);
+    if (!userId) return;
+    let alive = true;
+    api
+      .settlements(1)
+      .then((s) => alive && setDebt(openDebt(s)))
+      .catch(() => null);
+    return () => {
+      alive = false;
+    };
+  }, [userId]);
+  const debtNotice = debt ? openDebtNotice(debt) : null;
 
   function leave() {
     if (phase === "done" || !router.canGoBack()) router.replace("/login");
@@ -105,7 +124,9 @@ export default function DeleteAccount() {
     if (confirmed.current) return void run();
     Alert.alert(
       frTypo("Supprimer définitivement ?"),
-      frTypo("Votre compte et vos données personnelles seront supprimés. Cette action est irréversible."),
+      frTypo(
+        `Votre compte et vos données personnelles seront supprimés. Cette action est irréversible.${debtNotice ? ` ${debtNotice.confirm}` : ""}`,
+      ),
       [
         { text: "Annuler", style: "cancel" },
         {
@@ -133,6 +154,10 @@ export default function DeleteAccount() {
                 "La suppression est définitive. Si une course vous est attribuée, terminez-la ou demandez à votre centrale de la réattribuer avant de supprimer votre compte.",
               )}
             </Text>
+
+            {debtNotice && (
+              <Notice tone="warning" icon="wallet-outline" title={frTypo(debtNotice.title)} message={frTypo(debtNotice.message)} />
+            )}
 
             <Text style={styles.section} accessibilityRole="header">
               Supprimé
