@@ -1,0 +1,229 @@
+# Rydar Drive — historique détaillé (ancien CLAUDE.md, archivé le 27/09/2026)
+
+> Non chargé automatiquement : à lire seulement pour le détail d'un jalon, d'une migration ou d'une liste de RPC.
+> Le CLAUDE.md compact à la racine fait foi pour les règles.
+
+**Langue : toujours répondre en français** (réponses, messages d'avancement, résumés, descriptions de commandes).
+
+SaaS dispatch VTC multi-tenant. Acteurs : super admin, rattacheur (org), chauffeur. **Aucun compte/app client.**
+Sources de course : dashboard rattacheur | API `POST /api/v1/rides` (API key → org) | mini-site `/book/[slug]` (option).
+
+## Stack / layout (pnpm workspaces)
+- `apps/web` Next 16 App Router, TS, Tailwind v4, composants shadcn-like maison (`components/ui`), MapLibre (style dark CARTO, env `NEXT_PUBLIC_MAP_STYLE_URL`), Supabase SSR.
+- `apps/driver` Expo 57 + expo-router, expo-location (bg task), expo-notifications (canal `ride-offers-v2`, sonnerie 10 s `ride_offer_v2.wav`, action ACCEPTER), entrée `index.ts` (tâche GPS définie avant expo-router).
+- `apps/worker` Node : outbox `notifications` → push (Expo/FCM/APNs), `dispatch_tick()` (vagues/timeout/escalade planifiées), rappels, ménage.
+- `packages/shared` (`@rydar/shared`) : statuts, transitions, zod schemas, catégories, format FR.
+- `supabase/migrations` SQL (source de vérité), `supabase/seed.sql`, `tests/db` (vitest + pg réel).
+- TypeScript pin 5.9 (TS7 natif incompatible outils). zod 4, React 19.3, maplibre 6, recharts 3.
+
+## Décisions clés
+- Tenant = `organization_id` sur toutes tables métier. RLS partout + trigger `private.forbid_org_change` (org_id immuable → 42501).
+- Helpers RLS dans schéma `private` (SECURITY DEFINER, search_path=''): `is_super_admin()`, `is_org_member(org)`, `has_org_role(org, roles[])`, `current_driver_id()`.
+- Super admin : lecture via RLS, écritures via routes serveur (service role) + audit_logs.
+- Écritures sensibles via RPC (status, assign, cancel, accept, location) ; colonnes UPDATE restreintes par GRANT.
+- Dispatch en PL/pgSQL : trigger AFTER INSERT rides → `private.start_dispatch`. Instantané = pickup_at ≤ now + `instant_threshold_minutes`.
+  Instantané : vagues rayons `dispatch_radii_m` {4000,8000,12000,16000} (migr. 1500), `offer_timeout_seconds`, ST_DWithin sur `driver_locations.location` (geography), filtres org + presence='available' + position fraîche (`private.dispatch_location_window`) + catégorie compatible + places.
+  STRICT (mig 003200) : une vague par délai même vide ; relance `dispatch_retry_radii_m` {4000,8000} (sans réponse re-sonnés « COURSE TOUJOURS DISPONIBLE ») ; fin de séquence → NO_DRIVER_FOUND + `dispatch.no_driver` + explication ; `max_search_seconds` inutilisé.
+  Position en direct seulement (mig 003300 : fenêtre = location_max_age_seconds) ; app fermée → hors ligne (003400).
+  Planifiée : offre à toute la flotte compatible ; si non attribuée à T-`scheduled_dispatch_lead_minutes` → bascule dispatch géo. Rappels {1440,180,60,30} min → notifications planifiées.
+- Accept atomique `accept_ride_offer(offer_id)` : `SELECT … FOR UPDATE` ride + CAS (`driver_id is null and status in (SEARCHING_DRIVER,OFFERED)`) + index unique partiel `ride_assignments(ride_id) where is_active`. Perdant → `RIDE_ALREADY_ASSIGNED` « Course déjà attribuée. »
+- Journal : `ride_events` (category timeline|dispatch, level, message FR, data jsonb). `ride_status_history` via trigger.
+- Temps réel : `realtime.send()` broadcast privé, topics `org:{id}` et `driver:{id}` ; RLS sur `realtime.messages`.
+- API keys : `rdk_live_{prefix8}_{secret}` ; stocké prefix + sha256(pepper+key) ; rate limit Redis (fallback mémoire) ; `api_logs`.
+- Presence chauffeur : offline|available|offered|en_route|arrived|on_trip (maintenue par fonctions SQL).
+- Catégories : standard, business, first, van, green ; upgrade optionnel (`allow_category_upgrade`).
+- Offres (plans) FACULTATIVES, créées par le super admin (/admin/plans) ; aucune par défaut en prod (Starter/Pro/Business : démo seed.sql).
+  Limites jsonb appliquées par triggers SQL (`private.enforce_plan_limits`) via `private.org_limits` ; sans offre = ni limite ni restriction (mig 002800).
+
+## Design
+Sombre premium « radar ». bg #07080B, surfaces #0C0E12/#12151B/#191D25, texte #F4F5F7, muted #8B93A1.
+Accent marque lime `--brand`. Statuts : available lime, offered amber #FFB020, en_route blue #4C9DFF, arrived violet #A78BFA, on_trip cyan #22D3EE, offline #5B6270, erreur #FF4D4F.
+Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center).
+
+## Local
+- Stack Supabase sans Docker : `bash scripts/local-stack/setup.sh` puis `start.sh` (GoTrue 54332, PostgREST 54331, passerelle 54321) ; clés → `apps/web/.env.local`.
+- Dev web : `cd apps/web && npx next dev` ; captures Playwright : scripts scratchpad `shot.cjs` (LOGIN=email:mdp), `final.cjs` (docs/screenshots), `driver-flow.cjs` (app chauffeur :8081).
+- ⚠️ Ne jamais `pkill -f <motif>` si le motif apparaît dans la commande en cours (tue le shell) → scratchpad `sim.sh start|stop`.
+- Sandbox : tuiles/geocodage/routage externes bloqués (seuls npm, pypi, raw.githubusercontent, GitHub releases, S3 Overture passent) → dev-geo local (voir M11).
+- Tailwind v4 : classes custom = `@utility` (sinon pas de variantes `lg:`). MapLibre v6 ESM : worker copié dans public/vendor (predev).
+- PG16+PostGIS local : `pg_ctlcluster 16 main start` ; Redis `redis-server --daemonize yes`.
+- Tests DB : `pnpm test:db` (crée DB `rydar_test`, applique `scripts/sql/local-supabase-stubs.sql` + migrations).
+
+## Avancement (cocher au fil de l'eau)
+- [x] M0 scaffold monorepo
+- [x] M1 DB : 9 migrations + seed + 32 tests verts (`pnpm test:db`)
+- [x] M2 shared (tests `pnpm test`)
+- [x] M3 web socle + command center (`apps/web/components/command`, carte `components/map/fleet-map.tsx`)
+- [x] M4 super admin (`apps/web/app/admin`)
+- [x] M5 rattacheur (toutes pages)
+- [x] M6 API v1 (`apps/web/lib/api/v1.ts`, testée curl 201/200/403/401/422/429) + mini-site `/book/[slug]`
+- [x] M7 worker (`apps/worker` : tick, outbox push Expo/FCM/APNs, simulateur `SIM_ORG=elite-paris SIM_NEW_RIDE_EVERY=20 npx tsx src/simulator.ts`)
+- [x] M8 app chauffeur (`apps/driver`, Expo 57 / RN 0.86 / React 19.2.3 partout ; `npx expo export --platform android` OK)
+- [x] M9 Stripe (checkout/portal/webhook)
+- [x] M10 docs (README, docs/ARCHITECTURE|API|SECURITY), CI GitHub verte (3 jobs), révocation sessions (mig 001300)
+- [x] Audit géoloc/notifs/dispatch : vagues cumulatives (migr. 1700), flotte re-balayée toutes les 5 min (1800), géocodage API avec seuil de confiance (`lib/geocode.ts`, `lib/geo/anchor.ts`), alertes dashboard son + navigateur (`components/alerts`), relais Realtime local (`scripts/local-stack/realtime.mjs`)
+- [x] M11 REFONTE (demande utilisateur : épuré, vraie carte, géoloc + calculs, visuels partout, app chauffeur « waw »)
+  - géo serveur : `apps/web/lib/geocode.ts` (geopf|ban|google|mapbox, GEOCODER_URL), `lib/geo/routing.ts` (osrm|mapbox|google + repli), `lib/geo/quote.ts`
+  - API : /api/quote (dashboard), /api/route, /api/geocode/reverse, /api/book/[slug]/quote (public) ; rides.route_polyline (mig 001400)
+  - forfaits : `matchFixedFare` (@rydar/shared/pricing) → devis, mini-site, API sans prix
+  - carte : style Rydar (@rydar/shared/map-style, OpenMapTiles/OpenFreeMap), `components/map/{use-maplibre,fleet-map,route-preview,markers}`, thème jour/nuit
+  - web : command center (ride-focus, fleet-panel, ride-row, kpi-strip), nouvelle course = WorkspaceContent + RoutePreview, RideProgress, RouteGlyph
+  - app chauffeur : home carte plein écran, offre, course (SlideToConfirm, StepDots), `rydar-map(.web).tsx` ; aperçu web `pnpm --filter @rydar/driver web`
+  - worker : simulateur sur itinéraires OSRM, `backfill-routes`
+  - dev-geo : `scripts/dev-geo/` (tuiles OMT Overture, router :5001, géocodeur :5002) ; env dev dans apps/web/.env.local
+- [x] docs/DEPLOYMENT.md + captures docs/screenshots/*.jpg
+- [x] M12 NOUVEAUTÉS (choix utilisateur 3/6/7/10) — mig 002050→002500, 183 tests DB, 75 unitaires, 55 worker
+  - vols 002100 : rides.flight_*, pickup_at_original ; décalage RELATIF (heure demandée + retard), « arrivée + marge » seulement
+    sans horaire prévu ou si l'heure demandée précède l'atterrissage ; worker : flights_to_check / apply_flight_status
+  - alertes 002200 : ride_alerts (late|stalled|no_gps|not_started), private.watch_rides() 30 s ; la CENTRALE décide :
+    acknowledge_ride_alert (Garder), assign_ride (Réattribuer), reassign_ride(ride, reason, expected_driver) (Relancer ;
+    DRIVER_CHANGED / UNASSIGNED si dispatch auto off) ; chauffeur retiré = offre closed/removed_by_dispatch (exclu, pas un refus)
+  - messagerie 002300 : chat_messages (fil driver:<id> + flotte), signalements (report_type, position, expiration, votes),
+    topic realtime fleet:<org> ; send_chat_message, mark_chat_read, chat_overview, driver_chat_overview, vote_fleet_report
+  - gains/documents 002400 : driver_earnings, driver_documents, driver_submit_document, review_driver_document,
+    org_document_alerts, private.document_reminders() ; commission organization_settings.driver_commission_percent
+  - stats 002050 : ride_offers.missed_at (offre géo prolongée/expirée sans réponse = manquée)
+  - libellés communs : `@rydar/shared` features.ts (flightBadge, FLEET_REPORT_META, RIDE_ALERT_META, documents)
+  - revue SQL (mig 002500 + corrections en place) : fuseau IANA validé, votes anti-abus (OWN_REPORT, 1 min, 3 h max),
+    created_at des messages au COMMIT (déclencheur différé), EXPIRY_REQUIRED pour valider une pièce à échéance
+  - web : `components/alerts/{dispatch-alerts,ride-alert-ui}`, `components/rides/{flight-info,ride-alert-list}`,
+    `/dashboard/messages` + `components/chat/*` (unread-provider), `components/drivers/{driver-documents,driver-earnings}`
+  - app : `app/(app)/{messages,earnings,documents}.tsx`, `src/components/{fleet-report,flight}.tsx`, canal fleet:{org}
+  - worker : `src/flights/` (aerodatabox|aviationstack|flightaware|mock, FLIGHT_MOCK_DELAYS), watch_rides 30 s,
+    document_reminders 6 h, simulateur SIM_REPORTS=1
+
+- [x] M13 OPTION 2 « CENTRALE À COMMISSION » (réseaux WhatsApp/Telegram) — mig 002600, 200 tests DB, 77 unitaires
+  - `organizations.dispatch_model` fleet|centrale + `platform_fee_percent/fixed_cents` : super admin seul (service role + audit) ;
+    lien d'inscription `join_code/join_enabled/join_auto_approve` via RPC set_join_link (owner/admin)
+  - répartition trigger `rides_centrale_split` (commission % + fixe ou saisie `commission_cents`, frais plateforme, `driver_payout_cents`) ;
+    PRICE_REQUIRED (dashboard), COMMISSION_TOO_HIGH ; offre + push « Vous gagnez 40 € »
+  - `ride_settlements` (trigger `rides_d_settlement` à COMPLETED) : driver_owes (cash/card) | centrale_owes (online/invoice/account) ;
+    due→declared→paid | disputed | waived (+ reopen) ; SETTLEMENT_LOCKED ; relances manuelle (30 min) et worker (24 h, 3 max)
+  - blocages `private.centrale_blocker` (unpaid | credit_limit | new_driver) dans run_geo_wave / offer_to_fleet / accept (DRIVER_BLOCKED) ;
+    trust new→trusted auto (`trust_after_rides`)
+  - bans : `banned_identities` (sha256 normalisé, org|platform), `fraud_reports` ; triggers IDENTITY_BANNED / DRIVER_BANNED ;
+    appareil d'un banni → compte suspendu / candidature refusée ; ban_driver, lift_driver_ban, svc_platform_ban/unban/dismiss
+  - inscription `/rejoindre/{code}` : svc_join_info → svc_identity_check → compte Auth → svc_driver_apply (inactive+pending) →
+    approve (aussi « reconsidérer » un refus) / reject ; `driver_account_state()` ; candidat : documents + appareil (current_driver_or_applicant_id)
+  - web : `/admin/centrales` (frais, signalements), fiche org (modèle, « Donner un accès »), `/dashboard/settlements` (Encaissements),
+    `/dashboard/network` (lien, candidatures, bannis), réglages « Commission & encaissement », répartition dans nouvelle course / fiche /
+    command center (`components/settlements/*`, `components/network/*`, `components/admin/*`), alertes temps réel (settlement.updated,
+    driver.application, driver.flagged) ; route `api/auth/driver-login` : state active|pending, 403 BANNED|REJECTED|INACTIVE…
+  - app : `app/account.tsx` (en attente / refusé / banni / suspendu), `app/(app)/commissions.tsx`, offre « Vous gagnez », fin de course,
+    gains « Votre part » ; device id Android = `and-` + ANDROID_ID (bannissement)
+  - shared : `centrale.ts` (libellés, lien de paiement {montant}/{montant_centimes}/{reference}, message WhatsApp, schémas) ;
+    seed « Centrale Express Paris » contact@centrale-express.fr (tous les états, candidatures, 1 banni signalé), lien express2026demo
+
+- [x] Kit VPS `deploy/` : docker-compose (web standalone `apps/web/Dockerfile`, worker, redis, Caddy HTTPS auto + TLS à la demande
+  via `/api/tls/allowed`), `install.sh` (Docker, ufw + port SSH réel, swap, DNS, migrations, build), `migrate.sh` (registre CLI Supabase,
+  1 transaction/migration), `configure.sh` (assistant .env : secrets saisis masqués au terminal, vérifiés en direct), `create-admin.sh`
+  (Super Admin via API admin), `osrm-prepare.sh`
+- [x] Retours terrain (sept. 2026) :
+  - dispatch : Berline par défaut (nouvelle course, devis, fiche chauffeur ; Business par défaut excluait les Berline) ;
+    compteurs « N dispo. » par catégorie dans le formulaire ; mig 002900 `dispatch.excluded` (chronologie : chauffeurs en ligne
+    non sollicités + raison) ; durcissement auth (emailSchema max 254, clés de limitation hachées, `rateLimitAll` IP→compte,
+    `ipFromHeaders` : X-Forwarded-For d'abord, Caddy impose X-Real-IP et retire CF-Connecting-IP)
+  - app chauffeur : GPS partagé (`use-my-position.ts`, BestForNavigation, filtre des points imprécis), cercle de précision
+    accroché à la position, suivi + « Recentrer », carte à plat ; en ligne/hors ligne OPTIMISTE (seul l'appel serveur est
+    attendu, suivi GPS sans attendre de premier point) ; rechargements regroupés (`refresh` une seule à la fois) ; effets
+    liés à `userId` (pas à l'objet session) ; session chiffrée en cache mémoire
+  - mot de passe oublié chauffeur : API `/api/auth/driver-password-reset` (réponse neutre, `after()`, flux implicite) → code
+    à 6 chiffres dans l'app (`/confirm`, verifyOtp recovery) ou lien `/auth/set-password?app=driver` (client isolé sans cookie)
+  - guidage DANS l'app (Waze / Plans restent proposés) : `POST /api/driver/route` (Bearer jeton du chauffeur, fiche drivers
+    via RLS, 30/min) → tracé + étapes FR (`computeNavRoute` osrm|mapbox|google, repli estimation = pas de guidage) ;
+    `@rydar/shared` navigation.ts (navInstruction, buildNavTrack, locateOnTrack, nextManeuver, remainingTrack, maneuverGlyph) ;
+    app `hooks/use-navigation.ts` (recalcul après 2 points à > 40 m du tracé, 10 s min, rafraîchi 3 min) +
+    `components/nav-banner.tsx` ; `RydarMap navigation` (suit le chauffeur, carte orientée cap, zoom selon la vitesse ; iOS : la
+    flèche tourne de cap − orientation carte) + `routeMuted` (trajet client en pointillé pendant l'approche)
+  - glissières (SlideToConfirm) : `fullScreenGestureEnabled: false` sur les piles (iOS 26 : sinon tout glissement vers la
+    droite = retour) + `gestureEnabled: false` sur l'écran course ; PanResponder qui ne cède pas le geste
+  - À FAIRE (demandé « par la suite ») : code e-mail à l'inscription par lien (OTP GoTrue : createUser email_confirm:false +
+    resend signup, verifyOtp type email ; `drivers.email_verified_at` + trigger sur auth.users ; modèle « Confirm signup » avec {{ .Token }})
+- [x] M14 FRAIS PLATEFORME (reversement centrale → Rydar, mig 003000 + 003100 corrections de la revue, 19 tests
+  `tests/db/platform-fees.test.ts`) — règles d'argent :
+  - frais DUS PAR LA CENTRALE dès la fin de course (trigger `rides_e_platform_fee` → `private.sync_platform_fee`), même si la centrale
+    annule / conteste le règlement chauffeur ; registre IMMUABLE `platform_fee_entries` (ride | correction | adjustment, trigger
+    `platform_entry_guard`) : changement de frais = écriture de correction (delta) ; BAISSE = `pending` (compte seulement si le super admin
+    l'accepte, `svc_platform_review_entry`) ; rattrapage des courses déjà terminées dans la migration
+  - `platform_payments` : centrale (owner/admin, même suspendue) `declare_platform_payment` / `cancel_platform_payment` ; super admin (service role,
+    `svc_platform_*`, p_actor super admin vérifié, audit_logs écrit en SQL) confirme (montant REÇU, partiel possible), refuse (motif), rouvre,
+    saisit un paiement, avoir / frais ajoutés (`svc_platform_adjust`), relance (`svc_platform_remind`, 1/h), conditions (`svc_platform_terms`),
+    coordonnées (`platform_billing`, `svc_platform_billing_update`)
+  - solde = Σ posted − Σ reçus ; échéance = fin du cycle (mois / semaine, fuseau org) + `platform_payment_days` (défaut 5) − 1 s ; paiements
+    soldent les échéances les plus anciennes (FIFO) ; `private.platform_account(org)` (échu, retard, déclaré, encaissé non reversé,
+    chez les chauffeurs, annulé, signaux 0 € / annulées) ; levier `platform_block_after_days` → `PLATFORM_FEES_OVERDUE` (402) à la création de
+    course, suspendu par un paiement déclaré en attente
+  - lecture : `org_platform_status` (bandeau), `org_platform_account`, `org_platform_statement` (relevé) ; super admin `admin_platform_overview`,
+    `admin_platform_account` ; `admin_centrale_overview` borné au mois choisi + dette envers Rydar ; temps réel `platform.updated` (org:{id})
+  - 003100 : `private.platform_position` (paiements ET écritures négatives soldent les échéances les plus anciennes), une nouvelle
+    correction de prix REMPLACE la baisse en attente (`superseded`), déclaration « J'ai payé » ne suspend le blocage que 7 j (et pas
+    dans les 7 j après un refus), rattrapage sans échéance rétroactive (+ réparation), centrale archivée débitrice toujours listée
+  - temps réel `platform.updated` : action + identifiants SEULEMENT (canal org:{id} lisible par les dispatchers) → les écrans relisent
+    le détail par `org_platform_account` (owner/admin) ou la RLS super admin ; une migration publiée ne se modifie plus (corrections
+    dans une nouvelle migration : le VPS a pu l'appliquer)
+  - shared `platform-fees.ts` (types, libellés, schémas, `platformEntryStatusMeta`) ; web : Encaissements (carte Rydar, J'ai payé,
+    relevé + CSV), bandeau (`components/platform-fees/org-*`), /suspended, alertes ; `/admin/frais` (+ `/admin/frais/[id]`, CSV,
+    `components/platform-fees/admin-*`), colonne « Dû à Rydar » dans /admin/centrales ; seed : paiements démo Centrale Express
+  - exports CSV : UTF-8 BOM, « ; », cellules commençant par = + - @ préfixées d'une apostrophe (injection de formules)
+- [x] Super admin : effectifs partout (/admin) + carte en direct des chauffeurs en ligne par organisation (`/admin/carte`, `/api/admin/live`)
+- [x] App chauffeur : guidage dans l'app (voir Retours terrain) ; véhicule accroché au tracé (`snapToTrack`) ; sens du véhicule sur le point
+  (faisceau hors guidage, flèche en guidage, boussole à l'arrêt `watchHeadingAsync`)
+- [x] Dispatch strict (mig 003200) + position EN DIRECT (mig 003300 → 003400), 233 tests DB : vagues 4→8→12→16 km une par
+  délai, relance 4→8 km, alerte « personne n'a pris » ; dispatch sur position fraîche SEULEMENT (`location_max_age_seconds`).
+  RÈGLE UTILISATEUR : app OUVERTE (arrière-plan, verrouillé, autre app) = en ligne + GPS en direct ; app FERMÉE = hors ligne,
+  sans notification. `private.watch_driver_gps()` (worker 30 s) : ni position ni `driver_heartbeat()` depuis 3 min → offline
+  (15 min si app < 1.1.0, `driver_devices.app_version` ; jamais en course) ; fraîcheur ≥ 2 min ; housekeeping ne met plus jamais hors ligne ; réveils silencieux / « POSITION NON REÇUE » abandonnés
+  (colonnes gps_* supprimées). App `location.ts` : trackingState on/off/unknown (relance sans interface = arrêt), battement
+  porté par la tâche GPS + heartbeat sans point, jamais de point > 2 min, arrêt si presence=offline ou SIGNED_OUT,
+  `killServiceOnDestroy: true` ; `supabase.ts` : écriture de session en 3 temps (clé .next), délai 20 s (hors storage) ;
+  `api.ts` rpc : nouvel essai après JWT expiré ; Android : conseil batterie « Non restreinte » (`lib/battery.ts`).
+  Revue 003200 corrigée dans 003300 (audit, relance après « Relancer », refus tardif).
+- [x] Publication stores (mig 003500, 238 tests DB) : suppression du compte dans l'app (`app/delete-account.tsx`, route
+  `/api/driver/delete-account` → `svc_delete_driver_account` : données perso supprimées, fiche anonymisée, courses/règlements
+  gardés sans identité, refus si course attribuée, compte Auth conservé s'il gère une centrale) ; pages publiques `/confidentialite`
+  et `/suppression-compte` (LEGAL_NAME/EMAIL/ADDRESS, configure.sh) ; `/.well-known/assetlinks.json` (ANDROID_CERT_SHA256) ;
+  EAS Update (runtimeVersion = version, `eas update --channel production`) ; eas.json submit ; iOS UIBackgroundModes = location
+  seul ; Android SANS ACCESS_BACKGROUND_LOCATION ni exemption batterie (service de premier plan) ; « Toujours » jamais demandé ;
+  information préalable avant la 1re demande de position. Guide : docs/STORES.md.
+- [x] M15 RELANCES WHATSAPP + MOYENS DE PAIEMENT (mig 003600 canal `whatsapp`, 003700, 003800 ; 246 tests DB, `tests/db/whatsapp.test.ts`)
+  - API officielle WhatsApp Business Cloud (Meta), modèles « Utilité » fr : `rappel_commission` (4 variables) et
+    `rappel_frais_plateforme` (3 variables), textes dans `@rydar/shared` WHATSAPP_TEMPLATES et docs/WHATSAPP.md ; jamais d'outil non officiel
+  - centrale → chauffeurs : `organization_settings.reminder_channels` {app}|{whatsapp}|{app,whatsapp} ; `private.remind_driver` (WhatsApp
+    impossible → push) ; `remind_driver_settlements(p_driver_id, p_channels default null)`, `private.settlement_reminders` idem
+  - Rydar → propriétaire : `svc_platform_remind(p_org, p_actor, p_note, p_whatsapp default false)` (refus AVANT de consommer la limite
+    d'1/h si WhatsApp impossible), destinataire `private.platform_whatsapp_target` (users.phone du owner sinon organizations.phone),
+    `admin_platform_whatsapp(org)` (case de la relance)
+  - config : `org_whatsapp` / `platform_whatsapp` (RLS owner/admin | super admin), jetons dans `*_whatsapp_secrets` (service role SEUL) ;
+    écriture `svc_whatsapp_save|remove|record` (web, après vérification Graph `lib/whatsapp.ts`) ; file `notifications` canal whatsapp →
+    worker `src/whatsapp.ts` (`private.claim_whatsapp` / `private.complete_whatsapp` : reprises, état expéditeur, repli push `data.fallback`)
+  - web : Réglages › Commission & encaissement › « Relances des chauffeurs » (`components/settlements/reminder-settings.tsx`,
+    `components/whatsapp/whatsapp-card.tsx`), /admin/frais « WhatsApp de Rydar » + case dans Relancer
+  - moyens de paiement centrale : lien | virement (organization_settings.settlement_payee_name/iban/bic, IBAN vérifié mod 97
+    `isValidIban`) | espèces | autre (instructions) ; `private.settlement_methods_available` = cochés ET renseignés (repli espèces) ;
+    `driver_settlements.pay.bank` ; app Commissions : RIB copiable ; Rydar garde ses moyens dans platform_billing (/admin/frais)
+- **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;
+  aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
+  lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;
+  espace insécable avant ? : ; ! ; cibles ≥ 48 px (56 en conduite) ; texte d'information en `muted`, jamais `subtle`.
+- **Session Claude sur le VPS de production (`/opt/rydar`) : suivre `deploy/CLAUDE-VPS.md`** (secrets jamais dans le chat, pas de seed,
+  pas de code modifié sur le serveur).
+
+## Notes / prochaines étapes
+- Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
+- Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
+- Données indispensables en production : par MIGRATION, jamais seulement dans seed.sql (jamais chargé en prod).
+- Variables d'environnement : défaut avec `||`, jamais `??` (Docker/Compose passent des variables VIDES, ex. NEXT_PUBLIC_MAP_*
+  → carte noire en prod) ; la CI vérifie l'image (CSP tuiles, worker MapLibre, adresse des tuiles).
+- Formulaires web : `onSubmit={submitWith(fn)}` (`lib/utils`), jamais `<form action={fn}>` (React 19 vide le formulaire même
+  si le serveur répond une erreur) ; erreurs serveur : `fieldErrors(err)` + `describeError(err, LABELS)` (« Champ : message »).
+- Supabase hébergé : `postgres` NON super-utilisateur (BYPASSRLS) ; `auth.*`, `storage.*`, `realtime.messages` appartiennent
+  aux services → seulement CREATE/DROP POLICY (supautils policy_grants), trigger sur auth.users, DML ; jamais ALTER TABLE/fonction dessus.
+- RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_heartbeat, driver_register_device, driver_home, driver_offers ; centrale : driver_settlements, driver_declare_payment, driver_account_state.
+- RPC dashboard : cancel_ride, assign_ride, redispatch_ride, reassign_ride, acknowledge_ride_alert, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
+  Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
+  ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application, admin_centrale_overview ;
+  service role : svc_join_info, svc_identity_check, svc_driver_apply, svc_platform_ban/unban/dismiss_report.
+- Frais plateforme : centrale org_platform_status, org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
+  super admin admin_platform_overview, admin_platform_account ; service role svc_platform_confirm/reject/reopen/record_payment,
+  svc_platform_adjust, svc_platform_review_entry, svc_platform_remind, svc_platform_terms, svc_platform_billing_update.
+- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.watch_driver_gps() (app fermée → hors ligne), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.
