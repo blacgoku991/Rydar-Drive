@@ -1,4 +1,4 @@
-import type { PricingRule, VehicleCategory } from "@rydar/shared";
+import type { VehicleCategory } from "@rydar/shared";
 import { Clock, MapPin, Phone, ShieldCheck, Sparkles, Star } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -15,7 +15,7 @@ async function load(slug: string) {
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
-    .select("id, name, status, logo_url, legal_name, siret, address, postal_code, city, vtc_registration, booking:booking_sites(*)")
+    .select("id, name, status, timezone, logo_url, legal_name, siret, address, postal_code, city, vtc_registration, booking:booking_sites(*)")
     .eq("slug", slug)
     .maybeSingle();
   if (!org || (org as any).status !== "active") return null;
@@ -27,6 +27,15 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const data = await load((await params).slug);
   if (!data?.site) return { title: "Réservation" };
   return { title: { absolute: `${data.site.title ?? data.org.name} — Réservation de chauffeur privé` }, description: data.site.tagline ?? undefined };
+}
+
+/** Fuseau de la centrale (heure saisie par le client), Europe/Paris si absent ou inconnu. */
+function orgTimeZone(tz: unknown): string {
+  try {
+    return typeof tz === "string" && tz ? new Intl.DateTimeFormat("fr-FR", { timeZone: tz }).resolvedOptions().timeZone : "Europe/Paris";
+  } catch {
+    return "Europe/Paris";
+  }
 }
 
 function readableOn(hex: string) {
@@ -48,11 +57,6 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
     const session = preview ? await getSession() : null;
     if (!session?.memberships.some((m) => m.org.id === org.id)) notFound();
   }
-  const { data: pricing } = await createAdminClient()
-    .from("pricing_rules")
-    .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end")
-    .eq("organization_id", org.id)
-    .eq("is_active", true);
   const brand = site.primary_color ?? "#c8f03c";
   const style = { "--color-brand": brand, "--color-brand-strong": brand, "--color-brand-fg": readableOn(brand) } as React.CSSProperties;
 
@@ -116,7 +120,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             near={await publicAnchor(data.org.id).catch(() => null)}
             slug={slug}
             categories={(site.vehicle_categories ?? ["standard"]) as VehicleCategory[]}
-            pricing={(pricing ?? []) as PricingRule[]}
+            timeZone={orgTimeZone(org.timezone)}
             showPrice={site.show_price_estimate}
             phone={site.phone}
             operator={org.legal_name || org.name}

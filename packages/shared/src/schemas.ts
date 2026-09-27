@@ -185,7 +185,9 @@ export const bookingRequestSchema = z.object({
     .transform((v) => (v ? v.replace(/\s/g, "") : undefined)),
   comment: optionalText(500),
   consent: z.literal(true, { error: "Merci d'accepter le traitement de vos données" }),
-  website: z.string().max(0).optional(), // pot de miel anti-bot
+  // Pot de miel anti-robot : accepté par le schéma (sinon l'erreur de validation prévient le robot),
+  // l'action répond « ok » sans rien créer s'il est rempli
+  website: z.string().max(200).optional(),
 });
 export type BookingRequest = z.output<typeof bookingRequestSchema>;
 
@@ -249,11 +251,29 @@ export const driverStatusChangeSchema = z.object({
 // -----------------------------------------------------------------------------
 // Organisation / réglages / mini-site / API
 // -----------------------------------------------------------------------------
+/**
+ * Sous-domaines réservés à la plateforme (hameçonnage sous le domaine officiel, noms techniques) :
+ * refusés pour un mini-site ou un identifiant de centrale, ainsi que tout nom commençant par « rydar ».
+ * Liste identique au trigger SQL private.reject_reserved_subdomain (migration 004900).
+ */
+export const RESERVED_SUBDOMAINS = [
+  "www", "app", "api", "admin", "administration", "support", "aide", "help", "status", "statut", "mail", "email", "smtp", "imap",
+  "pop", "mx", "mta-sts", "autodiscover", "autoconfig", "docs", "doc", "blog", "login", "connexion", "auth", "compte", "account",
+  "securite", "security", "paiement", "payment", "facturation", "billing", "dashboard", "static", "cdn", "assets", "book",
+  "rejoindre", "chauffeur", "driver", "centrale", "legal", "juridique",
+] as const;
+
+export function isReservedSubdomain(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  return v.startsWith("rydar") || (RESERVED_SUBDOMAINS as readonly string[]).includes(v);
+}
+
 export const slugSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/, "Lettres minuscules, chiffres et tirets uniquement");
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/, "Lettres minuscules, chiffres et tirets uniquement")
+  .refine((s) => !isReservedSubdomain(s), "Nom réservé à la plateforme");
 
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -346,13 +366,25 @@ export const bookingSiteSchema = z.object({
 });
 
 export const API_SCOPES = ["rides:create", "rides:read", "rides:cancel"] as const;
-export const apiKeyCreateSchema = z.object({
-  name: z.string().trim().min(2).max(80),
-  scopes: z.array(z.enum(API_SCOPES)).min(1),
-  rateLimitPerMinute: z.coerce.number().int().min(1).max(10_000).default(60),
-  allowedOrigins: z.array(z.url()).max(20).default([]),
-  expiresInDays: z.coerce.number().int().min(1).max(3650).nullish(),
-});
+/** Seule portée permise à une clé « navigateur » (origines autorisées) : la clé est lisible par tout visiteur du site. */
+export const BROWSER_KEY_SCOPES = ["rides:create"] as const;
+export const apiKeyCreateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(80),
+    scopes: z.array(z.enum(API_SCOPES)).min(1),
+    rateLimitPerMinute: z.coerce.number().int().min(1).max(10_000).default(60),
+    allowedOrigins: z.array(z.url()).max(20).default([]),
+    expiresInDays: z.coerce.number().int().min(1).max(3650).nullish(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.allowedOrigins.length && v.scopes.some((s) => !(BROWSER_KEY_SCOPES as readonly string[]).includes(s))) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["scopes"],
+        message: "Clé utilisée depuis le navigateur (origines autorisées) : seule la création de courses est permise.",
+      });
+    }
+  });
 
 export const planLimitsSchema = z.object({
   max_drivers: z.number().int().min(1).nullable(),

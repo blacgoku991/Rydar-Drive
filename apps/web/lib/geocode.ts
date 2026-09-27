@@ -2,6 +2,9 @@ import "server-only";
 import { serverEnv } from "@/lib/env";
 import { lruCache, fetchJson } from "@/lib/geo/cache";
 import { exactFavorite, matchFavorites, type Place } from "@/lib/places";
+import { rateLimit, rateLimitAll } from "@/lib/rate-limit";
+import { clientIp, ipBucket } from "@/lib/request";
+import { createClient } from "@/lib/supabase/server";
 
 // -----------------------------------------------------------------------------
 // Géocodage — fournisseurs interchangeables (variable GEOCODER_PROVIDER) :
@@ -88,12 +91,41 @@ async function mapbox(q: string, near: Near, token: string): Promise<Place[]> {
 
 const searchCache = lruCache<Place[]>(800, 30 * 60_000);
 
-/** Fournisseur configuré (repli BAN publique en cas d'erreur). */
+/**
+ * Budget quotidien GLOBAL d'un fournisseur payant (Google, Mapbox), toutes requêtes confondues
+ * (GEO_DAILY_BUDGET, défaut 20 000 / jour) : au-delà, repli sur la Géoplateforme / BAN (gratuites).
+ */
+async function paidGeocodeAllowed(provider: "google" | "mapbox"): Promise<boolean> {
+  const budget = Number(process.env.GEO_DAILY_BUDGET) || 20_000;
+  return (await rateLimit(`geobudget:geocode:${provider}`, budget, 86_400)).ok;
+}
+
+/**
+ * Limite des routes anonymes /api/geocode et /api/geocode/reverse (autocomplétion du mini-site et du
+ * tableau de bord) : par utilisateur connecté, sinon par IP (IPv6 groupée par /64), à la minute et au jour.
+ */
+export async function geocodeRequestAllowed(): Promise<boolean> {
+  let sub: string | null = null;
+  try {
+    sub = (await (await createClient()).auth.getClaims()).data?.claims?.sub ?? null;
+  } catch {
+    sub = null; // session illisible : traité comme anonyme
+  }
+  const who = sub ? `u:${sub}` : ipBucket(await clientIp());
+  const res = await rateLimitAll(
+    sub
+      ? [{ key: `geocode:${who}`, limit: 90, windowSec: 60 }, { key: `geocode:day:${who}`, limit: 5000, windowSec: 86_400 }]
+      : [{ key: `geocode:${who}`, limit: 60, windowSec: 60 }, { key: `geocode:day:${who}`, limit: 1500, windowSec: 86_400 }],
+  );
+  return res.ok;
+}
+
+/** Fournisseur configuré (repli BAN publique en cas d'erreur ou de budget quotidien épuisé). */
 async function remoteSearch(query: string, near: Near, autocomplete: boolean): Promise<Place[]> {
   const env = serverEnv();
   try {
-    if (env.geocoder === "google" && env.googleMapsKey) return await google(query, env.googleMapsKey);
-    if (env.geocoder === "mapbox" && env.mapboxToken) return await mapbox(query, near, env.mapboxToken);
+    if (env.geocoder === "google" && env.googleMapsKey && (await paidGeocodeAllowed("google"))) return await google(query, env.googleMapsKey);
+    if (env.geocoder === "mapbox" && env.mapboxToken && (await paidGeocodeAllowed("mapbox"))) return await mapbox(query, near, env.mapboxToken);
     if (env.geocoder === "ban") return await ban(query, near, env.geocoderUrl || "https://api-adresse.data.gouv.fr", autocomplete);
     return await geopf(query, near, env.geocoderUrl || "https://data.geopf.fr/geocodage", autocomplete);
   } catch {
@@ -177,11 +209,11 @@ export async function reverseGeocode(lat: number, lng: number): Promise<Place | 
   const env = serverEnv();
   let place: Place | null = null;
   try {
-    if (env.geocoder === "google" && env.googleMapsKey) {
+    if (env.geocoder === "google" && env.googleMapsKey && (await paidGeocodeAllowed("google"))) {
       const data = await fetchJson(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=fr&key=${env.googleMapsKey}`);
       const r = data?.results?.[0];
       if (r) place = { label: r.formatted_address, address: r.formatted_address, lat, lng, kind: "address" };
-    } else if (env.geocoder === "mapbox" && env.mapboxToken) {
+    } else if (env.geocoder === "mapbox" && env.mapboxToken && (await paidGeocodeAllowed("mapbox"))) {
       const data = await fetchJson(`https://api.mapbox.com/search/geocode/v6/reverse?longitude=${lng}&latitude=${lat}&language=fr&limit=1&access_token=${env.mapboxToken}`);
       const f = data?.features?.[0];
       if (f) place = { label: f.properties.full_address, address: f.properties.full_address, lat, lng, kind: "address" };

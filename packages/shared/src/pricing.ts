@@ -52,8 +52,10 @@ const PLACE_ALIASES: Record<string, RegExp> = {
   disney: /disney|marne[\s-]*la[\s-]*vall|chessy/i,
   "le bourget": /bourget/i,
   beauvais: /beauvais|till[ée]/i,
-  paris: /\bparis\b|\b75\d{3}\b/i,
-  nice: /\bnice\b|\b06[0-9]00\b/i,
+  // Villes : la COMMUNE (code postal, début d'adresse, après une virgule ou en fin d'adresse), jamais un nom de
+  // voie (« Avenue de Paris, 78000 Versailles », « Boulevard de Nice, 06400 Cannes » ne sont pas la ville)
+  paris: /^\s*paris\b|,\s*(75\d{3}\s+)?paris\b|\bparis(\s+\d{1,2}\s*(e|er|ème))?\s*(,\s*france)?\s*$|\b75\d{3}\b/i,
+  nice: /^\s*nice\b|,\s*(06[0-3]00\s+)?nice\b|\bnice\s*(,\s*france)?\s*$|\b06[0-3]00\b/i,
   "aéroport de nice": /a[ée]roport.*nice|nice.*a[ée]roport|c[ôo]te d'azur/i,
   monaco: /monaco|\b98000\b/i,
 };

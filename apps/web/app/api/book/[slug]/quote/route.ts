@@ -1,9 +1,10 @@
 import { estimatePrice, matchFixedFare, vehicleCategorySchema, type PricingRule } from "@rydar/shared";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { coordinateProblem, orgAnchor } from "@/lib/geo/anchor";
 import { computeRoute } from "@/lib/geo/routing";
-import { rateLimit } from "@/lib/rate-limit";
-import { clientIp } from "@/lib/request";
+import { rateLimitAll } from "@/lib/rate-limit";
+import { clientIp, ipBucket } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,12 @@ const schema = z.object({ pickup: place, dropoff: place, category: vehicleCatego
  */
 export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const limit = await rateLimit(`bookquote:${await clientIp()}`, 60, 60);
+  // Une réservation réelle = 5 à 20 devis ; chaque devis peut coûter un itinéraire facturé
+  const ip = ipBucket(await clientIp());
+  const limit = await rateLimitAll([
+    { key: `bookquote:${ip}`, limit: 30, windowSec: 60 },
+    { key: `bookquote:day:${ip}`, limit: 600, windowSec: 86_400 },
+  ]);
   if (!limit.ok) return NextResponse.json({ error: "Trop de requêtes" }, { status: 429 });
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Requête invalide" }, { status: 422 });
@@ -31,6 +37,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     .maybeSingle();
   const site = org ? ((Array.isArray((org as any).booking) ? (org as any).booking[0] : (org as any).booking) as { enabled: boolean; show_price_estimate: boolean; vehicle_categories: string[] } | null) : null;
   if (!org || (org as any).status !== "active" || !site?.enabled) return NextResponse.json({ error: "Indisponible" }, { status: 404 });
+
+  // Zone desservie : mêmes règles que l'API v1 (départ près de l'activité de la centrale, trajet ≤ 1 500 km)
+  const anchor = await orgAnchor((org as any).id).catch(() => null);
+  if (coordinateProblem(v.pickup, anchor) || coordinateProblem(v.dropoff, v.pickup, 1_500_000)) {
+    return NextResponse.json({ error: "Trajet hors de la zone desservie" }, { status: 422 });
+  }
 
   const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500 });
   let priceCents: number | null = null;
