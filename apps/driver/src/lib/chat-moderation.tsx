@@ -43,7 +43,7 @@ export function unblockChatAuthor(driverId: string) {
 const acceptedNow = new Set<string>();
 
 /**
- * Règles du fil acceptées par le chauffeur connecté : CGU de la version en vigueur, ou plus récente
+ * Règles du fil acceptées par le chauffeur connecté : CGU de la version en vigueur, par égalité stricte
  * (driver_chat_overview.rules_version), ou acceptées pendant cette session. false tant que la messagerie n'est pas lue
  * (useFleetRules consulte aussi l'acceptation des conditions d'utilisation à l'ouverture de l'app : lib/legal.ts).
  */

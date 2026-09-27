@@ -359,9 +359,16 @@ export async function stopTracking() {
 /**
  * Chauffeur EN LIGNE qui revient dans l'app : suivi relancé s'il est arrêté OU s'il ne livre plus de position
  * depuis 90 s (tâche enregistrée ne veut pas dire points reçus ; Android : service de premier plan recréé).
+ * `ride` : présence de course (en route, sur place, client à bord) — suivi relancé même s'il a été arrêté dans ce
+ * processus (passage hors ligne plus tôt) : jamais de course sans position. L'appelant a vérifié l'autorisation
+ * (locationPermissionState), rien n'est demandé ici.
  */
-export async function ensureTracking() {
-  if (isWeb || trackingState === "off") return;
+export async function ensureTracking(ride = false) {
+  if (isWeb) return;
+  if (trackingState === "off") {
+    if (ride) await startTracking();
+    return;
+  }
   const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => true);
   // (Android : un changement de mode course pendant l'arrière-plan n'a pas pu être appliqué → maintenant)
   if (!started || Date.now() - lastSent > 90_000 || appliedRideMode !== rideMode) {

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
 import { useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View, type TextInput } from "react-native";
@@ -7,10 +8,11 @@ import { AuthField, FormScroll, Notice } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
 import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { ApiError, deleteAccount, legalUrl, type DeleteAccountResult } from "@/lib/api";
+import { ApiError, deleteAccount, LAST_EMAIL_KEY, legalUrl, type DeleteAccountResult } from "@/lib/api";
+import { forgetLocalAcceptance } from "@/lib/legal";
 import { stopTracking } from "@/lib/location";
 import { unregisterPush } from "@/lib/notifications";
-import { supabase } from "@/lib/supabase";
+import { signOutThisDevice } from "@/lib/supabase";
 import { colors, control, radius, space, type, weight } from "@/theme";
 
 const DELETED = [
@@ -53,11 +55,15 @@ export default function DeleteAccount() {
   }
 
   async function finish(res: DeleteAccountResult) {
-    // Arrêt du suivi GPS et des notifications, puis déconnexion de CET appareil seulement : un gérant qui roulait
-    // aussi garde ses sessions du tableau de bord.
+    // Arrêt du suivi GPS et des notifications, puis déconnexion de CET appareil seulement (même hors réseau avec un
+    // jeton expiré) : un gérant qui roulait aussi garde ses sessions du tableau de bord. Rien du compte supprimé ne
+    // reste sur le téléphone : ni l'adresse pré-remplie à la connexion, ni son acceptation des conditions.
+    const uid = session?.user.id;
     await stopTracking().catch(() => null);
     await unregisterPush().catch(() => null);
-    await supabase.auth.signOut({ scope: "local" }).catch(() => null);
+    await signOutThisDevice("local").catch(() => null);
+    await AsyncStorage.removeItem(LAST_EMAIL_KEY).catch(() => null);
+    if (uid) await forgetLocalAcceptance(uid);
     setResult(res);
     setPhase("done");
   }

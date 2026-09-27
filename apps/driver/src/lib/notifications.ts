@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Application from "expo-application";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
@@ -86,6 +87,12 @@ export async function setupNotificationChannels() {
 
 let registeredToken: string | null = null;
 
+/**
+ * Dernier jeton push obtenu sur ce téléphone, gardé d'un lancement à l'autre : la déconnexion le retire du compte
+ * même si le jeton n'a pas pu être relu dans ce processus (hors réseau au lancement).
+ */
+const PUSH_TOKEN_KEY = "rydar.push.token";
+
 /** Demande la permission, récupère le token Expo et l'enregistre pour ce chauffeur. */
 export async function registerForPush(): Promise<string | null> {
   if (Platform.OS === "web") return null; // pas de push en aperçu web
@@ -109,13 +116,26 @@ export async function registerForPush(): Promise<string | null> {
   }
   const token = (await Notifications.getExpoPushTokenAsync(appConfig.easProjectId ? { projectId: appConfig.easProjectId } : undefined)).data;
   registeredToken = token;
+  await AsyncStorage.setItem(PUSH_TOKEN_KEY, token).catch(() => null);
   await api.registerDevice({ ...base, token, provider: "expo" });
   return token;
 }
 
-export async function unregisterPush() {
-  if (registeredToken) await api.unregisterToken(registeredToken).catch(() => null);
+/**
+ * Retire le jeton push de ce téléphone du compte connecté (avant la déconnexion : l'appel est authentifié).
+ * false : jeton connu mais retrait impossible (réseau) — le téléphone peut encore recevoir les notifications du compte.
+ */
+export async function unregisterPush(): Promise<boolean> {
+  const token = registeredToken ?? (await AsyncStorage.getItem(PUSH_TOKEN_KEY).catch(() => null));
+  if (!token) return true;
+  try {
+    await api.unregisterToken(token);
+  } catch {
+    return false;
+  }
   registeredToken = null;
+  await AsyncStorage.removeItem(PUSH_TOKEN_KEY).catch(() => null);
+  return true;
 }
 
 type PresentedOffer = { id: string; offerId: string };

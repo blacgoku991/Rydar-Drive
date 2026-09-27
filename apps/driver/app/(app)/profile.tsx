@@ -58,6 +58,8 @@ export default function Profile() {
   const { home, signOut, chat } = useDriver();
   const v = home?.vehicle;
   const [docsTodo, setDocsTodo] = useState<number | null>(null);
+  // Déconnexion hors réseau : jusqu'à ~30 s (renouvellement du jeton tenté) — bouton en attente
+  const [leaving, setLeaving] = useState(false);
 
   // Pastille « à mettre à jour » : manquants, refusés, expirés ou bientôt échus
   const loadDocs = useCallback(() => {
@@ -200,8 +202,14 @@ export default function Profile() {
               variant="danger"
               icon="log-out-outline"
               height={control.md}
+              loading={leaving}
               onPress={async () => {
-                await signOut();
+                setLeaving(true);
+                try {
+                  await signOut();
+                } finally {
+                  setLeaving(false);
+                }
                 router.replace("/login");
               }}
             />

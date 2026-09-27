@@ -8,7 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { blockerInfo, frTypo } from "@/components/centrale";
 import { BigButton, Card, RouteLine, Screen, ScreenHeader } from "@/components/ui";
 import { alertDriverBlocked, useDriver } from "@/hooks/driver-context";
-import { api, type AcceptResult } from "@/lib/api";
+import { api, refusalText, type AcceptResult } from "@/lib/api";
 import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
 
 const NBSP = "\u00A0";
@@ -18,15 +18,18 @@ const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? m
 
 export default function Planning() {
   const { offers, refresh, home } = useDriver();
-  const [mine, setMine] = useState<Ride[]>([]);
+  const [mine, setMine] = useState<Ride[] | null>(null);
+  // Lecture de « Mes courses planifiées » en échec (réseau) : dernière liste connue gardée, jamais « Aucune course »
+  const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const tz = home?.organization.timezone;
   const available = offers.filter((o) => o.mode === "fleet");
 
   const load = useCallback(async () => {
-    const [, upcoming] = await Promise.all([refresh(), api.upcoming()]);
-    setMine(upcoming.filter((r) => r.type === "scheduled"));
+    const [, upcoming] = await Promise.all([refresh(), api.upcoming().catch(() => null)]);
+    setLoadError(upcoming == null);
+    if (upcoming) setMine(upcoming.filter((r) => r.type === "scheduled"));
   }, [refresh]);
   useFocusEffect(useCallback(() => void load(), [load]));
 
@@ -102,7 +105,7 @@ export default function Planning() {
                       else
                         Alert.alert(
                           res.ok ? "Course attribuée" : "Course indisponible",
-                          res.ok ? "Ajoutée à votre planning. Rappels programmés." : frTypo(res.message ?? "Course déjà attribuée."),
+                          res.ok ? "Ajoutée à votre planning. Rappels programmés." : frTypo(refusalText(res)),
                         );
                       await load();
                     }}
@@ -113,10 +116,18 @@ export default function Planning() {
           })}
 
           <Text style={[styles.section, { marginTop: space.lg }]} accessibilityRole="header">
-            Mes courses planifiées <Text style={mono}>· {mine.length}</Text>
+            Mes courses planifiées {mine ? <Text style={mono}>· {mine.length}</Text> : null}
           </Text>
-          {mine.length === 0 && <Text style={styles.empty}>Aucune course à venir.</Text>}
-          {mine.map((r) => {
+          {loadError ? (
+            <View style={styles.error} accessibilityRole="alert">
+              <Text style={styles.errorText}>
+                {frTypo(mine ? "Connexion impossible : cette liste n'est peut-être pas à jour." : "Connexion impossible : vos courses n'ont pas pu être chargées.")}
+              </Text>
+              <BigButton title="Réessayer" icon="refresh-outline" variant="secondary" height={control.md} loading={refreshing} onPress={pull} />
+            </View>
+          ) : null}
+          {mine?.length === 0 && <Text style={styles.empty}>Aucune course à venir.</Text>}
+          {(mine ?? []).map((r) => {
             const when = formatRideDate(r.pickup_at, tz);
             const amount = formatPrice(r.driver_payout_cents ?? r.price_cents);
             return (
@@ -156,6 +167,8 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.xxl + space.sm, gap: space.md },
   section: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.semibold },
   empty: { color: colors.muted, fontSize: type.body, lineHeight: 21 },
+  error: { gap: space.sm },
+  errorText: { color: colors.fg, fontSize: type.body, lineHeight: 21 },
   card: { gap: space.md },
   // Course planifiée attribuée : liseré violet discret (état « planifiée », comme sur le dashboard)
   mineCard: {},

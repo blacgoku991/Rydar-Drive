@@ -19,6 +19,7 @@ import { useNavigation } from "@/hooks/use-navigation";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { setHighAccuracy } from "@/lib/location";
+import { navUrl, rideTarget, type NavApp, type RideTarget } from "@/lib/ride-target";
 import { approachSeconds, colors, control, mono, overlay, radius, space, type, weight } from "@/theme";
 
 const STEP_COLOR: Partial<Record<RideStatus, string>> = {
@@ -46,24 +47,23 @@ const NBSP = " ";
 const passengersText = (n: number) => `${n}${NBSP}passager${n > 1 ? "s" : ""}`;
 const luggageText = (n: number) => (n > 0 ? `${n}${NBSP}bagage${n > 1 ? "s" : ""}` : "Sans bagage");
 
-function openNav(app: "waze" | "google" | "apple", lat: number, lng: number, label: string) {
-  const url =
-    app === "waze"
-      ? `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`
-      : app === "google"
-        ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
-        : `http://maps.apple.com/?daddr=${lat},${lng}&q=${encodeURIComponent(label)}`;
-  void Linking.openURL(url);
+function openNav(app: NavApp, target: RideTarget) {
+  void Linking.openURL(navUrl(app, target)).catch(() => null);
 }
+
+/** Retour à l'accueil existant (dépile), au lieu d'empiler un nouvel accueil à chaque course. */
+const toHome = () => router.dismissTo("/home");
 
 export default function RideScreen() {
   // Écran allumé pendant la course ; départ rapide de l'écran (fin de course → Commissions) : sur le web,
   // le verrou peut ne pas être encore actif au démontage — pas d'erreur dans ce cas
   useKeepAwake(undefined, { suppressDeactivateWarnings: true });
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { refresh, home } = useDriver();
+  const { refresh, home, setOnline } = useDriver();
   const me = useMyPosition();
   const [ride, setRide] = useState<Ride | null>(null);
+  // Course invisible pour ce chauffeur dès l'ouverture (réattribuée, notification ou planning périmés)
+  const [missing, setMissing] = useState(false);
   const [loading, setLoading] = useState(false);
   // Mode centrale : récapitulatif de fin de course (part chauffeur, commission à régler ou part à recevoir)
   const [done, setDone] = useState<{ ride: Ride; settlement: DriverSettlementItem | null } | null>(null);
@@ -72,14 +72,17 @@ export default function RideScreen() {
   const load = useCallback(async () => {
     const r = await api.ride(String(id)).catch(() => undefined); // undefined : réseau, on garde l'affichage
     if (r === undefined) return;
-    if (r === null && hadRide.current) {
-      // Course retirée par la centrale (réattribuée) : plus visible pour ce chauffeur
-      hadRide.current = false;
-      Alert.alert("Course retirée", "La centrale a réattribué cette course.");
-      router.replace("/home");
+    if (r === null) {
+      if (hadRide.current) {
+        // Course retirée par la centrale (réattribuée) : plus visible pour ce chauffeur
+        hadRide.current = false;
+        Alert.alert("Course retirée", "La centrale a réattribué cette course.");
+        toHome();
+      } else setMissing(true);
       return;
     }
-    if (r) hadRide.current = true;
+    hadRide.current = true;
+    setMissing(false);
     setRide(r);
   }, [id]);
 
@@ -110,7 +113,8 @@ export default function RideScreen() {
   // Guidage sur notre carte : vers la prise en charge, puis vers la destination (Waze / Plans restent proposés)
   const rideStatus = ride?.status as RideStatus | undefined;
   const headingToPickup = rideStatus == null || TO_PICKUP.includes(rideStatus);
-  const navTarget = headingToPickup || !dropoff ? pickup : dropoff;
+  // Destination sans coordonnées : pas de guidage intégré (jamais vers la prise en charge à sa place)
+  const navTarget = headingToPickup ? pickup : dropoff;
   // Course planifiée acceptée longtemps à l'avance : aperçu du trajet, le guidage démarre à l'approche de l'heure
   const pickupSoon = rideStatus !== "ACCEPTED" || (ride != null && new Date(ride.pickup_at).getTime() - Date.now() < GUIDE_BEFORE_MS);
   const navOn = rideStatus != null && DRIVER_FLOW[rideStatus] != null && rideStatus !== "DRIVER_ARRIVED" && navTarget != null && pickupSoon;
@@ -127,8 +131,21 @@ export default function RideScreen() {
   const mutedRoute = navOn && headingToPickup ? rideRoute : null;
 
   if (!ride) {
+    if (missing) {
+      return (
+        <Screen style={[styles.center, styles.missing]}>
+          <Ionicons name="close-circle-outline" size={40} color={colors.muted} />
+          <Text style={styles.missingTitle} accessibilityRole="header">Course indisponible</Text>
+          <Text style={styles.loadingText}>Elle a été retirée ou réattribuée par la centrale.</Text>
+          <BigButton title="Retour à l'accueil" variant="secondary" height={control.md} onPress={toHome} style={styles.missingBack} />
+        </Screen>
+      );
+    }
     return (
       <Screen style={styles.center}>
+        <SafeAreaView edges={["top"]} style={styles.mapTop} pointerEvents="box-none">
+          <BackButton />
+        </SafeAreaView>
         <ActivityIndicator color={colors.muted} />
         <Text style={styles.loadingText} accessibilityLiveRegion="polite">Chargement de la course…</Text>
       </Screen>
@@ -141,10 +158,9 @@ export default function RideScreen() {
   const centrale = (home?.model ?? home?.organization.dispatch_model) === "centrale" && ride.driver_payout_cents != null;
   const stepIndex = Math.max(0, STEPS.findIndex((s) => s.status === status));
   const toPickup = headingToPickup;
-  const target = toPickup || ride.dropoff_lat == null
-    ? { lat: ride.pickup_lat, lng: ride.pickup_lng, label: ride.pickup_address }
-    : { lat: ride.dropoff_lat!, lng: ride.dropoff_lng!, label: ride.dropoff_address };
-  const distToTarget = me ? haversine(me, target) : null;
+  // Client à bord : la destination, même sans coordonnées (adresse seule, sans estimation d'arrivée)
+  const target = rideTarget(ride, toPickup);
+  const distToTarget = me && target.lat != null && target.lng != null ? haversine(me, { lat: target.lat, lng: target.lng }) : null;
   const estimatedEta = toPickup ? approachSeconds(distToTarget) : distToTarget != null && ride.estimated_distance_m ? Math.round(((distToTarget * 1.3) / Math.max(1, ride.estimated_distance_m)) * (ride.estimated_duration_s ?? 0)) : null;
   // Itinéraire guidé disponible : distance et durée par la route ; sinon estimation
   const etaToTarget = nav.remainingS ?? estimatedEta;
@@ -154,7 +170,26 @@ export default function RideScreen() {
 
   async function advance() {
     if (!step || !ride) return;
+    // (glissière en attente dès maintenant : elle ne revient au départ qu'à la fin de l'attente)
     setLoading(true);
+    // Départ vers le client alors que le chauffeur est hors ligne (course planifiée acceptée hors ligne, passé hors
+    // ligne depuis) : en ligne d'abord (information préalable si l'autorisation manque), sinon la course se ferait
+    // sans position (ni suivi par la centrale, ni alerte de retard)
+    if (step.next === "DRIVER_EN_ROUTE" && home?.driver.presence === "offline") {
+      const online = await setOnline(true);
+      if (!online.ok) {
+        setLoading(false);
+        if (online.code === "cancelled") return;
+        const settings = online.code === "coarse" || online.code === "blocked";
+        return Alert.alert(
+          "Passez en ligne pour démarrer",
+          frTypo(online.message ?? "Réessayez."),
+          settings
+            ? [{ text: "Plus tard", style: "cancel" }, { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) }]
+            : undefined,
+        );
+      }
+    }
     const res = await api.updateStatus(ride.id, step.next).catch((e: Error) => ({ ok: false, message: e.message }) as { ok: boolean; message?: string });
     setLoading(false);
     if (!res.ok) return Alert.alert("Action impossible", res.message ? frTypo(res.message) : "Réessayez.");
@@ -166,8 +201,8 @@ export default function RideScreen() {
       return;
     }
     if (step.next === "COMPLETED") {
-      Alert.alert(`Course ${ride.number} terminée`, `${formatPrice(ride.price_cents)} · ${PAYMENT_METHOD_LABELS[ride.payment_method]}`, [{ text: "OK", onPress: () => router.replace("/home") }]);
-      if (Platform.OS === "web") router.replace("/home");
+      Alert.alert(`Course ${ride.number} terminée`, `${formatPrice(ride.price_cents)} · ${PAYMENT_METHOD_LABELS[ride.payment_method]}`, [{ text: "OK", onPress: toHome }]);
+      if (Platform.OS === "web") toHome();
     }
   }
 
@@ -185,15 +220,7 @@ export default function RideScreen() {
           controlsBottom={RECENTER_BOTTOM}
         />
         <SafeAreaView edges={["top"]} style={styles.mapTop} pointerEvents="box-none">
-          <Pressable
-            onPress={() => (router.canGoBack() ? router.back() : router.replace("/home"))}
-            style={({ pressed }) => [styles.round, pressed && styles.pressed]}
-            accessibilityRole="button"
-            accessibilityLabel="Retour"
-            hitSlop={4}
-          >
-            <Ionicons name="chevron-back" size={22} color={colors.fg} />
-          </Pressable>
+          <BackButton />
           {guiding ? (
             <View style={styles.flex}>
               <NavBanner next={nav.next} then={nav.then} rerouting={nav.rerouting} />
@@ -211,7 +238,7 @@ export default function RideScreen() {
           <View style={styles.navRow}>
             <Pressable
               style={({ pressed }) => [styles.navBtn, pressed && styles.pressed]}
-              onPress={() => openNav("waze", target.lat, target.lng, target.label)}
+              onPress={() => openNav("waze", target)}
               accessibilityRole="button"
               accessibilityLabel="Ouvrir l'itinéraire dans Waze"
             >
@@ -220,7 +247,7 @@ export default function RideScreen() {
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.navBtn, pressed && styles.pressed]}
-              onPress={() => openNav(Platform.OS === "ios" ? "apple" : "google", target.lat, target.lng, target.label)}
+              onPress={() => openNav(Platform.OS === "ios" ? "apple" : "google", target)}
               accessibilityRole="button"
               accessibilityLabel={`Ouvrir l'itinéraire dans ${navApp}`}
             >
@@ -290,7 +317,7 @@ export default function RideScreen() {
         {step ? (
           <SlideToConfirm label={step.label} onConfirm={advance} loading={loading} color={step.next === "COMPLETED" ? colors.green : colors.brand} />
         ) : (
-          <BigButton title="Retour à l'accueil" variant="secondary" height={control.md} onPress={() => router.replace("/home")} />
+          <BigButton title="Retour à l'accueil" variant="secondary" height={control.md} onPress={toHome} />
         )}
       </SafeAreaView>
 
@@ -298,6 +325,21 @@ export default function RideScreen() {
         {done && <RideDoneSummary ride={done.ride} settlement={done.settlement} tz={home?.organization.timezone} />}
       </BottomSheet>
     </Screen>
+  );
+}
+
+/** Bouton ‹ : écran précédent, sinon l'accueil (écran ouvert directement, par une notification). */
+function BackButton() {
+  return (
+    <Pressable
+      onPress={() => (router.canGoBack() ? router.back() : toHome())}
+      style={({ pressed }) => [styles.round, pressed && styles.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel="Retour"
+      hitSlop={4}
+    >
+      <Ionicons name="chevron-back" size={22} color={colors.fg} />
+    </Pressable>
   );
 }
 
@@ -355,7 +397,10 @@ function RideDoneSummary({ ride, settlement, tz }: { ride: Ride; settlement: Dri
 
 const styles = StyleSheet.create({
   center: { alignItems: "center", justifyContent: "center", gap: space.md },
-  loadingText: { color: colors.muted, fontSize: type.body },
+  loadingText: { color: colors.muted, fontSize: type.body, lineHeight: 21, textAlign: "center" },
+  missing: { paddingHorizontal: space.xl },
+  missingTitle: { color: colors.fg, fontSize: type.title3, fontWeight: weight.bold },
+  missingBack: { marginTop: space.xl, alignSelf: "stretch" },
   mapBox: { height: "50%" },
   // Guidage : la carte prend plus de place (la route devant compte plus que les détails)
   mapBoxNav: { height: "58%" },
