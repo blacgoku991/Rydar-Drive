@@ -194,8 +194,8 @@ describe("Acceptation des documents légaux (accept_legal_documents)", () => {
     const again = await sql("select accepted_at, source from public.legal_acceptances where user_id = $1 and document = 'cgu'", [d.userId]);
     expect(again).toEqual([{ accepted_at: first.accepted_at, source: "app" }]);
     // « join » et « admin » sont réservés au serveur : un appel client est enregistré « web »
-    await accept(d.userId, ["cgu"], "2026-10-01", null, "join");
-    const [last] = await sql("select source from public.legal_acceptances where user_id = $1 and version = '2026-10-01'", [d.userId]);
+    await accept(d.userId, ["cgu"], "2026-09-01", null, "join");
+    const [last] = await sql("select source from public.legal_acceptances where user_id = $1 and version = '2026-09-01'", [d.userId]);
     expect(last.source).toBe("web");
   });
 
@@ -237,10 +237,10 @@ describe("Acceptation des documents légaux (accept_legal_documents)", () => {
     }
     const [c] = await sql("select count(*)::int as n from public.legal_acceptances where user_id = $1", [org.ownerId]);
     expect(c.n).toBe(0);
-    // Version trop longue : tronquée à 40 caractères
-    expect(await accept(org.ownerId, ["cgu"], "v".repeat(60))).toMatchObject({ ok: true });
-    const [row] = await sql("select version from public.legal_acceptances where user_id = $1", [org.ownerId]);
-    expect(row.version).toHaveLength(40);
+    // Version hors format AAAA-MM-JJ (20260924004300) : refusée, rien n'est enregistré
+    expect(await accept(org.ownerId, ["cgu"], "v".repeat(60))).toMatchObject({ ok: false, code: "INVALID_VERSION" });
+    const [after] = await sql("select count(*)::int as n from public.legal_acceptances where user_id = $1", [org.ownerId]);
+    expect(after.n).toBe(0);
   });
 
   it("lecture : soi-même, propriétaire / administrateur de la centrale, super admin ; aucune écriture directe", async () => {

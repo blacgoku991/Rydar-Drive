@@ -301,15 +301,16 @@ describe("Règles du fil : version des CGU acceptée (driver_chat_overview.rules
     expect((await driverOverview(karim.userId)).rules_version).toBeNull();
 
     // Application : sans centrale, source « app »
-    expect(await acceptTerms(karim.userId, ["cgu"], "2026-09-27")).toMatchObject({ ok: true, code: "ACCEPTED" });
-    expect((await driverOverview(karim.userId)).rules_version).toBe("2026-09-27");
+    expect(await acceptTerms(karim.userId, ["cgu"], "2026-06-01")).toMatchObject({ ok: true, code: "ACCEPTED" });
+    expect((await driverOverview(karim.userId)).rules_version).toBe("2026-06-01");
     const rows = await sql(`select organization_id, source from public.legal_acceptances where user_id = $1 and document = 'cgu'`, [karim.userId]);
     expect(rows).toEqual([{ organization_id: null, source: "app" }]);
 
     // Plusieurs versions : la plus récente, même acceptée avant une plus ancienne (deux versions de l'application)
-    await acceptTerms(karim.userId, ["cgu"], "2027-01-15");
-    await acceptTerms(karim.userId, ["cgu"], "2026-12-01");
-    expect((await driverOverview(karim.userId)).rules_version).toBe("2027-01-15");
+    // (versions passées : accept_legal_documents refuse une date future, 20260924004300)
+    await acceptTerms(karim.userId, ["cgu"], "2026-09-27");
+    await acceptTerms(karim.userId, ["cgu"], "2026-07-01");
+    expect((await driverOverview(karim.userId)).rules_version).toBe("2026-09-27");
 
     // Inscription par lien : acceptation enregistrée au nom de la centrale (service role, lib/join.ts)
     expect((await driverOverview(nadia.userId)).rules_version).toBeNull();
@@ -318,7 +319,7 @@ describe("Règles du fil : version des CGU acceptée (driver_chat_overview.rules
       [nadia.userId, C.id],
     );
     expect((await driverOverview(nadia.userId)).rules_version).toBe("2026-09-27");
-    expect((await driverOverview(karim.userId)).rules_version).toBe("2027-01-15");
+    expect((await driverOverview(karim.userId)).rules_version).toBe("2026-09-27");
   });
 });
 
