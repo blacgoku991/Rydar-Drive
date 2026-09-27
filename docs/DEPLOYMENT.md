@@ -45,6 +45,21 @@ Architecture cible :
        ```
 
      Laissez *Email OTP Length* à 6 chiffres (l'app accepte 6 à 10) et *Email OTP Expiration* à 3600 s (*Sign In / Providers → Email*).
+   - **Journal d'audit Auth (conservation)** : Supabase Auth inscrit chaque connexion (nom, e-mail, adresse IP) dans
+     `auth.audit_log_entries`. `private.housekeeping` (migration 004800, une fois par heure) en efface les lignes de plus
+     d'un an, et la file de suppression (`private.complete_account_deletion`) celles d'un chauffeur dès que son compte de
+     connexion est supprimé, comme l'annoncent `/confidentialite` et `/suppression-compte`. La table a la RLS activée
+     par Supabase : ces suppressions n'agissent que si le rôle `postgres` a `BYPASSRLS` (c'est le cas sur un projet
+     hébergé). **Contrôle après déploiement** (SQL Editor) : `select rolbypassrls from pg_roles where rolname = 'postgres';`
+     et `select has_table_privilege('postgres', 'auth.audit_log_entries', 'DELETE');` doivent renvoyer `true` ; une heure
+     plus tard, `select count(*) from auth.audit_log_entries where created_at < now() - interval '1 year';` doit renvoyer
+     0. Un refus de droits apparaît dans le journal du worker (`housekeeping incomplete`, `errors.auth_audit`) ; sans
+     `BYPASSRLS`, la suppression n'efface rien, sans erreur. **Alternative** :
+     *Authentication → Audit Logs*, désactiver l'écriture des journaux Auth dans la base (*Disable writing auth audit
+     logs to project database* ; `GOTRUE_AUDIT_LOG_DISABLE_POSTGRES=true` en auto-hébergé) : les connexions ne sont
+     plus gardées que dans les journaux de Supabase (durée de conservation de l'offre) ; purger alors une fois le stock
+     (`delete from auth.audit_log_entries;`) et, dans ce cas, remplacer « 1 an » par la durée de conservation des
+     journaux de l'hébergeur dans `/confidentialite`, `/dpa` et `/suppression-compte`.
 4. **Realtime** (*Realtime → Settings*) : désactivez *Allow public access*. Rydar n'utilise que des canaux privés ; la policy `rydar_realtime_receive` (migrations 0600 et 2300) gère les droits d'écoute des canaux `org:*`, `driver:*` et `fleet:*`.
 5. **Storage** : les buckets `org-assets`, `driver-photos` et `driver-documents` et leurs policies sont créés par la migration 0800.
 6. Créez le premier **Super Admin** : invitez l'utilisateur depuis le dashboard Supabase, puis exécutez `update public.users set is_super_admin = true where email = '…';` dans le SQL editor.

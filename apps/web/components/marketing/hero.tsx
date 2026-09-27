@@ -9,8 +9,8 @@ import { fr } from "./typo";
 
 const delay = (ms: number) => ({ "--delay": `${ms}ms` }) as CSSProperties;
 
-/** Garanties réelles : CGV (articles 1 et 8) et accord de traitement des données (article 7). */
-const REASSURANCE = ["Vos courses restent les vôtres", "Hébergement dans l'UE", "Données exportables"];
+/** Garanties réelles : CGV (article 1 ; article 8 : export sur demande) et accord de traitement des données (article 7). */
+const REASSURANCE = ["Vos courses restent les vôtres", "Hébergement dans l'UE", "Export CSV sur demande"];
 
 /** Faits produit (aucune statistique inventée). */
 const FACTS = [
