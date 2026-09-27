@@ -9,6 +9,7 @@ import { CentraleSettingsForm, type CentraleSettingsRow } from "@/components/set
 import { ReminderSettings } from "@/components/settlements/reminder-settings";
 import type { WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Réglages" };
@@ -101,10 +102,18 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   } else if (tab === "team") {
     const { data } = await ctx.supabase
       .from("organization_users")
-      .select("id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)")
+      .select("id, user_id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)")
       .eq("organization_id", orgId)
       .order("created_at");
-    content = <TeamPanel members={(data ?? []).map((m: any) => ({ ...m, user: Array.isArray(m.user) ? m.user[0] : m.user }))} isOwner={ctx.role === "owner"} canInvite={admin} />;
+    const members = (data ?? []).map((m: any) => ({ ...m, user: Array.isArray(m.user) ? m.user[0] : m.user }));
+    // Invitation en attente : profil non lisible (RLS users_select) ; seule l'adresse saisie par la centrale est affichée
+    const invited = members.filter((m) => m.status === "invited" && !m.user).map((m) => m.user_id as string);
+    if (invited.length) {
+      const { data: emails } = await createAdminClient().from("users").select("id, email").in("id", invited);
+      const byId = new Map(((emails ?? []) as { id: string; email: string }[]).map((u) => [u.id, u.email]));
+      for (const m of members) if (m.status === "invited" && !m.user) m.user = { full_name: null, email: byId.get(m.user_id) ?? "" };
+    }
+    content = <TeamPanel members={members} isOwner={ctx.role === "owner"} canInvite={admin} />;
   } else {
     const [{ data: plans }, { data: usage }, { data: subscription }, { data: invoices }] = await Promise.all([
       ctx.supabase.from("plans").select("*").eq("is_active", true).eq("is_public", true).order("sort_order"),

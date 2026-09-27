@@ -5,6 +5,7 @@ import { getPayerContext } from "@/components/platform-fees/org-payer-context";
 import { OrgSuspendedDues } from "@/components/platform-fees/org-suspended-dues";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
+import { SwitchOrganization } from "./switch-organization";
 
 export const dynamic = "force-dynamic";
 
@@ -17,10 +18,13 @@ export default async function SuspendedPage() {
     const acc = (data ?? null) as OrgPlatformAccount | null;
     if (acc?.enabled && (acc.account.balance_cents > 0 || acc.account.declared_count > 0)) platform = acc;
   }
+  // Membre de plusieurs centrales : les autres, actives, restent accessibles
+  const others = (ctx?.memberships ?? []).filter((m) => m.org.status === "active" && m.org.id !== ctx?.org.id).map((m) => ({ id: m.org.id, name: m.org.name }));
   return (
     <StatusScreen icon={<PauseCircle />} title="Compte suspendu" actions={<form action={signOut}><Button variant="secondary" type="submit">Se déconnecter</Button></form>}>
       L&apos;accès de votre centrale à Rydar Drive est temporairement suspendu. Contactez l&apos;équipe Rydar pour le réactiver.
       {platform && <OrgSuspendedDues data={platform} serverNow={Date.now()} />}
+      {others.length > 0 && <SwitchOrganization orgs={others} />}
     </StatusScreen>
   );
 }

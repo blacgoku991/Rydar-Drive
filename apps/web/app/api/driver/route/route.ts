@@ -13,14 +13,20 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store" };
 const point = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) });
 const schema = z.object({ from: point, to: point });
-/** Jeton déjà vérifié → utilisateur chauffeur (évite un appel à Supabase Auth à chaque recalcul). */
-const drivers = lruCache<string>(2000, 5 * 60_000);
+/**
+ * Jeton déjà vérifié → utilisateur chauffeur (évite un appel à Supabase Auth à chaque recalcul). 60 s seulement : un
+ * chauffeur suspendu ou banni (sessions révoquées) perd vite le guidage.
+ */
+const drivers = lruCache<string>(2000, 60_000);
 
 export function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: driverAppCors(req) });
 }
 
-/** Utilisateur du jeton d'accès de l'app, s'il a une fiche chauffeur (RLS : sa propre fiche). */
+/**
+ * Utilisateur du jeton d'accès de l'app, s'il est chauffeur ACTIF (driver_account_state : non banni, centrale active,
+ * fiche active, candidature validée). Candidat en attente ou refusé, fiche désactivée ou supprimée : refusé.
+ */
 async function driverUser(req: Request): Promise<string | null> {
   const token = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "")?.[1];
   if (!token || token.length > 8192) return null;
@@ -33,8 +39,8 @@ async function driverUser(req: Request): Promise<string | null> {
   });
   const { data: user } = await client.auth.getUser(token);
   if (!user.user) return null;
-  const { data: row } = await client.from("drivers").select("id").eq("user_id", user.user.id).maybeSingle();
-  if (!row) return null;
+  const { data: account } = await client.rpc("driver_account_state");
+  if ((account as { state?: string } | null)?.state !== "active") return null;
   drivers.set(k, user.user.id);
   return user.user.id;
 }

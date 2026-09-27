@@ -30,6 +30,28 @@ function banAwareError(error: { code?: string; message?: string } | null) {
 
 /** Ban « définitif » (100 ans) au niveau du compte Auth. */
 const BAN_FOREVER = "876000h";
+const uuid = z.string().uuid();
+
+type ManagerCtx = NonNullable<Awaited<ReturnType<typeof fleetManager>>>;
+
+/** Le chauffeur appartient-il à la centrale ACTIVE (onglet resté sur une autre centrale → refus, journal juste) ? */
+async function ownDriver(ctx: ManagerCtx, driverId: string) {
+  if (!uuid.safeParse(driverId).success) return false;
+  const { data } = await ctx.supabase.from("drivers").select("id").eq("id", driverId).eq("organization_id", ctx.org.id).maybeSingle();
+  return !!data;
+}
+
+/**
+ * Compte qui sert aussi à GÉRER (membre actif d'une centrale, super admin) : la centrale du chauffeur n'agit que sur
+ * la fiche, jamais sur le compte (mot de passe, bannissement Auth). null = vérification impossible.
+ */
+async function isSharedAccount(userId: string): Promise<boolean | null> {
+  const { data, error } = await createAdminClient().rpc("svc_login_account_shared", { p_user: userId });
+  return error || typeof data !== "boolean" ? null : data;
+}
+
+const SHARED_ACCOUNT_PASSWORD =
+  "Ce compte sert aussi à gérer une centrale : le chauffeur doit utiliser « Mot de passe oublié » dans l'application.";
 
 /** Crée le compte chauffeur (Supabase Auth) + véhicule + fiche, de manière compensée. */
 export async function createDriver(input: z.input<typeof driverCreateSchema>): Promise<Result<{ id: string }>> {
@@ -86,7 +108,9 @@ export async function createDriver(input: z.input<typeof driverCreateSchema>): P
       email: v.email,
       photo_url: v.photoUrl || null,
       vtc_card_number: v.vtcCardNumber ?? null,
-      status: v.access === "invite" ? "invited" : v.status,
+      // Invitation : fiche active d'emblée (le compte sans mot de passe ne se connecte qu'après le lien reçu par e-mail ;
+      // une fiche « invitée » refusait la connexion sans que rien ne l'active)
+      status: v.status,
       vehicle_id: (vehicle as { id: string }).id,
       created_by: ctx.user.id,
     } as never)
@@ -140,28 +164,26 @@ export async function updateDriver(driverId: string, input: z.input<typeof drive
   return { ok: true };
 }
 
-/** Activer / désactiver / suspendre : effet immédiat (RLS) + révocation de l'accès Auth. */
-export async function setDriverStatus(driverId: string, input: z.input<typeof driverStatusChangeSchema>): Promise<Result> {
+/**
+ * Activer / désactiver / suspendre (set_driver_status) : effet immédiat (RLS), courses non commencées remises en
+ * recherche, refus si client à bord ; sessions fermées par le déclencheur SQL (sauf compte qui gère aussi une centrale).
+ * Plus de bannissement Auth ici (réservé à « Bannir ») : la connexion affiche le vrai motif (compte inactif).
+ */
+export async function setDriverStatus(driverId: string, input: z.input<typeof driverStatusChangeSchema>): Promise<Result<{ message?: string }>> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent modifier ce statut." };
   const parsed = driverStatusChangeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Statut invalide." };
   const { status, reason } = parsed.data;
-  const { data: driver, error } = await ctx.supabase
-    .from("drivers")
-    .update({ status, suspended_reason: status === "suspended" ? (reason ?? null) : null })
-    .eq("id", driverId)
-    .eq("organization_id", ctx.org.id)
-    .select("id, user_id, current_ride_id")
-    .maybeSingle();
-  if (error || !driver) return { ok: false, error: error ? banAwareError(error) : "Accès refusé." };
+  if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
+  const { data, error } = await ctx.supabase.rpc("set_driver_status", { p_driver_id: driverId, p_status: status, p_reason: reason ?? null });
+  if (error || !data) return { ok: false, error: error ? banAwareError(error) : "Action impossible." };
+  const res = data as { ok: boolean; code: string; message?: string; user_id?: string | null; reassigned_rides?: number };
+  if (!res.ok) return { ok: false, error: res.message ?? "Action impossible." };
 
-  const admin = createAdminClient();
-  if (status !== "active") {
-    await admin.from("drivers").update({ presence: "offline", online_since: null } as never).eq("id", driverId);
-    if (driver.user_id) await admin.auth.admin.updateUserById(driver.user_id, { ban_duration: BAN_FOREVER });
-  } else if (driver.user_id) {
-    await admin.auth.admin.updateUserById(driver.user_id, { ban_duration: "none" });
+  // Réactivation : levée d'un ancien bannissement Auth (l'ancienne désactivation bannissait le compte)
+  if (status === "active" && res.user_id) {
+    await createAdminClient().auth.admin.updateUserById(res.user_id, { ban_duration: "none" }).catch(() => null);
   }
   await audit({
     organizationId: ctx.org.id,
@@ -170,19 +192,26 @@ export async function setDriverStatus(driverId: string, input: z.input<typeof dr
     entityType: "drivers",
     entityId: driverId,
     severity: status === "suspended" ? "warning" : "info",
-    metadata: { reason },
+    metadata: { reason, reassigned_rides: res.reassigned_rides ?? 0 },
   });
   revalidatePath(`/dashboard/drivers/${driverId}`);
   revalidatePath("/dashboard/drivers");
-  return { ok: true };
+  revalidatePath("/dashboard/rides");
+  return { ok: true, message: res.message };
 }
 
 export async function resetDriverPassword(driverId: string, password: string): Promise<Result> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Accès refusé." };
-  if (password.length < 10) return { ok: false, error: "10 caractères minimum." };
+  if (typeof password !== "string" || password.length < 10) return { ok: false, error: "10 caractères minimum." };
+  if (password.length > 72) return { ok: false, error: "72 caractères maximum." };
+  if (!uuid.safeParse(driverId).success) return { ok: false, error: "Chauffeur introuvable." };
   const { data: driver } = await ctx.supabase.from("drivers").select("user_id").eq("id", driverId).eq("organization_id", ctx.org.id).maybeSingle();
   if (!driver?.user_id) return { ok: false, error: "Chauffeur introuvable." };
+  // Compte qui gère aussi une centrale (ou la plateforme) : jamais de mot de passe imposé par la centrale du chauffeur
+  const shared = await isSharedAccount(driver.user_id);
+  if (shared === null) return { ok: false, error: "Vérification du compte impossible pour le moment. Réessayez." };
+  if (shared) return { ok: false, error: SHARED_ACCOUNT_PASSWORD };
   const { error } = await createAdminClient().auth.admin.updateUserById(driver.user_id, { password });
   if (error) return { ok: false, error: "Impossible de modifier le mot de passe." };
   // Nouveau mot de passe = déconnexion de tous les appareils
@@ -195,30 +224,65 @@ export async function resetDriverPassword(driverId: string, password: string): P
 export async function revokeDriverSessions(driverId: string): Promise<Result> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent déconnecter un chauffeur." };
-  const { error } = await ctx.supabase.rpc("revoke_driver_sessions", { p_driver_id: driverId });
+  if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
+  const { data, error } = await ctx.supabase.rpc("revoke_driver_sessions", { p_driver_id: driverId });
   if (error) return { ok: false, error: humanizeError(error.message, actionError(error)) };
+  // Compte qui gère aussi une centrale : refus (SHARED_ACCOUNT), ses sessions de gestion restent ouvertes
+  const res = (data ?? {}) as { ok?: boolean; message?: string };
+  if (res.ok === false) return { ok: false, error: res.message ?? "Action impossible." };
   revalidatePath(`/dashboard/drivers/${driverId}`);
   return { ok: true };
 }
 
+// « Visite médicale » n'est plus proposée à l'ajout (les documents déjà enregistrés restent affichés)
 const documentSchema = z.object({
-  type: z.enum(["driving_license", "vtc_card", "insurance", "vehicle_registration", "identity", "medical", "other"]),
+  type: z.enum(["driving_license", "vtc_card", "insurance", "vehicle_registration", "identity", "other"]),
   number: z.string().trim().max(60).optional(),
   expiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
   filePath: z.string().max(300).optional(),
 });
+
+/**
+ * Pièces à échéance : date obligatoire (même règle que review_driver_document). Sans date, la pièce ajoutée serait
+ * classée derrière l'ancienne (document_superseded) : masquée, et l'ancienne resterait affichée et rappelée.
+ */
+const EXPIRY_REQUIRED = new Set(["vtc_card", "driving_license", "insurance", "identity"]);
+
+/** Date du jour (AAAA-MM-JJ) dans le fuseau de la centrale. */
+function orgToday(timeZone: string) {
+  const format = (tz: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  try {
+    return format(timeZone || "Europe/Paris");
+  } catch {
+    return format("Europe/Paris");
+  }
+}
 
 export async function addDriverDocument(driverId: string, input: z.input<typeof documentSchema>): Promise<Result> {
   const ctx = await getOrgContext();
   if (!ctx) return { ok: false, error: "Accès refusé." };
   const parsed = documentSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Document invalide." };
+  const expiresAt = parsed.data.expiresAt || null;
+  if (!expiresAt && EXPIRY_REQUIRED.has(parsed.data.type)) {
+    return { ok: false, error: "Indiquez la date d'expiration de ce document.", fieldErrors: { expiresAt: "Date obligatoire pour ce document" } };
+  }
+  if (expiresAt) {
+    const today = orgToday(ctx.org.timezone);
+    if (expiresAt < today) {
+      return { ok: false, error: "Ce document est déjà expiré : indiquez la date d'expiration de la pièce en cours de validité.", fieldErrors: { expiresAt: "Date passée" } };
+    }
+    if (expiresAt > `${Number(today.slice(0, 4)) + 30}${today.slice(4)}`) {
+      return { ok: false, error: "Date d'expiration invalide.", fieldErrors: { expiresAt: "Date invalide" } };
+    }
+  }
+  if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
   const { error } = await ctx.supabase.from("driver_documents").insert({
     organization_id: ctx.org.id,
     driver_id: driverId,
     type: parsed.data.type,
     number: parsed.data.number || null,
-    expires_at: parsed.data.expiresAt || null,
+    expires_at: expiresAt,
     file_path: parsed.data.filePath || null,
     status: "valid",
   });
@@ -299,7 +363,7 @@ export async function banDriver(
 ): Promise<Result<BanOutcome> | { ok: false; error: string; code?: string; fieldErrors?: Record<string, string> }> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent bannir un chauffeur." };
-  if (!z.string().uuid().safeParse(driverId).success) return { ok: false, error: "Chauffeur introuvable." };
+  if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
   const parsed = banDriverSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Vérifiez le formulaire.", fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
@@ -321,11 +385,16 @@ export async function banDriver(
     };
   }
 
-  // Connexion bloquée au niveau du compte (sessions déjà révoquées par trigger SQL)
+  // Connexion bloquée au niveau du compte (sessions déjà révoquées par trigger SQL) — sauf compte qui gère aussi une
+  // centrale ou la plateforme : la fiche bannie suffit (la base refuse tout accès chauffeur)
   let authBanned = false;
+  let sharedAccount = false;
   if (res.user_id) {
-    const { error: banError } = await createAdminClient().auth.admin.updateUserById(res.user_id, { ban_duration: BAN_FOREVER });
-    authBanned = !banError;
+    sharedAccount = (await isSharedAccount(res.user_id)) !== false;
+    if (!sharedAccount) {
+      const { error: banError } = await createAdminClient().auth.admin.updateUserById(res.user_id, { ban_duration: BAN_FOREVER });
+      authBanned = !banError;
+    }
   }
   // ban_driver journalise déjà « driver.banned » en base ; ici : verrou du compte Auth (+ IP / navigateur)
   await audit({
@@ -338,6 +407,7 @@ export async function banDriver(
     metadata: {
       reason: v.reason, category: v.category, report_to_platform: v.reportToPlatform, ban_vehicle: v.banVehicle,
       identities: res.identities ?? 0, reassigned_rides: res.reassigned_rides ?? 0, report_id: res.report_id ?? null, auth_banned: authBanned,
+      shared_account: sharedAccount,
     },
   });
   revalidatePath(`/dashboard/drivers/${driverId}`);
@@ -356,13 +426,16 @@ export async function banDriver(
 export async function liftDriverBan(driverId: string, reason?: string): Promise<Result<{ message: string }> | { ok: false; error: string; code?: string }> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent lever un bannissement." };
-  if (!z.string().uuid().safeParse(driverId).success) return { ok: false, error: "Chauffeur introuvable." };
+  if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
   const motive = reason?.trim().slice(0, 500) || null;
   const { data, error } = await ctx.supabase.rpc("lift_driver_ban", { p_driver_id: driverId, p_reason: motive });
   if (error || !data) return { ok: false, error: actionError(error, "Levée impossible.") };
-  const res = data as { ok: boolean; code: string; message?: string; identities?: number };
+  const res = data as { ok: boolean; code: string; message?: string; identities?: number; user_id?: string | null };
   if (!res.ok) return { ok: false, code: res.code, error: res.message ?? "Levée impossible." };
-  // Journal : « driver.ban_lifted » écrit par lift_driver_ban. Compte Auth débloqué à la réactivation (setDriverStatus).
+  // Journal : « driver.ban_lifted » écrit par lift_driver_ban. Compte Auth débloqué tout de suite : la fiche reste
+  // suspendue (la base refuse l'accès, la connexion affiche « compte inactif ») ; une candidature reconsidérée puis
+  // validée (approveApplication) se connecte sans autre étape.
+  if (res.user_id) await createAdminClient().auth.admin.updateUserById(res.user_id, { ban_duration: "none" }).catch(() => null);
   revalidatePath(`/dashboard/drivers/${driverId}`);
   revalidatePath("/dashboard/drivers");
   revalidatePath("/dashboard/network");

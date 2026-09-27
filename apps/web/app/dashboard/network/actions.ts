@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { isAdminRole } from "@/lib/auth";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; code?: string };
 type RpcResult = { ok: boolean; code: string; message?: string } & Record<string, unknown>;
@@ -18,6 +19,15 @@ async function managerCtx() {
   const ctx = await getOrgContext();
   if (!ctx || !isAdminRole(ctx.role)) return null;
   return ctx;
+}
+
+/**
+ * Le candidat appartient-il à la centrale ACTIVE ? Les RPC contrôlent le rôle dans la centrale du chauffeur ; sans ce
+ * contrôle, un onglet resté sur une autre centrale agirait sur elle et le journal (motif) irait dans la mauvaise.
+ */
+async function ownDriver(ctx: NonNullable<Awaited<ReturnType<typeof managerCtx>>>, driverId: string) {
+  const { data } = await ctx.supabase.from("drivers").select("id").eq("id", driverId).eq("organization_id", ctx.org.id).maybeSingle();
+  return !!data;
 }
 
 /** Erreurs levées par les triggers (limite de l'offre, identité bannie…) → message lisible. */
@@ -55,10 +65,16 @@ export async function approveApplication(driverId: string, trustLevel: TrustLeve
   const ctx = await managerCtx();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent valider une candidature." };
   if (!uuid.safeParse(driverId).success || !["new", "trusted"].includes(trustLevel)) return { ok: false, error: "Demande invalide." };
+  if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Candidature introuvable." };
   const { data, error } = await ctx.supabase.rpc("approve_driver_application", { p_driver_id: driverId, p_trust_level: trustLevel });
   if (error || !data) return { ok: false, error: triggerError(error, "Validation impossible.") };
   const res = data as RpcResult;
   if (!res.ok) return { ok: false, code: res.code, error: res.message ?? "Validation impossible." };
+  // Chauffeur désormais actif : levée d'un ancien bannissement Auth hérité (candidat banni puis gracié, ancienne
+  // suspension de la centrale), sinon il ne pourrait jamais se connecter
+  const { data: row } = await ctx.supabase.from("drivers").select("user_id, banned_at").eq("id", driverId).maybeSingle();
+  const d = row as { user_id: string | null; banned_at: string | null } | null;
+  if (d?.user_id && !d.banned_at) await createAdminClient().auth.admin.updateUserById(d.user_id, { ban_duration: "none" }).catch(() => null);
   await audit({
     organizationId: ctx.org.id,
     actorUserId: ctx.user.id,
@@ -78,7 +94,8 @@ export async function rejectApplication(driverId: string, reason: string): Promi
   const ctx = await managerCtx();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent refuser une candidature." };
   if (!uuid.safeParse(driverId).success) return { ok: false, error: "Demande invalide." };
-  const motive = reason.trim().slice(0, 500) || null;
+  if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Candidature introuvable." };
+  const motive = String(reason ?? "").trim().slice(0, 500) || null;
   const { data, error } = await ctx.supabase.rpc("reject_driver_application", { p_driver_id: driverId, p_reason: motive });
   if (error || !data) return { ok: false, error: triggerError(error, "Refus impossible.") };
   const res = data as RpcResult;

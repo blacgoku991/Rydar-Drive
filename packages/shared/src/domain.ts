@@ -231,6 +231,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   IDENTITY_BANNED: "Identité bannie (téléphone, e-mail, carte VTC, plaque…) : ce chauffeur ne peut pas être ajouté.",
   // Compte supprimé par le chauffeur (20260924004000) : fiche anonyme conservée pour les courses et règlements
   DRIVER_DELETED: "Ce chauffeur a supprimé son compte : fiche anonyme, non modifiable.",
+  // Invitation d'un compte existant (20260924004700) : activée par la personne elle-même (lien reçu par e-mail)
+  INVITATION_PENDING: "Invitation en attente : seule la personne invitée peut activer cet accès, avec le lien reçu par e-mail.",
   // Frais plateforme (20260924003000)
   PLATFORM_FEES_OVERDUE: "Frais plateforme en retard : réglez Rydar Drive (Encaissements) pour créer de nouvelles courses.",
   PLATFORM_LEDGER_IMMUTABLE: "Les frais plateforme enregistrés ne se modifient pas.",

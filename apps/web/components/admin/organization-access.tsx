@@ -1,11 +1,11 @@
 "use client";
 // Super admin : accès au tableau de bord d'un compte (propriétaires, administrateurs, dispatchers).
 import { ORG_ROLE_LABELS, formatDate, type OrgRole } from "@rydar/shared";
-import { KeyRound, UserPlus, UserX, Undo2 } from "lucide-react";
+import { KeyRound, Mail, UserPlus, UserX, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { grantOrganizationAccess, setOrganizationMemberStatus } from "@/app/admin/actions";
+import { grantOrganizationAccess, resendOrganizationInvitation, setOrganizationMemberStatus } from "@/app/admin/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -53,11 +53,24 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
       const res = await setOrganizationMemberStatus(orgId, m.id, status);
       setBusy(null);
       if (!res.ok) return void toast.error(res.error);
-      toast.success(status === "disabled" ? `Accès retiré : ${m.user?.full_name ?? m.user?.email}` : `Accès rétabli : ${m.user?.full_name ?? m.user?.email}`, {
-        description: status === "disabled" ? "Sessions fermées sur tous ses appareils." : undefined,
-      });
+      if (m.status === "invited") toast.success(`Invitation annulée : ${m.user?.email ?? m.user?.full_name}`);
+      else {
+        toast.success(status === "disabled" ? `Accès retiré : ${m.user?.full_name ?? m.user?.email}` : `Accès rétabli : ${m.user?.full_name ?? m.user?.email}`, {
+          description: status === "disabled" ? "Sessions fermées, sauf s'il garde un autre accès (autre centrale, application chauffeur)." : undefined,
+        });
+      }
       setRevoke(null);
       router.refresh();
+    });
+  };
+
+  const resend = (m: AccessMember) => {
+    setBusy(m.id);
+    start(async () => {
+      const res = await resendOrganizationInvitation(orgId, m.id);
+      setBusy(null);
+      if (!res.ok) return void toast.error(res.error);
+      toast.success(`Invitation renvoyée : ${m.user?.email ?? m.user?.full_name}`);
     });
   };
 
@@ -82,18 +95,29 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
       <ul className="divide-y divide-line">
         {sorted.map((m) => {
           const name = m.user?.full_name ?? m.user?.email ?? "—";
-          const disabled = m.status !== "active";
+          const invited = m.status === "invited";
+          const disabled = m.status === "disabled";
           return (
-            <li key={m.id} className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3", disabled && "opacity-70")}>
+            <li key={m.id} className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3", m.status !== "active" && "opacity-70")}>
               <Avatar name={name} size={32} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13.5px] font-medium">{name}</p>
-                <p className="truncate text-[12px] text-fg-subtle" title={`Accès depuis le ${formatDate(m.created_at)}`}>{m.user?.email}</p>
+                <p className="truncate text-[12px] text-fg-subtle" title={`${invited ? "Invitation du" : "Accès depuis le"} ${formatDate(m.created_at)}`}>{m.user?.email}</p>
               </div>
-              <div className="flex w-full items-center gap-2 pl-[44px] sm:w-auto sm:pl-0">
+              <div className="flex w-full flex-wrap items-center gap-2 pl-[44px] sm:w-auto sm:pl-0">
                 <Badge tone={ROLE_TONE[m.role]} dot={false}>{ORG_ROLE_LABELS[m.role]}</Badge>
                 {disabled && <Badge tone="red">Accès retiré</Badge>}
-                {disabled ? (
+                {invited ? (
+                  <>
+                    <Badge tone="amber">Invitation envoyée</Badge>
+                    <Button variant="ghost" size="xs" loading={pending && busy === m.id} onClick={() => resend(m)}>
+                      <Mail /> Renvoyer l&apos;invitation
+                    </Button>
+                    <Button variant="ghost" size="xs" className="text-fg-subtle hover:text-red" disabled={pending} onClick={() => setStatus(m, "disabled")}>
+                      <UserX /> Annuler
+                    </Button>
+                  </>
+                ) : disabled ? (
                   <Button variant="ghost" size="xs" loading={pending && busy === m.id} onClick={() => setStatus(m, "active")}>
                     <Undo2 /> Rétablir
                   </Button>
@@ -110,7 +134,10 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
       </ul>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent title="Donner un accès" description={`Accès au tableau de bord de ${orgName}. Un compte existant (même e-mail) est réutilisé.`}>
+        <DialogContent
+          title="Donner un accès"
+          description={`Accès au tableau de bord de ${orgName}. Adresse déjà liée à un compte : la personne reçoit un lien et active elle-même son accès.`}
+        >
           <form
             onSubmit={submitWith((f) =>
               start(async () => {
@@ -125,15 +152,26 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
                   setErrors(res.fieldErrors ?? {});
                   return void toast.error(res.error);
                 }
-                toast.success(`Accès ${ORG_ROLE_LABELS[role].toLowerCase()} donné`, {
-                  description: res.invited
-                    ? "Invitation envoyée par e-mail."
-                    : res.created
-                      ? "Compte créé : transmettez l'e-mail et le mot de passe provisoire."
-                      : res.reactivated
-                        ? "Accès rétabli sur le compte existant."
-                        : "Compte existant rattaché à ce rattacheur.",
-                });
+                if (res.pending) {
+                  toast.success("Invitation envoyée", {
+                    description: [
+                      "Cette adresse a déjà un compte : l'accès sera actif quand la personne aura choisi son mot de passe avec le lien reçu par e-mail.",
+                      res.passwordIgnored ? "Le mot de passe provisoire n'est pas appliqué." : "",
+                      res.emailSent ? "" : "L'e-mail n'a pas pu partir : utilisez « Renvoyer l'invitation » dans une minute.",
+                    ].filter(Boolean).join(" "),
+                    duration: 12000,
+                  });
+                } else {
+                  toast.success(`Accès ${ORG_ROLE_LABELS[role].toLowerCase()} donné`, {
+                    description: res.invited
+                      ? "Invitation envoyée par e-mail."
+                      : res.created
+                        ? "Compte créé : transmettez l'e-mail et le mot de passe provisoire."
+                        : res.reactivated
+                          ? "Accès rétabli sur le compte existant."
+                          : "Accès ajouté à votre propre compte.",
+                  });
+                }
                 setOpen(false);
                 router.refresh();
               }),
@@ -181,11 +219,11 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
                 ))}
               </div>
               {mode === "password" ? (
-                <Field className="mt-3" error={errors.password} hint="10 caractères minimum — inutile si un compte existe déjà avec cet e-mail.">
+                <Field className="mt-3" error={errors.password} hint="10 caractères minimum — non appliqué si un compte existe déjà avec cet e-mail (la personne reçoit un lien).">
                   <Input name="password" type="text" minLength={10} autoComplete="off" className="num" aria-label="Mot de passe provisoire" aria-invalid={!!errors.password} />
                 </Field>
               ) : (
-                <p className="mt-2 text-[12px] text-fg-subtle">Un lien pour choisir son mot de passe est envoyé à cette adresse (compte existant : accès immédiat).</p>
+                <p className="mt-2 text-[12px] text-fg-subtle">Un lien pour choisir son mot de passe est envoyé à cette adresse ; l&apos;accès est actif dès qu&apos;il est utilisé.</p>
               )}
             </div>
             <div className="flex justify-end gap-2 pt-1">
@@ -199,7 +237,7 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
       <Dialog open={!!revoke} onOpenChange={(o) => !o && setRevoke(null)}>
         <DialogContent
           title="Retirer l'accès ?"
-          description={revoke ? `${revoke.user?.full_name ?? revoke.user?.email} (${ORG_ROLE_LABELS[revoke.role]}) ne pourra plus ouvrir le tableau de bord de ${orgName} ; ses sessions sont fermées immédiatement.` : undefined}
+          description={revoke ? `${revoke.user?.full_name ?? revoke.user?.email} (${ORG_ROLE_LABELS[revoke.role]}) ne pourra plus ouvrir le tableau de bord de ${orgName} ; ses sessions sont fermées, sauf s'il garde un autre accès (autre centrale, application chauffeur).` : undefined}
         >
           {revoke?.role === "owner" && activeOwners <= 1 && (
             <p className="mb-4 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">

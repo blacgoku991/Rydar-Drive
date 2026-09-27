@@ -68,7 +68,16 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
                 }
                 return void toast.error(res.error);
               }
-              toast.success("Rattacheur créé");
+              if (res.ownerInvited) {
+                toast.success("Rattacheur créé", {
+                  description: [
+                    "Cette adresse a déjà un compte Rydar Drive : le propriétaire activera son accès en choisissant son mot de passe avec le lien reçu par e-mail.",
+                    res.passwordIgnored ? "Le mot de passe provisoire n'est pas appliqué." : "",
+                    res.emailSent ? "" : "L'e-mail n'a pas pu partir : renvoyez l'invitation depuis la fiche du rattacheur (Accès).",
+                  ].filter(Boolean).join(" "),
+                  duration: 12000,
+                });
+              } else toast.success("Rattacheur créé");
               setOpen(false);
               router.push(`/admin/organizations/${res.id}`);
             }),
@@ -123,6 +132,7 @@ export function OrganizationStatusActions({ orgId, status }: { orgId: string; st
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [reason, setReason] = useState("");
   const run = (s: "active" | "suspended" | "archived") =>
     start(async () => {
@@ -130,19 +140,31 @@ export function OrganizationStatusActions({ orgId, status }: { orgId: string; st
       if (!res.ok) return void toast.error(res.error);
       toast.success(s === "active" ? "Rattacheur réactivé" : s === "suspended" ? "Rattacheur suspendu — accès coupés" : "Rattacheur archivé");
       setOpen(false);
+      setArchiving(false);
       router.refresh();
     });
   return (
     <>
       {status !== "active" && <Button variant="primary" loading={pending} onClick={() => run("active")}>Réactiver</Button>}
       {status === "active" && <Button variant="danger" onClick={() => setOpen(true)}>Suspendre</Button>}
-      {status !== "archived" && <Button variant="outline" loading={pending} onClick={() => run("archived")}>Archiver</Button>}
+      {status !== "archived" && <Button variant="outline" onClick={() => setArchiving(true)}>Archiver</Button>}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent title="Suspendre ce rattacheur" description="Membres et chauffeurs perdent immédiatement l'accès ; les courses ne sont plus dispatchées.">
+        <DialogContent
+          title="Suspendre ce rattacheur"
+          description="Membres et chauffeurs perdent immédiatement l'accès aux données ; les courses ne sont plus dispatchées. Le propriétaire et les administrateurs peuvent encore se connecter pour voir la suspension et régler les frais dus."
+        >
           <Field label="Motif"><Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Impayé, demande du client…" /></Field>
           <div className="mt-6 flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
             <Button variant="danger" loading={pending} onClick={() => run("suspended")}>Suspendre</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={archiving} onOpenChange={setArchiving}>
+        <DialogContent title="Archiver ce rattacheur ?" description="Il disparaît des centrales actives : membres et chauffeurs perdent l'accès, les courses ne sont plus dispatchées. Les données et le registre des frais sont conservés ; vous pourrez le réactiver.">
+          <div className="mt-6 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setArchiving(false)}>Annuler</Button>
+            <Button variant="danger" loading={pending} onClick={() => run("archived")}>Archiver</Button>
           </div>
         </DialogContent>
       </Dialog>

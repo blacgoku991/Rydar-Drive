@@ -65,7 +65,15 @@ export async function requireSuperAdmin() {
   return session;
 }
 
-/** Organisation active (cookie → dernière utilisée → première). */
+/**
+ * Centrale choisie : cookie → dernière utilisée → première ACTIVE → première. Une centrale suspendue choisie mène à
+ * /suspended, qui propose les autres centrales actives du compte.
+ */
+export function pickMembership<T extends { org: { id: string; status: string } }>(memberships: T[], wanted: string | null | undefined): T {
+  return memberships.find((m) => m.org.id === wanted) ?? memberships.find((m) => m.org.status === "active") ?? memberships[0]!;
+}
+
+/** Organisation active (cookie → dernière utilisée → première active). */
 export async function requireOrg(opts: { roles?: OrgRole[] } = {}) {
   const session = await requireUser();
   if (!session.memberships.length) {
@@ -75,7 +83,7 @@ export async function requireOrg(opts: { roles?: OrgRole[] } = {}) {
   }
   const jar = await cookies();
   const wanted = jar.get(ORG_COOKIE)?.value ?? session.profile.last_active_org_id;
-  const current = session.memberships.find((m) => m.org.id === wanted) ?? session.memberships[0]!;
+  const current = pickMembership(session.memberships, wanted);
   if (current.org.status === "suspended") redirect("/suspended");
   if (opts.roles && !opts.roles.includes(current.role)) redirect("/dashboard?forbidden=1");
   return { ...session, org: current.org, role: current.role };

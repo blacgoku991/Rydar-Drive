@@ -38,10 +38,14 @@ async function requestReset(req: Request): Promise<NextResponse> {
   }
   const { email } = parsed.data;
 
-  // IP d'abord : une requête refusée pour son IP ne consomme pas le quota de l'adresse visée
+  // IP d'abord : une requête refusée pour son IP ne consomme pas le quota de l'adresse visée. Puis 3 demandes / h par
+  // couple (adresse, IP) — un tiers n'épuise plus les demandes du chauffeur depuis une autre IP — et 6 / h par adresse
+  // au total (pas de bombardement de la boîte mail).
+  const ip = await clientIp();
   const limit = await rateLimitAll([
-    { key: `dreset:ip:${await clientIp()}`, limit: 10, windowSec: HOUR },
-    { key: `dreset:email:${email}`, limit: 3, windowSec: HOUR },
+    { key: `dreset:ip:${ip}`, limit: 10, windowSec: HOUR },
+    { key: `dresetip:${ip}:${email}`, limit: 3, windowSec: HOUR },
+    { key: `dreset:email:${email}`, limit: 6, windowSec: HOUR },
   ]);
   if (!limit.ok) {
     const minutes = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 60_000));

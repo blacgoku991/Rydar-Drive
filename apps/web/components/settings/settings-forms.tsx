@@ -7,7 +7,9 @@ import { BellRing, Percent, Plane, Plus, Trash2, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { inviteMember, savePricingRule, updateDispatchSettings, updateMember, updateOrganization } from "@/app/dashboard/settings/actions";
+import {
+  cancelMemberInvitation, inviteMember, resendMemberInvitation, savePricingRule, updateDispatchSettings, updateMember, updateOrganization,
+} from "@/app/dashboard/settings/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -503,7 +505,9 @@ export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boo
 
 // ---------------------------------------------------------------- Équipe
 export function TeamPanel({ members, isOwner, canInvite }: { members: any[]; isOwner: boolean; canInvite: boolean }) {
+  const router = useRouter();
   const { pending, save } = useSave();
+  const [adding, startAdding] = useTransition();
   const [open, setOpen] = useState(false);
   const [role, setRole] = useState<"admin" | "dispatcher">("dispatcher");
   return (
@@ -514,37 +518,64 @@ export function TeamPanel({ members, isOwner, canInvite }: { members: any[]; isO
         action={canInvite ? <Button variant="primary" size="sm" onClick={() => setOpen(true)}><UserPlus /> Ajouter</Button> : undefined}
       />
       <div className="divide-y divide-line">
-        {members.map((m) => (
-          <div key={m.id} className="flex flex-wrap items-center gap-4 px-5 py-3">
-            <Avatar name={m.user?.full_name ?? m.user?.email ?? "?"} size={34} />
-            <div className="min-w-0 flex-1">
-              <p className="text-[13.5px] font-medium">{m.user?.full_name ?? "—"}</p>
-              <p className="text-[12px] text-fg-subtle">{m.user?.email}</p>
-            </div>
-            <Badge tone={m.role === "owner" ? "brand" : m.role === "admin" ? "blue" : "neutral"}>{m.role === "owner" ? "Propriétaire" : m.role === "admin" ? "Administrateur" : "Dispatcher"}</Badge>
-            {m.status !== "active" && <Badge tone="red">Désactivé</Badge>}
-            {isOwner && m.role !== "owner" && (
-              <div className="flex gap-1">
-                <Button variant="ghost" size="xs" onClick={() => save(() => updateMember(m.id, { role: m.role === "admin" ? "dispatcher" : "admin" }))}>
-                  {m.role === "admin" ? "→ Dispatcher" : "→ Admin"}
-                </Button>
-                <Button variant="ghost" size="xs" onClick={() => save(() => updateMember(m.id, { status: m.status === "active" ? "disabled" : "active" }))}>
-                  {m.status === "active" ? "Désactiver" : "Réactiver"}
-                </Button>
+        {members.map((m) => {
+          const invited = m.status === "invited";
+          return (
+            <div key={m.id} className="flex flex-wrap items-center gap-4 px-5 py-3">
+              <Avatar name={m.user?.full_name ?? m.user?.email ?? "?"} size={34} />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13.5px] font-medium [overflow-wrap:anywhere]">{invited ? m.user?.email : (m.user?.full_name ?? "—")}</p>
+                <p className="text-[12px] text-fg-subtle">{invited ? "Accès actif dès que la personne aura choisi son mot de passe avec le lien reçu." : m.user?.email}</p>
               </div>
-            )}
-          </div>
-        ))}
+              <Badge tone={m.role === "owner" ? "brand" : m.role === "admin" ? "blue" : "neutral"}>{m.role === "owner" ? "Propriétaire" : m.role === "admin" ? "Administrateur" : "Dispatcher"}</Badge>
+              {invited ? <Badge tone="amber">Invitation envoyée</Badge> : m.status !== "active" && <Badge tone="red">Désactivé</Badge>}
+              {invited && canInvite && (
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="xs" disabled={pending} onClick={() => save(() => resendMemberInvitation(m.id), "Invitation renvoyée")}>
+                    Renvoyer l&apos;invitation
+                  </Button>
+                  <Button variant="ghost" size="xs" disabled={pending} onClick={() => save(() => cancelMemberInvitation(m.id), "Invitation annulée")}>
+                    Annuler
+                  </Button>
+                </div>
+              )}
+              {!invited && isOwner && m.role !== "owner" && (
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="xs" onClick={() => save(() => updateMember(m.id, { role: m.role === "admin" ? "dispatcher" : "admin" }))}>
+                    {m.role === "admin" ? "→ Dispatcher" : "→ Admin"}
+                  </Button>
+                  <Button variant="ghost" size="xs" onClick={() => save(() => updateMember(m.id, { status: m.status === "active" ? "disabled" : "active" }))}>
+                    {m.status === "active" ? "Désactiver" : "Réactiver"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent title="Ajouter un membre" description="Sans mot de passe, une invitation est envoyée par e-mail.">
+        <DialogContent
+          title="Ajouter un membre"
+          description="Sans mot de passe, une invitation est envoyée par e-mail. Adresse déjà liée à un compte Rydar Drive : la personne reçoit un lien et active elle-même son accès."
+        >
           <form
             onSubmit={submitWith((f) =>
-              save(async () => {
+              startAdding(async () => {
                 const res = await inviteMember({ fullName: String(f.get("name")), email: String(f.get("email")), role, password: String(f.get("password") ?? "") });
-                if (res.ok) setOpen(false);
-                return res;
-              }, "Membre ajouté"),
+                if (!res.ok) return void toast.error(res.error);
+                setOpen(false);
+                if (res.existingAccount) {
+                  toast.success("Invitation envoyée", {
+                    description: [
+                      "Cette adresse a déjà un compte Rydar Drive : l'accès sera actif quand la personne aura choisi son mot de passe avec le lien reçu par e-mail.",
+                      res.passwordIgnored ? "Le mot de passe provisoire n'est pas appliqué." : "",
+                      res.emailSent ? "" : "L'e-mail n'a pas pu partir : utilisez « Renvoyer l'invitation » dans une minute.",
+                    ].filter(Boolean).join(" "),
+                    duration: 12000,
+                  });
+                } else toast.success(res.invited ? "Invitation envoyée par e-mail" : "Membre ajouté");
+                router.refresh();
+              }),
             )}
             className="space-y-4"
           >
@@ -558,12 +589,12 @@ export function TeamPanel({ members, isOwner, canInvite }: { members: any[]; isO
                 </button>
               ))}
             </div>
-            <Field label="Mot de passe provisoire" optional hint="Laissez vide pour envoyer une invitation.">
+            <Field label="Mot de passe provisoire" optional hint="Laissez vide pour envoyer une invitation. Sans effet si l'adresse a déjà un compte.">
               <Input name="password" type="text" className="num" />
             </Field>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
-              <Button type="submit" variant="primary" loading={pending}>Ajouter</Button>
+              <Button type="submit" variant="primary" loading={adding}>Ajouter</Button>
             </div>
           </form>
         </DialogContent>

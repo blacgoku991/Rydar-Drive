@@ -2,6 +2,8 @@
 # Crée le compte Super Admin (ou donne ce rôle à un compte existant), dans un terminal, en root :
 #   sudo bash deploy/create-admin.sh
 # Le mot de passe se tape ici, sans affichage. Passe par l'API Supabase avec la clé secrète de deploy/.env.
+# Compte DÉJÀ existant (il a pu être créé par un tiers avec cette adresse, par ex. via un lien d'inscription chauffeur) :
+# après confirmation, le mot de passe saisi ici le remplace et TOUTES ses sessions sont fermées AVANT de donner le rôle.
 set -euo pipefail
 umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -77,11 +79,12 @@ printf '{"email":%s,"password":%s,"email_confirm":true,"user_metadata":{"full_na
   "$(json_str "$EMAIL")" "$(json_str "$PASS")" "$(json_str "$NAME")" > "$TMP/user.json"
 code="$(api POST /auth/v1/admin/users "$TMP/user.json")"
 rm -f "$TMP/user.json"
+EXISTING=""
 case "$code" in
   200 | 201) echo "  ✓ compte créé" ;;
   422)
     if grep -q -i -E "already|exists" "$TMP/out"; then
-      echo "  compte déjà existant : son mot de passe n'est pas modifié"
+      EXISTING=1
     else
       echo "✗ refusé par Supabase : $(cat "$TMP/out")"; exit 1
     fi
@@ -90,6 +93,46 @@ case "$code" in
   000) echo "✗ Supabase injoignable ($URL)"; exit 1 ;;
   *) echo "✗ erreur $code : $(cat "$TMP/out")"; exit 1 ;;
 esac
+
+if [ -n "$EXISTING" ]; then
+  # Compte existant : on en reprend le contrôle (mot de passe saisi ici + toutes les sessions fermées) AVANT le rôle,
+  # sinon celui qui l'aurait créé avec cette adresse deviendrait Super Admin avec SON mot de passe.
+  echo "  Un compte existe déjà avec $EMAIL."
+  read -r -p "  Remplacer son mot de passe par celui saisi et fermer toutes ses sessions ? (oui/non) : " CONFIRM
+  [ "$CONFIRM" = "oui" ] || { echo "✗ abandon : aucun changement"; exit 1; }
+  code="$(api GET "/rest/v1/users?select=id&email=eq.$(urlencode "$EMAIL")")"
+  USER_ID="$(grep -o -E '"id" *: *"[0-9a-f-]{36}"' "$TMP/out" | head -1 | grep -o -E '[0-9a-f-]{36}' || true)"
+  if [ "$code" != 200 ] || ! [[ "$USER_ID" =~ ^[0-9a-f-]{36}$ ]]; then
+    echo "✗ compte introuvable dans public.users (réponse $code) : les migrations sont-elles appliquées ? sudo bash deploy/install.sh"
+    exit 1
+  fi
+
+  echo "→ nouveau mot de passe"
+  printf '{"password":%s,"email_confirm":true}' "$(json_str "$PASS")" > "$TMP/pw.json"
+  code="$(api PUT "/auth/v1/admin/users/$USER_ID" "$TMP/pw.json")"
+  rm -f "$TMP/pw.json"
+  [ "$code" = 200 ] || { echo "✗ mot de passe non modifié (réponse $code) : $(cat "$TMP/out")"; exit 1; }
+  echo "  ✓ mot de passe remplacé"
+
+  echo "→ fermeture de toutes ses sessions"
+  DATABASE_URL="$(value DATABASE_URL)"
+  [ -n "$DATABASE_URL" ] || { echo "✗ DATABASE_URL manquant dans $ENV_FILE : rôle non attribué (sudo bash deploy/configure.sh)"; exit 1; }
+  PGURL="${DATABASE_URL/sslmode=no-verify/sslmode=require}"
+  # Client psql dans un conteneur (comme deploy/migrate.sh) ; identifiant vérifié ci-dessus (UUID)
+  if ! LEFT="$(docker run --rm -i --network host -e PGURL="$PGURL" postgres:17-alpine \
+      sh -c 'psql "$PGURL" -X -v ON_ERROR_STOP=1 -qtA' <<SQL
+begin;
+delete from auth.refresh_tokens where user_id::text = '$USER_ID';
+delete from auth.sessions where user_id::text = '$USER_ID';
+commit;
+select count(*) from auth.sessions where user_id::text = '$USER_ID';
+SQL
+  )" || [ "$(printf '%s' "$LEFT" | tr -d '[:space:]')" != 0 ]; then
+    echo "✗ sessions non fermées : rôle non attribué (vérifiez DATABASE_URL et Docker)"
+    exit 1
+  fi
+  echo "  ✓ sessions fermées"
+fi
 
 echo "→ rôle Super Admin"
 printf '{"is_super_admin":true}' > "$TMP/flag.json"

@@ -2,7 +2,7 @@ import { driverResetConfirmSchema, NEW_PASSWORD_MAX, NEW_PASSWORD_MIN } from "@r
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { driverAppCors } from "@/lib/driver-app-cors";
-import { checkDriverAccount, DRIVER_DENIED, DRIVER_LOGIN_WINDOW, driverLoginEmailKey, isAuthBanned } from "@/lib/driver-session";
+import { checkDriverAccount, DRIVER_LOGIN_WINDOW, driverLoginEmailKey, driverLoginPairKey, isAuthBanned } from "@/lib/driver-session";
 import { env } from "@/lib/env";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
@@ -51,11 +51,15 @@ async function confirm(req: Request): Promise<NextResponse> {
   }
   const { email, code, password } = parsed.data;
 
-  // IP d'abord : une requête refusée pour son IP ne consomme pas le quota de l'adresse visée.
-  // 8 essais / 15 min / adresse : deviner un code à 6 chiffres pendant sa durée de validité reste hors de portée.
+  // IP d'abord : une requête refusée pour son IP ne consomme pas le quota de l'adresse visée. Puis 8 essais / 15 min
+  // par couple (adresse, IP) — un tiers ne bloque plus le chauffeur depuis une autre IP — et 30 par adresse au total
+  // (remis à zéro par un code valide). Les essais directs sur Supabase Auth ne passent pas par ici : ils sont bornés
+  // par les réglages du projet Supabase (code à 8 chiffres, validité de 15 min au plus).
+  const ip = await clientIp();
   const limit = await rateLimitAll([
-    { key: `dresetc:ip:${await clientIp()}`, limit: 20, windowSec: WINDOW },
-    { key: `dresetc:email:${email}`, limit: 8, windowSec: WINDOW },
+    { key: `dresetc:ip:${ip}`, limit: 20, windowSec: WINDOW },
+    { key: `dresetcip:${ip}:${email}`, limit: 8, windowSec: WINDOW },
+    { key: `dresetc:email:${email}`, limit: 30, windowSec: WINDOW },
   ]);
   if (!limit.ok) {
     const minutes = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 60_000));
@@ -69,7 +73,9 @@ async function confirm(req: Request): Promise<NextResponse> {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
   const { data, error } = await auth.auth.verifyOtp({ email, token: code, type: "recovery" });
-  if (isAuthBanned(error)) return NextResponse.json({ code: "BANNED", error: DRIVER_DENIED.BANNED }, { status: 403 });
+  // Compte Auth banni : Supabase refuse AVANT de vérifier le code → même réponse qu'un code faux (aucun oracle
+  // « compte sanctionné ») ; le vrai motif est donné à la connexion, une fois le mot de passe vérifié
+  if (isAuthBanned(error)) return NextResponse.json({ code: "OTP_INVALID", error: "Code incorrect ou expiré." }, { status: 400 });
   if (error?.status === 429 || error?.code === "over_request_rate_limit") {
     return NextResponse.json({ code: "RATE_LIMITED", error: "Trop de tentatives. Réessayez dans quelques minutes." }, { status: 429 });
   }
@@ -105,6 +111,8 @@ async function confirm(req: Request): Promise<NextResponse> {
 
   // Propriété de l'adresse prouvée : les échecs de connexion passés ne bloquent plus le compte
   await resetRateLimit(driverLoginEmailKey(email), DRIVER_LOGIN_WINDOW);
+  await resetRateLimit(driverLoginPairKey(email, ip), DRIVER_LOGIN_WINDOW);
+  await resetRateLimit(`dresetcip:${ip}:${email}`, WINDOW);
   await resetRateLimit(`dresetc:email:${email}`, WINDOW);
   return NextResponse.json({
     access_token: data.session.access_token,
