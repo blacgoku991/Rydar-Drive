@@ -4,12 +4,13 @@ import { fetchCentraleCounts } from "@/components/settlements/counts";
 import { TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { LEGAL_VERSION } from "@/lib/legal";
+import { countPendingDocuments } from "@/lib/queries/pending-documents";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireOrg();
   const centrale = ctx.org.dispatch_model === "centrale";
   const admin = isAdminRole(ctx.role);
-  const [{ count }, { data: chat }, { count: pendingDocs }, centraleCounts, centraleSettings, terms, userTerms] = await Promise.all([
+  const [{ count }, { data: chat }, pendingDocs, centraleCounts, centraleSettings, terms, userTerms] = await Promise.all([
     ctx.supabase
       .from("rides")
       .select("id", { count: "exact", head: true })
@@ -18,12 +19,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       .gte("pickup_at", new Date(Date.now() - 6 * 3600_000).toISOString()),
     // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus, et messages signalés à traiter
     ctx.supabase.rpc("chat_overview", { p_org: ctx.org.id }),
-    // Compteur « Chauffeurs » : documents déposés à valider
-    ctx.supabase
-      .from("driver_documents")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", ctx.org.id)
-      .eq("status", "pending"),
+    // Compteur « Chauffeurs » : documents déposés à valider (candidats exclus, comme la page Chauffeurs)
+    countPendingDocuments(ctx.supabase, ctx.org.id),
     // Mode centrale : « Encaissements » (à confirmer + en retard) et « Réseau » (candidatures en attente)
     centrale ? fetchCentraleCounts(ctx.supabase, ctx.org.id) : Promise.resolve(null),
     // Mode centrale : lien de paiement et instructions (réclamations WhatsApp depuis les alertes et les fiches)

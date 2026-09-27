@@ -516,7 +516,8 @@ export function MessagesView({
               <>
                 <p className="relative text-[15px] font-semibold">Aucun message pour l&apos;instant</p>
                 <p className="relative mt-1.5 max-w-sm text-[13px] text-fg-muted">
-                  Écrivez à un chauffeur ou à toute la flotte : ils reçoivent une notification sur leur téléphone.
+                  Écrivez à un chauffeur : il reçoit une notification sur son téléphone. Les annonces à toute la flotte
+                  s&apos;affichent dans l&apos;application chauffeur, sans notification.
                 </p>
               </>
             ) : (

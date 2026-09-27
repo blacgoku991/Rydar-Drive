@@ -3,8 +3,22 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
 
-/** Rafraîchit la page serveur quand un événement temps réel concerne la ressource. */
-export function LiveRefresh({ rideId, events = ["ride.updated", "ride.event", "offer.updated"], pollMs = 5000 }: { rideId?: string; events?: string[]; pollMs?: number }) {
+/**
+ * Rafraîchit la page serveur quand un événement temps réel concerne la ressource : la course `rideId`, ou le chauffeur
+ * `driverId` (fiche chauffeur : « driver.updated » est diffusé pour CHAQUE chauffeur de la centrale, à chaque vague de
+ * dispatch ou étape de course), sinon tout événement de la liste.
+ */
+export function LiveRefresh({
+  rideId,
+  driverId,
+  events = ["ride.updated", "ride.event", "offer.updated"],
+  pollMs = 5000,
+}: {
+  rideId?: string;
+  driverId?: string;
+  events?: string[];
+  pollMs?: number;
+}) {
   const router = useRouter();
   const status = useRealtimeStatus();
   const timer = useRef<number | null>(null);
@@ -17,6 +31,10 @@ export function LiveRefresh({ rideId, events = ["ride.updated", "ride.event", "o
     // eslint-disable-next-line react-hooks/rules-of-hooks
     useRealtimeEvent(ev, (p: any) => {
       if (!events.includes(ev)) return;
+      if (driverId) {
+        if ((ev === "driver.updated" ? p?.id : p?.driver_id) === driverId) schedule();
+        return;
+      }
       if (!rideId || p?.ride_id === rideId || p?.id === rideId || p?.settlement?.ride_id === rideId) schedule();
     });
   }
