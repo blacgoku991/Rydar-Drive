@@ -234,6 +234,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Frais plateforme (20260924003000)
   PLATFORM_FEES_OVERDUE: "Frais plateforme en retard : réglez Rydar Drive (Encaissements) pour créer de nouvelles courses.",
   PLATFORM_LEDGER_IMMUTABLE: "Les frais plateforme enregistrés ne se modifient pas.",
+  // Visite médicale (donnée de santé) retirée des justificatifs déposés (20260924004300)
+  TYPE_NOT_ALLOWED: "Ce type de document ne se dépose plus dans l'application.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */

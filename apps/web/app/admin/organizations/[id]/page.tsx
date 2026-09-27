@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = { title: "Rattacheur" };
 export const dynamic = "force-dynamic";
@@ -24,7 +25,9 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const session = await requireSuperAdmin();
   const db = session.supabase;
-  const { data: org } = await db.from("organizations").select("*").eq("id", id).maybeSingle();
+  // Colonnes réservées au serveur (motif de suspension, limites, relance Rydar : GRANT par colonne, 20260924004300) :
+  // lecture seule par le client admin, après requireSuperAdmin
+  const { data: org } = await createAdminClient().from("organizations").select("*").eq("id", id).maybeSingle();
   if (!org) notFound();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const [kpis, plans, subscription, drivers, errors, notifications, members, keys, applications, banned, platform] = await Promise.all([
