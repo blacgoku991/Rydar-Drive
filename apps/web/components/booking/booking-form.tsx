@@ -1,10 +1,11 @@
 "use client";
 import {
-  decodePolyline, formatDistance, formatDuration, formatPrice, VEHICLE_CATEGORY_META, type PricingRule, type VehicleCategory,
+  decodePolyline, formatDistance, formatDuration, formatPrice, VEHICLE_CATEGORY_META, type VehicleCategory,
 } from "@rydar/shared";
 import { CalendarClock, Check, Minus, Plane, Plus, ShieldCheck, Zap } from "lucide-react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { submitBooking } from "@/app/book/[slug]/actions";
+import { dayInZone, foreignZoneName, zonedInstant } from "@/components/booking/zoned-time";
 import { RoutePreview } from "@/components/map/route-preview";
 import { AddressInput, type PlaceValue } from "@/components/rides/address-input";
 import { Button } from "@/components/ui/button";
@@ -24,11 +25,12 @@ function Counter({ value, set, min, max }: { value: number; set: (v: number) => 
 }
 
 export function BookingForm({
-  slug, categories, pricing, showPrice, phone, near, operator, privacyUrl,
+  slug, categories, timeZone = "Europe/Paris", showPrice, phone, near, operator, privacyUrl,
 }: {
   slug: string;
   categories: VehicleCategory[];
-  pricing: PricingRule[];
+  /** Fuseau de la centrale : l'heure saisie est l'heure locale du départ, quel que soit le pays du visiteur */
+  timeZone?: string;
   showPrice: boolean;
   phone?: string | null;
   near?: { lat: number; lng: number } | null;
@@ -40,7 +42,7 @@ export function BookingForm({
   const [pickup, setPickup] = useState<PlaceValue>(empty);
   const [dropoff, setDropoff] = useState<PlaceValue>(empty);
   const [when, setWhen] = useState<"now" | "scheduled">("scheduled");
-  const [date, setDate] = useState(() => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => dayInZone(new Date(Date.now() + 86_400_000), timeZone));
   const [time, setTime] = useState("08:00");
   const [category, setCategory] = useState<VehicleCategory>(categories[0] ?? "standard");
   const [passengers, setPassengers] = useState(1);
@@ -50,12 +52,21 @@ export function BookingForm({
   const [done, setDone] = useState<number | null>(null);
   const [pending, start] = useTransition();
 
-  const pickupAt = when === "now" ? new Date() : new Date(`${date}T${time}`);
+  const pickupAt = when === "now" ? new Date() : zonedInstant(date, time, timeZone);
   const [quote, setQuote] = useState<{ distanceM: number; durationS: number; polyline: string; priceCents: number | null; fixedFare: string | null } | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  // Visiteur dans un autre fuseau (voyageur) : l'heure à saisir est celle du lieu de départ
+  const [zoneHint, setZoneHint] = useState<string | null>(null);
   const ready = pickup.lat != null && pickup.lng != null && dropoff.lat != null && dropoff.lng != null;
+
+  useEffect(() => {
+    const name = foreignZoneName(timeZone);
+    setZoneHint(name ? `Heure locale du départ (${name})` : null);
+  }, [timeZone]);
 
   // Devis réel : itinéraire routier + prix indicatif (forfait / grille) calculés par le serveur
   useEffect(() => {
+    setQuoteError(null);
     if (!ready) {
       setQuote(null);
       return;
@@ -70,10 +81,14 @@ export function BookingForm({
           pickup: { lat: pickup.lat, lng: pickup.lng, address: pickup.address },
           dropoff: { lat: dropoff.lat, lng: dropoff.lng, address: dropoff.address },
           category,
-          pickupAt: Number.isNaN(pickupAt.getTime()) ? undefined : pickupAt.toISOString(),
+          pickupAt: pickupAt?.toISOString(),
         }),
       })
-        .then((r) => (r.ok ? r.json() : null))
+        .then(async (r) => {
+          const q = await r.json().catch(() => null);
+          if (r.status === 422 && q?.error) setQuoteError(q.error as string);
+          return r.ok ? q : null;
+        })
         .then((q) => setQuote(q))
         .catch(() => undefined);
     }, 250);
@@ -85,7 +100,6 @@ export function BookingForm({
   }, [ready, pickup.lat, pickup.lng, dropoff.lat, dropoff.lng, category, when, date, time, slug]);
   const routeCoords = useMemo(() => (quote?.polyline ? decodePolyline(quote.polyline) : null), [quote?.polyline]);
   const estimate = showPrice ? (quote?.priceCents ?? null) : null;
-  void pricing;
 
   if (done !== null) {
     return (
@@ -118,7 +132,7 @@ export function BookingForm({
             pickup: { address: pickup.address, lat: pickup.lat!, lng: pickup.lng! },
             dropoff: { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng! },
             when,
-            pickupAt: when === "scheduled" ? new Date(`${date}T${time}`) : undefined,
+            pickupAt: when === "scheduled" ? (zonedInstant(date, time, timeZone) ?? undefined) : undefined,
             customerName: String(f.get("name") ?? ""),
             customerPhone: String(f.get("phone") ?? ""),
             customerEmail: String(f.get("email") ?? ""),
@@ -153,6 +167,7 @@ export function BookingForm({
         <div className="grid grid-cols-2 gap-3">
           <Field label="Date" error={errors.pickupAt}><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-11 [color-scheme:dark]" /></Field>
           <Field label="Heure"><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="h-11 [color-scheme:dark]" /></Field>
+          {zoneHint && <p className="col-span-2 -mt-1 text-[12px] text-fg-muted">{zoneHint}</p>}
         </div>
       )}
 
@@ -190,6 +205,8 @@ export function BookingForm({
                 <>
                   <span className="num text-fg">{formatDistance(quote.distanceM)}</span> · <span className="num text-fg">{formatDuration(quote.durationS)}</span> de trajet
                 </>
+              ) : quoteError ? (
+                <span className="text-amber">{quoteError}</span>
               ) : (
                 "Calcul de l'itinéraire…"
               )}

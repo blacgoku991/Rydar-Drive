@@ -1,5 +1,5 @@
 "use server";
-import { apiKeyCreateSchema, humanizeError } from "@rydar/shared";
+import { apiKeyCreateSchema, BROWSER_KEY_SCOPES, humanizeError } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { generateApiKey, hashApiKey } from "@/lib/api-keys";
@@ -54,7 +54,10 @@ export async function createApiKey(input: z.input<typeof apiKeyCreateSchema>): P
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = apiKeyCreateSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Paramètres invalides." };
+  if (!parsed.success) {
+    // Règle des clés « navigateur » : message explicite ; le reste est guidé par le formulaire
+    return { ok: false, error: parsed.error.issues.find((i) => i.code === "custom")?.message ?? "Paramètres invalides." };
+  }
   const v = parsed.data;
   const res = await insertKey(ctx.org.id, ctx.user.id, {
     name: v.name,
@@ -101,9 +104,13 @@ export async function rotateApiKey(id: string): Promise<Result<{ key: string; pr
     .maybeSingle();
   if (!old) return { ok: false, error: "Clé introuvable." };
   const o = old as any;
+  // Clé « navigateur » (origines autorisées) : la nouvelle clé n'a que la création de courses
+  const browser = ((o.allowed_origins ?? []) as string[]).length > 0;
+  const scopes = browser ? (o.scopes as string[]).filter((s) => (BROWSER_KEY_SCOPES as readonly string[]).includes(s)) : (o.scopes as string[]);
+  if (!scopes.length) return { ok: false, error: "Clé utilisée depuis le navigateur sans permission de création : créez une nouvelle clé." };
   const res = await insertKey(ctx.org.id, ctx.user.id, {
     name: o.name,
-    scopes: o.scopes,
+    scopes,
     rateLimitPerMinute: o.rate_limit_per_minute,
     allowedOrigins: o.allowed_origins,
     expiresAt: o.expires_at,

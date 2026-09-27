@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { extractApiKey, hashApiKey, parseApiKey, safeEqualHex } from "@/lib/api-keys";
 import { serverEnv } from "@/lib/env";
 import { rateLimit } from "@/lib/rate-limit";
-import { ipFromHeaders } from "@/lib/request";
+import { ipBucket, ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type ApiContext = {
@@ -18,13 +18,27 @@ export type ApiContext = {
   allowedOrigin: string | null;
   ip: string | null;
   rate: { limit: number; remaining: number; resetAt: number };
+  /** Clé « navigateur » (origines autorisées) : création de course seule, prix et paiement fixés par la centrale */
+  browser: boolean;
 };
 
 export class ApiError extends Error {
+  /** Clé identifiée (hash valide) avant l'erreur : la requête refusée apparaît dans le journal de la centrale */
+  ctx?: { orgId: string; keyId: string };
   constructor(public status: number, public code: string, message: string, public details?: unknown, public headers?: Record<string, string>) {
     super(message);
   }
 }
+
+/** Débit par IP (IPv6 groupée par /64), vérifié AVANT toute requête SQL : borne les appels anonymes. */
+const IP_LIMIT_PER_MINUTE = 600;
+/** Échecs d'authentification journalisés par IP et par minute (au-delà : 429, rien n'est écrit). */
+const AUTH_FAILURES_PER_MINUTE = 20;
+
+/** Centrale sans offre (plan_id null) : tout est autorisé — même règle que private.org_limits (migration 002800). */
+const NO_PLAN_LIMITS = { api_access: true, booking_site: true, custom_domain: true, advanced_stats: true };
+
+const retryAfter = (resetAt: number) => ({ "Retry-After": String(Math.max(1, Math.ceil((resetAt - Date.now()) / 1000))) });
 
 function clientIpOf(req: Request) {
   return ipFromHeaders(req.headers);
@@ -45,13 +59,15 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
   const requestId = randomUUID();
   const startedAt = Date.now();
   const origin = req.headers.get("origin");
+  const pre = await rateLimit(`api:ip:${ipBucket(clientIpOf(req))}`, IP_LIMIT_PER_MINUTE, 60);
+  if (!pre.ok) throw new ApiError(429, "RATE_LIMITED", "Trop de requêtes depuis cette adresse.", undefined, retryAfter(pre.resetAt));
   const parsed = parseApiKey(extractApiKey(req.headers));
   if (!parsed) throw new ApiError(401, "INVALID_API_KEY", "Clé API absente ou mal formée (Authorization: Bearer rdk_live_…).");
 
   const admin = createAdminClient();
   const { data: key } = await admin
     .from("api_keys")
-    .select("id, organization_id, scopes, rate_limit_per_minute, allowed_origins, expires_at, revoked_at, organization:organizations(status, timezone, limits_override, plan:plans(limits))")
+    .select("id, organization_id, scopes, rate_limit_per_minute, allowed_origins, expires_at, revoked_at, organization:organizations(status, timezone, plan_id, limits_override, plan:plans(limits))")
     .eq("prefix", parsed.prefix)
     .maybeSingle();
   const { data: secret } = key
@@ -64,26 +80,34 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
   }
   const k = key as any;
   const org = Array.isArray(k.organization) ? k.organization[0] : k.organization;
-  if (k.revoked_at) throw new ApiError(401, "API_KEY_REVOKED", "Cette clé API a été révoquée.");
-  if (k.expires_at && new Date(k.expires_at).getTime() < Date.now()) throw new ApiError(401, "API_KEY_EXPIRED", "Cette clé API a expiré.");
-  if (!org || org.status !== "active") throw new ApiError(403, "ORGANIZATION_INACTIVE", "Organisation suspendue ou archivée.");
-  if (!(k.scopes as string[]).includes(scope)) throw new ApiError(403, "INSUFFICIENT_SCOPE", `Permission requise : ${scope}.`);
+  // Clé identifiée : toute erreur suivante est rattachée à la centrale et à la clé (journal api_logs)
+  const fail = (e: ApiError) => Object.assign(e, { ctx: { orgId: k.organization_id as string, keyId: k.id as string } });
+  if (k.revoked_at) throw fail(new ApiError(401, "API_KEY_REVOKED", "Cette clé API a été révoquée."));
+  if (k.expires_at && new Date(k.expires_at).getTime() < Date.now()) throw fail(new ApiError(401, "API_KEY_EXPIRED", "Cette clé API a expiré."));
+  if (!org || org.status !== "active") throw fail(new ApiError(403, "ORGANIZATION_INACTIVE", "Organisation suspendue ou archivée."));
+  if (!(k.scopes as string[]).includes(scope)) throw fail(new ApiError(403, "INSUFFICIENT_SCOPE", `Permission requise : ${scope}.`));
 
   const plan = Array.isArray(org.plan) ? org.plan[0] : org.plan;
-  const limits = { ...(plan?.limits ?? {}), ...(org.limits_override ?? {}) };
-  if (!limits.api_access) throw new ApiError(403, "PLAN_FEATURE_API", "L'API n'est pas incluse dans l'offre de cette organisation.");
+  const limits = { ...(org.plan_id == null ? NO_PLAN_LIMITS : (plan?.limits ?? {})), ...(org.limits_override ?? {}) };
+  if (!limits.api_access) throw fail(new ApiError(403, "PLAN_FEATURE_API", "L'API n'est pas incluse dans l'offre de cette organisation."));
+
+  // Clé « navigateur » : lisible par tout visiteur du site → création de course seule, depuis une origine listée
+  const allowedOrigins = (k.allowed_origins ?? []) as string[];
+  const browser = allowedOrigins.length > 0;
+  if (browser && scope !== "rides:create") {
+    throw fail(new ApiError(403, "INSUFFICIENT_SCOPE", "Clé utilisée depuis le navigateur (origines autorisées) : seule la création de courses est permise."));
+  }
+  if (browser && (!origin || !allowedOrigins.includes(origin))) {
+    throw fail(new ApiError(403, "ORIGIN_NOT_ALLOWED", "Origine non autorisée pour cette clé."));
+  }
 
   const rl = await rateLimit(`api:${k.id}`, k.rate_limit_per_minute, 60);
   const rate = { limit: rl.limit, remaining: rl.remaining, resetAt: rl.resetAt };
-  if (!rl.ok) {
-    throw new ApiError(429, "RATE_LIMITED", "Trop de requêtes pour cette clé.", undefined, {
-      "Retry-After": String(Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000))),
-    });
-  }
-  const allowedOrigin = origin && (k.allowed_origins as string[]).includes(origin) ? origin : null;
+  if (!rl.ok) throw fail(new ApiError(429, "RATE_LIMITED", "Trop de requêtes pour cette clé.", undefined, retryAfter(rl.resetAt)));
+  const allowedOrigin = origin && allowedOrigins.includes(origin) ? origin : null;
   return {
     requestId, startedAt, origin, allowedOrigin, ip: clientIpOf(req),
-    orgId: k.organization_id, orgTimezone: org.timezone ?? "Europe/Paris", keyId: k.id, scopes: k.scopes, rate,
+    orgId: k.organization_id, orgTimezone: org.timezone ?? "Europe/Paris", keyId: k.id, scopes: k.scopes, rate, browser,
   };
 }
 
@@ -101,8 +125,18 @@ function baseHeaders(ctx: Partial<ApiContext> & { requestId: string }) {
   return h;
 }
 
-/** Journalise la requête (api_logs) + dernière utilisation de la clé. Ne bloque jamais la réponse. */
-async function logRequest(req: Request, ctx: Partial<ApiContext> & { requestId: string; startedAt: number }, status: number, errorCode?: string, rideId?: string) {
+/**
+ * Journalise la requête (api_logs) + dernière utilisation de la clé (seulement si elle s'est authentifiée :
+ * jamais pour une clé révoquée, expirée ou refusée). Ne bloque jamais la réponse.
+ */
+async function logRequest(
+  req: Request,
+  ctx: Partial<ApiContext> & { requestId: string; startedAt: number },
+  status: number,
+  errorCode?: string,
+  rideId?: string,
+  touchKey = true,
+) {
   try {
     const admin = createAdminClient();
     const url = new URL(req.url);
@@ -119,7 +153,7 @@ async function logRequest(req: Request, ctx: Partial<ApiContext> & { requestId: 
       error_code: errorCode ?? null,
       ride_id: rideId ?? null,
     } as never);
-    if (ctx.keyId) await admin.from("api_keys").update({ last_used_at: new Date().toISOString(), last_used_ip: ctx.ip ?? null } as never).eq("id", ctx.keyId);
+    if (ctx.keyId && touchKey) await admin.from("api_keys").update({ last_used_at: new Date().toISOString(), last_used_ip: ctx.ip ?? null } as never).eq("id", ctx.keyId);
   } catch (e) {
     console.error("[api] log failed", e);
   }
@@ -139,12 +173,21 @@ export async function handle(
     await logRequest(req, ctx, res.status, undefined, res.rideId);
     return NextResponse.json(res.body, { status: res.status, headers: baseHeaders(ctx) });
   } catch (error) {
-    const e =
+    let e =
       error instanceof ApiError
         ? error
         : (console.error("[api] erreur interne", error), new ApiError(500, "INTERNAL_ERROR", "Erreur interne. Réessayez."));
-    const c = ctx ?? fallback;
-    await logRequest(req, c, e.status, e.code);
+    const c = ctx ?? { ...fallback, ...(e.ctx ?? {}) };
+    let log = true;
+    if (!ctx && !e.ctx) {
+      // Requête non identifiée (sans clé, clé inconnue, débit par IP) : journal borné par IP, au-delà 429 sans écriture
+      const failures = await rateLimit(`api:fail:${ipBucket(clientIpOf(req))}`, AUTH_FAILURES_PER_MINUTE, 60);
+      log = failures.ok && e.code !== "RATE_LIMITED";
+      if (!failures.ok && e.code !== "RATE_LIMITED") {
+        e = new ApiError(429, "RATE_LIMITED", "Trop d'échecs d'authentification. Réessayez dans une minute.", undefined, retryAfter(failures.resetAt));
+      }
+    }
+    if (log) await logRequest(req, c, e.status, e.code, undefined, !!ctx);
     return NextResponse.json(
       { error: { code: e.code, message: e.message, details: e.details, request_id: c.requestId } },
       { status: e.status, headers: { ...baseHeaders(c), ...(e.headers ?? {}) } },

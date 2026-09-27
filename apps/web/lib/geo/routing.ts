@@ -2,6 +2,7 @@ import "server-only";
 import { decodePolyline, encodePolyline, estimateRoute, haversine, navInstruction, simplifyLine, type Coord, type LatLng, type NavStep } from "@rydar/shared";
 import { serverEnv } from "@/lib/env";
 import { fetchJson, lruCache } from "@/lib/geo/cache";
+import { rateLimit } from "@/lib/rate-limit";
 
 // -----------------------------------------------------------------------------
 // Itinéraires — fournisseurs interchangeables (ROUTING_PROVIDER) :
@@ -180,6 +181,16 @@ export async function computeNavRoute(from: LatLng, to: LatLng, opts: { timeoutM
   }
 }
 
+/**
+ * Budget quotidien GLOBAL des itinéraires facturés (Google Routes, Mapbox Directions), devis anonymes du
+ * mini-site compris (GEO_DAILY_BUDGET, défaut 20 000 / jour) : au-delà, estimation à vol d'oiseau.
+ * Le guidage des chauffeurs (computeNavRoute, authentifié) n'est pas compté.
+ */
+async function paidRouteAllowed(provider: string): Promise<boolean> {
+  const budget = Number(process.env.GEO_DAILY_BUDGET) || 20_000;
+  return (await rateLimit(`geobudget:route:${provider}`, budget, 86_400)).ok;
+}
+
 /** Itinéraire routier entre deux points (avec cache et repli). */
 export async function computeRoute(from: LatLng, to: LatLng, opts: { timeoutMs?: number } = {}): Promise<Route> {
   const timeoutMs = opts.timeoutMs ?? 3000;
@@ -188,6 +199,8 @@ export async function computeRoute(from: LatLng, to: LatLng, opts: { timeoutMs?:
   const cached = routeCache.get(k);
   if (cached) return cached;
   const env = serverEnv();
+  const paid = (env.routing === "mapbox" && !!env.mapboxToken) || (env.routing === "google" && !!env.googleMapsKey);
+  if (paid && !(await paidRouteAllowed(env.routing))) return estimate(from, to);
   try {
     let route: Route;
     if (env.routing === "mapbox" && env.mapboxToken) route = await mapbox(from, to, env.mapboxToken, timeoutMs);

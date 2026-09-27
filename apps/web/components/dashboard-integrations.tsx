@@ -1,5 +1,5 @@
 "use client";
-import { API_SCOPES, formatRelative } from "@rydar/shared";
+import { API_SCOPES, BROWSER_KEY_SCOPES, formatRelative } from "@rydar/shared";
 import { Check, Copy, KeyRound, Plus, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -55,13 +55,17 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
   const [createOpen, setCreateOpen] = useState(false);
   const [revealed, setRevealed] = useState<{ key: string; prefix: string } | null>(null);
   const [scopes, setScopes] = useState<string[]>(["rides:create", "rides:read"]);
+  const [originsText, setOriginsText] = useState("");
+  // Clé « navigateur » (origines saisies) : visible par tout visiteur du site → création de courses seule
+  const browserKey = originsText.trim().length > 0;
+  const effectiveScopes = browserKey ? [...BROWSER_KEY_SCOPES] : scopes;
 
   function create(form: FormData) {
     start(async () => {
       const origins = String(form.get("origins") ?? "").split(/[\s,]+/).filter(Boolean);
       const res = await createApiKey({
         name: String(form.get("name") ?? ""),
-        scopes: scopes as never,
+        scopes: (origins.length ? [...BROWSER_KEY_SCOPES] : scopes) as never,
         rateLimitPerMinute: Number(form.get("rate") || 60),
         allowedOrigins: origins,
       });
@@ -104,11 +108,17 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
                 </p>
               </div>
               <div className="flex flex-wrap gap-1">
-                {k.scopes.map((s) => (
+                {/* Clé « navigateur » : seule la création de courses est acceptée par l'API, quelles que soient ses portées */}
+                {(k.allowed_origins?.length ? k.scopes.filter((s) => (BROWSER_KEY_SCOPES as readonly string[]).includes(s)) : k.scopes).map((s) => (
                   <span key={s} className="rounded-md border border-line bg-white/[0.03] px-1.5 py-0.5 text-[11px] text-fg-muted">
                     {SCOPE_LABELS[s] ?? s}
                   </span>
                 ))}
+                {k.allowed_origins?.length ? (
+                  <span className="rounded-md border border-amber/30 px-1.5 py-0.5 text-[11px] text-amber" title={k.allowed_origins.join(", ")}>
+                    Navigateur
+                  </span>
+                ) : null}
               </div>
               <div className="w-32 text-right text-[12px] text-fg-subtle">
                 <span className="num text-fg-muted">{k.rate_limit_per_minute}</span> req/min
@@ -165,14 +175,18 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
             <Field label="Nom">
               <Input name="name" required placeholder="Site web — formulaire de réservation" />
             </Field>
-            <Field label="Permissions">
+            <Field label="Permissions" hint={browserKey ? "Clé utilisée depuis le navigateur : création de courses uniquement." : undefined}>
               <div className="flex flex-wrap gap-2">
                 {API_SCOPES.map((s) => (
                   <button
                     key={s}
                     type="button"
+                    disabled={browserKey}
                     onClick={() => setScopes((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]))}
-                    className={cn("rounded-lg border px-3 py-1.5 text-[12.5px]", scopes.includes(s) ? "border-brand/50 bg-brand/[0.08] text-brand" : "border-line text-fg-muted")}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-[12.5px] disabled:cursor-not-allowed",
+                      effectiveScopes.includes(s) ? "border-brand/50 bg-brand/[0.08] text-brand" : "border-line text-fg-muted",
+                    )}
                   >
                     {SCOPE_LABELS[s]}
                   </button>
@@ -182,8 +196,12 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
             <Field label="Limite de débit" hint="Requêtes par minute pour cette clé.">
               <Input name="rate" type="number" min={1} max={10000} defaultValue={60} className="num" />
             </Field>
-            <Field label="Origines autorisées (CORS)" optional hint="Uniquement si le formulaire appelle l'API depuis le navigateur. Recommandé : appel serveur.">
-              <Textarea name="origins" placeholder="https://www.ma-centrale.fr" className="min-h-[60px]" />
+            <Field
+              label="Origines autorisées (CORS)"
+              optional
+              hint="Uniquement si le formulaire appelle l'API depuis le navigateur : la clé est alors visible par tout visiteur du site, elle ne peut que créer des courses (prix et paiement fixés par votre grille). Recommandé : appel serveur."
+            >
+              <Textarea name="origins" value={originsText} onChange={(e) => setOriginsText(e.target.value)} placeholder="https://www.ma-centrale.fr" className="min-h-[60px]" />
             </Field>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>Annuler</Button>

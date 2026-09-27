@@ -51,8 +51,9 @@ export async function POST(req: Request) {
     const idempotencyKey = req.headers.get("idempotency-key")?.slice(0, 100) || null;
 
     const admin = createAdminClient();
-    // Prix absent : grille de l'organisation (forfait reconnu, sinon compteur)
-    let priceCents = v.price_cents ?? null;
+    // Prix absent : grille de l'organisation (forfait reconnu, sinon compteur). Clé « navigateur » (lisible par
+    // tout visiteur) : prix et moyen de paiement jamais pris dans la requête
+    let priceCents = ctx.browser ? null : (v.price_cents ?? null);
     if (priceCents == null) {
       const { data: rule } = await admin
         .from("pricing_rules")
@@ -87,7 +88,7 @@ export async function POST(req: Request) {
         luggage: v.luggage,
         vehicle_category: v.vehicle_category,
         price_cents: priceCents,
-        payment_method: v.payment_method,
+        payment_method: ctx.browser ? "card" : v.payment_method,
         comment: v.comment ?? null,
         flight_number: v.flight_number ?? null,
         external_reference: v.external_reference ?? null,

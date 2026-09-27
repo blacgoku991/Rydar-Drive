@@ -7,6 +7,7 @@ import { ArrowDownUp, Banknote, CalendarClock, Car, Clock3, Landmark, Minus, Mou
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createRide } from "@/app/dashboard/rides/actions";
+import { dayInZone, foreignZoneName, zonedInstant } from "@/components/booking/zoned-time";
 import { RoutePreview } from "@/components/map/route-preview";
 import { AddressInput, type PlaceValue } from "@/components/rides/address-input";
 import { useCentrale } from "@/components/settlements/centrale-context";
@@ -58,11 +59,6 @@ function Stepper({ value, onChange, min, max, label, icon: Icon }: { value: numb
   );
 }
 
-function toLocalInput(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
-}
-
 export function NewRideSheet({
   open,
   onOpenChange,
@@ -79,11 +75,12 @@ export function NewRideSheet({
   /** Centre de la flotte (proximité des suggestions d'adresses) */
   center?: { lat: number; lng: number } | null;
 }) {
-  const tomorrow = toLocalInput(new Date(Date.now() + 24 * 3600_000));
+  const org = useCentrale();
+  const timeZone = org?.timeZone || "Europe/Paris";
   const [pickup, setPickup] = useState<PlaceValue>(empty);
   const [dropoff, setDropoff] = useState<PlaceValue>(empty);
   const [when, setWhen] = useState<"now" | "scheduled">("now");
-  const [date, setDate] = useState(tomorrow.date);
+  const [date, setDate] = useState(() => dayInZone(new Date(Date.now() + 24 * 3600_000), timeZone));
   const [time, setTime] = useState("06:30");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -95,7 +92,6 @@ export function NewRideSheet({
   const [price, setPrice] = useState("");
   // Mode centrale : commission saisie à la course (vide = automatique selon les réglages)
   const [commission, setCommission] = useState("");
-  const org = useCentrale();
   const centrale = org?.model === "centrale";
   const [payment, setPayment] = useState(defaultPayment);
   const [flight, setFlight] = useState("");
@@ -106,7 +102,9 @@ export function NewRideSheet({
   const [pending, start] = useTransition();
   const quoteAbort = useRef<AbortController | null>(null);
 
-  const pickupAt = when === "now" ? null : new Date(`${date}T${time}`);
+  const pickupAt = when === "now" ? null : zonedInstant(date, time, timeZone);
+  const [zoneName, setZoneName] = useState<string | null>(null);
+  useEffect(() => setZoneName(foreignZoneName(timeZone)), [timeZone]);
   const pickupPt = pickup.lat != null && pickup.lng != null ? { lat: pickup.lat, lng: pickup.lng } : null;
   const dropoffPt = dropoff.lat != null && dropoff.lng != null ? { lat: dropoff.lat, lng: dropoff.lng } : null;
   const near = useMemo(() => pickupPt ?? center ?? null, [pickupPt?.lat, pickupPt?.lng, center?.lat, center?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -215,7 +213,7 @@ export function NewRideSheet({
         pickup: { address: pickup.address, lat: pickupPt.lat, lng: pickupPt.lng },
         dropoff: { address: dropoff.address, lat: dropoff.lat, lng: dropoff.lng },
         when,
-        pickupAt: when === "scheduled" ? new Date(`${date}T${time}`) : undefined,
+        pickupAt: when === "scheduled" ? (zonedInstant(date, time, timeZone) ?? undefined) : undefined,
         customerName,
         customerPhone,
         customerEmail,
@@ -313,6 +311,7 @@ export function NewRideSheet({
                     <Field>
                       <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="[color-scheme:dark]" aria-label="Heure" />
                     </Field>
+                    {zoneName && <p className="col-span-2 text-[12px] text-fg-muted">Heure de la centrale ({zoneName})</p>}
                   </div>
                 )}
               </section>
