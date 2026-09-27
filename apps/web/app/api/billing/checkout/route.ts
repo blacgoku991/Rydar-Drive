@@ -18,12 +18,19 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Offre invalide." }, { status: 422 });
 
   const admin = createAdminClient();
-  const [{ data: plan }, { data: org }] = await Promise.all([
-    admin.from("plans").select("id, code, stripe_price_monthly_id, stripe_price_yearly_id").eq("code", parsed.data.planCode).eq("is_active", true).maybeSingle(),
-    admin.from("organizations").select("id, name, email, stripe_customer_id").eq("id", ctx.org.id).single(),
+  const [{ data: plan }, { data: org }, { data: live, error: liveError }] = await Promise.all([
+    admin.from("plans").select("id, code, is_public, stripe_price_monthly_id, stripe_price_yearly_id").eq("code", parsed.data.planCode).eq("is_active", true).maybeSingle(),
+    admin.from("organizations").select("id, name, email, stripe_customer_id, plan_id").eq("id", ctx.org.id).single(),
+    // Abonnement Stripe encore vivant : Checkout en créerait un SECOND (double facturation)
+    admin.from("subscriptions").select("id").eq("organization_id", ctx.org.id).not("stripe_subscription_id", "is", null)
+      .in("status", ["active", "trialing", "past_due", "unpaid", "paused"]).limit(1),
   ]);
+  if (liveError) return NextResponse.json({ error: "Abonnement indisponible pour le moment : réessayez." }, { status: 503 });
+  if (live?.length) return NextResponse.json({ error: "Vous avez déjà un abonnement : changez d'offre avec le bouton « Gérer »." }, { status: 409 });
   const priceId = parsed.data.interval === "year" ? (plan as any)?.stripe_price_yearly_id : (plan as any)?.stripe_price_monthly_id;
-  if (!plan || !priceId) return NextResponse.json({ error: "Offre non disponible au paiement en ligne." }, { status: 422 });
+  // Offre non publique (négociée) : seulement celle que le super admin a attribuée à cette centrale
+  const allowed = plan && ((plan as any).is_public || (plan as any).id === (org as any)?.plan_id);
+  if (!allowed || !priceId) return NextResponse.json({ error: "Offre non disponible au paiement en ligne." }, { status: 422 });
 
   let customer = (org as any).stripe_customer_id as string | null;
   if (!customer) {
@@ -36,7 +43,10 @@ export async function POST(req: Request) {
     customer,
     line_items: [{ price: priceId, quantity: 1 }],
     allow_promotion_codes: true,
-    subscription_data: { metadata: { organization_id: ctx.org.id, plan_code: (plan as any).code } },
+    // previous_plan_id : offre rendue à la centrale si l'abonnement se termine (webhook Stripe, jamais « sans offre »)
+    subscription_data: {
+      metadata: { organization_id: ctx.org.id, plan_code: (plan as any).code, ...((org as any).plan_id ? { previous_plan_id: (org as any).plan_id } : {}) },
+    },
     metadata: { organization_id: ctx.org.id, plan_code: (plan as any).code },
     success_url: `${env.appUrl}/dashboard/settings?tab=billing&checkout=success`,
     cancel_url: `${env.appUrl}/dashboard/settings?tab=billing`,

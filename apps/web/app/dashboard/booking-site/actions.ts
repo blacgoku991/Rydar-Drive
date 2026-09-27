@@ -1,16 +1,26 @@
 "use server";
-import { bookingSiteSchema, describeError, humanizeError } from "@rydar/shared";
+import { bookingSiteSchema, describeError, extractErrorCode, humanizeError } from "@rydar/shared";
 import { createHash } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { isAdminRole } from "@/lib/auth";
+import { env } from "@/lib/env";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result = { ok: true } | { ok: false; error: string };
+
+/** Domaine racine de Rydar, ses sous-domaines ou l'hôte de l'application : jamais un domaine personnalisé. */
+function isPlatformDomain(domain: string) {
+  const root = env.rootDomain.toLowerCase();
+  return domain === root || domain.endsWith(`.${root}`) || domain === new URL(env.appUrl).hostname.toLowerCase();
+}
+
+const PLATFORM_DOMAIN_ERROR = () =>
+  `Le domaine personnalisé ne peut pas être ${env.rootDomain} ni l'un de ses sous-domaines : utilisez le champ « Sous-domaine ».`;
 
 /** Noms des champs du mini-site pour les messages d'erreur. */
 const BOOKING_LABELS: Record<string, string> = {
@@ -29,11 +39,19 @@ export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>
   const parsed = bookingSiteSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS) };
   const v = parsed.data;
+  if (v.custom_domain && isPlatformDomain(v.custom_domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
   const { error } = await ctx.supabase
     .from("booking_sites")
     .update({ ...v, email: v.email || null, custom_domain: v.custom_domain || null })
     .eq("organization_id", ctx.org.id);
-  if (error) return { ok: false, error: error.code === "23505" ? "Ce sous-domaine ou domaine est déjà utilisé." : humanizeError(error.message, actionError(error)) };
+  if (error) {
+    // Seuls les domaines VÉRIFIÉS sont uniques (migration 20260924005000) : un conflit ne peut venir que du sous-domaine
+    if (error.code === "23505") return { ok: false, error: "Ce sous-domaine est déjà utilisé : choisissez-en un autre." };
+    if (extractErrorCode(error.message) === "SUBDOMAIN_CHANGE_LIMIT") {
+      return { ok: false, error: "Sous-domaine déjà modifié 5 fois ces 7 derniers jours : réessayez plus tard ou contactez l'équipe Rydar." };
+    }
+    return { ok: false, error: humanizeError(error.message, actionError(error)) };
+  }
   revalidatePath("/dashboard/booking-site");
   return { ok: true };
 }
@@ -45,10 +63,24 @@ export async function verifyCustomDomain(): Promise<Result> {
   const { data: site } = await ctx.supabase.from("booking_sites").select("custom_domain").eq("organization_id", ctx.org.id).single();
   const domain = site?.custom_domain as string | null;
   if (!domain) return { ok: false, error: "Aucun domaine personnalisé." };
+  if (isPlatformDomain(domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
   const token = await domainToken(ctx.org.id);
   const records = await resolveTxt(`_rydar.${domain}`).catch(() => [] as string[][]);
   if (!records.some((r) => r.join("") === token)) return { ok: false, error: `Enregistrement TXT introuvable sur _rydar.${domain}.` };
-  await createAdminClient().from("booking_sites").update({ custom_domain_verified_at: new Date().toISOString() } as never).eq("organization_id", ctx.org.id);
+  // Atomique : on ne marque vérifié QUE le domaine dont le TXT vient d'être lu (il a pu changer pendant la résolution DNS)
+  const { data: verified, error } = await createAdminClient()
+    .from("booking_sites")
+    .update({ custom_domain_verified_at: new Date().toISOString() } as never)
+    .eq("organization_id", ctx.org.id)
+    .eq("custom_domain", domain)
+    .select("organization_id");
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: false, error: "Ce domaine est déjà vérifié par une autre centrale : contactez l'équipe Rydar si vous en êtes le propriétaire." };
+    }
+    return { ok: false, error: "Vérification impossible pour le moment : réessayez." };
+  }
+  if (!verified?.length) return { ok: false, error: "Le domaine a changé pendant la vérification : recommencez." };
   await audit({ organizationId: ctx.org.id, actorUserId: ctx.user.id, action: "booking_site.domain_verified", metadata: { domain } });
   revalidatePath("/dashboard/booking-site");
   return { ok: true };

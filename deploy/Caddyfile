@@ -11,6 +11,11 @@
 # Plateforme : dashboard, super admin, API v1, inscription des chauffeurs (/rejoindre/…)
 {$DOMAIN} {
 	encode zstd gzip
+	# Webhook Stripe (quelques Ko, signature vérifiée après lecture) : corps plafonné avant l'application
+	@stripe_webhook path /api/stripe/webhook
+	request_body @stripe_webhook {
+		max_size 1MB
+	}
 	reverse_proxy web:3000 {
 		# IP réelle de la connexion (limitations de débit) ; un client ne choisit pas son IP par en-tête
 		header_up X-Real-IP {remote_host}
@@ -28,6 +33,11 @@ https:// {
 		on_demand
 	}
 	encode zstd gzip
+	# Même plafond ici : la route du webhook répond aussi derrière un hôte de mini-site
+	@stripe_webhook path /api/stripe/webhook
+	request_body @stripe_webhook {
+		max_size 1MB
+	}
 	reverse_proxy web:3000 {
 		# IP réelle de la connexion (limitations de débit) ; un client ne choisit pas son IP par en-tête
 		header_up X-Real-IP {remote_host}
