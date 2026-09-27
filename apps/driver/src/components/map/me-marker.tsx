@@ -103,8 +103,9 @@ export function MeMarker({
   const mode = meMode(heading, navigation);
   // Guidage sans cap connu : flèche dans l'axe de la carte (elle-même tournée selon le dernier cap)
   const dir = heading ?? (mode === "nav" ? mapHeading : null);
-  // Nouveau marqueur quand le dessin change (Android : nouvelle image)
-  return <MeMarkerView key={mode} lat={me.lat} lng={me.lng} mode={mode} dir={dir} mapHeading={mapHeading} label={meLabel(heading)} />;
+  // Android : nouveau marqueur quand le dessin change (nouvelle image). iPhone : jamais de remontage — un marqueur
+  // recréé part d'un cadre vide et react-native-maps le remonte d'une demi-hauteur jusqu'au prochain placement
+  return <MeMarkerView key={Platform.OS === "android" ? mode : undefined} lat={me.lat} lng={me.lng} mode={mode} dir={dir} mapHeading={mapHeading} label={meLabel(heading)} />;
 }
 
 const styles = StyleSheet.create({

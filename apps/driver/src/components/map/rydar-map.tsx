@@ -47,7 +47,8 @@ function ReportMarker({ report, selected, onPress }: { report: MapReport; select
       onPress={() => onPress?.(report.id)}
       accessibilityLabel={`Signalement\u00A0: ${meta.label}`}
     >
-      <View style={styles.reportWrap}>
+      {/* Vue conservée (collapsable) : sinon Fabric l'aplatit et iOS mesure la pastille seule, décalée de quelques points */}
+      <View style={styles.reportWrap} collapsable={false}>
         <View style={[styles.report, { borderColor: meta.color }, selected && styles.reportSelected]}>
           <Ionicons name={meta.ionicon as keyof typeof Ionicons.glyphMap} size={20} color={meta.color} />
         </View>

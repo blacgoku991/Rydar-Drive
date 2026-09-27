@@ -1,6 +1,7 @@
 // Dessin de la position du chauffeur, commun à la carte native (react-native-svg) et à l'aperçu web (SVG DOM) :
 // point bleu à bord blanc + faisceau d'orientation hors guidage, flèche de navigation en guidage.
-// Tout est dessiné pointé vers le nord (haut) ; la carte fait tourner le marqueur selon le cap.
+// Tout est dessiné pointé vers le nord (haut) puis tourné selon le cap : par la carte sur Android (marqueur à plat),
+// dans le SVG sur iPhone (la vue du marqueur n'est jamais transformée, voir me-marker.tsx).
 import { colors } from "@/theme";
 
 /** Faisceau : éventail de 70° (±35°), rayon 46 px, pointe au centre du point. */
