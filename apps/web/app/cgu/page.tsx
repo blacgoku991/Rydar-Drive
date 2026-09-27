@@ -202,8 +202,10 @@ export default async function TermsOfUsePage() {
         <p>
           Vous pouvez supprimer votre compte dans l&apos;application (Profil › Supprimer mon compte) ou par e-mail : voir{" "}
           <Link href="/suppression-compte" className={link}>Supprimer son compte</Link>. La suppression est refusée
-          tant qu&apos;une course vous est attribuée : terminez-la ou demandez à la centrale de la réattribuer. Les
-          utilisateurs d&apos;une centrale s&apos;adressent au propriétaire de celle-ci.
+          tant qu&apos;une course vous est attribuée : terminez-la ou demandez à la centrale de la réattribuer (si la
+          centrale est suspendue ou a quitté le service, une course acceptée mais pas encore commencée vous est retirée
+          automatiquement). Elle n&apos;efface pas les commissions encore dues à la centrale. Les utilisateurs d&apos;une centrale s&apos;adressent
+          au propriétaire de celle-ci.
         </p>
       </LegalSection>
 

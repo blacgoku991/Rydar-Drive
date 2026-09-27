@@ -15,10 +15,10 @@ const link = "text-fg underline underline-offset-2";
 
 /**
  * Suppression du compte chauffeur (lien déclaré à Google Play et à l'App Store). Décrit EXACTEMENT le traitement
- * de private.delete_driver_account (migration 20260924004000, avec le déclencheur drivers_chat_forget_deleted de
- * 20260924004100), de la route /api/driver/delete-account, de la file private.account_deletions (reprise par le
- * worker) et de l'outil super admin /admin/suppressions. Durées : private.housekeeping (20260924003900),
- * private.purge_expired_bans et private.purge_deleted_driver_bans.
+ * de private.delete_driver_account (dernière définition 20260924004800, avec le déclencheur drivers_chat_forget_deleted
+ * de 20260924004100), de la route /api/driver/delete-account, de la file private.account_deletions (reprise par le
+ * worker, private.complete_account_deletion) et de l'outil super admin /admin/suppressions. Durées :
+ * private.housekeeping (20260924004800), private.purge_expired_bans et private.purge_deleted_driver_bans.
  */
 export default async function AccountDeletionPage() {
   const legal = await getLegalInfo();
@@ -58,7 +58,8 @@ export default async function AccountDeletionPage() {
         </p>
         <p>
           Si une course vous est attribuée, la suppression est refusée : terminez-la ou demandez à votre centrale de la
-          réattribuer, puis supprimez votre compte.
+          réattribuer, puis supprimez votre compte. Si votre centrale est suspendue ou a quitté le service, une course
+          acceptée mais pas encore commencée vous est retirée automatiquement et la suppression se poursuit.
         </p>
       </LegalSection>
 
@@ -83,15 +84,20 @@ export default async function AccountDeletionPage() {
             <p className="text-amber">Adresse de contact « données personnelles » à compléter par l&apos;éditeur.</p>
           </>
         )}
-        <p>Là aussi, une course qui vous est attribuée doit d&apos;abord être terminée ou réattribuée par la centrale.</p>
+        <p>
+          Là aussi, une course qui vous est attribuée doit d&apos;abord être terminée ou réattribuée par la centrale ; si elle
+          est suspendue ou a quitté le service, une course acceptée mais pas encore commencée vous est retirée lors de la
+          suppression.
+        </p>
       </LegalSection>
 
       <LegalSection title="Ce qui est supprimé">
         <LegalList
           items={[
             <>
-              Votre compte de connexion (e-mail, mot de passe, nom et téléphone associés). S&apos;il sert aussi à gérer une
-              centrale, seul votre profil chauffeur est supprimé et votre accès au tableau de bord est conservé.
+              Votre compte de connexion (e-mail, mot de passe, nom et téléphone associés) et l&apos;historique de ses
+              connexions (dates, adresses IP). S&apos;il sert aussi à gérer une centrale, seul votre profil chauffeur est
+              supprimé et votre accès au tableau de bord est conservé.
             </>,
             <>
               Sur votre fiche : votre nom, votre téléphone, votre e-mail, votre photo, votre numéro de carte VTC, votre message
@@ -103,9 +109,11 @@ export default async function AccountDeletionPage() {
             </>,
             <>Vos positions et leur historique, vos appareils, vos jetons de notification et vos notifications.</>,
             <>
-              Vos messages avec la centrale (dans les deux sens) et dans le fil « Chauffeurs », vos signalements pour la flotte
-              (leur copie dans le journal de la centrale et les alertes envoyées aux autres chauffeurs comprises), vos votes,
-              vos signalements de messages, les auteurs que vous aviez masqués et vos accusés de lecture.
+              Vos messages avec la centrale (dans les deux sens) et dans le fil « Chauffeurs », vos signalements pour la flotte,
+              même retirés par la centrale (leur copie dans le journal de la centrale et les alertes enregistrées pour les
+              autres chauffeurs comprises ; une notification déjà affichée sur leur téléphone y reste jusqu&apos;à ce
+              qu&apos;ils l&apos;effacent), vos votes, vos signalements de messages, les auteurs que vous aviez masqués et vos
+              accusés de lecture.
             </>,
             <>
               Le véhicule enregistré lors de votre inscription par lien, s&apos;il n&apos;a servi à aucune course ; sinon sa plaque,
@@ -150,8 +158,18 @@ export default async function AccountDeletionPage() {
           le signalement de fraude, sans votre nom. Elles servent uniquement à reconnaître une nouvelle inscription avec les
           mêmes identifiants. Ce sont des hachages sha256 : ils ne sont pas chiffrés, mais ne font pas apparaître la valeur
           en clair (données pseudonymisées). Les indices partiels qui les accompagnaient (par exemple +33••••••78) sont
-          effacés dès la suppression. Seuls les administrateurs de la centrale concernée et l&apos;éditeur y ont accès. Le
-          tout est effacé automatiquement 3 ans après le bannissement.
+          effacés dès la suppression. Seuls les administrateurs de la centrale concernée et l&apos;éditeur ont accès aux
+          empreintes et au signalement ; le motif du bannissement, resté sur la fiche anonyme, est visible de toute
+          l&apos;équipe de la centrale. Le tout est effacé automatiquement 3 ans après le bannissement.
+        </p>
+        <p>
+          Si vous devez encore des commissions à votre centrale au moment de la suppression, les empreintes (hachages
+          sha256, sans indice en clair) de votre téléphone, de vos adresses e-mail et de votre numéro de carte VTC sont
+          conservées pour le compte de la centrale, tant qu&apos;une somme reste due, puis effacées automatiquement. Base
+          légale : constatation, exercice ou défense des droits de la centrale en justice (article 17.3.e du RGPD). Elles
+          servent uniquement à signaler à la centrale une nouvelle candidature avec ces identifiants : elle n&apos;est
+          alors pas validée automatiquement, et la centrale voit le montant restant dû. Supprimer votre compte
+          n&apos;efface pas la dette : les règlements restent dus, au nom de la fiche anonyme.
         </p>
         <p>
           Plus de détails :{" "}

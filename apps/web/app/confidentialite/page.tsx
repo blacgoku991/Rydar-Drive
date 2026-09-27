@@ -53,7 +53,7 @@ export default async function PrivacyPage() {
           items={[
             <>Identité et contact : prénom, nom, téléphone, e-mail, photo éventuelle ajoutée par la centrale. Le mot de passe est conservé sous forme hachée par le service d&apos;authentification.</>,
             <>Activité professionnelle : numéro de carte professionnelle VTC, véhicule (marque, modèle, couleur, plaque, catégorie, nombre de places), message joint à une candidature.</>,
-            <>Justificatifs envoyés depuis l&apos;application : carte VTC, permis, pièce d&apos;identité, assurance, carte grise…, avec leur numéro et leur date d&apos;échéance.</>,
+            <>Justificatifs envoyés depuis l&apos;application : carte VTC, permis, pièce d&apos;identité, assurance, carte grise…, avec leur numéro et leur date d&apos;échéance. Aucun justificatif médical ni aucune autre donnée de santé n&apos;est demandé.</>,
             <>
               Position GPS, avec cap, vitesse, précision et <span className="text-fg">niveau de batterie</span> du téléphone : en continu
               lorsque vous êtes <span className="text-fg">EN LIGNE</span> ou en course, y compris application en arrière-plan ou
@@ -68,7 +68,7 @@ export default async function PrivacyPage() {
             </>,
             <>Activité : offres reçues, acceptées, refusées ou manquées, courses et trajets, horaires, alertes (retard, position non reçue), gains, commissions, règlements et paiements déclarés.</>,
             <>Messages avec la centrale et dans le fil « Chauffeurs », signalements pour la flotte et votes, signalements de messages, et auteurs que vous avez masqués (visibles de vous seul).</>,
-            <>Journal de sécurité : adresse IP et navigateur utilisés pour l&apos;inscription par lien, y compris une inscription refusée, et e-mail de la candidature.</>,
+            <>Journal de sécurité : adresse IP et navigateur utilisés pour l&apos;inscription par lien, y compris une inscription refusée, et e-mail de la candidature ; historique des connexions au compte (date, e-mail, nom, adresse IP), tenu par le service d&apos;authentification.</>,
             <>Preuve d&apos;acceptation des CGU et de cette politique (document, version, date), enregistrée à l&apos;inscription par lien ou dans l&apos;application, avant son utilisation puis à chaque nouvelle version.</>,
           ]}
         />
@@ -80,6 +80,12 @@ export default async function PrivacyPage() {
           l&apos;inscription, l&apos;enregistrement de la fiche ou du justificatif est refusé ; pour un appareil, la
           candidature est refusée ou le compte suspendu automatiquement, et la centrale est alertée. Vous pouvez demander
           qu&apos;une personne réexamine cette décision (article 5).
+        </p>
+        <p>
+          À l&apos;inscription par lien, votre téléphone, votre e-mail et votre numéro de carte VTC sont aussi comparés aux
+          empreintes des anciens comptes de la centrale supprimés alors qu&apos;ils lui devaient encore des commissions
+          (article 9) : en cas de correspondance, la candidature n&apos;est jamais validée automatiquement ; la centrale
+          l&apos;examine et voit le montant restant dû.
         </p>
       </LegalSection>
 
@@ -96,7 +102,7 @@ export default async function PrivacyPage() {
       <LegalSection title="4. Équipes des centrales et visiteurs">
         <LegalList
           items={[
-            <>Utilisateurs du tableau de bord : nom, e-mail, téléphone, rôle, centrales gérées, journal des actions sensibles (qui, quoi, quand, adresse IP et navigateur), preuve d&apos;acceptation des CGU et de cette politique (document, version, date). Pour la centrale cliente : coordonnées de facturation et paiements.</>,
+            <>Utilisateurs du tableau de bord : nom, e-mail, téléphone, rôle, centrales gérées, journal des actions sensibles (qui, quoi, quand, adresse IP et navigateur), historique des connexions (date, e-mail, adresse IP), preuve d&apos;acceptation des CGU et de cette politique (document, version, date). Pour la centrale cliente : coordonnées de facturation et paiements.</>,
             <>Acceptation des CGV et de l&apos;accord de traitement au nom d&apos;une centrale : date, version et e-mail de la personne qui a accepté, gardés comme preuve du contrat même si son compte est supprimé.</>,
             <>Moyens de paiement que la centrale propose à ses chauffeurs (lien de paiement, bénéficiaire, IBAN et BIC, consignes) : visibles de son équipe et des chauffeurs à qui ils sont proposés, modifiables par le propriétaire et les administrateurs seulement.</>,
             <>Visiteurs : aucune mesure d&apos;audience ni publicité. Le serveur reçoit, comme tout site, l&apos;adresse IP et le navigateur, pour la sécurité. Voir la <Link href="/cookies" className={link}>politique cookies</Link>.</>,
@@ -112,6 +118,7 @@ export default async function PrivacyPage() {
             <>Calculer gains, commissions et règlements, tenir la comptabilité : exécution du contrat et obligation légale.</>,
             <>Envoyer les offres, messages, rappels et relances de commission par notification (et par WhatsApp si la centrale l&apos;active, avec votre accord recueilli par elle) : exécution du contrat.</>,
             <>Assurer la sécurité, prévenir la fraude, bannir un auteur de fraude : intérêt légitime de la centrale et de l&apos;éditeur.</>,
+            <>Garder, après la suppression d&apos;un compte, les empreintes d&apos;un chauffeur qui doit encore des commissions à la centrale : constatation, exercice ou défense des droits de la centrale en justice (article 17.3.e du RGPD), l&apos;éditeur agissant pour son compte.</>,
             <>Gérer les comptes des centrales, les abonnements et les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur, et obligations comptables.</>,
             <>Traiter les signalements de contenus illicites et répondre aux autorités : obligation légale.</>,
             <>Établir des statistiques anonymes pour améliorer le service : intérêt légitime de l&apos;éditeur.</>,
@@ -148,7 +155,7 @@ export default async function PrivacyPage() {
           items={[
             <>Votre centrale (propriétaire, administrateurs, dispatchers) : toutes les données de ses chauffeurs, candidats, clients et courses, dont le fil « Chauffeurs » et les signalements, sauf les auteurs qu&apos;un chauffeur a masqués.</>,
             <>Les autres chauffeurs de votre flotte : votre prénom et l&apos;initiale de votre nom avec vos messages du fil « Chauffeurs » et vos signalements (avec leur position).</>,
-            <>Le chauffeur attribué à une course : nom et téléphone du client, adresses, horaires et précisions.</>,
+            <>Les chauffeurs à qui une course est proposée (les plus proches pour une course immédiate, tous les chauffeurs compatibles de la centrale pour une course planifiée) : adresses de départ et d&apos;arrivée, date et heure, nombre de passagers et de bagages, numéro et provenance du vol, précisions et prix, sans le nom ni le téléphone du client. Le chauffeur attribué reçoit en plus le nom et le téléphone du client.</>,
             <>Le client : seulement ce que la centrale lui communique, par exemple le prénom du chauffeur et le modèle, la couleur et la plaque du véhicule (que l&apos;API remet à la centrale). Le logiciel ne montre pas la position du chauffeur au client.</>,
             <>L&apos;éditeur (support, sécurité, traitement des signalements, facturation) : il peut consulter les données des centrales, y compris le fil « Chauffeurs » et la carte des chauffeurs en ligne, dans la limite de ces missions.</>,
             <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : hébergement, notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
@@ -174,11 +181,11 @@ export default async function PrivacyPage() {
         <LegalList
           items={[
             <>Compte, véhicule et justificatifs, y compris les versions remplacées par un nouvel envoi : tant que le compte existe (sa suppression est décrite à l&apos;article 10).</>,
-            <>Historique des positions : 30 jours. La dernière position connue est remplacée à chaque envoi.</>,
-            <>Messages, signalements pour la flotte (y compris leur copie dans le journal de la centrale) et signalements de messages : 180 jours. Un message retiré par la centrale n&apos;est plus visible de personne et il est effacé à la même échéance. Auteurs masqués : tant que les deux comptes existent.</>,
+            <>Historique des positions, y compris la position relevée lors d&apos;une alerte de course (chauffeur immobile, GPS muet) : 30 jours, ou jusqu&apos;à la clôture de l&apos;alerte si elle reste ouverte plus longtemps. La dernière position connue est remplacée à chaque envoi.</>,
+            <>Messages, signalements pour la flotte (y compris leur copie dans le journal de la centrale) et signalements de messages : 180 jours. Un message retiré par la centrale disparaît aussitôt de l&apos;application, du tableau de bord et des alertes enregistrées ; une notification déjà affichée sur un téléphone y reste jusqu&apos;à ce que son destinataire l&apos;efface. Il est effacé à la même échéance. Auteurs masqués : tant que les deux comptes existent.</>,
             <>Notifications, y compris les relances WhatsApp : 90 jours après leur envoi prévu, qu&apos;elles aient abouti ou non. Journaux d&apos;appels de l&apos;API : 90 jours.</>,
-            <>Adresse IP et navigateur enregistrés dans le journal de sécurité (inscription par lien, actions sensibles de l&apos;équipe) : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
-            <>Courses (y compris les coordonnées du client), gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course, pour les obligations comptables de la centrale, puis supprimés.</>,
+            <>Adresse IP et navigateur enregistrés dans le journal de sécurité (inscription par lien, actions sensibles de l&apos;équipe) et historique des connexions du service d&apos;authentification : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
+            <>Courses (y compris les coordonnées du client), gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course, pour les obligations comptables de la centrale, puis supprimés, y compris une course jamais terminée.</>,
             <>Comptes et journal des actions de l&apos;équipe d&apos;une centrale : tant qu&apos;elle utilise le service, puis supprimés dans les 30 jours qui suivent la fin du contrat, sauf les actions sur les frais plateforme et leurs paiements, gardées avec ce registre comptable.</>,
             <>Preuves d&apos;acceptation : celle des CGU et de cette politique reste, détachée du compte s&apos;il est supprimé (document, version, date) ; celle des CGV et de l&apos;accord de traitement, avec l&apos;e-mail de la personne qui les a acceptés, est gardée comme preuve du contrat, y compris après sa fin (la fiche de la centrale est alors archivée, jamais supprimée).</>,
             <>
@@ -187,10 +194,19 @@ export default async function PrivacyPage() {
               banni) et le motif ; si elle le signale à l&apos;éditeur, celui-ci conserve aussi le signalement (nom, motif,
               date). Les empreintes sont des hachages sha256 : elles ne sont pas chiffrées, mais ne font pas apparaître la
               valeur en clair ; un indice partiel les accompagne (par exemple +33••••••78). Seuls les administrateurs de la
-              centrale concernée et l&apos;éditeur y ont accès. Elles servent uniquement à empêcher une nouvelle inscription.
+              centrale concernée et l&apos;éditeur ont accès aux empreintes, à leurs indices et au signalement ; le motif du
+              bannissement est visible de toute l&apos;équipe de la centrale, dispatchers compris. Les empreintes servent
+              uniquement à empêcher une nouvelle inscription.
               Empreintes, signalement et motif sont effacés 3 ans après le bannissement, même si le compte existe toujours ;
               une levée du bannissement met fin au blocage, l&apos;historique restant jusqu&apos;à cette échéance. Si le
               compte est supprimé, votre nom et les indices partiels sont effacés aussitôt, le reste à la même échéance.
+            </>,
+            <>
+              Commissions dues : si vous supprimez votre compte alors que vous devez encore des commissions à la centrale, les
+              empreintes (hachages sha256, sans indice en clair) de votre téléphone, de vos adresses e-mail et de votre numéro
+              de carte VTC sont conservées pour le compte de la centrale, rattachées à la fiche anonyme, tant qu&apos;une somme
+              reste due, puis effacées automatiquement. Elles servent uniquement à signaler à la centrale une nouvelle
+              candidature avec ces identifiants (article 2) ; aucun utilisateur du service n&apos;y a accès.
             </>,
           ]}
         />
@@ -207,13 +223,15 @@ export default async function PrivacyPage() {
         </p>
         <p>
           La suppression est refusée tant qu&apos;une course vous est attribuée : terminez-la ou demandez à la centrale de
-          la réattribuer.
+          la réattribuer. Si la centrale est suspendue ou a quitté le service, une course acceptée mais pas encore
+          commencée vous est retirée automatiquement et la suppression se poursuit.
         </p>
         <LegalList
           items={[
-            <><span className="text-fg">Supprimé</span> : compte de connexion (s&apos;il sert aussi à gérer une centrale, seul le profil chauffeur est supprimé) ; nom, téléphone, e-mail, photo, numéro de carte VTC, message de candidature et notes de la centrale ; justificatifs et tous leurs fichiers ; positions et historique GPS ; appareils et jetons de notification ; notifications ; messages avec la centrale et dans le fil « Chauffeurs », signalements pour la flotte (et leur copie dans le journal de la centrale), votes, signalements de messages, auteurs masqués et accusés de lecture ; véhicule créé à l&apos;inscription par lien s&apos;il n&apos;a servi à aucune course (sinon sa plaque, sa marque, son modèle, sa couleur et son année sont effacés).</>,
+            <><span className="text-fg">Supprimé</span> : compte de connexion et historique de ses connexions (s&apos;il sert aussi à gérer une centrale, seul le profil chauffeur est supprimé) ; nom, téléphone, e-mail, photo, numéro de carte VTC, message de candidature et notes de la centrale ; justificatifs et tous leurs fichiers ; positions et historique GPS ; appareils et jetons de notification ; notifications ; messages avec la centrale et dans le fil « Chauffeurs », signalements pour la flotte (leur copie dans le journal de la centrale et les alertes envoyées aux autres chauffeurs comprises), votes, signalements de messages, auteurs masqués et accusés de lecture ; véhicule créé à l&apos;inscription par lien s&apos;il n&apos;a servi à aucune course (sinon sa plaque, sa marque, son modèle, sa couleur et son année sont effacés).</>,
             <><span className="text-fg">Anonymisé</span>, conservé sans nom ni coordonnées pour les obligations comptables, jusqu&apos;à 10 ans après la fin de l&apos;année de chaque course : la fiche devient « Chauffeur supprimé (#N) » ; courses, règlements, gains et commissions y restent rattachés ; votre nom est retiré du journal des courses, des alertes (avec leur position) et des règlements ; le journal d&apos;audit est caviardé et l&apos;adresse IP et le navigateur de votre inscription en sont effacés ; dans le commentaire et le motif d&apos;annulation d&apos;une course, données de la centrale, seul votre nom complet est remplacé ; la preuve d&apos;acceptation des CGU et de cette politique reste, détachée de votre compte.</>,
             <><span className="text-fg">Conservé</span> en cas de bannissement pour fraude : empreintes (hachages) de vos identifiants, motif et signalement de fraude, jusqu&apos;à 3 ans après le bannissement, pour empêcher une réinscription ; votre nom et les indices partiels en sont retirés dès la suppression.</>,
+            <><span className="text-fg">Conservé</span> si des commissions restent dues à la centrale : empreintes (hachages) de votre téléphone, de vos adresses e-mail et de votre numéro de carte VTC, tant qu&apos;une somme reste due (article 9). Supprimer son compte n&apos;efface pas la dette.</>,
           ]}
         />
         <p>

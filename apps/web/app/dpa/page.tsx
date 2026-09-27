@@ -165,7 +165,7 @@ export default async function DataProcessingPage() {
             <><span className="text-fg">Nature</span> : collecte, enregistrement, hébergement, consultation, calcul (distances, itinéraires, répartition des montants), transmission (notifications, relances), rapprochement, suppression.</>,
             <><span className="text-fg">Finalités</span> : réception des réservations, proposition des courses aux chauffeurs selon leur position, suivi des courses, guidage, messagerie et signalements, gains, commissions et règlements, documents des chauffeurs, alertes, statistiques, candidatures par lien d&apos;inscription.</>,
             <><span className="text-fg">Personnes concernées</span> : chauffeurs et candidats, clients et passagers, membres de l&apos;équipe de la centrale.</>,
-            <><span className="text-fg">Données</span> : identité et coordonnées ; carte professionnelle VTC, véhicule et plaque ; justificatifs (permis, pièce d&apos;identité, assurance…) ; positions GPS avec cap, vitesse, précision et niveau de batterie ; informations de l&apos;appareil (identifiant, modèle, système, version de l&apos;application, jeton de notification) ; adresse IP et navigateur du journal de sécurité ; courses (adresses, horaires, passagers, prix, numéro de vol, commentaires) ; messages et signalements ; gains, commissions et règlements ; journal des actions de l&apos;équipe. Aucune donnée sensible au sens de l&apos;article 9 du RGPD ne doit être saisie.</>,
+            <><span className="text-fg">Données</span> : identité et coordonnées ; carte professionnelle VTC, véhicule et plaque ; justificatifs (permis, pièce d&apos;identité, assurance…) ; positions GPS avec cap, vitesse, précision et niveau de batterie ; informations de l&apos;appareil (identifiant, modèle, système, version de l&apos;application, jeton de notification) ; adresse IP et navigateur du journal de sécurité ; historique des connexions (date, e-mail, adresse IP) ; courses (adresses, horaires, passagers, prix, numéro de vol, commentaires) ; messages et signalements ; gains, commissions et règlements ; empreintes (hachages) des identifiants d&apos;un chauffeur banni ou parti en devant des commissions ; journal des actions de l&apos;équipe. Aucune donnée sensible au sens de l&apos;article 9 du RGPD, notamment de santé, ne doit être saisie : aucun justificatif médical n&apos;est prévu.</>,
           ]}
         />
       </LegalSection>
@@ -259,13 +259,14 @@ export default async function DataProcessingPage() {
       <LegalSection title="11. Durées de conservation et fin du contrat">
         <LegalList
           items={[
-            <>Historique des positions GPS : 30 jours ; la dernière position connue est remplacée à chaque envoi.</>,
-            <>Messages, signalements de la flotte (y compris leur copie dans le journal de la centrale) et signalements de messages : 180 jours ; un message retiré par la centrale n&apos;est plus visible de personne et il est effacé à la même échéance. Auteurs masqués par un chauffeur : tant que les deux comptes existent.</>,
+            <>Historique des positions GPS, y compris la position relevée lors d&apos;une alerte de course (chauffeur immobile, GPS muet) : 30 jours, ou jusqu&apos;à la clôture de l&apos;alerte si elle reste ouverte plus longtemps ; la dernière position connue est remplacée à chaque envoi.</>,
+            <>Messages, signalements de la flotte (y compris leur copie dans le journal de la centrale) et signalements de messages : 180 jours ; un message retiré par la centrale disparaît aussitôt de l&apos;application, du tableau de bord et des alertes enregistrées (une notification déjà affichée sur un téléphone y reste jusqu&apos;à ce que son destinataire l&apos;efface) et il est effacé à la même échéance. Auteurs masqués par un chauffeur : tant que les deux comptes existent.</>,
             <>Notifications, y compris les relances WhatsApp : 90 jours après leur envoi prévu, quel que soit leur résultat. Journaux d&apos;appels de l&apos;API : 90 jours.</>,
-            <>Journal des actions sensibles : pendant le contrat. Les adresses IP et navigateurs qu&apos;il contient (inscription par lien, actions sensibles) : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
-            <>Courses, gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course (obligations comptables), puis supprimés ; sans l&apos;identité d&apos;un chauffeur qui a supprimé son compte.</>,
+            <>Journal des actions sensibles : pendant le contrat. Les adresses IP et navigateurs qu&apos;il contient (inscription par lien, actions sensibles) et l&apos;historique des connexions tenu par le service d&apos;authentification : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
+            <>Courses, gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course (obligations comptables), puis supprimés, y compris une course jamais terminée ; sans l&apos;identité d&apos;un chauffeur qui a supprimé son compte.</>,
             <>Justificatifs des chauffeurs, y compris les versions remplacées : tant que le compte du chauffeur existe ; supprimés avec leurs fichiers dès la suppression du compte.</>,
             <>Bannissement pour fraude : empreintes des identifiants, motif et signalement effacés 3 ans après le bannissement, même si le compte du chauffeur existe toujours ; si le compte est supprimé, son nom et les indices partiels des empreintes sont effacés aussitôt.</>,
+            <>Chauffeur qui supprime son compte en devant encore des commissions à la centrale : empreintes (hachages, sans indice en clair) de son téléphone, de ses adresses e-mail et de son numéro de carte VTC, gardées pour le compte de la centrale (constatation, exercice ou défense de ses droits en justice) tant qu&apos;une somme reste due, puis effacées ; elles empêchent seulement la validation automatique d&apos;une nouvelle candidature par lien avec ces identifiants et signalent à la centrale le montant restant dû.</>,
           ]}
         />
         <p>
@@ -296,7 +297,7 @@ export default async function DataProcessingPage() {
           La centrale s&apos;assure que ses traitements reposent sur une base légale et informe les personnes concernées :
           ses chauffeurs (géolocalisation, notifications, relances WhatsApp auxquelles ils ont consenti, règles de
           commission et de blocage), ses clients (identité de l&apos;exploitant, usage de leurs coordonnées) et son équipe.
-          Elle ne saisit que des données nécessaires et aucune donnée sensible.
+          Elle ne saisit que des données nécessaires et aucune donnée sensible (santé notamment).
         </p>
       </LegalSection>
 

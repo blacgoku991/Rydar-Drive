@@ -165,7 +165,8 @@ ni `ACCESS_BACKGROUND_LOCATION` ni exemption d'optimisation de la batterie.
      - Données chiffrées en transit : oui. Suppression possible : oui (dans l'app et
        `https://VOTRE-DOMAINE/suppression-compte`, aussi à déclarer comme URL de suppression du compte). Cette page
        dit ce qui est supprimé, ce qui est anonymisé ou conservé (courses et règlements : 10 ans, obligations
-       comptables ; empreintes d'un compte banni pour fraude : 3 ans) et pendant combien de temps, comme l'exige
+       comptables ; empreintes d'un compte banni pour fraude : 3 ans ; empreintes d'un chauffeur qui doit encore des
+       commissions à sa centrale : tant que la dette reste ouverte) et pendant combien de temps, comme l'exige
        Google.
    - **Autorisations de service de premier plan** : type « Localisation » ; description (§ 7) et lien vers une
      courte vidéo (YouTube non répertoriée) : passer EN LIGNE, notification « Rydar Drive — EN LIGNE », app en
@@ -189,7 +190,7 @@ ni `ACCESS_BACKGROUND_LOCATION` ni exemption d'optimisation de la batterie.
 >
 > • Passez EN LIGNE : les courses proches vous sont proposées automatiquement, avec sonnerie, même téléphone verrouillé ou dans une autre application.
 > • Acceptez d'un geste : départ, destination, distance et prix (ou votre part) affichés avant d'accepter.
-> • Guidage intégré jusqu'au client puis à destination, ou ouverture dans Waze et Plans.
+> • Guidage intégré jusqu'au client puis à destination, ou ouverture dans Waze ou dans l'application de cartes du téléphone.
 > • Planning des courses réservées et rappels avant chaque course.
 > • Messages avec votre centrale et signalements de la flotte (contrôles, accidents, bouchons).
 > • Gains du jour et de la semaine, commissions et règlements avec votre centrale.
@@ -282,5 +283,8 @@ l'adresse de son compte, y compris un chauffeur qui n'a plus l'app ou dont le co
    suppression faite depuis l'app (données effacées ou anonymisées, dossier des justificatifs, compte de
    connexion) et l'inscrit au journal d'audit. La même page montre les suppressions en attente (compte de connexion
    ou fichiers non encore supprimés, retentés automatiquement par le worker) et permet de les relancer. Si une
-   course est attribuée, demander d'abord à la centrale de la terminer ou de la réattribuer.
+   course est attribuée, demander d'abord à la centrale de la terminer ou de la réattribuer. Centrale suspendue ou
+   archivée : l'outil retire lui-même au chauffeur une course acceptée pas encore commencée (elle reste « à
+   attribuer ») ; une course commencée bloque toujours : réactiver la centrale le temps qu'elle la termine ou
+   l'annule, puis la suspendre ou l'archiver de nouveau.
 3. Confirmer la suppression par e-mail au chauffeur, dans le délai de 30 jours.
