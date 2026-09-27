@@ -1,7 +1,8 @@
-// Ménage périodique (private.housekeeping, dernière définition 20260924003900) : durées de conservation annoncées
-// par /confidentialite et /dpa. Les purges longues (courses de plus de 10 ans, bannissements de plus de 3 ans) sont
-// isolées en SQL : un échec revient dans « errors » sans bloquer le reste du ménage et elles sont retentées au passage
-// suivant. Journal en niveau warn dans ce cas, pour qu'une purge qui échoue à chaque passage ne passe pas inaperçue.
+// Ménage périodique (private.housekeeping, dernière définition 20260924004800) : durées de conservation annoncées
+// par /confidentialite et /dpa. Les purges longues ou hors de nos tables (courses de plus de 10 ans, bannissements de
+// plus de 3 ans, journal d'audit de Supabase Auth de plus d'un an) sont isolées en SQL : un échec revient dans
+// « errors » sans bloquer le reste du ménage et elles sont retentées au passage suivant. Journal en niveau warn dans ce
+// cas, pour qu'une purge qui échoue à chaque passage ne passe pas inaperçue.
 import { log } from "./config";
 
 export type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;

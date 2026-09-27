@@ -72,6 +72,7 @@ ou `eas env:create`) :
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | clé publique (anon) Supabase |
 | `EXPO_PUBLIC_API_URL` | `https://VOTRE-DOMAINE` |
 | `GOOGLE_MAPS_ANDROID_KEY` | clé Google Maps SDK for Android (carte Android) |
+| `APP_LINK_DOMAIN` | facultatif : domaine des liens `https://DOMAINE/rejoindre/{code}` qui ouvrent l'app (liens universels iOS, liens d'application Android) ; par défaut, celui d'`EXPO_PUBLIC_API_URL`. Réglage natif : le changer demande un nouveau build (§ 10) |
 
 Dans le terminal, avant chaque commande `eas`, exporter aussi l'identifiant pour que la configuration locale le
 voie : `export EAS_PROJECT_ID=…` (ou le placer dans `apps/driver/.env`, ignoré par git).

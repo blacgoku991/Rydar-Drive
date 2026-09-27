@@ -17,9 +17,14 @@ rdk_live_<préfixe 8 car.>_<secret 32 car.>
 Envoyez-la dans l'en-tête `Authorization: Bearer rdk_live_…`, ou `X-API-Key`.
 
 - **La clé identifie l'organisation.** Il n'existe aucun paramètre `organization_id`. Si vous en envoyez un, la requête est refusée en **403 `FORBIDDEN_TENANT_FIELD`**.
-- La clé est une donnée **serveur**. Appelez l'API depuis le back-end de votre site (PHP, WordPress, Node…), jamais depuis du JavaScript exécuté dans le navigateur du client. Pour un site sans back-end, utilisez le mini-site de réservation (voir plus bas). Les appels navigateur ne reçoivent les en-têtes CORS que pour les origines déclarées sur la clé.
+- La clé est une donnée **serveur**. Appelez l'API depuis le back-end de votre site (PHP, WordPress, Node…), jamais depuis du JavaScript exécuté dans le navigateur du client. Pour un site sans back-end, utilisez le mini-site de réservation (voir plus bas).
+- **Clé « navigateur »** (seule exception) : une clé qui a des **origines autorisées** (champ « Origines autorisées (CORS) » du dashboard) est lisible par tout visiteur du site, elle est donc restreinte, y compris si elle a été créée avant cette règle :
+  - **création de course seulement** : elle ne peut avoir que la permission `rides:create` ; toute autre route (`GET /ping`, lecture, annulation) répond **403 `INSUFFICIENT_SCOPE`** ;
+  - **origine listée obligatoire** : en-tête `Origin` absent ou absent de la liste → **403 `ORIGIN_NOT_ALLOWED`** (un appel depuis un serveur ou `curl` est donc refusé). Seules les origines listées reçoivent les en-têtes CORS ;
+  - **prix et paiement ignorés** : `price_cents` et `payment_method` de la requête ne sont pas pris en compte ; le prix est calculé avec la grille de l'organisation et le moyen de paiement est `card` (valeur par défaut).
 - Côté Rydar, seul un hash **HMAC-SHA-256** (poivré) de la clé est stocké, dans une table inaccessible aux clients. La comparaison se fait en temps constant.
 - Chaque clé a des **permissions** : `rides:create`, `rides:read`, `rides:cancel`. Elle a aussi un **débit** (60 requêtes/min par défaut) et peut recevoir une date d'expiration. Elle se révoque instantanément depuis le dashboard.
+- **Limites par adresse IP**, vérifiées avant la clé : 600 requêtes par minute (IPv6 regroupée par /64) ; au-delà de 20 échecs d'authentification par minute (clé absente, inconnue ou invalide), les suivants reçoivent 429 et ne sont plus journalisés.
 
 Test rapide :
 
@@ -119,14 +124,14 @@ Format commun :
 | 401 | `INVALID_API_KEY`, `API_KEY_REVOKED`, `API_KEY_EXPIRED` |
 | 402 | `PLAN_LIMIT_RIDES` (quota mensuel de l'offre atteint) |
 | 402 | `PLATFORM_FEES_OVERDUE` (mode centrale : frais plateforme en retard, création de courses suspendue par Rydar) |
-| 403 | `FORBIDDEN_TENANT_FIELD`, `FORBIDDEN_TENANT`, `INSUFFICIENT_SCOPE`, `ORGANIZATION_INACTIVE`, `PLAN_FEATURE_API` |
+| 403 | `FORBIDDEN_TENANT_FIELD`, `FORBIDDEN_TENANT`, `INSUFFICIENT_SCOPE`, `ORIGIN_NOT_ALLOWED` (clé « navigateur »), `ORGANIZATION_INACTIVE`, `PLAN_FEATURE_API` |
 | 404 | `RIDE_NOT_FOUND` |
 | 409 | codes métier d'annulation (ex. course déjà terminée) |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 422 | `VALIDATION_ERROR`, `PICKUP_NOT_GEOCODED`, `INVALID_COORDINATES`, `PICKUP_IN_PAST`, `PICKUP_TOO_FAR` |
-| 429 | `RATE_LIMITED`, avec l'en-tête `Retry-After` |
+| 429 | `RATE_LIMITED` (débit de la clé, 600 requêtes/min par IP ou trop d'échecs d'authentification), avec l'en-tête `Retry-After` |
 
-Chaque réponse porte `X-Request-Id` et `X-RateLimit-Limit` / `-Remaining` / `-Reset`. Toutes les requêtes sont journalisées (`api_logs`, 90 jours) et visibles dans **Intégrations**.
+Chaque réponse porte `X-Request-Id` et `X-RateLimit-Limit` / `-Remaining` / `-Reset`. Les requêtes sont journalisées (`api_logs`, 90 jours), sauf celles refusées par les limites par IP, et visibles dans **Intégrations**.
 
 ## Mini-site de réservation (sans code)
 

@@ -4,6 +4,24 @@ import { appData, presentation, type PushPayload, type PushProvider, type PushRe
 /** Sous-ensemble du client Expo utilisé ici (remplaçable en test). */
 export type ExpoClient = Pick<Expo, "chunkPushNotifications" | "sendPushNotificationsAsync" | "chunkPushNotificationReceiptIds" | "getPushNotificationReceiptsAsync">;
 
+const EXPO_TOKEN_RE = /(Expo(?:nent)?PushToken\[)([^\]]*)\]/g;
+
+/**
+ * Jeton push masqué (6 premiers caractères + …) : un jeton complet suffit à envoyer une notification à l'appareil,
+ * il ne doit apparaître ni dans notifications.last_error ni dans les journaux.
+ */
+export function maskPushToken(token: string): string {
+  const m = /^(Expo(?:nent)?PushToken\[)([^\]]*)\]$/.exec(token);
+  return m ? `${m[1]}${m[2]!.slice(0, 6)}…]` : `${token.slice(0, 6)}…`;
+}
+
+/** Masque dans un message (erreur Expo, exception) tout ExponentPushToken[…] et les jetons connus de l'envoi. */
+export function redactPushTokens(text: string, tokens: string[] = []): string {
+  let out = text.replace(EXPO_TOKEN_RE, (_, prefix: string, inner: string) => `${prefix}${inner.slice(0, 6)}…]`);
+  for (const t of tokens) if (t.length > 6 && out.includes(t)) out = out.split(t).join(maskPushToken(t));
+  return out;
+}
+
 /** Expo Push (recommandé) : relaie vers FCM (Android) et APNs (iOS). */
 export function expoProvider(expo: ExpoClient = new Expo()): PushProvider {
   return {
@@ -36,11 +54,13 @@ export function expoProvider(expo: ExpoClient = new Expo()): PushProvider {
             if (ticket.status === "ok") results.push({ token, ok: true, messageId: ticket.id, receiptId: ticket.id });
             else {
               const code = ticket.details?.error ?? "ExpoError";
-              results.push({ token, ok: false, error: `${code}: ${ticket.message}`, invalid: code === "DeviceNotRegistered", retryable: code === "MessageRateExceeded" });
+              const error = redactPushTokens(`${code}: ${ticket.message}`, [token]);
+              results.push({ token, ok: false, error, invalid: code === "DeviceNotRegistered", retryable: code === "MessageRateExceeded" });
             }
           });
         } catch (error) {
-          for (const m of chunk) results.push({ token: String(m.to), ok: false, error: (error as Error).message, retryable: true });
+          const message = redactPushTokens((error as Error).message, chunk.map((m) => String(m.to)));
+          for (const m of chunk) results.push({ token: String(m.to), ok: false, error: message, retryable: true });
         }
       }
       return results;
@@ -132,7 +152,7 @@ export function expoReceiptTracker(expo: ExpoClient, actions: ReceiptActions, op
       try {
         receipts = await expo.getPushNotificationReceiptsAsync(ids);
       } catch (error) {
-        actions.log?.("warn", "expo receipts fetch failed", { error: (error as Error).message, count: ids.length });
+        actions.log?.("warn", "expo receipts fetch failed", { error: redactPushTokens((error as Error).message), count: ids.length });
         for (const id of ids) {
           const t = tickets.get(id);
           if (t) later(t);
@@ -154,7 +174,7 @@ export function expoReceiptTracker(expo: ExpoClient, actions: ReceiptActions, op
         }
         stats.errors++;
         const code = r.details?.error ?? "ExpoError";
-        const error = `${code}: ${r.message}`;
+        const error = redactPushTokens(`${code}: ${r.message}`, [t.token]);
         if (code === "DeviceNotRegistered") dead.add(t.token);
         actions.log?.(code === "InvalidCredentials" ? "error" : "warn", "expo receipt error", { notification_id: t.notificationId, error });
         const failed = settle(t, { error });
