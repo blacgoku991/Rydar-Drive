@@ -55,6 +55,7 @@ services:
       LEGAL_NAME: ${LEGAL_NAME:-}
       LEGAL_EMAIL: ${LEGAL_EMAIL:-}
       LEGAL_ADDRESS: ${LEGAL_ADDRESS:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-}
     depends_on:
       - redis
 
@@ -67,6 +68,11 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?}
+      # Certificat du serveur de la base vérifié avec la racine publique Supabase (deploy/supabase-ca.crt, monté
+      # ci-dessous). Repli (ancien mode, chiffré SANS vérification) : DATABASE_SSLMODE=no-verify dans deploy/.env
+      # (docs/DEPLOYMENT.md, « Connexion chiffrée à la base »)
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-verify-full}
+      DATABASE_CA_FILE: /etc/rydar/supabase-ca.crt
       # API Supabase avec la clé service role (Storage, administration d'Auth) : reprise des suppressions de compte
       # chauffeur (dossier des justificatifs, compte de connexion). Sans elles, la file n'est jamais reprise.
       SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?}
@@ -79,11 +85,19 @@ services:
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+      APNS_PRODUCTION: ${APNS_PRODUCTION:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-}
       FLIGHT_PROVIDER: ${FLIGHT_PROVIDER:-}
       AERODATABOX_KEY: ${AERODATABOX_KEY:-}
       AERODATABOX_MARKETPLACE: ${AERODATABOX_MARKETPLACE:-}
+      AERODATABOX_URL: ${AERODATABOX_URL:-}
       AVIATIONSTACK_KEY: ${AVIATIONSTACK_KEY:-}
+      AVIATIONSTACK_URL: ${AVIATIONSTACK_URL:-}
+      AVIATIONSTACK_TIMES: ${AVIATIONSTACK_TIMES:-}
       FLIGHTAWARE_KEY: ${FLIGHTAWARE_KEY:-}
+      FLIGHTAWARE_URL: ${FLIGHTAWARE_URL:-}
+    volumes:
+      - ./supabase-ca.crt:/etc/rydar/supabase-ca.crt:ro
 
   redis:
     <<: *service

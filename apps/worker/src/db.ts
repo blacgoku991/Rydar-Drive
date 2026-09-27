@@ -1,5 +1,5 @@
 import pg from "pg";
-import { config, log } from "./config";
+import { config, dbTlsHint, log } from "./config";
 
 export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 8, application_name: "rydar-worker" });
 pool.on("error", (e) => log("error", "pg pool error", { error: e.message }));
@@ -25,7 +25,7 @@ export async function listen(channel: string, onNotify: (payload: string | undef
       await client.query(`listen ${channel}`);
       log("info", "listening", { channel });
     } catch (error) {
-      log("warn", "listen failed, retrying", { error: (error as Error).message });
+      log("warn", "listen failed, retrying", { error: (error as Error).message, ...dbTlsHint(error) });
       reconnect(5000);
     }
   };

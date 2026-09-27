@@ -4,7 +4,7 @@ import { pool } from "./db";
 import { apnsProvider } from "./push/apns";
 import { expoProvider, expoReceiptTracker } from "./push/expo";
 import { fcmProvider } from "./push/fcm";
-import type { PushProvider, PushResult, PushTarget } from "./push/types";
+import type { PushPayload, PushProvider, PushResult, PushTarget } from "./push/types";
 
 type Claimed = {
   id: string;
@@ -46,6 +46,29 @@ export function summarize(results: PushResult[]) {
   return { ok, messageId, receipts, deliveredElsewhere, invalid, retryable, error };
 }
 
+/** Délai maximal d'un envoi par fournisseur (Expo, FCM, APNs répondent en moins d'une seconde). */
+export const PUSH_SEND_TIMEOUT_MS = 20_000;
+
+/**
+ * Envoi borné dans le temps : une requête qui ne répond jamais (connexion morte, API muette) ne bloque plus toute
+ * la file (drapeau `running`) ; ses jetons passent en échec réessayable (PUSH_TIMEOUT). Un envoi finalement abouti
+ * après le délai peut être répété au réessai : préférable à des minutes sans aucune notification.
+ */
+export async function sendWithTimeout(provider: PushProvider, targets: PushTarget[], payload: PushPayload, ms = PUSH_SEND_TIMEOUT_MS): Promise<PushResult[]> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<PushResult[]>((resolve) => {
+    timer = setTimeout(
+      () => resolve(targets.map((t) => ({ token: t.token, ok: false, error: `PUSH_TIMEOUT: ${provider.name} (${ms} ms)`, retryable: true }))),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([provider.send(targets, payload), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function deliver(n: Claimed) {
   if (!n.tokens.length) {
     await pool.query("select private.complete_notification($1, false, 'NO_PUSH_TOKEN', null, null, false)", [n.id]);
@@ -65,7 +88,7 @@ async function deliver(n: Claimed) {
       results.push(...targets.map((t) => ({ token: t.token, ok: true, messageId: "dry-run" })));
       continue;
     }
-    results.push(...(await provider.send(targets, payload)));
+    results.push(...(await sendWithTimeout(provider, targets, payload)));
   }
   const s = summarize(results);
   if (s.invalid.length) await pool.query("select private.deactivate_push_tokens($1, $2)", [s.invalid, "invalid_token"]);

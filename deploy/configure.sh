@@ -13,6 +13,8 @@ ENV_FILE="$ROOT/deploy/.env"
 chmod 600 "$ENV_FILE"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# shellcheck source=pg-url.sh
+. "$ROOT/deploy/pg-url.sh"
 
 get() { grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2- || true; }
 
@@ -72,6 +74,19 @@ auth_headers() {
 http_status() {
   auth_headers "$2" > "$TMP/h"
   curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H @"$TMP/h" "$1" || true
+}
+
+# Connexion de test à la base (psql en conteneur) : URL sans mot de passe et PGPASSWORD dans un fichier --env-file,
+# jamais dans une ligne de commande ; erreur dans $TMP/pg.err
+db_check() {
+  local rc=0
+  pg_prepare "$1" "$2" 2>"$TMP/pg.err" || return 1
+  { printf 'PGURL=%s\n' "$PGURL"; [ -z "${PGPASSWORD:-}" ] || printf 'PGPASSWORD=%s\n' "$PGPASSWORD"; } > "$TMP/pg.env"
+  unset PGPASSWORD
+  docker run --rm --network host --env-file "$TMP/pg.env" "${PG_MOUNT[@]}" postgres:17-alpine \
+    sh -c 'psql "$PGURL" -Atc "select 1"' >/dev/null 2>"$TMP/pg.err" || rc=1
+  rm -f "$TMP/pg.env"
+  return "$rc"
 }
 
 echo "Configuration de Rydar Drive — Entrée garde la valeur entre crochets."
@@ -162,29 +177,47 @@ while :; do
     enc="$(urlencode "$pw")"
     if [[ "$db" == *"[YOUR-PASSWORD]"* ]]; then
       db="${db//"[YOUR-PASSWORD]"/"$enc"}"
-    else
-      db="$(printf '%s' "$db" | sed -E "s#^(postgres(ql)?://[^:/@]+)@#\\1:$enc@#")"
+    elif [[ "$db" =~ ^(postgres(ql)?://[^:/@]+)@(.*)$ ]]; then
+      # Substitution interne au shell : le mot de passe n'apparaît dans aucune ligne de commande
+      db="${BASH_REMATCH[1]}:$enc@${BASH_REMATCH[3]}"
     fi
   fi
   if [[ "$db" == *:6543/* ]]; then
     db="${db/:6543\//:5432/}"
     echo "  → port 6543 (mode transaction) remplacé par 5432 (mode session, nécessaire au worker)"
   fi
+  # Chaîne toujours chiffrée ; le mode réel du worker et des migrations est DATABASE_SSLMODE (qui remplace ce sslmode)
   if [[ "$db" != *sslmode=* ]]; then
     if [[ "$db" == *\?* ]]; then db="$db&sslmode=no-verify"; else db="$db?sslmode=no-verify"; fi
   fi
   if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+    # Chiffrement : certificat du serveur vérifié (verify-full, racine deploy/supabase-ca.crt) sauf repli no-verify
+    mode="$(get DATABASE_SSLMODE)"
+    case "${mode:-verify-full}" in
+      verify-full | no-verify) mode="${mode:-verify-full}" ;;
+      *) echo "  ⚠ DATABASE_SSLMODE « $mode » inconnu : verify-full"; mode=verify-full ;;
+    esac
     echo "  vérification de la connexion (1re fois : téléchargement du client PostgreSQL)…"
-    printf 'PGURL=%s\n' "${db/sslmode=no-verify/sslmode=require}" > "$TMP/pg.env"
-    if docker run --rm --network host --env-file "$TMP/pg.env" postgres:17-alpine \
-        sh -c 'psql "$PGURL" -Atc "select 1"' >/dev/null 2>"$TMP/pg.err"; then
-      echo "  ✓ connexion à la base réussie"
+    if db_check "$db" "$mode"; then
+      if [ "$mode" = verify-full ]; then echo "  ✓ connexion à la base réussie (certificat du serveur vérifié)"
+      else echo "  ✓ connexion à la base réussie (certificat du serveur NON vérifié : DATABASE_SSLMODE=$mode)"; fi
+    elif [ "$mode" = verify-full ] && pg_tls_error "$TMP/pg.err"; then
+      echo "  ✗ certificat du serveur non vérifié avec deploy/supabase-ca.crt : $(tail -1 "$TMP/pg.err")"
+      echo "    Contrôle : docs/DEPLOYMENT.md, « Connexion chiffrée à la base ». Repli possible : connexion chiffrée"
+      echo "    SANS vérification du certificat (ancien mode), exposée à une interception sur le réseau."
+      read -r -p "  Utiliser ce repli (DATABASE_SSLMODE=no-verify) ? [o/N] " yn
+      case "$yn" in [oO]*) ;; *) continue ;; esac
+      mode=no-verify
+      if ! db_check "$db" "$mode"; then
+        echo "  ✗ connexion impossible : $(tail -1 "$TMP/pg.err")"
+        continue
+      fi
+      echo "  ✓ connexion à la base réussie (certificat du serveur NON vérifié : DATABASE_SSLMODE=no-verify)"
     else
       echo "  ✗ connexion impossible : $(tail -1 "$TMP/pg.err")"
-      rm -f "$TMP/pg.env"
       continue
     fi
-    rm -f "$TMP/pg.env"
+    put DATABASE_SSLMODE "$mode"
   else
     echo "  (Docker pas encore installé : la connexion sera vérifiée pendant l'installation)"
   fi

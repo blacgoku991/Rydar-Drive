@@ -13,11 +13,15 @@
  *   - de temps en temps (SIM_REPORT_EVERY secondes, 120 par défaut) un chauffeur publie un
  *     signalement (police / contrôle / bouchon) près de sa position ;
  *   - les chauffeurs répondent aux messages directs de la centrale après 3 à 8 s.
+ *
+ * Développement / recette uniquement : absent de l'image du worker (tsup.config.ts) et refusé si
+ * NODE_ENV=production, sauf SIM_ALLOW_PRODUCTION=1 (simulator-guard.ts).
  */
 import { decodePolyline, haversine, pointAlong, type Coord } from "@rydar/shared";
 import pg from "pg";
 import { config, log } from "./config";
 import { osrmRoute } from "./routing";
+import { simulatorRefusal } from "./simulator-guard";
 
 const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 6 });
 const ORG = process.env.SIM_ORG ?? "elite-paris";
@@ -316,6 +320,11 @@ async function answerDirectMessages(org: string) {
 }
 
 async function main() {
+  const refusal = simulatorRefusal(process.env);
+  if (refusal) {
+    log("error", refusal);
+    process.exit(1);
+  }
   const org = await orgId();
   log("info", "simulateur démarré", { org, stepMs: STEP_MS, newRideEvery: NEW_RIDE_EVERY_S || "off", speedup: SPEEDUP, reports: REPORTS ? `${REPORT_EVERY_S}s` : "off" });
   setInterval(() => step(org).catch((e) => log("error", "step failed", { error: (e as Error).message })), STEP_MS);

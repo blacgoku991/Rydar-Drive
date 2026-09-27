@@ -63,7 +63,7 @@ Architecture cible :
 
 | Variable | Rôle |
 | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client Supabase (clé **publique**) |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client Supabase (clé **publique**). `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` est lue à défaut de `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Serveur uniquement : API v1, administration |
 | `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_ROOT_DOMAIN` | URL publique, domaine des mini-sites |
 | `API_KEY_PEPPER` | Poivre HMAC des clés API, 32 caractères aléatoires ou plus. Le changer invalide toutes les clés |
@@ -110,13 +110,23 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 | --- | --- |
 | `DATABASE_URL` | **Requise.** Connexion à la base (voir ci-dessous) |
 | `SUPABASE_URL` (à défaut `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (ou `SUPABASE_SECRET_KEY`) | **Requises en production.** API Storage et administration d'Auth, avec la clé service role : le worker termine les suppressions de compte chauffeur restées inachevées (dossier des justificatifs, compte de connexion). Sans elles, il écrit l'erreur `account deletions cannot be completed` au démarrage, puis toutes les heures tant que la file n'est pas vide, et `/admin/suppressions` affiche ces suppressions « en retard ». Le kit VPS les transmet (`deploy/docker-compose.yml`) |
-| `EXPO_ACCESS_TOKEN` | Pushs par Expo (voir « Pushs » plus bas) ; `FCM_*` / `APNS_*` pour un envoi direct |
+| `DATABASE_SSLMODE`, `DATABASE_CA_FILE` | Chiffrement de la connexion à la base, prioritaire sur le `sslmode` de `DATABASE_URL` : `verify-full` (certificat du serveur vérifié avec la racine `DATABASE_CA_FILE`) ou `no-verify` (repli). Vide : `DATABASE_URL` telle quelle. Voir « Connexion chiffrée à la base » |
+| `EXPO_ACCESS_TOKEN` | Pushs par Expo (voir « Pushs » plus bas) ; `FCM_*` / `APNS_*` pour un envoi direct (`APNS_PRODUCTION=false` : serveur sandbox d'Apple) |
 | `WHATSAPP_API_VERSION` | Facultative ([WHATSAPP.md](WHATSAPP.md)). Aucun jeton WhatsApp dans l'environnement : ils sont en base, lisibles par le seul service role |
 | `*_MS` | Fréquences des tâches (tableau ci-dessous), défauts conseillés |
+| `NOTIFICATION_BATCH`, `WHATSAPP_BATCH` | Notifications push (200) et relances WhatsApp (20) réservées par passage |
+| `HEALTH_PORT` | Port du point de santé (8080), repris par le `HEALTHCHECK` de l'image |
+| `PUSH_DRY_RUN` | `true` : aucun push réellement envoyé (développement, jamais en production) |
+
+Le kit VPS (`deploy/docker-compose.yml`) ne transmet au conteneur que les variables qu'il liste ; les autres (`*_MS`,
+`NOTIFICATION_BATCH`, `WHATSAPP_BATCH`, `HEALTH_PORT`, `FLIGHT_BATCH`, `FLIGHT_CONCURRENCY`, `FLIGHT_TIMEOUT_MS`,
+`FLIGHT_CACHE_MS`, `FLIGHT_MOCK_DELAYS`, `PUSH_DRY_RUN`) y gardent leur valeur par défaut, même ajoutées à `deploy/.env`.
 
 - `DATABASE_URL` doit être une **connexion directe** (port 5432) et non le pooler transactionnel : le worker utilise `LISTEN/NOTIFY`.
 - Vous pouvez lancer plusieurs instances : les tâches sont réparties par `FOR UPDATE SKIP LOCKED` ou protégées par un verrou SQL.
-- Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`, `settlements`, `deletions`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ». `deletions.enabled` vaut `false` sans l'API Supabase ; `deletions.waiting` compte alors les suppressions bloquées.
+- Le simulateur de flotte (`pnpm --filter @rydar/worker simulate`, développement et recette) n'est pas dans l'image et refuse
+  de démarrer si `NODE_ENV=production` (sauf `SIM_ALLOW_PRODUCTION=1`, sur une base jetable) : il agit au nom de vrais chauffeurs.
+- Healthcheck : `GET :8080/` (`HEALTH_PORT`) renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`, `settlements`, `deletions`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ». `deletions.enabled` vaut `false` sans l'API Supabase ; `deletions.waiting` compte alors les suppressions bloquées.
 - Au démarrage, le journal indique `"accountDeletions":"on"` (ou `off: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing`).
 
 Tâches périodiques :
@@ -133,6 +143,42 @@ Tâches périodiques :
 | suppressions de compte : `private.claim_account_deletions(10)` → Storage + Auth → `private.complete_account_deletion` | au démarrage puis 5 min (`ACCOUNT_DELETIONS_MS`) | reprend la file `private.account_deletions` quand la route de l'app ou `/admin/suppressions` n'a pas pu finir : purge du dossier `{centrale}/{chauffeur}/` des justificatifs, puis suppression du compte de connexion (sauf s'il sert aussi à gérer une centrale). Nouvel essai espacé de 5 min à 6 h, abandon au 10ᵉ essai (journal d'audit critique, bouton « Réessayer » sur `/admin/suppressions`). Exige l'API Supabase (variables ci-dessus) |
 | `private.purge_deleted_driver_bans()` | toutes les 6 h (dans la tâche précédente) | bannissements des comptes supprimés depuis 3 ans : empreintes, signalements et motif effacés (filet de `private.purge_expired_bans`, qui les efface déjà 3 ans après le bannissement) ; fonctionne même sans l'API Supabase |
 | vols : `private.flights_to_check(n)` → fournisseur → `private.apply_flight_status(...)` | 60 s (`FLIGHT_POLL_MS`) | horaires des vols, prise en charge recalée, notification au chauffeur |
+
+### Connexion chiffrée à la base
+
+Le worker et `deploy/migrate.sh` vérifient le certificat du serveur PostgreSQL (`DATABASE_SSLMODE=verify-full`, défaut du
+kit VPS) avec la racine publique de Supabase, versionnée dans `deploy/supabase-ca.crt` et montée en lecture seule dans le
+worker (`/etc/rydar/supabase-ca.crt`). Sans cette vérification, un intermédiaire placé entre le VPS et Supabase pourrait
+se faire passer pour la base et obtenir une session `postgres` (RLS contournée). Le mot de passe de la base ne passe
+jamais dans une ligne de commande (`PGPASSWORD`, `deploy/pg-url.sh`).
+
+**Contrôle** (une fois après la mise à jour qui introduit la vérification, puis après tout changement de ce réglage) :
+
+1. Racine versionnée : `openssl x509 -in deploy/supabase-ca.crt -noout -subject -enddate -fingerprint -sha256` doit
+   afficher `CN = Supabase Root 2021 CA`, `notAfter=Apr 26 10:56:53 2031 GMT` et l'empreinte
+   `80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA`, la même que
+   celle du certificat téléchargé dans Supabase (*Project Settings → Database → SSL Configuration → Download certificate*).
+2. Certificat présenté par le pooler, sans mot de passe (`HOTE` = hôte de `DATABASE_URL`, par exemple
+   `aws-0-eu-west-3.pooler.supabase.com`) :
+   `openssl s_client -starttls postgres -connect HOTE:5432 -servername HOTE -verify_hostname HOTE -CAfile deploy/supabase-ca.crt -verify_return_error </dev/null 2>&1 | grep -E 'Verify return code|verify error'`
+   doit afficher `Verify return code: 0 (ok)`.
+3. `sudo bash deploy/install.sh` : `migrate.sh` se connecte en `verify-full` avant toute migration ou reconstruction, et la
+   vérification finale attend un worker sain. Le journal de démarrage du worker indique `"dbSsl":"verify-full"`.
+
+**En cas d'échec** (`certificat du serveur de la base NON vérifié`, `certificate verify failed`, `self-signed certificate`,
+`unable to get local issuer certificate`) :
+
+- rien n'a été modifié : `migrate.sh` s'arrête avant les migrations et la reconstruction, les services en place
+  continuent de tourner ;
+- vérifiez l'hôte de `DATABASE_URL` (Session pooler, `*.pooler.supabase.com`) et refaites le contrôle 2 depuis une autre
+  machine : un résultat différent signale une interception sur le réseau du VPS ;
+- si Supabase a changé d'autorité, téléchargez la nouvelle racine dans le tableau de bord et remplacez
+  `deploy/supabase-ca.crt` par un commit dans le dépôt (jamais de modification directe sur le serveur), puis contrôle 1 ;
+- repli temporaire, décidé par l'exploitant : une seule ligne `DATABASE_SSLMODE=no-verify` dans `deploy/.env` (`sudo nano`,
+  en remplaçant la ligne existante, ou la question posée par `sudo bash deploy/configure.sh`), puis `sudo bash deploy/install.sh`. La connexion reste chiffrée
+  mais le certificat n'est plus vérifié (ancien mode). Retour : `DATABASE_SSLMODE=verify-full`.
+
+Hors kit VPS : `docker run -e DATABASE_SSLMODE=verify-full -e DATABASE_CA_FILE=/etc/rydar/supabase-ca.crt -v "$PWD/deploy/supabase-ca.crt:/etc/rydar/supabase-ca.crt:ro" …`.
 
 ### Suivi des vols
 
@@ -162,7 +208,8 @@ Une course avec un numéro de vol est suivie de 24 h avant à 3 h après la pris
   - Android : téléversez la clé de compte de service **FCM v1** dans EAS (`eas credentials`) ;
   - iOS : la **clé APNs** (.p8) dans EAS ;
   - le worker vérifie les accusés de réception Expo (15 s à 5 min après l'envoi) : un jeton `DeviceNotRegistered` est désactivé, et une notification qu'aucun appareil n'a reçue passe en échec ;
-  - FCM v1 direct (`FCM_SERVICE_ACCOUNT_B64`) et APNs direct (`APNS_KEY_P8_B64`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`) ne servent qu'à un build spécifique qui enregistre des jetons natifs (provider `fcm` / `apns`).
+  - FCM v1 direct (`FCM_SERVICE_ACCOUNT_B64`) et APNs direct (`APNS_KEY_P8_B64`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`) ne servent qu'à un build spécifique qui enregistre des jetons natifs (provider `fcm` / `apns`) ;
+  - chaque envoi est borné dans le temps (10 s par requête FCM ou APNs, 20 s par fournisseur, Expo compris) : un service qui ne répond pas ne bloque plus la file, la notification est réessayée (`PUSH_TIMEOUT`, `APNS_TIMEOUT`).
 - Tracés manquants (après une migration ou une panne du routeur) : `node dist/backfill-routes.js --days 30`, avec `OSRM_URL`.
 
 ## 4. Stripe
@@ -190,6 +237,7 @@ eas submit -p ios
 | `EXPO_PUBLIC_API_URL` | URL de l'app web (connexion chauffeur protégée) |
 | `GOOGLE_MAPS_ANDROID_KEY` | Carte Android (react-native-maps) |
 | `EXPO_PUBLIC_MAP_TILES_URL`, `EXPO_PUBLIC_MAP_GLYPHS_URL` | Carte de l'aperçu web uniquement |
+| `APP_LINK_DOMAIN` | (optionnel) domaine des liens `https://DOMAINE/rejoindre/{code}` qui ouvrent l'app ; par défaut, celui d'`EXPO_PUBLIC_API_URL` |
 
 La **localisation en arrière-plan** exige un *development build* ou un build de production : elle ne fonctionne pas dans Expo Go. Seule l'autorisation « Pendant l'utilisation » est demandée : app ouverte, le suivi continue en arrière-plan (service de premier plan Android avec la notification « Rydar Drive — EN LIGNE », indicateur de localisation iOS) ; fermer l'app met hors ligne.
 
