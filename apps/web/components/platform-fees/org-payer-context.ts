@@ -15,8 +15,6 @@ export async function getPayerContext() {
   return { ...session, org: current.org, role: current.role, canPay: isAdminRole(current.role) };
 }
 
-export type PayerContext = NonNullable<Awaited<ReturnType<typeof getPayerContext>>>;
-
 /** « 2026-09 » valide, sinon null. */
 export function parseMonth(value: string | null | undefined): string | null {
   return value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : null;

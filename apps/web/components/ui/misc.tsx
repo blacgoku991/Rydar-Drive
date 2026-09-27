@@ -1,6 +1,5 @@
 "use client";
-import { Check, ChevronDown } from "lucide-react";
-import { DropdownMenu as DM, Select as S, Switch as Sw, Tabs as T, Tooltip as Tt } from "radix-ui";
+import { DropdownMenu as DM, Switch as Sw, Tabs as T, Tooltip as Tt } from "radix-ui";
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
@@ -62,64 +61,6 @@ export function Tooltip({ content, children, side = "top" }: { content: React.Re
   );
 }
 
-// ---------------------------------------------------------------- Select
-export function Select({
-  value,
-  onValueChange,
-  options,
-  placeholder,
-  className,
-  name,
-  disabled,
-}: {
-  value?: string;
-  onValueChange?: (v: string) => void;
-  options: { value: string; label: React.ReactNode; hint?: React.ReactNode }[];
-  placeholder?: string;
-  className?: string;
-  name?: string;
-  disabled?: boolean;
-}) {
-  return (
-    <S.Root value={value} onValueChange={onValueChange} name={name} disabled={disabled}>
-      <S.Trigger
-        className={cn(
-          "flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-line-strong bg-ink-850 px-3 text-left text-sm text-fg outline-none hover:border-white/15 focus:border-brand/60 focus:ring-4 focus:ring-brand/10 data-[placeholder]:text-fg-subtle",
-          className,
-        )}
-      >
-        <S.Value placeholder={placeholder} />
-        <S.Icon>
-          <ChevronDown className="size-4 text-fg-subtle" />
-        </S.Icon>
-      </S.Trigger>
-      <S.Portal>
-        <S.Content
-          position="popper"
-          sideOffset={6}
-          className="z-[60] max-h-80 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-line-strong bg-ink-700 p-1 shadow-float data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-        >
-          <S.Viewport>
-            {options.map((o) => (
-              <S.Item
-                key={o.value}
-                value={o.value}
-                className="relative flex cursor-pointer select-none flex-col rounded-lg py-2 pl-8 pr-3 text-sm text-fg outline-none data-[highlighted]:bg-white/[0.06]"
-              >
-                <S.ItemIndicator className="absolute left-2.5 top-2.5">
-                  <Check className="size-3.5 text-brand" />
-                </S.ItemIndicator>
-                <S.ItemText>{o.label}</S.ItemText>
-                {o.hint && <span className="text-xs text-fg-subtle">{o.hint}</span>}
-              </S.Item>
-            ))}
-          </S.Viewport>
-        </S.Content>
-      </S.Portal>
-    </S.Root>
-  );
-}
-
 // ---------------------------------------------------------------- Dropdown
 export const DropdownMenu = DM.Root;
 export const DropdownMenuTrigger = DM.Trigger;
@@ -157,18 +98,6 @@ export function DropdownMenuSeparator() {
 }
 
 // ---------------------------------------------------------------- Divers
-export function Separator({ className }: { className?: string }) {
-  return <div className={cn("h-px w-full bg-line", className)} />;
-}
-
-export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("skeleton rounded-md", className)} />;
-}
-
-export function Kbd({ children }: { children: React.ReactNode }) {
-  return <kbd className="kbd">{children}</kbd>;
-}
-
 export function Avatar({
   name,
   src,

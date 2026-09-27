@@ -91,8 +91,6 @@ const fetchWithTimeout: typeof fetch = (input, init) => {
   return fetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
 };
 
-export const isConfigured = Boolean(appConfig.supabaseUrl && appConfig.supabaseAnonKey);
-
 // Web (aperçu / démo) : stockage du navigateur ; mobile : trousseau chiffré.
 const storage = Platform.OS === "web" ? (typeof window !== "undefined" ? window.localStorage : undefined) : new LargeSecureStore();
 

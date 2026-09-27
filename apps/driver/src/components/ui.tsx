@@ -162,7 +162,6 @@ export function Pill({ label, color }: { label: string; color: string }) {
     </View>
   );
 }
-export const StatusTag = Pill;
 
 /** Progression de la course (étapes chauffeur). */
 export function StepDots({ steps, current }: { steps: string[]; current: number }) {

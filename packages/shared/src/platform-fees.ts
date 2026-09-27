@@ -304,7 +304,6 @@ export type DeclarePlatformPaymentInput = z.output<typeof declarePlatformPayment
 
 /** Super admin : paiement reçu directement. */
 export const recordPlatformPaymentSchema = declarePlatformPaymentSchema;
-export type RecordPlatformPaymentInput = DeclarePlatformPaymentInput;
 
 /** Super admin : avoir (négatif) ou frais ajoutés (positif), motif obligatoire. */
 export const platformAdjustSchema = z.object({
@@ -312,7 +311,6 @@ export const platformAdjustSchema = z.object({
     .refine((v) => Math.abs(v) <= 10_000_000, "Montant trop élevé"),
   reason: z.string().trim().min(3, "Motif requis").max(500),
 });
-export type PlatformAdjustInput = z.output<typeof platformAdjustSchema>;
 
 /** Super admin : cycle, délai et blocage d'une centrale. */
 export const platformTermsSchema = z.object({
@@ -321,7 +319,6 @@ export const platformTermsSchema = z.object({
   blockAfterDays: z.union([z.literal(""), z.null(), z.undefined(), z.coerce.number().int().min(1, "Entre 1 et 90 jours").max(90, "Entre 1 et 90 jours")])
     .transform((v) => (v === "" || v == null ? null : v)),
 });
-export type PlatformTermsInput = z.output<typeof platformTermsSchema>;
 
 /** Super admin : coordonnées de paiement de Rydar (IBAN normalisé : majuscules, sans espaces). */
 export const platformBillingSchema = z.object({
@@ -334,7 +331,6 @@ export const platformBillingSchema = z.object({
     .refine((v) => v == null || (/^https:\/\/\S+$/.test(v) && v.length <= 500), "Lien https:// requis"),
   instructions: optionalText(500),
 });
-export type PlatformBillingInput = z.output<typeof platformBillingSchema>;
 
 /** IBAN lisible : « FR76 3000 6000 0112 3456 7890 189 ». */
 export function formatIban(iban: string | null | undefined): string {

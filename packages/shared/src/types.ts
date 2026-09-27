@@ -23,18 +23,6 @@ export interface Organization {
   created_at: Iso;
 }
 
-export interface Vehicle {
-  id: Uuid;
-  organization_id: Uuid;
-  brand: string | null;
-  model: string;
-  color: string | null;
-  plate: string;
-  category: VehicleCategory;
-  seats: number;
-  luggage_capacity: number;
-}
-
 export interface Driver {
   id: Uuid;
   organization_id: Uuid;
@@ -52,18 +40,6 @@ export interface Driver {
   online_since: Iso | null;
   last_seen_at: Iso | null;
   created_at: Iso;
-}
-
-export interface DriverLocation {
-  driver_id: Uuid;
-  organization_id: Uuid;
-  lat: number;
-  lng: number;
-  heading: number | null;
-  speed_mps: number | null;
-  accuracy_m: number | null;
-  battery_level: number | null;
-  updated_at: Iso;
 }
 
 export interface Ride {
@@ -109,39 +85,6 @@ export interface Ride {
   cancel_reason: string | null;
   created_at: Iso;
   updated_at: Iso;
-}
-
-export interface RideOffer {
-  id: Uuid;
-  ride_id: Uuid;
-  driver_id: Uuid;
-  status: OfferStatus;
-  mode: "geo" | "fleet";
-  wave: number;
-  radius_m: number | null;
-  distance_m: number | null;
-  sent_at: Iso;
-  expires_at: Iso | null;
-  responded_at: Iso | null;
-}
-
-export interface RideEvent {
-  id: number;
-  organization_id: Uuid;
-  ride_id: Uuid | null;
-  category: "timeline" | "dispatch" | "system";
-  level: "debug" | "info" | "success" | "warning" | "error";
-  type: string;
-  message: string;
-  actor_type: string;
-  data: Record<string, unknown>;
-  created_at: Iso;
-}
-
-export interface Membership {
-  organization_id: Uuid;
-  role: OrgRole;
-  organization: Pick<Organization, "id" | "name" | "slug" | "status" | "logo_url" | "timezone">;
 }
 
 export interface RpcResult {
@@ -257,29 +200,6 @@ export interface RideFlightFields {
 export interface Ride extends Partial<RideFlightFields> {}
 export interface DriverOffer extends Partial<Omit<RideFlightFields, "flight_checked_at">> {}
 
-export interface FlightSettings {
-  flight_tracking_enabled: boolean;
-  /** Marge entre l'arrivée du vol et la prise en charge (0..120 min). */
-  flight_pickup_buffer_minutes: number;
-}
-
-/** Ligne renvoyée par private.flights_to_check(n) (worker). */
-export interface FlightToCheck {
-  id: Uuid;
-  organization_id: Uuid;
-  /** bigint : chaîne avec node-postgres */
-  number: number | string;
-  /** Normalisé : majuscules, sans espaces (« AF1234 »). */
-  flight_number: string;
-  /** Date locale du vol (type SQL date). */
-  flight_date: string | Date;
-  mode: FlightMode;
-  timezone: string;
-  pickup_at: Iso | Date;
-  flight_status: FlightStatus | null;
-  flight_scheduled_arrival: Iso | Date | null;
-}
-
 /** Étiquettes renvoyées par apply_flight_status (`events`) et dans `data.event` des notifications `flight_update`. */
 export type FlightEventTag =
   | "flight.delayed" | "flight.early" | "flight.updated" | "flight.landed" | "flight.cancelled"
@@ -303,19 +223,6 @@ export interface ApplyFlightStatusResult {
   /** Instantanée repoussée au-delà du seuil : repassée en planifiée ('fleet' = proposée à la flotte,
    *  'assigned' = chauffeur gardé et libéré d'ici là), sinon null */
   requalified?: "fleet" | "assigned" | null;
-}
-
-/** `data` des notifications push de type `flight_update` (chauffeur). */
-export interface FlightUpdateNotificationData {
-  type: "flight_update";
-  event: FlightEventTag;
-  ride_id: Uuid;
-  flight_number: string;
-  flight_status: FlightStatus;
-  delay_minutes: number | null;
-  terminal: string | null;
-  pickup_at: Iso;
-  pickup_at_original: Iso | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -381,14 +288,6 @@ export interface RideAlert {
 /** Diffusion temps réel `ride.alert` sur `org:{organization_id}` (et champ `alert` des RPC). */
 export interface RideAlertBroadcast extends Omit<RideAlert, "organization_id"> {
   op: "insert" | "update" | "resolve";
-}
-
-/** Réglages (organization_settings) des alertes. */
-export interface RideAlertSettings {
-  /** Retard toléré avant alerte (1..60 min, défaut 5) */
-  late_alert_tolerance_minutes: number;
-  /** Immobilité avant alerte (2..30 min, défaut 4) */
-  stalled_alert_minutes: number;
 }
 
 // Messagerie centrale ⇄ chauffeurs + signalements flotte (migration 20260924002300_chat)
@@ -508,32 +407,6 @@ export type DocumentType = "driving_license" | "vtc_card" | "insurance" | "vehic
 export type DocumentStoredStatus = "pending" | "valid" | "expired" | "rejected";
 /** Statut affiché, calculé côté SQL (expiring = échéance ≤ 30 j). */
 export type DocumentState = "valid" | "expiring" | "expired" | "pending" | "rejected";
-
-/** Réglage centrale : organization_settings.driver_commission_percent (0..100, null = pas de net estimé). */
-export interface DriverCommissionSetting {
-  driver_commission_percent: number | null;
-}
-
-/** Ligne public.driver_documents (colonnes ajoutées : source, reminders_sent, reviewed_at, reviewed_by, review_note). */
-export interface DriverDocumentRow {
-  id: Uuid;
-  organization_id: Uuid;
-  driver_id: Uuid;
-  type: DocumentType;
-  label: string | null;
-  file_path: string | null;
-  number: string | null;
-  issued_at: string | null;
-  expires_at: string | null;
-  status: DocumentStoredStatus;
-  source: "dashboard" | "driver";
-  reminders_sent: number[];
-  reviewed_at: Iso | null;
-  reviewed_by: Uuid | null;
-  review_note: string | null;
-  created_at: Iso;
-  updated_at: Iso;
-}
 
 export interface EarningsPeriod {
   from: Iso;
@@ -981,23 +854,6 @@ export interface FraudReport {
   review_note: string | null;
   created_at: Iso;
   updated_at: Iso;
-}
-
-export interface BannedIdentity {
-  id: Uuid;
-  scope: "org" | "platform";
-  organization_id: Uuid | null;
-  kind: IdentityKind;
-  value_hash: string;
-  hint: string | null;
-  driver_id: Uuid | null;
-  report_id: Uuid | null;
-  reason: string | null;
-  created_by: Uuid | null;
-  created_at: Iso;
-  lifted_at: Iso | null;
-  lifted_by: Uuid | null;
-  lift_reason: string | null;
 }
 
 export interface AdminCentraleRow {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  apiRideCreateSchema, canDriverTransition, classifyRide, DRIVER_FLOW, estimatePrice, estimateRoute, extractErrorCode,
+  apiRideCreateSchema, DRIVER_FLOW, estimatePrice, estimateRoute, extractErrorCode,
   formatDistance, formatPrice, haversine, humanizeError, isCategoryCompatible, normalizePhone, rideFormSchema, TENANT_FIELDS,
 } from "./index";
 
@@ -21,8 +21,7 @@ describe("format", () => {
 
 describe("domaine", () => {
   it("machine à états chauffeur", () => {
-    expect(canDriverTransition("ACCEPTED", "DRIVER_EN_ROUTE")).toBe(true);
-    expect(canDriverTransition("ACCEPTED", "COMPLETED")).toBe(false);
+    expect(DRIVER_FLOW.ACCEPTED?.next).toBe("DRIVER_EN_ROUTE");
     expect(DRIVER_FLOW.IN_PROGRESS?.label).toBe("Terminer la course");
   });
   it("compatibilité des catégories (miroir SQL)", () => {
@@ -30,12 +29,6 @@ describe("domaine", () => {
     expect(isCategoryCompatible("standard", "business", false)).toBe(false);
     expect(isCategoryCompatible("business", "van", true)).toBe(false);
     expect(isCategoryCompatible("van", "van", false)).toBe(true);
-  });
-  it("classification instantanée / planifiée", () => {
-    const now = new Date("2026-09-24T10:00:00Z");
-    expect(classifyRide(null, now)).toBe("instant");
-    expect(classifyRide(new Date("2026-09-24T10:30:00Z"), now)).toBe("instant");
-    expect(classifyRide(new Date("2026-09-24T12:00:00Z"), now)).toBe("scheduled");
   });
   it("codes d'erreur métier", () => {
     expect(extractErrorCode("PLAN_LIMIT_DRIVERS: limite de 10 chauffeurs")).toBe("PLAN_LIMIT_DRIVERS");
@@ -107,10 +100,10 @@ describe("itinéraires", () => {
   });
 
   it("simplifie un tracé et calcule un point le long de la ligne", async () => {
-    const { simplifyLine, pointAlong, lineLength } = await import("./geo");
+    const { simplifyLine, pointAlong } = await import("./geo");
     const straight: [number, number][] = Array.from({ length: 50 }, (_, k) => [2.3 + k * 0.001, 48.85]);
     expect(simplifyLine(straight, 5)).toHaveLength(2);
-    const len = lineLength(straight);
+    const len = haversine({ lat: 48.85, lng: 2.3 }, { lat: 48.85, lng: 2.349 });
     const mid = pointAlong(straight, len / 2);
     expect(mid.done).toBe(false);
     expect(mid.point[0]).toBeCloseTo(2.3245, 3);

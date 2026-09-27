@@ -28,7 +28,6 @@ export function LiveRefresh({
   };
   // liste fixe (règle des hooks) ; « settlement.updated » : règlement de la course (mode centrale)
   for (const ev of ["ride.updated", "ride.event", "offer.updated", "driver.updated", "ride.alert", "settlement.updated"]) {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
     useRealtimeEvent(ev, (p: any) => {
       if (!events.includes(ev)) return;
       if (driverId) {

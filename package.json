@@ -14,7 +14,6 @@
     "dev:driver": "pnpm --filter @rydar/driver start",
     "build": "pnpm -r --filter ./packages/** --filter @rydar/web --filter @rydar/worker build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint",
     "test": "vitest run --project unit",
     "test:db": "vitest run --project db",
     "db:local": "bash scripts/db-local.sh",

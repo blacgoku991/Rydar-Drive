@@ -65,9 +65,6 @@ export type AcceptResult = RpcResult & { ride_id?: string; reason?: DriverBlocke
 /** driver_declare_payment : « J'ai payé » (à confirmer par la centrale). */
 export type DeclarePaymentResult = RpcResult & { count?: number; amount_cents?: number };
 
-/** Codes de refus de la route de connexion (403) — messages FR fournis par le serveur. */
-export type LoginDeniedCode = "BANNED" | "REJECTED" | "INACTIVE" | "ORGANIZATION_SUSPENDED" | "NOT_DRIVER";
-
 /** Connexion acceptée : chauffeur actif ou candidat en attente de validation (null : inconnu, relu ensuite). */
 export type SignInResult = { state: DriverAccountStateKind | null };
 

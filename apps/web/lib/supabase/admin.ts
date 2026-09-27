@@ -2,7 +2,6 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env, serverEnv } from "@/lib/env";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let admin: SupabaseClient<any, any, any> | null = null;
 
 /**

@@ -107,7 +107,7 @@ export function NewRideSheet({
   useEffect(() => setZoneName(foreignZoneName(timeZone)), [timeZone]);
   const pickupPt = pickup.lat != null && pickup.lng != null ? { lat: pickup.lat, lng: pickup.lng } : null;
   const dropoffPt = dropoff.lat != null && dropoff.lng != null ? { lat: dropoff.lat, lng: dropoff.lng } : null;
-  const near = useMemo(() => pickupPt ?? center ?? null, [pickupPt?.lat, pickupPt?.lng, center?.lat, center?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
+  const near = useMemo(() => pickupPt ?? center ?? null, [pickupPt?.lat, pickupPt?.lng, center?.lat, center?.lng]);
 
   // Devis en direct : itinéraire réel, prix de la grille, chauffeurs proches
   useEffect(() => {
@@ -135,7 +135,6 @@ export function NewRideSheet({
       }
     }, 200);
     return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pickupPt?.lat, pickupPt?.lng, dropoffPt?.lat, dropoffPt?.lng, category, passengers, when, date, time]);
 
   const routeCoords = useMemo<Coord[] | null>(() => (quote?.route?.polyline ? decodePolyline(quote.route.polyline) : null), [quote?.route?.polyline]);

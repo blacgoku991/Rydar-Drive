@@ -379,7 +379,6 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const focusRide = useCallback(

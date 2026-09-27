@@ -326,7 +326,6 @@ export function CommandCenter({
   const reports = useMemo(() => {
     const t = tick * 15_000;
     return Object.values(state.reports).filter((r) => Date.parse(r.expires_at) > t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.reports, tick]);
   useEffect(() => {
     if (selectedReport && !reports.some((r) => r.id === selectedReport)) setSelectedReport(null);
@@ -390,7 +389,6 @@ export function CommandCenter({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ride?.id, ride?.status, rideDriver?.location?.lat, rideDriver?.location?.lng]);
 
   const selectRide = (id: string | null) => {
