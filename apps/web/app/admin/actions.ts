@@ -99,7 +99,8 @@ export async function createOrganization(
 
 /**
  * Modèle d'exploitation (flotte / centrale à commission) + frais plateforme d'un compte.
- * Retour au mode flotte : le lien d'inscription est coupé par le trigger SQL (organizations_dispatch_model_guard).
+ * Retour au mode flotte : refusé s'il reste des règlements chauffeur ouverts ; le lien d'inscription est coupé par le
+ * trigger SQL (organizations_dispatch_model_guard). Passage en centrale : répartition des courses non clôturées (SQL).
  */
 export async function updateDispatchModel(orgId: string, input: z.input<typeof dispatchModelSchema>): Promise<Result<{ joinDisabled: boolean }>> {
   const session = await requireSuperAdmin();
@@ -116,11 +117,30 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof d
   if (!before) return { ok: false, error: "Organisation introuvable." };
   const b = before as { dispatch_model: string; platform_fee_percent: number; platform_fee_fixed_cents: number; join_enabled: boolean };
 
+  // Retour au mode flotte : refusé tant qu'il reste des règlements chauffeur ouverts (écrans Encaissements /
+  // Commissions et relances réservés au mode centrale : dettes et parts à verser ne seraient plus suivies)
+  const openSettlements = (n: number) =>
+    `${n} règlement${n > 1 ? "s" : ""} chauffeur encore ouvert${n > 1 ? "s" : ""} (à régler, signalé${n > 1 ? "s" : ""} payé${n > 1 ? "s" : ""} ou contesté${n > 1 ? "s" : ""}) : la centrale doit les solder ou les annuler dans Encaissements avant le retour au mode flotte.`;
+  if (b.dispatch_model === "centrale" && v.dispatchModel === "fleet") {
+    const { count, error: countError } = await admin
+      .from("ride_settlements")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .in("status", ["due", "declared", "disputed"]);
+    if (countError) return { ok: false, error: "Mise à jour impossible." };
+    if (count) return { ok: false, error: openSettlements(count) };
+  }
+
   const { error } = await admin
     .from("organizations")
     .update({ dispatch_model: v.dispatchModel, platform_fee_percent: v.platformFeePercent, platform_fee_fixed_cents: v.platformFeeFixedCents } as never)
     .eq("id", orgId);
-  if (error) return { ok: false, error: error.code === "23514" ? "Frais plateforme hors limites (0 à 50 %, 0 à 1 000 €)." : "Mise à jour impossible." };
+  if (error) {
+    // Garde SQL (organizations_dispatch_model_guard) : règlement ouvert entre-temps
+    const open = /SETTLEMENTS_OPEN: (\d+)/.exec(error.message ?? "");
+    if (open) return { ok: false, error: openSettlements(Number(open[1])) };
+    return { ok: false, error: error.code === "23514" ? "Frais plateforme hors limites (0 à 50 %, 0 à 1 000 €)." : "Mise à jour impossible." };
+  }
 
   const modelChanged = b.dispatch_model !== v.dispatchModel;
   const joinDisabled = modelChanged && v.dispatchModel === "fleet" && b.join_enabled;

@@ -108,14 +108,32 @@ export function blockInfo(a: Pick<PlatformAccount, "blocked" | "block_after_days
   return { text: "Désactivé", tone: "neutral" };
 }
 
-/** Signaux du mois : « 2 courses à 0 € · 1 annulée après attribution ». */
+/** Indicateurs du mois (private.platform_account) : cancelled_onboard_rides ajouté par 20260924004400. */
+export type PlatformMonthStats = PlatformAccount["month"] & { cancelled_onboard_rides?: number };
+
+/** Courses annulées après la prise en charge du client (0 si le compte ne le fournit pas). */
+export const cancelledOnboard = (a: Pick<PlatformAccount, "month">) => (a.month as PlatformMonthStats | undefined)?.cancelled_onboard_rides ?? 0;
+
+/** Signaux du mois : « 2 courses à prix nul ou symbolique · 3 annulées après attribution (dont 1 client à bord) ». */
 export function monthSignals(a: Pick<PlatformAccount, "month">) {
   const parts: string[] = [];
   const z = a.month?.zero_price_rides ?? 0;
   const c = a.month?.cancelled_assigned_rides ?? 0;
-  if (z) parts.push(`${z} course${z > 1 ? "s" : ""} à 0 €`);
-  if (c) parts.push(`${c} annulée${c > 1 ? "s" : ""} après attribution`);
+  const b = cancelledOnboard(a);
+  if (z) parts.push(`${z} course${z > 1 ? "s" : ""} à prix nul ou symbolique`);
+  if (c) parts.push(`${c} annulée${c > 1 ? "s" : ""} après attribution${b ? ` (dont ${b} client à bord)` : ""}`);
   return parts.join(" · ");
+}
+
+/**
+ * Cellule CSV (séparateur « ; ») d'un texte libre : tenu sur une ligne (retours chariot, sauts de ligne et
+ * tabulations → espace, un « \r » isolé ouvrirait une nouvelle ligne dans le tableur), formule neutralisée
+ * (=, +, -, @ en tête → apostrophe), entre guillemets si « ; » ou « " ».
+ */
+export function csvText(v: string | null | undefined) {
+  let s = (v ?? "").replace(/[\r\n\t]+/g, " ").trim();
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /** Ventilation des frais comptabilisés : d'où vient l'argent (courses) + ajustements / courses supprimées. */

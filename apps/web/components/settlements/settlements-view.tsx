@@ -493,9 +493,15 @@ function SettlementList({
   const { pending, run } = useSettlementRunner();
   const selectable = items.filter(isOpen);
   const picked = items.filter((s) => selected.has(s.id));
-  const pickedTotal = picked.reduce((n, s) => n + s.amount_cents, 0);
+  // Entrées (commissions à encaisser) et sorties (parts à verser) jamais additionnées
+  const inCents = picked.reduce((n, s) => n + (s.direction === "driver_owes" ? s.amount_cents : 0), 0);
+  const outCents = picked.reduce((n, s) => n + (s.direction === "centrale_owes" ? s.amount_cents : 0), 0);
   const allOwes = picked.every((s) => s.direction === "driver_owes");
   const allPays = picked.every((s) => s.direction === "centrale_owes");
+  const mixed = !allOwes && !allPays;
+  const pickedAmount = mixed
+    ? `${formatPrice(inCents, currency)} à encaisser · ${formatPrice(outCents, currency)} à verser`
+    : formatPrice(inCents + outCents, currency);
   const verb = allOwes ? "Marquer reçus" : allPays ? "Marquer versés" : "Marquer réglés";
   // Sélection nettoyée quand un règlement quitte la liste (confirmé ailleurs, temps réel)
   useEffect(() => {
@@ -564,7 +570,7 @@ function SettlementList({
         <div className="sticky bottom-4 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] px-4 py-3 shadow-float backdrop-blur-xl">
           <p className="text-[13px] text-fg-muted">
             <span className="font-semibold text-fg">{picked.length}</span> sélectionné{picked.length > 1 ? "s" : ""} ·{" "}
-            <span className="mono font-semibold text-fg">{formatPrice(pickedTotal, currency)}</span>
+            <span className="mono font-semibold text-fg">{pickedAmount}</span>
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-[12.5px] text-fg-muted">
@@ -589,7 +595,12 @@ function SettlementList({
               onClick={() =>
                 run(
                   () => confirmSettlements([...selected], bulkMethod === "declared" ? null : bulkMethod),
-                  (r) => `${r.count ?? picked.length} règlement${(r.count ?? picked.length) > 1 ? "s" : ""} confirmé${(r.count ?? picked.length) > 1 ? "s" : ""} · ${formatPrice(r.amount_cents ?? pickedTotal, currency)}`,
+                  (r) =>
+                    `${r.count ?? picked.length} règlement${(r.count ?? picked.length) > 1 ? "s" : ""} confirmé${(r.count ?? picked.length) > 1 ? "s" : ""} · ${
+                      mixed
+                        ? `${formatPrice(inCents, currency)} encaissés · ${formatPrice(outCents, currency)} versés`
+                        : formatPrice(r.amount_cents ?? inCents + outCents, currency)
+                    }`,
                   () => setSelected(new Set()),
                 )
               }

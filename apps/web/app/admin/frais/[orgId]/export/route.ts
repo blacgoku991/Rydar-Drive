@@ -3,6 +3,7 @@
 import type { AdminPlatformAccount, PlatformEntry, PlatformPayment } from "@rydar/shared";
 import {
   MONTH_RE,
+  csvText,
   entryKindLabel,
   entryStatusMeta,
   paymentStatusLabel,
@@ -19,12 +20,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** 12345 → « 123,45 » ; null → vide. */
 const euros = (cents: number | null | undefined) => (cents == null ? "" : (cents / 100).toFixed(2).replace(".", ","));
 
-/** Texte libre : neutralise les formules (=, +, -, @) et échappe « ; », guillemets et retours à la ligne. */
-function text(v: string | null | undefined) {
-  let s = (v ?? "").replace(/\r?\n/g, " ").trim();
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return /[;"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+/** Texte libre (note, référence, adresse… saisies par la centrale) : une ligne, formule neutralisée, « ; » échappé. */
+const text = csvText;
 
 function dateTime(iso: string | null | undefined, timeZone: string) {
   if (!iso) return "";
