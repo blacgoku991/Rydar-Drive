@@ -294,7 +294,7 @@ describe("mot de passe oublié par code (app chauffeur)", () => {
   });
 });
 
-import { buildNavTrack, locateOnTrack, maneuverGlyph, navDistance, navInstruction, nextManeuver, remainingTrack, snapToTrack, type NavStep } from "./navigation";
+import { buildNavTrack, locateOnTrack, maneuverGlyph, navDistance, navInstruction, nextManeuver, remainingTrack, snapForDisplay, snapToTrack, type NavStep } from "./navigation";
 describe("guidage : instructions en français", () => {
   it("formule les manœuvres courantes", () => {
     expect(navInstruction({ type: "turn", modifier: "right" }, "Rue de Berri")).toBe("Tournez à droite sur Rue de Berri");
@@ -357,6 +357,21 @@ describe("guidage : suivi sur le tracé", () => {
     expect(snap.heading).toBeCloseTo(90, 0);
     // Après le virage : cap nord (0°)
     expect(snapToTrack(track, locateOnTrack(track, at(505, 200))!).heading).toBeCloseTo(0, 0);
+  });
+
+  it("position affichée : sur la route seulement si le chauffeur y est vraiment, sinon sa vraie position", () => {
+    const fix = (accuracy: number | null, heading: number | null = null, speed: number | null = null) => ({ accuracy, heading, speed });
+    // 10 m de la rue, point précis : posée sur la rue
+    expect(snapForDisplay(track, locateOnTrack(track, at(120, -10))!, fix(5))).not.toBeNull();
+    // Rue voisine à 50 m (le cas de l'itinéraire par la diagonale) : vraie position, jamais collée
+    expect(snapForDisplay(track, locateOnTrack(track, at(120, -50))!, fix(10))).toBeNull();
+    // 16 m : collée si le point est imprécis (±20 m), pas s'il est précis (±5 m)
+    expect(snapForDisplay(track, locateOnTrack(track, at(120, -16))!, fix(20))).not.toBeNull();
+    expect(snapForDisplay(track, locateOnTrack(track, at(120, -16))!, fix(5))).toBeNull();
+    // En roulant sur une rue qui croise l'itinéraire (cap nord sur un tronçon vers l'est) : pas collée
+    expect(snapForDisplay(track, locateOnTrack(track, at(120, -8))!, fix(5, 0, 10))).toBeNull();
+    // Dans le sens du tronçon : collée
+    expect(snapForDisplay(track, locateOnTrack(track, at(120, -8))!, fix(5, 95, 10))).not.toBeNull();
   });
 
   it("détecte la sortie d'itinéraire", () => {

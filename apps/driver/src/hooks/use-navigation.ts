@@ -1,13 +1,13 @@
 import {
-  buildNavTrack, decodePolyline, haversine, locateOnTrack, maneuverGlyph, nextManeuver, remainingTrack, snapToTrack,
+  buildNavTrack, decodePolyline, haversine, locateOnTrack, maneuverGlyph, nextManeuver, remainingTrack, snapForDisplay,
   type Coord, type LatLng, type ManeuverGlyph, type NavTrack,
 } from "@rydar/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchDriverRoute } from "@/lib/api";
 import type { MyPosition } from "./use-my-position";
 
-/** Écart au tracé (m) au-delà duquel le chauffeur a quitté l'itinéraire (s'y ajoute l'imprécision du point). */
-const OFF_ROUTE_M = 40;
+/** Écart au tracé (m) au-delà duquel le chauffeur a quitté l'itinéraire (s'y ajoute l'imprécision du point, 20 m au plus). */
+const OFF_ROUTE_M = 30;
 /** Points hors itinéraire consécutifs avant un recalcul (un point GPS isolé ne suffit pas). */
 const OFF_ROUTE_FIXES = 2;
 /** Délai minimal entre deux calculs d'itinéraire. */
@@ -18,8 +18,10 @@ const REFRESH_MS = 3 * 60_000;
 const ARRIVED_M = 30;
 /** Deux manœuvres plus proches que cette distance : la seconde est annoncée (« Puis… »). */
 const THEN_M = 120;
+/** Itinéraire calculé depuis un point imprécis (au-delà) : recalculé dès qu'un point précis (≤ 20 m) arrive. */
+const ROUGH_START_M = 40;
 
-type Loaded = { track: NavTrack; durationS: number; target: string; at: number };
+type Loaded = { track: NavTrack; durationS: number; target: string; at: number; fromAccuracy: number | null };
 
 export type NavNext = { glyph: ManeuverGlyph; instruction: string; exit: number | null; distance: number };
 
@@ -36,14 +38,14 @@ export type Navigation = {
   /** Chauffeur sorti de l'itinéraire : nouveau calcul en cours */
   rerouting: boolean;
   /**
-   * Position à afficher, posée sur la route suivie (imprécision du GPS gommée, cap du tronçon) ; null hors
-   * itinéraire : la position GPS brute est affichée.
+   * Position à afficher, posée sur la route suivie quand le chauffeur y est vraiment (12 à 20 m, dans le sens du
+   * tronçon) ; null sinon : la vraie position GPS est affichée (jamais la rue voisine).
    */
   position: { lat: number; lng: number; heading: number | null } | null;
 };
 
-/** Sur l'itinéraire : écart au tracé dans la marge (40 m + imprécision du point, 30 m au plus). */
-const onRoute = (off: number, accuracy: number | null) => off <= OFF_ROUTE_M + Math.min(accuracy ?? 0, 30);
+/** Sur l'itinéraire : écart au tracé dans la marge (30 m + imprécision du point, 20 m au plus). */
+const onRoute = (off: number, accuracy: number | null) => off <= OFF_ROUTE_M + Math.min(accuracy ?? 0, 20);
 
 const EMPTY: Navigation = { route: null, next: null, then: null, remainingM: null, remainingS: null, rerouting: false, position: null };
 const keyOf = (p: LatLng) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
@@ -79,7 +81,7 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
     if (coords.length < 2) return;
     hint.current = 0;
     setOffCount(0);
-    setLoaded({ track: buildNavTrack(coords, r.steps), durationS: r.durationS, target: keyOf(to), at: Date.now() });
+    setLoaded({ track: buildNavTrack(coords, r.steps), durationS: r.durationS, target: keyOf(to), at: Date.now(), fromAccuracy: from.accuracy });
   }).current;
 
   // Premier calcul, puis à chaque changement de cible (prise en charge → destination)
@@ -115,6 +117,11 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
         const t = setTimeout(() => void request(), REROUTE_MIN_MS - since);
         return () => clearTimeout(t);
       }
+    } else if (
+      // Départ calculé depuis un point imprécis (Wi-Fi, premier point) : recalcul dès qu'un point précis arrive
+      current.fromAccuracy != null && current.fromAccuracy > ROUGH_START_M && me.accuracy != null && me.accuracy <= 20 && since > 3000
+    ) {
+      void request();
     } else if (Date.now() - current.at > REFRESH_MS && since > REFRESH_MS) void request();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos, enabled]);
@@ -139,7 +146,7 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
       remainingM: Math.round(remainingM),
       remainingS,
       rerouting: offCount >= OFF_ROUTE_FIXES,
-      position: onRoute(pos.off, me.accuracy) ? snapToTrack(t, pos) : null,
+      position: snapForDisplay(t, pos, me),
     };
   }, [enabled, current, pos, me, target, offCount]);
 }

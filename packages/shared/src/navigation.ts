@@ -218,6 +218,30 @@ export function snapToTrack(t: NavTrack, pos: TrackPosition): { lat: number; lng
   return { lat, lng, heading: ((Math.atan2(y, x) / RAD) + 360) % 360 };
 }
 
+/** Écart maximal (m) pour poser la position affichée sur le tracé : 20 m, 12 m si le point GPS est précis. */
+export const NAV_SNAP_MAX_M = 20;
+export const NAV_SNAP_MIN_M = 12;
+
+/**
+ * Position à AFFICHER en guidage. Posée sur l'itinéraire seulement si le chauffeur y est vraiment : écart de
+ * 12 à 20 m au plus selon la précision du point, et en roulant, cap dans le sens du tronçon (±60°). Sinon null :
+ * la vraie position GPS est affichée (comme Waze), jamais la rue voisine par où passe l'itinéraire.
+ */
+export function snapForDisplay(
+  t: NavTrack,
+  pos: TrackPosition,
+  me: { accuracy: number | null; heading: number | null; speed: number | null },
+): { lat: number; lng: number; heading: number | null } | null {
+  const limit = Math.min(NAV_SNAP_MAX_M, Math.max(NAV_SNAP_MIN_M, me.accuracy ?? NAV_SNAP_MAX_M));
+  if (pos.off > limit) return null;
+  const snap = snapToTrack(t, pos);
+  if (snap.heading != null && me.heading != null && (me.speed ?? 0) >= 3) {
+    const delta = Math.abs(((me.heading - snap.heading + 540) % 360) - 180);
+    if (delta > 60) return null;
+  }
+  return snap;
+}
+
 /** Pictogramme d'une manœuvre (dessin choisi par l'app). */
 export type ManeuverGlyph =
   | "straight" | "left" | "right" | "slight-left" | "slight-right" | "sharp-left" | "sharp-right"
