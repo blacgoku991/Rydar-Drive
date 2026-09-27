@@ -13,6 +13,7 @@ import { AccessibilityInfo, Image, Platform, Pressable, StyleSheet, Text, TextIn
 import { frTypo } from "@/components/centrale";
 import { BigButton, BottomSheet, hapticResult, Pill } from "@/components/ui";
 import { api, STORAGE_UNAVAILABLE, type ApiError } from "@/lib/api";
+import { canUploadDocument, DOCUMENT_TYPE_REFUSED, isTodo, needsAction } from "@/lib/document-types";
 import { useAppEvent } from "@/lib/events";
 import { assetBytes, extensionFor, formatIsoDay, maskDate, parseFrDate } from "@/lib/files";
 import { colors, control, mono, overlay, radius, space, toneColor, type, weight } from "@/theme";
@@ -34,8 +35,8 @@ const TYPE_ICON: Record<DocumentType, keyof typeof Ionicons.glyphMap> = {
 
 export type DocEntry = { key: string; type: DocumentType; doc: DriverDocumentItem | null; state: DocumentDisplayState };
 
-/** États à traiter par le chauffeur (manquant, refusé, expiré, bientôt échu). */
-export const isTodo = (s: DocumentDisplayState) => s === "missing" || s === "rejected" || s === "expired" || s === "expiring";
+// États à traiter ; à traiter ET déposable depuis l'application (visite médicale : historique seulement)
+export { isTodo, needsAction };
 
 /** « 3 documents », « 1 manquant » : nombre et mot insécables, pluriel. */
 const count = (n: number, word: string) => `${n}${NB}${word}${n > 1 ? "s" : ""}`;
@@ -88,7 +89,7 @@ export function useDriverDocuments(enabled = true) {
 
 /** Synthèse : « 3 documents à mettre à jour » / « Dossier complet ». */
 export function DocumentsSummary({ data, entries }: { data: DriverDocuments; entries: DocEntry[] }) {
-  const todo = entries.filter((e) => isTodo(e.state)).length;
+  const todo = entries.filter(needsAction).length;
   const s = data.summary;
   const valid = s.valid + s.expiring;
   const title = todo > 0 ? `${count(todo, "document")} à mettre à jour` : "Dossier complet";
@@ -117,7 +118,9 @@ export function DocCard({ entry, tz, onUpdate }: { entry: DocEntry; tz?: string;
   const color = state === "missing" ? colors.muted : toneColor(meta.tone);
   const label = doc?.label ?? DOCUMENT_TYPE_LABELS[docType] ?? "Document";
   const status = stateLabel(state, doc?.days_left);
-  const urgent = isTodo(state);
+  // Type refusé au dépôt par le serveur (visite médicale) : fiche affichée, sans bouton d'envoi
+  const uploadable = canUploadDocument(docType);
+  const urgent = isTodo(state) && uploadable;
   const details = [
     doc?.number ? `N°${NB}${doc.number}` : null,
     doc ? (doc.expires_at ? `Échéance ${formatIsoDay(doc.expires_at)}` : "Sans échéance") : "Obligatoire pour rouler",
@@ -134,7 +137,7 @@ export function DocCard({ entry, tz, onUpdate }: { entry: DocEntry; tz?: string;
       </View>
       <View style={styles.stateRow}>
         <Pill label={status} color={color} />
-        {!urgent && (
+        {!urgent && uploadable && (
           <Pressable
             onPress={onUpdate}
             style={({ pressed }) => [styles.smallAction, pressed && styles.pressed]}
@@ -158,6 +161,7 @@ export function DocCard({ entry, tz, onUpdate }: { entry: DocEntry; tz?: string;
       {state === "pending" && doc ? (
         <Text style={styles.pendingText}>Envoyé le {formatDate(doc.created_at, tz)} · en cours de vérification par la centrale</Text>
       ) : null}
+      {!uploadable && <Text style={styles.pendingText}>{frTypo(DOCUMENT_TYPE_REFUSED)}</Text>}
       {urgent && (
         <BigButton
           title={action}
@@ -253,6 +257,8 @@ export function UploadSheet({
 
   async function submit() {
     if (!current) return;
+    // Type refusé par le serveur : vérifié AVANT l'envoi du fichier (sinon fichier orphelin dans le stockage)
+    if (!canUploadDocument(current.type)) return setError(DOCUMENT_TYPE_REFUSED);
     if (!orgId || !driverId) return setError("Connexion impossible. Réessayez dans un instant.");
     if (!picked) return setError("Ajoutez une photo du document.");
     let expiresAt: string | null = null;

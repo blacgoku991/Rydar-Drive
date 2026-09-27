@@ -47,11 +47,18 @@ export const SETTLEMENT_METHOD_META: Record<SettlementMethod | "other", { label:
   other: { label: "Autre moyen", ionicon: "ellipsis-horizontal", lucide: "Ellipsis" },
 };
 
+// Messages = repli de private.blocker_message (dernière définition : 20260924004400_audit_argent.sql), à garder
+// identiques (blocker-message.test.ts) : « unpaid » couvre aussi une commission contestée (paiement à confirmer).
 export const DRIVER_BLOCKER_META: Record<DriverBlocker, { label: string; message: string }> = {
-  unpaid: { label: "Commission en retard", message: "Commission en retard : réglez-la pour recevoir de nouvelles courses." },
+  unpaid: {
+    label: "Commission en retard ou contestée",
+    message:
+      "Commission en retard ou contestée : réglez-la pour recevoir de nouvelles courses (après une contestation, la centrale doit confirmer votre paiement).",
+  },
   credit_limit: {
     label: "Plafond d'encours atteint",
-    message: "Plafond de commissions à régler atteint : réglez-les pour recevoir de nouvelles courses.",
+    message:
+      "Plafond de commissions à régler atteint : réglez-les ou attendez leur confirmation par la centrale pour recevoir de nouvelles courses.",
   },
   new_driver: { label: "Réservée aux confirmés", message: "Course réservée aux chauffeurs confirmés de la centrale." },
 };

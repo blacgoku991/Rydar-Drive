@@ -1,35 +1,43 @@
-// Planning : courses planifiées proposées à la flotte (à prendre) et courses planifiées déjà attribuées.
+// Planning : courses planifiées proposées à la flotte (à prendre) et courses déjà attribuées (planifiées, et
+// instantanées pas encore démarrées : course suivante attribuée pendant la course en cours).
 import { Ionicons } from "@expo/vector-icons";
 import { formatPrice, formatRideDate, shortAddress, type Ride } from "@rydar/shared";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { blockerInfo, frTypo } from "@/components/centrale";
 import { BigButton, Card, RouteLine, Screen, ScreenHeader } from "@/components/ui";
 import { alertDriverBlocked, useDriver } from "@/hooks/driver-context";
 import { api, refusalText, type AcceptResult } from "@/lib/api";
+import { myRides, waitsForCurrentRide } from "@/lib/planning";
 import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
 
 const NBSP = "\u00A0";
+
+/** Instantanée attribuée pendant une autre course : le serveur refuse de la démarrer avant (DRIVER_BUSY). */
+const AFTER_CURRENT = "À démarrer après votre course en cours";
 
 /** « 3 passagers », « 1 bagage » */
 const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? many : one}`;
 
 export default function Planning() {
   const { offers, refresh, home } = useDriver();
-  const [mine, setMine] = useState<Ride[] | null>(null);
-  // Lecture de « Mes courses planifiées » en échec (réseau) : dernière liste connue gardée, jamais « Aucune course »
+  const [upcoming, setUpcoming] = useState<Ride[] | null>(null);
+  // Lecture de « Mes courses » en échec (réseau) : dernière liste connue gardée, jamais « Aucune course »
   const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const tz = home?.organization.timezone;
+  const driverId = home?.driver.id;
+  const currentRideId = home?.driver.current_ride_id ?? null;
   const available = offers.filter((o) => o.mode === "fleet");
+  const mine = useMemo(() => (upcoming && driverId ? myRides(upcoming, driverId) : null), [upcoming, driverId]);
 
   const load = useCallback(async () => {
-    const [, upcoming] = await Promise.all([refresh(), api.upcoming().catch(() => null)]);
-    setLoadError(upcoming == null);
-    if (upcoming) setMine(upcoming.filter((r) => r.type === "scheduled"));
+    const [, list] = await Promise.all([refresh(), api.upcoming().catch(() => null)]);
+    setLoadError(list == null);
+    if (list) setUpcoming(list);
   }, [refresh]);
   useFocusEffect(useCallback(() => void load(), [load]));
 
@@ -116,7 +124,7 @@ export default function Planning() {
           })}
 
           <Text style={[styles.section, { marginTop: space.lg }]} accessibilityRole="header">
-            Mes courses planifiées {mine ? <Text style={mono}>· {mine.length}</Text> : null}
+            Mes courses {mine ? <Text style={mono}>· {mine.length}</Text> : null}
           </Text>
           {loadError ? (
             <View style={styles.error} accessibilityRole="alert">
@@ -128,14 +136,16 @@ export default function Planning() {
           ) : null}
           {mine?.length === 0 && <Text style={styles.empty}>Aucune course à venir.</Text>}
           {(mine ?? []).map((r) => {
-            const when = formatRideDate(r.pickup_at, tz);
+            // Instantanée attribuée : pas d'heure de prise en charge à afficher (dès que possible)
+            const when = r.type === "instant" ? "Course immédiate" : formatRideDate(r.pickup_at, tz);
+            const after = waitsForCurrentRide(r, currentRideId);
             const amount = formatPrice(r.driver_payout_cents ?? r.price_cents);
             return (
               <Pressable
                 key={r.id}
                 onPress={() => router.push({ pathname: "/ride/[id]", params: { id: r.id } })}
                 accessibilityRole="button"
-                accessibilityLabel={`Course ${r.number}, ${when}, ${shortAddress(r.pickup_address)} vers ${shortAddress(r.dropoff_address)}, ${amount}`}
+                accessibilityLabel={`Course ${r.number}, ${when}${after ? `, ${AFTER_CURRENT.toLowerCase()}` : ""}, ${shortAddress(r.pickup_address)} vers ${shortAddress(r.dropoff_address)}, ${amount}`}
                 accessibilityHint="Ouvre le détail de la course"
               >
                 {({ pressed }) => (
@@ -147,6 +157,7 @@ export default function Planning() {
                           Course {r.number} · {plural(r.passengers, "passager", "passagers")}
                           {r.luggage > 0 ? ` · ${plural(r.luggage, "bagage", "bagages")}` : ""}
                         </Text>
+                        {after && <Text style={styles.hint}>{AFTER_CURRENT}</Text>}
                       </View>
                       <Text style={styles.price}>{amount}</Text>
                       <Ionicons name="chevron-forward" size={20} color={colors.muted} />
@@ -175,6 +186,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
   when: { color: colors.fg, fontSize: type.headline, fontWeight: weight.semibold, ...mono },
   meta: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium, ...mono },
+  hint: { color: colors.muted, fontSize: type.footnote, lineHeight: 18 },
   price: { color: colors.fg, fontSize: type.headline, fontWeight: weight.bold, ...mono },
   blocked: {
     flexDirection: "row", alignItems: "center", gap: space.md, minHeight: control.md, paddingHorizontal: space.md, paddingVertical: 10,

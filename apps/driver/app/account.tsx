@@ -10,7 +10,7 @@ import { Redirect, router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { buildDocEntries, DocCard, DocumentsSummary, isTodo, UploadSheet, useDriverDocuments, type DocEntry } from "@/components/documents";
+import { buildDocEntries, DocCard, DocumentsSummary, needsAction, UploadSheet, useDriverDocuments, type DocEntry } from "@/components/documents";
 import { frTypo } from "@/components/centrale";
 import { BigButton, Pill, Screen, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
@@ -88,8 +88,9 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
     return () => clearInterval(t);
   }, [check]);
 
-  const todo = entries.filter((e) => isTodo(e.state));
-  const sent = entries.filter((e) => !isTodo(e.state));
+  // À traiter ET déposable dans l'application (visite médicale : historique seulement, jamais « à ajouter »)
+  const todo = entries.filter(needsAction);
+  const sent = entries.filter((e) => !needsAction(e));
   const docsDone = data != null && todo.length === 0;
   const steps: { title: string; sub: string; state: StepState }[] = [
     {
