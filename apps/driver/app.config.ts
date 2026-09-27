@@ -17,7 +17,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "Rydar Drive",
   slug: "rydar-drive",
   scheme: "rydardrive",
-  version: "1.0.0",
+  // 1.1.0 : position en direct app ouverte, app fermée = hors ligne en 3 min (private.watch_driver_gps, par version)
+  version: "1.1.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   userInterfaceStyle: "dark",
@@ -76,8 +77,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         color: "#C8F03C",
         // v2 : sonnerie ~10 s (canal Android « ride-offers-v2 ») ; v1 conservée (carillon court, anciens envois)
         sounds: ["./assets/sounds/ride_offer_v2.wav", "./assets/sounds/ride_offer.wav"],
-        // Réveil GPS silencieux (content-available) : mode d'arrière-plan « remote-notification »
-        enableBackgroundRemoteNotifications: true,
       },
     ],
     ["expo-splash-screen", { image: "./assets/images/splash.png", backgroundColor: "#07080B", imageWidth: 160 }],

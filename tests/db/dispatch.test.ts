@@ -506,90 +506,99 @@ describe("Recherche sans chauffeur : explication dans la chronologie (migration 
   });
 });
 
-describe("Position en direct : réveil, alerte, jamais retiré (migrations 003200 / 003300)", () => {
-  const pings = (ids: string[]) =>
-    sql("select driver_id, status from public.notifications where type = 'location_ping' and driver_id = any($1) order by created_at", [ids]);
-  const lostAlerts = (ids: string[]) =>
-    sql("select driver_id, title, priority from public.notifications where type = 'gps_lost' and driver_id = any($1) order by created_at", [ids]);
+describe("App ouverte = en ligne, app fermée = hors ligne (migrations 003300 / 003400)", () => {
+  /** Appareil enregistré avec cette version de l'app (driver_register_device). */
+  const withApp = async (org: Org, driverIds: string[], version: string) => {
+    for (const id of driverIds) {
+      await sql(
+        `insert into public.driver_devices (organization_id, driver_id, installation_id, platform, app_version, last_seen_at)
+         values ($1, $2, $3, 'ios', $4, now())`,
+        [org.id, id, `inst-${id.slice(0, 8)}`, version],
+      );
+    }
+  };
 
-  it("position absente depuis 90 s : réveil silencieux (puis un toutes les 20 min) ; au-delà de 3 min : « POSITION NON REÇUE » une fois", async () => {
-    const org = await createOrg("GPS perdu");
-    const quiet = await createDriver(org, { firstName: "Muet", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 100 });
-    const lost = await createDriver(org, { firstName: "Perdu", at: north(CHAMPS_ELYSEES, 550), locationAgeSeconds: 400 });
-    const fresh = await createDriver(org, { firstName: "Frais", at: north(CHAMPS_ELYSEES, 600), locationAgeSeconds: 20 });
-    // Repassé en ligne il y a 30 s, position d'hier : rien encore
-    const back = await createDriver(org, { firstName: "Revenu", at: north(CHAMPS_ELYSEES, 700), locationAgeSeconds: 86_400 });
-    const off = await createDriver(org, { firstName: "Horsligne", at: north(CHAMPS_ELYSEES, 800), locationAgeSeconds: 900, presence: "offline" });
-    const ids = [quiet.id, lost.id, fresh.id, back.id, off.id];
-    await sql("update public.drivers set online_since = now() - interval '1 hour' where id = any($1) and presence <> 'offline'", [ids]);
-    await sql("update public.drivers set online_since = now() - interval '30 seconds' where id = $1", [back.id]);
+  it("plus de position ni de signe de vie depuis 3 min (app fermée) : hors ligne en silence, offres closes", async () => {
+    const org = await createOrg("App fermée");
+    const closed = await createDriver(org, { firstName: "Ferme", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 200 });
+    const live = await createDriver(org, { firstName: "Ouvert", at: north(CHAMPS_ELYSEES, 600), locationAgeSeconds: 20 });
+    // Pas de point GPS depuis 5 min (sous-sol) mais l'app envoie son signe de vie : reste en ligne
+    const alive = await createDriver(org, { firstName: "Vivant", at: north(CHAMPS_ELYSEES, 700), locationAgeSeconds: 300 });
+    // En course, app fermée : jamais touché (alertes de suivi côté centrale)
+    const onTrip = await createDriver(org, { firstName: "Encourse", at: north(CHAMPS_ELYSEES, 800), locationAgeSeconds: 900 });
+    const ids = [closed.id, live.id, alive.id, onTrip.id];
+    await sql("update public.drivers set online_since = now() - interval '1 hour', last_seen_at = now() - interval '1 hour' where id = any($1)", [ids]);
+    await withApp(org, ids, "1.1.0");
+    await as({ sub: alive.userId }, (q) => q("select public.driver_heartbeat()"));
+    const ride = await createRideAsOwner(org);
+    await sql("update public.drivers set presence = 'on_trip', current_ride_id = $2 where id = $1", [onTrip.id, ride.id]);
+    const [offer] = await sql(
+      `insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, expires_at)
+       values ($1, $2, $3, 'pending', 'geo', 1, now() + interval '30 seconds') returning id`,
+      [org.id, ride.id, closed.id],
+    );
+    await sql("update public.drivers set presence = 'offered' where id = $1", [closed.id]);
 
-    await sql("select private.watch_driver_gps()");
-    await sql("select private.watch_driver_gps()");
-    expect((await pings(ids)).map((x) => x.driver_id).sort()).toEqual([quiet.id, lost.id].sort());
-    expect(await lostAlerts(ids)).toEqual([{ driver_id: lost.id, title: "POSITION NON REÇUE", priority: "high" }]);
-
-    // Moins de 20 min après : pas de nouveau réveil ; 20 min après, toujours rien : nouveau réveil, l'ancien
-    // (encore en file) est annulé ; pas de 2e alerte
-    await sql("update public.driver_locations set updated_at = now() - interval '30 minutes' where driver_id = $1", [quiet.id]);
-    await sql("update public.drivers set gps_ping_at = now() - interval '10 minutes' where id = $1", [quiet.id]);
-    await sql("select private.watch_driver_gps()");
-    expect(await pings([quiet.id])).toHaveLength(1);
-    await sql("update public.drivers set gps_ping_at = now() - interval '1201 seconds' where id = $1", [quiet.id]);
-    await sql("select private.watch_driver_gps()");
-    expect((await pings([quiet.id])).map((x) => x.status)).toEqual(["cancelled", "queued"]);
-    // (Muet a dépassé 3 min entre-temps : son alerte, une seule fois)
-    expect((await lostAlerts(ids)).map((x) => x.driver_id).sort()).toEqual([lost.id, quiet.id].sort());
-
-    // La position est revenue après l'alerte puis s'est de nouveau coupée : nouvelle alerte
-    await sql("update public.drivers set gps_lost_notified_at = now() - interval '20 minutes' where id = $1", [lost.id]);
-    await sql("update public.driver_locations set updated_at = now() - interval '4 minutes' where driver_id = $1", [lost.id]);
-    await sql("select private.watch_driver_gps()");
-    expect(await lostAlerts(ids)).toHaveLength(3);
+    const [res] = await sql("select private.watch_driver_gps() as r");
+    expect(res.r.offline).toBeGreaterThanOrEqual(1);
+    const rows = await sql("select id, presence from public.drivers where id = any($1)", [ids]);
+    const presence = Object.fromEntries(rows.map((x) => [x.id, x.presence]));
+    // (Ouvert a reçu l'offre de la course créée plus haut : « offered », toujours en ligne)
+    expect(presence).toEqual({ [closed.id]: "offline", [live.id]: "offered", [alive.id]: "available", [onTrip.id]: "on_trip" });
+    const [o] = await sql("select status, closed_reason from public.ride_offers where id = $1", [offer.id]);
+    expect(o).toEqual({ status: "expired", closed_reason: "driver_offline" });
+    // Aucune notification au chauffeur
+    const notifs = await sql("select type from public.notifications where driver_id = any($1) and type in ('gps_lost', 'driver_offline', 'location_ping')", [ids]);
+    expect(notifs).toHaveLength(0);
   });
 
-  it("le chauffeur n'est jamais retiré : toujours en ligne après le ménage, même sans position depuis 1 h", async () => {
-    const org = await createOrg("Jamais retiré");
-    const d = await createDriver(org, { firstName: "Toujours", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 3600 });
-    await sql("update public.drivers set online_since = now() - interval '2 hours' where id = $1", [d.id]);
+  it("ancienne version de l'app (sans battement) : l'ancien délai de 15 min s'applique", async () => {
+    const org = await createOrg("Ancienne app");
+    const old = await createDriver(org, { firstName: "Ancienne", at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 600 });
+    const gone = await createDriver(org, { firstName: "Partie", at: north(CHAMPS_ELYSEES, 600), locationAgeSeconds: 1000 });
+    await sql("update public.drivers set online_since = now() - interval '1 hour', last_seen_at = now() - interval '1 hour' where id = any($1)", [[old.id, gone.id]]);
+    await withApp(org, [old.id, gone.id], "1.0.0");
+    await sql("select private.watch_driver_gps()");
+    const rows = await sql("select id, presence from public.drivers where id = any($1)", [[old.id, gone.id]]);
+    expect(Object.fromEntries(rows.map((x) => [x.id, x.presence]))).toEqual({ [old.id]: "available", [gone.id]: "offline" });
+  });
+
+  it("version d'app : comparaison numérique", async () => {
+    const [r] = await sql(
+      `select private.app_version_at_least('1.1.0', '{1,1,0}') a, private.app_version_at_least('1.10', '{1,1,0}') b,
+              private.app_version_at_least('1.0.9', '{1,1,0}') c, private.app_version_at_least(null, '{1,1,0}') d,
+              private.app_version_at_least('2.0.0 (12)', '{1,1,0}') e`,
+    );
+    expect(r).toEqual({ a: true, b: true, c: false, d: false, e: true });
+  });
+
+  it("repassé en ligne il y a 1 min avec une position d'hier : pas encore hors ligne", async () => {
+    const org = await createOrg("Revenu en ligne");
+    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 86_400 });
+    await sql("update public.drivers set online_since = now() - interval '1 minute', last_seen_at = now() - interval '1 minute' where id = $1", [d.id]);
+    await withApp(org, [d.id], "1.1.0");
+    await sql("select private.watch_driver_gps()");
+    const [row] = await sql("select presence from public.drivers where id = $1", [d.id]);
+    expect(row.presence).toBe("available");
+  });
+
+  it("le ménage ne met jamais un chauffeur hors ligne", async () => {
+    const org = await createOrg("Ménage");
+    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 60 });
     await sql("select private.housekeeping()");
-    const [row] = await sql("select presence, online_since is not null as since from public.drivers where id = $1", [d.id]);
-    expect(row).toEqual({ presence: "available", since: true });
-    const off = await sql("select 1 from public.notifications where type = 'driver_offline' and driver_id = $1", [d.id]);
-    expect(off).toHaveLength(0);
+    const [row] = await sql("select presence from public.drivers where id = $1", [d.id]);
+    expect(row.presence).toBe("available");
   });
 
-  it("réveil : priorité normale, un seul essai, annulé s'il n'est pas parti dans la minute", async () => {
-    const org = await createOrg("Réveil essai");
-    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 100 });
-    await sql("update public.drivers set online_since = now() - interval '1 hour' where id = $1", [d.id]);
-    await sql("select private.watch_driver_gps()");
-    const [ping] = await sql("select id, priority from public.notifications where type = 'location_ping' and driver_id = $1", [d.id]);
-    expect(ping.priority).toBe("normal");
-    await sql("update public.notifications set status = 'sending', attempts = 1 where id = $1", [ping.id]);
-    await sql("select private.complete_notification($1, false, 'HTTP_503', 'expo', null, true)", [ping.id]);
-    const [failed] = await sql("select status from public.notifications where id = $1", [ping.id]);
-    expect(failed.status).toBe("failed");
-
-    await sql("update public.drivers set gps_ping_at = now() - interval '21 minutes' where id = $1", [d.id]);
-    await sql("select private.watch_driver_gps()");
-    const [late] = await sql("select id from public.notifications where type = 'location_ping' and driver_id = $1 and status = 'queued'", [d.id]);
-    await sql("update public.notifications set created_at = now() - interval '2 minutes' where id = $1", [late.id]);
-    await sql("select * from private.claim_notifications(500)");
-    const [expired] = await sql("select status, last_error from public.notifications where id = $1", [late.id]);
-    expect(expired).toEqual({ status: "cancelled", last_error: "wake_expired" });
-  });
-
-  it("réveils et alertes GPS n'écrivent rien dans le journal d'audit", async () => {
-    const org = await createOrg("GPS audit");
-    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 500), locationAgeSeconds: 400 });
-    await sql("update public.drivers set online_since = now() - interval '1 hour' where id = $1", [d.id]);
-    const before = await sql("select count(*)::int as n from public.audit_logs where entity_id = $1", [d.id]);
-    await sql("select private.watch_driver_gps()");
-    const [x] = await sql("select gps_ping_at is not null as pinged, gps_lost_notified_at is not null as warned from public.drivers where id = $1", [d.id]);
-    expect(x).toEqual({ pinged: true, warned: true });
-    const after = await sql("select count(*)::int as n from public.audit_logs where entity_id = $1", [d.id]);
-    expect(after[0].n).toBe(before[0].n);
+  it("signe de vie : réservé au chauffeur connecté", async () => {
+    const org = await createOrg("Signe de vie");
+    const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 500) });
+    await sql("update public.drivers set last_seen_at = now() - interval '10 minutes' where id = $1", [d.id]);
+    const [r] = await as({ sub: d.userId }, (q) => q("select public.driver_heartbeat() as r"));
+    expect(r.r).toEqual({ ok: true, presence: "available" });
+    const [row] = await sql("select last_seen_at > now() - interval '5 seconds' as fresh from public.drivers where id = $1", [d.id]);
+    expect(row.fresh).toBe(true);
+    await expect(as({ sub: org.ownerId }, (q) => q("select public.driver_heartbeat()"))).rejects.toThrow(/FORBIDDEN/);
   });
 
   it("après « Relancer » (chauffeur retiré), personne jusqu'à 16 km : « Aucun chauffeur disponible » + explication", async () => {

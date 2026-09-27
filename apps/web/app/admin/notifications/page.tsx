@@ -11,10 +11,9 @@ export const dynamic = "force-dynamic";
 export default async function AdminNotificationsPage() {
   const session = await requireSuperAdmin();
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
-  // Réveils GPS silencieux (location_ping) : techniques, jamais affichés au chauffeur — hors de cette supervision
   const [{ data: recent }, { data: last24 }, { data: orgs }] = await Promise.all([
-    session.supabase.from("notifications").select("id, organization_id, type, title, body, status, attempts, last_error, provider, created_at, sent_at").neq("type", "location_ping").order("created_at", { ascending: false }).limit(120),
-    session.supabase.from("notifications").select("status").neq("type", "location_ping").gte("created_at", since),
+    session.supabase.from("notifications").select("id, organization_id, type, title, body, status, attempts, last_error, provider, created_at, sent_at").order("created_at", { ascending: false }).limit(120),
+    session.supabase.from("notifications").select("status").gte("created_at", since),
     session.supabase.from("organizations").select("id, name"),
   ]);
   const name = new Map((orgs ?? []).map((o) => [o.id, o.name]));

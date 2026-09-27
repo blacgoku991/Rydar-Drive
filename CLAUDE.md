@@ -21,7 +21,7 @@ Sources de course : dashboard rattacheur | API `POST /api/v1/rides` (API key →
 - Dispatch en PL/pgSQL : trigger AFTER INSERT rides → `private.start_dispatch`. Instantané = pickup_at ≤ now + `instant_threshold_minutes`.
   Instantané : vagues rayons `dispatch_radii_m` {4000,8000,12000,16000} (migr. 1500), `offer_timeout_seconds`, ST_DWithin sur `driver_locations.location` (geography), filtres org + presence='available' + position fraîche (`private.dispatch_location_window`) + catégorie compatible + places.
   STRICT (mig 003200) : une vague par délai même vide ; relance `dispatch_retry_radii_m` {4000,8000} (sans réponse re-sonnés « COURSE TOUJOURS DISPONIBLE ») ; fin de séquence → NO_DRIVER_FOUND + `dispatch.no_driver` + explication ; `max_search_seconds` inutilisé.
-  Position en direct seulement (mig 003300 : fenêtre = location_max_age_seconds) ; jamais de hors ligne automatique.
+  Position en direct seulement (mig 003300 : fenêtre = location_max_age_seconds) ; app fermée → hors ligne (003400).
   Planifiée : offre à toute la flotte compatible ; si non attribuée à T-`scheduled_dispatch_lead_minutes` → bascule dispatch géo. Rappels {1440,180,60,30} min → notifications planifiées.
 - Accept atomique `accept_ride_offer(offer_id)` : `SELECT … FOR UPDATE` ride + CAS (`driver_id is null and status in (SEARCHING_DRIVER,OFFERED)`) + index unique partiel `ride_assignments(ride_id) where is_active`. Perdant → `RIDE_ALREADY_ASSIGNED` « Course déjà attribuée. »
 - Journal : `ride_events` (category timeline|dispatch, level, message FR, data jsonb). `ride_status_history` via trigger.
@@ -165,14 +165,16 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [x] Super admin : effectifs partout (/admin) + carte en direct des chauffeurs en ligne par organisation (`/admin/carte`, `/api/admin/live`)
 - [x] App chauffeur : guidage dans l'app (voir Retours terrain) ; véhicule accroché au tracé (`snapToTrack`) ; sens du véhicule sur le point
   (faisceau hors guidage, flèche en guidage, boussole à l'arrêt `watchHeadingAsync`)
-- [x] Dispatch strict (mig 003200) + position EN DIRECT h24 (mig 003300), 233 tests DB : vagues 4→8→12→16 km une par délai,
-  relance 4→8 km, alerte « personne n'a pris » ; dispatch sur position fraîche SEULEMENT (`location_max_age_seconds`, pas de
-  « dernière position ») ; chauffeur JAMAIS retiré (plus de hors ligne automatique) ; `private.watch_driver_gps()` (worker 30 s) →
-  push SILENCIEUX `location_ping` à 90 s puis toutes les 20 min, prio normal, 1 essai, périmé 1 min (worker `isSilent` : Expo contentAvailable iOS « normal » /
-  Android « high », FCM data-only, APNs background prio 5), `gps_lost` visible au-delà de la fraîcheur ; app : `location.ts`
-  (trackingState on/off/unknown, battement porté par la tâche GPS, jamais de point > 2 min, `wakeTracking`), tâche
-  `rydar-wake` (notifications.ts), iPhone « Toujours » EXIGÉ pour passer en ligne, Android fenêtre batterie (`lib/battery.ts`,
-  expo-intent-launcher). Revue 003200 corrigée dans 003300 (audit, relance après « Relancer », refus tardif).
+- [x] Dispatch strict (mig 003200) + position EN DIRECT (mig 003300 → 003400), 233 tests DB : vagues 4→8→12→16 km une par
+  délai, relance 4→8 km, alerte « personne n'a pris » ; dispatch sur position fraîche SEULEMENT (`location_max_age_seconds`).
+  RÈGLE UTILISATEUR : app OUVERTE (arrière-plan, verrouillé, autre app) = en ligne + GPS en direct ; app FERMÉE = hors ligne,
+  sans notification. `private.watch_driver_gps()` (worker 30 s) : ni position ni `driver_heartbeat()` depuis 3 min → offline
+  (15 min si app < 1.1.0, `driver_devices.app_version` ; jamais en course) ; fraîcheur ≥ 2 min ; housekeeping ne met plus jamais hors ligne ; réveils silencieux / « POSITION NON REÇUE » abandonnés
+  (colonnes gps_* supprimées). App `location.ts` : trackingState on/off/unknown (relance sans interface = arrêt), battement
+  porté par la tâche GPS + heartbeat sans point, jamais de point > 2 min, arrêt si presence=offline ou SIGNED_OUT,
+  `killServiceOnDestroy: true` ; `supabase.ts` : écriture de session en 3 temps (clé .next), délai 20 s (hors storage) ;
+  `api.ts` rpc : nouvel essai après JWT expiré ; Android : fenêtre batterie (`lib/battery.ts`, expo-intent-launcher).
+  Revue 003200 corrigée dans 003300 (audit, relance après « Relancer », refus tardif).
 - **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;
   aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
   lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;
@@ -190,7 +192,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   si le serveur répond une erreur) ; erreurs serveur : `fieldErrors(err)` + `describeError(err, LABELS)` (« Champ : message »).
 - Supabase hébergé : `postgres` NON super-utilisateur (BYPASSRLS) ; `auth.*`, `storage.*`, `realtime.messages` appartiennent
   aux services → seulement CREATE/DROP POLICY (supautils policy_grants), trigger sur auth.users, DML ; jamais ALTER TABLE/fonction dessus.
-- RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_register_device, driver_home, driver_offers ; centrale : driver_settlements, driver_declare_payment, driver_account_state.
+- RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_heartbeat, driver_register_device, driver_home, driver_offers ; centrale : driver_settlements, driver_declare_payment, driver_account_state.
 - RPC dashboard : cancel_ride, assign_ride, redispatch_ride, reassign_ride, acknowledge_ride_alert, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
   Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
   ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application, admin_centrale_overview ;
@@ -198,4 +200,4 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - Frais plateforme : centrale org_platform_status, org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
   super admin admin_platform_overview, admin_platform_account ; service role svc_platform_confirm/reject/reopen/record_payment,
   svc_platform_adjust, svc_platform_review_entry, svc_platform_remind, svc_platform_terms, svc_platform_billing_update.
-- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.watch_driver_gps(), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.
+- Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.watch_driver_gps() (app fermée → hors ligne), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.

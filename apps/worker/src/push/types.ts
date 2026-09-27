@@ -36,18 +36,6 @@ export const DEFAULT_CHANNEL = "default";
 /** Types liés à une course en cours (canal « ride-updates »). */
 const RIDE_UPDATE_TYPES = new Set(["ride_cancelled", "ride_assigned", "ride_unassigned", "flight_update"]);
 /**
- * Chauffeur en ligne injoignable : position non reçue depuis 5 min, puis passé hors ligne (30 min).
- * Il doit rouvrir l'app pour continuer à recevoir les courses → canal « ride-updates », time-sensitive.
- */
-const PRESENCE_TYPES = new Set(["gps_lost", "driver_offline"]);
-
-/**
- * Réveil GPS (private.watch_driver_gps) : push SILENCIEUX — ni titre, ni son, ni bannière. Il réveille l'app
- * (tâche de notification en arrière-plan) qui relance le suivi et renvoie une position fraîche.
- * iOS : content-available, priorité 5 (exigée par Apple pour un réveil) ; Android : message « data only » HIGH.
- */
-export const isSilent = (payload: PushPayload) => payload.type === "location_ping";
-/**
  * Événements vol qui déplacent la prise en charge ou l'annulent (data.event, cf. apply_flight_status) :
  * le chauffeur doit agir → time-sensitive. Atterrissage, terminal, retard au départ (heure inchangée) : « active ».
  */
@@ -67,8 +55,6 @@ export function isUrgent(payload: PushPayload) {
     case "ride_assigned":
     case "ride_unassigned":
     case "chat_message":
-    case "gps_lost":
-    case "driver_offline":
       return true;
     case "flight_update":
       return urgentFlight(payload.data);
@@ -82,7 +68,7 @@ function channelFor(type: string) {
   if (type === "ride_offer_scheduled") return SCHEDULED_OFFER_CHANNEL;
   if (type === "chat_message") return MESSAGES_CHANNEL;
   if (type === "fleet_report") return FLEET_REPORTS_CHANNEL;
-  if (RIDE_UPDATE_TYPES.has(type) || PRESENCE_TYPES.has(type)) return RIDE_UPDATES_CHANNEL;
+  if (RIDE_UPDATE_TYPES.has(type)) return RIDE_UPDATES_CHANNEL;
   return DEFAULT_CHANNEL; // documents (document_expiring / document_expired / document_reviewed), rappels…
 }
 
@@ -92,7 +78,6 @@ export function threadId(payload: PushPayload): string {
   if (payload.type === "chat_message") return `chat:${String(d.thread ?? "dispatch")}`;
   if (payload.type === "fleet_report") return "fleet-reports";
   if (payload.type.startsWith("document_")) return "documents";
-  if (PRESENCE_TYPES.has(payload.type)) return "presence";
   return String(d.ride_id ?? payload.type);
 }
 
@@ -120,10 +105,6 @@ function ttlSeconds(payload: PushPayload, now: number) {
   if (payload.type === "fleet_report") return offerTtlSeconds(payload.data.expires_at, now, 3600, 3600);
   // échéance / validation de document : encore utile le lendemain (téléphone éteint la nuit)
   if (payload.type.startsWith("document_")) return 86_400;
-  // position non reçue : sans intérêt une fois la coupure passée (un nouveau passage alerte de nouveau)
-  if (payload.type === "gps_lost") return 900;
-  // réveil GPS : un nouveau suit s'il n'a pas suffi ; inutile de livrer un réveil périmé
-  if (isSilent(payload)) return 60;
   return 3600;
 }
 

@@ -116,7 +116,7 @@ Tâches périodiques :
 | notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s |
 | `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | ménage (dont messages de plus de 180 jours) ; ne met jamais un chauffeur hors ligne |
 | `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |
-| `private.watch_driver_gps()` | 30 s (`WATCH_DRIVER_GPS_MS`) | chauffeur en ligne sans position depuis 90 s : réveil silencieux de l'app (puis toutes les 20 min) ; au-delà de la fraîcheur réglée : « POSITION NON REÇUE » (une fois par coupure) |
+| `private.watch_driver_gps()` | 30 s (`WATCH_DRIVER_GPS_MS`) | application fermée (ni position ni signe de vie depuis 3 min) : chauffeur hors ligne, sans notification (jamais en course) |
 | `private.document_reminders()` | au démarrage puis 6 h (`DOCUMENT_REMINDERS_MS`) | documents échus, rappels d'échéance (30 j, 7 j, jour J), jamais avant 9 h locale |
 | `private.settlement_reminders()` | au démarrage puis 15 min (`SETTLEMENT_REMINDERS_MS`) | mode centrale : relance des commissions en retard (une par chauffeur toutes les 24 h, 3 au plus) |
 | vols : `private.flights_to_check(n)` → fournisseur → `private.apply_flight_status(...)` | 60 s (`FLIGHT_POLL_MS`) | horaires des vols, prise en charge recalée, notification au chauffeur |

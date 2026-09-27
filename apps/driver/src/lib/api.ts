@@ -31,8 +31,16 @@ export function errorText(raw: string | null | undefined, fallback: string) {
   return fallback;
 }
 
+/** Jeton refusé par l'API (expiré pendant la requête, horloge du téléphone en retard). */
+const jwtRejected = (e: { code?: string; message?: string }) =>
+  e.code === "PGRST301" || e.code === "PGRST303" || /JWT expired/i.test(e.message ?? "");
+
 async function rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
-  const { data, error } = await supabase.rpc(fn, args ?? {});
+  let { data, error } = await supabase.rpc(fn, args ?? {});
+  // Jeton expiré : renouvelé puis UN nouvel essai (sinon chaque envoi échouerait jusqu'au renouvellement suivant)
+  if (error && jwtRejected(error) && !(await supabase.auth.refreshSession()).error) {
+    ({ data, error } = await supabase.rpc(fn, args ?? {}));
+  }
   if (error) throw new ApiError(errorText(error.message, "Connexion impossible. Réessayez."), extractErrorCode(error.message));
   return data as T;
 }
@@ -164,6 +172,8 @@ export const api = {
   accept: (offerId: string) => rpc<AcceptResult>("accept_ride_offer", { p_offer_id: offerId }),
   decline: (offerId: string) => rpc<RpcResult>("decline_ride_offer", { p_offer_id: offerId }),
   updateStatus: (rideId: string, status: RideStatus) => rpc<RpcResult>("driver_update_ride_status", { p_ride_id: rideId, p_status: status }),
+  /** Signe de vie sans position (app ouverte, pas de point GPS) : le chauffeur reste en ligne. */
+  heartbeat: () => rpc<{ ok: boolean; presence: string }>("driver_heartbeat"),
   location: (p: { lat: number; lng: number; heading?: number | null; speed?: number | null; accuracy?: number | null; battery?: number | null; recordedAt?: string }) =>
     rpc<{ ok: boolean; next_interval_s: number; presence: string }>("update_driver_location", {
       p_lat: p.lat,

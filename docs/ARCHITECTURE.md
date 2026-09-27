@@ -34,7 +34,7 @@ Les paramètres de dispatch sont réglables par organisation (`organization_sett
 | `dispatch_retry_radii_m` | `{4000, 8000}` | Relance quand personne n'a accepté après le dernier rayon (`{}` : pas de relance) |
 | `offer_timeout_seconds` | 30 | Durée d'une vague (et d'une offre instantanée) |
 | `max_search_seconds` | 300 | N'est plus utilisé par le dispatch GPS (la séquence de vagues fixe la fin) |
-| `location_max_age_seconds` | 180 | Position en direct : au-delà, le chauffeur n'est pas sollicité (l'app est réveillée, puis il est prévenu) |
+| `location_max_age_seconds` | 180 | Position en direct : au-delà (2 min au moins), le chauffeur n'est pas sollicité |
 | `max_offers_per_wave` | 25 | Chauffeurs notifiés au plus par vague |
 | `instant_threshold_minutes` | 45 | Prise en charge ≤ maintenant + 45 min : course **instantanée**, sinon **planifiée** |
 | `scheduled_dispatch_lead_minutes` | 60 | Planifiée encore libre à T-60 min : bascule en recherche GPS |
@@ -87,12 +87,11 @@ Toutes les 2 s, le worker appelle `private.dispatch_tick()`. Cette fonction verr
 
 Séquence par défaut : **4 → 8 → 12 → 16 km**, puis **relance 4 → 8 km** (`dispatch_retry_radii_m`) où les chauffeurs restés sans réponse sont re-sonnés (« COURSE TOUJOURS DISPONIBLE ») ; un refus ou un retrait par la centrale n'est jamais re-sonné. Après la dernière vague, les offres sont fermées, la course passe à `NO_DRIVER_FOUND` et le dispatch est alerté (`dispatch.no_driver`, son + notification navigateur), avec l'explication des chauffeurs en ligne qui n'ont pas pris la course. « Relancer » et la bascule d'une planifiée repartent de 4 km.
 
-Position en direct h24 (migrations 003200 / 003300), comme les apps VTC :
+Position en direct (migrations 003200 → 003400) — règle : **app ouverte = en ligne et position en direct, app fermée = hors ligne** :
 
-- **App** (`apps/driver/src/lib/location.ts`) : tâche GPS de fond (`startLocationUpdatesAsync`, précision maximale, aucun filtre de distance, jamais de pause, pas de regroupement), service de premier plan Android « EN LIGNE » (un point toutes les 5 s), battement d'au moins une position fraîche par minute même immobile (porté par le flux GPS, minuterie en plus sur iPhone), jamais de position de plus de 2 min envoyée. iPhone : position « Toujours » exigée pour passer en ligne (relance de l'app par le système). Android : fenêtre « toujours s'exécuter en arrière-plan » (économie de batterie).
-- **Réveil** : position non reçue depuis 90 s → push SILENCIEUX `location_ping` (ni titre ni son ; iOS content-available priorité 5, Android data-only HIGH) → tâche de notification de l'app (`rydar-wake`) qui relance le GPS et envoie une position fraîche ; puis toutes les 20 min (Apple : 2 à 3 réveils par heure au plus), priorité normale, un seul essai (`private.watch_driver_gps`, worker 30 s).
-- **Alerte** : au-delà de `location_max_age_seconds`, push « POSITION NON REÇUE » (une fois par coupure : app fermée à la main).
-- Le chauffeur n'est **jamais retiré** : plus de passage hors ligne automatique ; il reste en ligne jusqu'à ce qu'il se mette hors ligne.
+- **App ouverte** (premier plan, arrière-plan, téléphone verrouillé, autre application) : tâche GPS de fond (`apps/driver/src/lib/location.ts`, `startLocationUpdatesAsync` : précision maximale, aucun filtre de distance, jamais de pause, pas de regroupement), service de premier plan Android « EN LIGNE » (un point toutes les 5 s), au moins une position fraîche par minute même immobile (battement porté par le flux GPS, minuterie en plus sur iPhone), jamais de position de plus de 2 min ; sans point GPS (sous-sol), signe de vie `driver_heartbeat()`. Android : fenêtre « toujours s'exécuter en arrière-plan » (économie de batterie) au passage en ligne.
+- **App fermée** (balayée, arrêtée par le système) : service Android arrêté avec l'app (`killServiceOnDestroy`), une relance sans interface ne reprend pas le suivi ; ni position ni signe de vie depuis 3 min (15 min pour les versions de l'app antérieures à 1.1.0, sans battement) → **hors ligne en silence** (`private.watch_driver_gps`, worker 30 s), offres en attente closes. Aucune notification. Un chauffeur en course n'est jamais touché.
+- Le ménage (`private.housekeeping`) ne met jamais un chauffeur hors ligne.
 
 ### 3. Course planifiée : offre à la flotte
 

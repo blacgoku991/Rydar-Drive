@@ -57,17 +57,14 @@ async function dispatchTick() {
 }
 
 /**
- * Toutes les 30 s : chauffeur en ligne dont la position n'arrive plus → réveil silencieux de l'app (90 s, puis
- * toutes les 5 min), et « POSITION NON REÇUE » au-delà de la fraîcheur réglée (une fois par coupure).
+ * Toutes les 30 s : application fermée (ni position ni signe de vie depuis 3 min) → chauffeur hors ligne, sans
+ * notification. App ouverte, même en arrière-plan ou téléphone verrouillé, elle envoie sa position en continu.
  */
 const watchDriverGps = single("watchDriverGps", async () => {
   try {
-    const { rows } = await pool.query<{ r: { location_ping?: number; gps_lost?: number } }>("select private.watch_driver_gps() as r");
+    const { rows } = await pool.query<{ r: { offline?: number } }>("select private.watch_driver_gps() as r");
     const r = rows[0]?.r ?? {};
-    if (r.location_ping || r.gps_lost) {
-      log("info", "driver gps lost", r);
-      run(processNotifications);
-    }
+    if (r.offline) log("info", "drivers offline (app closed)", r);
   } catch (error) {
     log("error", "watch driver gps failed", { error: (error as Error).message });
   }

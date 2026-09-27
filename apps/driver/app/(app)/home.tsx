@@ -26,29 +26,17 @@ const NBSP = " ";
 let reachHintShown = false;
 
 /**
- * Android, chauffeur passé EN LIGNE : ce qui empêcherait sa position de rester en direct téléphone verrouillé ou
- * dans une autre app — économie de batterie (le système coupe l'app), position « Toujours autoriser » absente.
- * (iPhone : « Toujours » est exigé pour passer en ligne, voir driver-context.)
+ * Android, chauffeur passé EN LIGNE : l'économie de batterie peut couper l'app en arrière-plan (écran éteint,
+ * autre application) — il passerait alors hors ligne sans l'avoir voulu.
  */
-async function reachabilityHint(foregroundOnly: boolean) {
-  if (reachHintShown || Platform.OS !== "android") return;
-  if (await batteryRestricted()) {
-    reachHintShown = true;
-    Alert.alert(
-      "Restez joignable",
-      "Pour que votre position reste en direct écran éteint ou dans une autre application, autorisez Rydar Drive à fonctionner en arrière-plan sans restriction de batterie.",
-      [{ text: "Plus tard", style: "cancel" }, { text: "Autoriser", onPress: () => void requestBatteryExemption() }],
-    );
-    return;
-  }
-  if (foregroundOnly) {
-    reachHintShown = true;
-    Alert.alert(
-      "Restez joignable",
-      frTypo(`Pour que votre position reste en direct application fermée, autorisez la position « Toujours autoriser » : Réglages › Rydar Drive › Position.`),
-      [{ text: "Plus tard", style: "cancel" }, { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) }],
-    );
-  }
+async function reachabilityHint() {
+  if (reachHintShown || !(await batteryRestricted())) return;
+  reachHintShown = true;
+  Alert.alert(
+    "Restez en ligne",
+    "Pour que votre position reste en direct écran éteint ou dans une autre application, autorisez Rydar Drive à fonctionner en arrière-plan sans restriction de batterie.",
+    [{ text: "Plus tard", style: "cancel" }, { text: "Autoriser", onPress: () => void requestBatteryExemption() }],
+  );
 }
 /** Écart entre les boutons posés sur la carte et le panneau du bas. */
 const GAP = space.md;
@@ -156,15 +144,15 @@ export default function Home() {
   async function toggle() {
     if (!home) return;
     const res = await setOnline(!online);
-    if (res.code === "coarse" || res.code === "background") {
-      Alert.alert(res.code === "coarse" ? "Activez la position exacte" : `Autorisez la position «${NBSP}Toujours${NBSP}»`, frTypo(res.message ?? ""), [
+    if (res.code === "coarse") {
+      Alert.alert("Activez la position exacte", frTypo(res.message ?? ""), [
         { text: "Plus tard", style: "cancel" },
         { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
       ]);
       return;
     }
     if (!res.ok) Alert.alert("Action impossible", frTypo(res.message ?? "Réessayez."));
-    else if (!online) void reachabilityHint(res.code === "foreground-only");
+    else if (!online) void reachabilityHint();
   }
 
   const measure = useCallback(
