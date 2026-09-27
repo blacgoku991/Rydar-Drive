@@ -116,3 +116,16 @@ describe("Documents — rappel d'échéance avec un renouvellement déjà dépos
     expect(list[1].data.renewal_pending).toBe(false);
   });
 });
+
+describe("Documents — visite médicale (plus déposable dans l'application)", () => {
+  it("le rappel demande de transmettre le document à la centrale, pas de le déposer dans l'application", async () => {
+    const org = await createOrg("Audit Robustesse Médical");
+    const d = await createDriver(org);
+    const doc = await insertDoc(org, d, "medical", 5);
+    await run();
+    const [n] = await notifOf(doc);
+    expect(n.type).toBe("document_expiring");
+    expect(n.body).toMatch(/^Échéance le \d{2}\/\d{2}\/\d{4}\. Transmettez le nouveau document à votre centrale\.$/);
+    expect(n.body).not.toContain("application");
+  });
+});

@@ -161,7 +161,7 @@ function openCommissions() {
 export function alertDriverBlocked(res: { reason?: string | null; message?: string }) {
   const meta = res.reason ? DRIVER_BLOCKER_META[res.reason as keyof typeof DRIVER_BLOCKER_META] : undefined;
   const payable = res.reason !== "new_driver";
-  Alert.alert("Acceptation impossible", res.message ?? meta?.message ?? "Réglez vos commissions pour accepter des courses.", [
+  Alert.alert("Acceptation impossible", frTypo(res.message ?? meta?.message ?? "Réglez vos commissions pour accepter des courses."), [
     { text: payable ? "Plus tard" : "OK", style: "cancel" },
     ...(payable ? [{ text: "Régler mes commissions", onPress: () => router.push("/commissions") }] : []),
   ]);
