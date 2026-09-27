@@ -1,12 +1,13 @@
 import * as Application from "expo-application";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import * as TaskManager from "expo-task-manager";
 import { Platform } from "react-native";
 import { api } from "./api";
 import { isChatNotificationMuted } from "./chat-session";
 import { appConfig } from "./config";
 import { installationId } from "./device";
-import { ensureTracking } from "./location";
+import { ensureTracking, wakeTracking } from "./location";
 
 // Affichage des notifications même application ouverte (le modal d'offre prend ensuite le relais),
 // sauf un message ou un signalement qui s'affiche déjà dans le fil ouvert de l'écran Messages.
@@ -22,6 +23,40 @@ if (Platform.OS !== "web") Notifications.setNotificationHandler({
     return { shouldShowBanner: !muted, shouldShowList: !muted, shouldPlaySound: !muted, shouldSetBadge: false };
   },
 });
+
+/** Réveil silencieux (worker : type « location_ping », sans titre ni son, private.watch_driver_gps). */
+export const WAKE_TASK = "rydar-wake";
+
+/** Type métier d'une notification reçue par la tâche : Android « dataString » (JSON), iOS « body » (objet). */
+function taskPayloadType(payload: unknown): string | null {
+  const o = (payload ?? {}) as Record<string, unknown>;
+  const inner = (o.data ?? {}) as Record<string, unknown>;
+  for (const c of [inner.dataString, o.dataString, inner.body, o.body, inner, o]) {
+    let v: unknown = c;
+    if (typeof c === "string") {
+      try {
+        v = JSON.parse(c);
+      } catch {
+        continue;
+      }
+    }
+    const type = (v as Record<string, unknown> | null)?.type;
+    if (typeof type === "string") return type;
+  }
+  return null;
+}
+
+// Tâche de notification en arrière-plan : exécutée app ouverte, en arrière-plan ou relancée sans interface
+// (Android : message data-only ; iPhone : content-available, sauf app fermée à la main). Définie et enregistrée
+// au chargement du module (importé en tête de index.ts). Réveil GPS : suivi relancé, position fraîche envoyée.
+if (Platform.OS !== "web") {
+  TaskManager.defineTask(WAKE_TASK, async ({ data }) => {
+    if (taskPayloadType(data) !== "location_ping") return Notifications.BackgroundNotificationTaskResult.NoData;
+    await wakeTracking().catch(() => null);
+    return Notifications.BackgroundNotificationTaskResult.NewData;
+  });
+  void Notifications.registerTaskAsync(WAKE_TASK).catch(() => null);
+}
 
 /** Canal Android des offres instantanées (worker : channelId « ride-offers-v2 », son « ride_offer_v2 ») ;
  *  les planifiées arrivent sur « ride-offers-scheduled » (son « ride_offer »). */

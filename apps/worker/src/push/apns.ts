@@ -1,6 +1,6 @@
 import { connect, type ClientHttp2Session } from "node:http2";
 import { SignJWT, importPKCS8 } from "jose";
-import { appData, presentation, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
+import { appData, isSilent, presentation, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
 
 type ApnsConfig = { key: string; keyId: string; teamId: string; bundleId: string; production: boolean };
 
@@ -8,8 +8,10 @@ type ApnsConfig = { key: string; keyId: string; teamId: string; bundleId: string
  * Charge utile APNs au format lu par expo-notifications iOS : les données de l'app sous
  * « body » (userInfo["body"] → content.data), la présentation dans « aps ».
  */
-export function apnsPayload(payload: PushPayload, now = Date.now()) {
+export function apnsPayload(payload: PushPayload, now = Date.now()): { aps: Record<string, unknown>; body: Record<string, unknown> } {
   const p = presentation(payload, now);
+  // Réveil silencieux : content-available seul (ni alerte, ni son, ni badge)
+  if (isSilent(payload)) return { aps: { "content-available": 1 }, body: appData(payload) };
   return {
     aps: {
       alert: { title: payload.title, body: payload.body },
@@ -80,8 +82,9 @@ export function apnsProvider(cfg: ApnsConfig): PushProvider {
           const res = await post(t.token, {
             authorization: `bearer ${auth}`,
             "apns-topic": cfg.bundleId,
-            "apns-push-type": "alert",
-            "apns-priority": payload.priority === "high" ? "10" : "5",
+            // Réveil silencieux : type « background » et priorité 5 (exigés par Apple)
+            "apns-push-type": isSilent(payload) ? "background" : "alert",
+            "apns-priority": !isSilent(payload) && payload.priority === "high" ? "10" : "5",
             "apns-expiration": String(Math.floor(Date.now() / 1000) + p.ttlSeconds),
           }, body);
           if (res.status === 200) return { token: t.token, ok: true, messageId: res.id };

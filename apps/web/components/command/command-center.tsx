@@ -160,7 +160,7 @@ export function CommandCenter({
   orgName: string;
   pricing: PricingRule[];
   offerTimeout: number;
-  /** Au-delà, la position est affichée comme ancienne (le dispatch la garde tant que le chauffeur est en ligne). */
+  /** Au-delà, la position n'est plus prise en compte par le dispatch (réglage de l'organisation). */
   locationMaxAgeS?: number;
   /** Nombre de vagues du premier passage : au-delà, la recherche est en relance */
   firstPassWaves?: number;

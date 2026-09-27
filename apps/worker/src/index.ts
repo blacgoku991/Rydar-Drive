@@ -56,12 +56,15 @@ async function dispatchTick() {
   }
 }
 
-/** Toutes les minutes : chauffeurs en ligne dont la position n'arrive plus depuis 5 min → push « POSITION NON REÇUE ». */
+/**
+ * Toutes les 30 s : chauffeur en ligne dont la position n'arrive plus → réveil silencieux de l'app (90 s, puis
+ * toutes les 5 min), et « POSITION NON REÇUE » au-delà de la fraîcheur réglée (une fois par coupure).
+ */
 const watchDriverGps = single("watchDriverGps", async () => {
   try {
-    const { rows } = await pool.query<{ r: { gps_lost?: number } }>("select private.watch_driver_gps() as r");
+    const { rows } = await pool.query<{ r: { location_ping?: number; gps_lost?: number } }>("select private.watch_driver_gps() as r");
     const r = rows[0]?.r ?? {};
-    if (r.gps_lost) {
+    if (r.location_ping || r.gps_lost) {
       log("info", "driver gps lost", r);
       run(processNotifications);
     }

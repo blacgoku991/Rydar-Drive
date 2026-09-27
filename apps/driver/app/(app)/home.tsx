@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   DRIVER_FLOW, FLEET_REPORT_META, RIDE_STATUS_META, formatPrice, formatRideDate, haversine, shortAddress, type Ride, type RideStatus,
 } from "@rydar/shared";
-import * as Battery from "expo-battery";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
@@ -16,6 +15,7 @@ import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { useNow } from "@/hooks/use-now";
 import { api } from "@/lib/api";
+import { batteryRestricted, requestBatteryExemption } from "@/lib/battery";
 import { useAppEvent } from "@/lib/events";
 import { colors, control, mono, overlay, presenceColor, radius, space, type, weight } from "@/theme";
 
@@ -26,28 +26,27 @@ const NBSP = " ";
 let reachHintShown = false;
 
 /**
- * Chauffeur passé EN LIGNE : ce qui l'empêcherait de recevoir les courses téléphone verrouillé ou dans une autre
- * app — position « Pendant l'utilisation » seulement (iPhone : plus rien si l'app est fermée), économie de
- * batterie Android (le système coupe l'app en arrière-plan).
+ * Android, chauffeur passé EN LIGNE : ce qui empêcherait sa position de rester en direct téléphone verrouillé ou
+ * dans une autre app — économie de batterie (le système coupe l'app), position « Toujours autoriser » absente.
+ * (iPhone : « Toujours » est exigé pour passer en ligne, voir driver-context.)
  */
 async function reachabilityHint(foregroundOnly: boolean) {
-  if (reachHintShown || Platform.OS === "web") return;
-  const open = { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) };
+  if (reachHintShown || Platform.OS !== "android") return;
+  if (await batteryRestricted()) {
+    reachHintShown = true;
+    Alert.alert(
+      "Restez joignable",
+      "Pour que votre position reste en direct écran éteint ou dans une autre application, autorisez Rydar Drive à fonctionner en arrière-plan sans restriction de batterie.",
+      [{ text: "Plus tard", style: "cancel" }, { text: "Autoriser", onPress: () => void requestBatteryExemption() }],
+    );
+    return;
+  }
   if (foregroundOnly) {
     reachHintShown = true;
     Alert.alert(
       "Restez joignable",
-      frTypo(`Pour recevoir les courses même application fermée, autorisez la position «${NBSP}Toujours${NBSP}» : Réglages → Rydar Drive → Position.`),
-      [{ text: "Plus tard", style: "cancel" }, open],
-    );
-    return;
-  }
-  if (Platform.OS === "android" && (await Battery.isBatteryOptimizationEnabledAsync().catch(() => false))) {
-    reachHintShown = true;
-    Alert.alert(
-      "Restez joignable",
-      frTypo(`Pour recevoir les courses écran éteint ou dans une autre application, réglez la batterie de Rydar Drive sur «${NBSP}Non restreinte${NBSP}» : Réglages → Batterie.`),
-      [{ text: "Plus tard", style: "cancel" }, open],
+      frTypo(`Pour que votre position reste en direct application fermée, autorisez la position « Toujours autoriser » : Réglages › Rydar Drive › Position.`),
+      [{ text: "Plus tard", style: "cancel" }, { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) }],
     );
   }
 }
@@ -157,8 +156,8 @@ export default function Home() {
   async function toggle() {
     if (!home) return;
     const res = await setOnline(!online);
-    if (res.code === "coarse") {
-      Alert.alert("Activez la position exacte", frTypo(res.message ?? ""), [
+    if (res.code === "coarse" || res.code === "background") {
+      Alert.alert(res.code === "coarse" ? "Activez la position exacte" : `Autorisez la position «${NBSP}Toujours${NBSP}»`, frTypo(res.message ?? ""), [
         { text: "Plus tard", style: "cancel" },
         { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
       ]);

@@ -33,7 +33,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     db.from("subscriptions").select("*").eq("organization_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     db.from("drivers").select("id, first_name, last_name, number, presence, status, location:driver_locations(updated_at)").eq("organization_id", id).neq("presence", "offline").order("number"),
     db.from("ride_events").select("id, level, message, created_at").eq("organization_id", id).in("level", ["warning", "error"]).gte("created_at", since).order("id", { ascending: false }).limit(20),
-    db.from("notifications").select("id, type, title, status, last_error, created_at").eq("organization_id", id).order("created_at", { ascending: false }).limit(12),
+    db.from("notifications").select("id, type, title, status, last_error, created_at").eq("organization_id", id).neq("type", "location_ping").order("created_at", { ascending: false }).limit(12),
     db.from("organization_users").select("id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)").eq("organization_id", id),
     db.from("api_keys").select("id", { count: "exact", head: true }).eq("organization_id", id).is("revoked_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("application_status", "pending"),

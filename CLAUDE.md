@@ -19,8 +19,9 @@ Sources de course : dashboard rattacheur | API `POST /api/v1/rides` (API key →
 - Super admin : lecture via RLS, écritures via routes serveur (service role) + audit_logs.
 - Écritures sensibles via RPC (status, assign, cancel, accept, location) ; colonnes UPDATE restreintes par GRANT.
 - Dispatch en PL/pgSQL : trigger AFTER INSERT rides → `private.start_dispatch`. Instantané = pickup_at ≤ now + `instant_threshold_minutes`.
-  Instantané : vagues rayons `dispatch_radii_m` {4000,8000,12000,16000} (migr. 1500), `offer_timeout_seconds`, ST_DWithin sur `driver_locations.location` (geography), filtres org + presence='available' + position < 30 min (`private.dispatch_location_window`) + catégorie compatible + places.
+  Instantané : vagues rayons `dispatch_radii_m` {4000,8000,12000,16000} (migr. 1500), `offer_timeout_seconds`, ST_DWithin sur `driver_locations.location` (geography), filtres org + presence='available' + position fraîche (`private.dispatch_location_window`) + catégorie compatible + places.
   STRICT (mig 003200) : une vague par délai même vide ; relance `dispatch_retry_radii_m` {4000,8000} (sans réponse re-sonnés « COURSE TOUJOURS DISPONIBLE ») ; fin de séquence → NO_DRIVER_FOUND + `dispatch.no_driver` + explication ; `max_search_seconds` inutilisé.
+  Position en direct seulement (mig 003300 : fenêtre = location_max_age_seconds) ; jamais de hors ligne automatique.
   Planifiée : offre à toute la flotte compatible ; si non attribuée à T-`scheduled_dispatch_lead_minutes` → bascule dispatch géo. Rappels {1440,180,60,30} min → notifications planifiées.
 - Accept atomique `accept_ride_offer(offer_id)` : `SELECT … FOR UPDATE` ride + CAS (`driver_id is null and status in (SEARCHING_DRIVER,OFFERED)`) + index unique partiel `ride_assignments(ride_id) where is_active`. Perdant → `RIDE_ALREADY_ASSIGNED` « Course déjà attribuée. »
 - Journal : `ride_events` (category timeline|dispatch, level, message FR, data jsonb). `ride_status_history` via trigger.
@@ -164,10 +165,14 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - [x] Super admin : effectifs partout (/admin) + carte en direct des chauffeurs en ligne par organisation (`/admin/carte`, `/api/admin/live`)
 - [x] App chauffeur : guidage dans l'app (voir Retours terrain) ; véhicule accroché au tracé (`snapToTrack`) ; sens du véhicule sur le point
   (faisceau hors guidage, flèche en guidage, boussole à l'arrêt `watchHeadingAsync`)
-- [x] Dispatch strict + chauffeurs joignables h24 (mig 003200, 229 tests DB) : vagues 4→8→12→16 km une par délai, relance 4→8 km,
-  alerte « personne n'a pris » ; chauffeur EN LIGNE sollicité sur sa dernière position (30 min) ; `private.watch_driver_gps()` (worker 60 s)
-  → push `gps_lost` à 5 min ; housekeeping → hors ligne à 30 min + push `driver_offline` ; app : battement GPS 60 s (`location.ts`),
-  `ensureTracking()` au retour au premier plan / sur `gps_lost`, conseils « Toujours » (iOS) / batterie « Non restreinte » (Android)
+- [x] Dispatch strict (mig 003200) + position EN DIRECT h24 (mig 003300), 233 tests DB : vagues 4→8→12→16 km une par délai,
+  relance 4→8 km, alerte « personne n'a pris » ; dispatch sur position fraîche SEULEMENT (`location_max_age_seconds`, pas de
+  « dernière position ») ; chauffeur JAMAIS retiré (plus de hors ligne automatique) ; `private.watch_driver_gps()` (worker 30 s) →
+  push SILENCIEUX `location_ping` à 90 s puis toutes les 20 min, prio normal, 1 essai, périmé 1 min (worker `isSilent` : Expo contentAvailable iOS « normal » /
+  Android « high », FCM data-only, APNs background prio 5), `gps_lost` visible au-delà de la fraîcheur ; app : `location.ts`
+  (trackingState on/off/unknown, battement porté par la tâche GPS, jamais de point > 2 min, `wakeTracking`), tâche
+  `rydar-wake` (notifications.ts), iPhone « Toujours » EXIGÉ pour passer en ligne, Android fenêtre batterie (`lib/battery.ts`,
+  expo-intent-launcher). Revue 003200 corrigée dans 003300 (audit, relance après « Relancer », refus tardif).
 - **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;
   aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
   lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;

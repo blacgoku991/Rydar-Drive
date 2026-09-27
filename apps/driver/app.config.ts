@@ -48,6 +48,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "POST_NOTIFICATIONS",
       "VIBRATE",
       "WAKE_LOCK",
+      // Fenêtre « toujours s'exécuter en arrière-plan » : position en direct écran éteint (src/lib/battery.ts)
+      "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
     ],
     intentFilters: LINK_DOMAIN
       ? [{ action: "VIEW", autoVerify: true, data: [{ scheme: "https", host: LINK_DOMAIN, pathPrefix: "/rejoindre/" }], category: ["BROWSABLE", "DEFAULT"] }]
@@ -74,6 +76,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         color: "#C8F03C",
         // v2 : sonnerie ~10 s (canal Android « ride-offers-v2 ») ; v1 conservée (carillon court, anciens envois)
         sounds: ["./assets/sounds/ride_offer_v2.wav", "./assets/sounds/ride_offer.wav"],
+        // Réveil GPS silencieux (content-available) : mode d'arrière-plan « remote-notification »
+        enableBackgroundRemoteNotifications: true,
       },
     ],
     ["expo-splash-screen", { image: "./assets/images/splash.png", backgroundColor: "#07080B", imageWidth: 160 }],

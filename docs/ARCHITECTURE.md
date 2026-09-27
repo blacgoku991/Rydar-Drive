@@ -34,7 +34,7 @@ Les paramètres de dispatch sont réglables par organisation (`organization_sett
 | `dispatch_retry_radii_m` | `{4000, 8000}` | Relance quand personne n'a accepté après le dernier rayon (`{}` : pas de relance) |
 | `offer_timeout_seconds` | 30 | Durée d'une vague (et d'une offre instantanée) |
 | `max_search_seconds` | 300 | N'est plus utilisé par le dispatch GPS (la séquence de vagues fixe la fin) |
-| `location_max_age_seconds` | 180 | Position « récente » (affichage). Le dispatch garde la dernière position d'un chauffeur en ligne 30 min au moins |
+| `location_max_age_seconds` | 180 | Position en direct : au-delà, le chauffeur n'est pas sollicité (l'app est réveillée, puis il est prévenu) |
 | `max_offers_per_wave` | 25 | Chauffeurs notifiés au plus par vague |
 | `instant_threshold_minutes` | 45 | Prise en charge ≤ maintenant + 45 min : course **instantanée**, sinon **planifiée** |
 | `scheduled_dispatch_lead_minutes` | 60 | Planifiée encore libre à T-60 min : bascule en recherche GPS |
@@ -68,7 +68,7 @@ Qu'elle vienne de l'API, du dashboard ou du mini-site, une course passe par le t
 
 - ils appartiennent à la **même organisation** ;
 - ils sont `active` et `available` ;
-- ils sont EN LIGNE : leur dernière position a moins de 30 min (`private.dispatch_location_window`, ou `location_max_age_seconds` s'il est plus long) et une précision meilleure que 1,5 km. Téléphone verrouillé ou application en arrière-plan, le chauffeur reste sollicité : l'offre part par push et sonne ;
+- leur position est EN DIRECT (moins de `location_max_age_seconds`, `private.dispatch_location_window`) et précise à 1,5 km près. L'app l'envoie en continu, téléphone verrouillé ou dans une autre application ; l'offre part par push et sonne ;
 - leur véhicule est de catégorie compatible et a assez de places ;
 - ils n'ont pas déjà décliné cette course ;
 - ils se trouvent à moins de R mètres : `ST_DWithin(driver_locations.location, rides.pickup_location, R)`.
@@ -87,7 +87,12 @@ Toutes les 2 s, le worker appelle `private.dispatch_tick()`. Cette fonction verr
 
 Séquence par défaut : **4 → 8 → 12 → 16 km**, puis **relance 4 → 8 km** (`dispatch_retry_radii_m`) où les chauffeurs restés sans réponse sont re-sonnés (« COURSE TOUJOURS DISPONIBLE ») ; un refus ou un retrait par la centrale n'est jamais re-sonné. Après la dernière vague, les offres sont fermées, la course passe à `NO_DRIVER_FOUND` et le dispatch est alerté (`dispatch.no_driver`, son + notification navigateur), avec l'explication des chauffeurs en ligne qui n'ont pas pris la course. « Relancer » et la bascule d'une planifiée repartent de 4 km.
 
-Chauffeur injoignable : position non reçue depuis 5 min → push « POSITION NON REÇUE » au chauffeur (`private.watch_driver_gps`, une fois par coupure) ; 30 min → hors ligne automatique et push « VOUS ÊTES HORS LIGNE » (`private.housekeeping`). L'app renvoie sa position au moins toutes les minutes, même immobile (battement).
+Position en direct h24 (migrations 003200 / 003300), comme les apps VTC :
+
+- **App** (`apps/driver/src/lib/location.ts`) : tâche GPS de fond (`startLocationUpdatesAsync`, précision maximale, aucun filtre de distance, jamais de pause, pas de regroupement), service de premier plan Android « EN LIGNE » (un point toutes les 5 s), battement d'au moins une position fraîche par minute même immobile (porté par le flux GPS, minuterie en plus sur iPhone), jamais de position de plus de 2 min envoyée. iPhone : position « Toujours » exigée pour passer en ligne (relance de l'app par le système). Android : fenêtre « toujours s'exécuter en arrière-plan » (économie de batterie).
+- **Réveil** : position non reçue depuis 90 s → push SILENCIEUX `location_ping` (ni titre ni son ; iOS content-available priorité 5, Android data-only HIGH) → tâche de notification de l'app (`rydar-wake`) qui relance le GPS et envoie une position fraîche ; puis toutes les 20 min (Apple : 2 à 3 réveils par heure au plus), priorité normale, un seul essai (`private.watch_driver_gps`, worker 30 s).
+- **Alerte** : au-delà de `location_max_age_seconds`, push « POSITION NON REÇUE » (une fois par coupure : app fermée à la main).
+- Le chauffeur n'est **jamais retiré** : plus de passage hors ligne automatique ; il reste en ligne jusqu'à ce qu'il se mette hors ligne.
 
 ### 3. Course planifiée : offre à la flotte
 

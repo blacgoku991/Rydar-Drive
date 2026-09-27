@@ -1,5 +1,5 @@
 import { SignJWT, importPKCS8 } from "jose";
-import { appData, presentation, stringifyData, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
+import { appData, isSilent, presentation, stringifyData, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
 
 type ServiceAccount = { project_id: string; client_email: string; private_key: string };
 
@@ -13,6 +13,14 @@ type ServiceAccount = { project_id: string; client_email: string; private_key: s
  */
 export function fcmMessage(token: string, payload: PushPayload, now = Date.now()) {
   const p = presentation(payload, now);
+  // Réveil silencieux : « data only » sans titre ni texte → jamais affiché, tâche de notification de l'app exécutée
+  if (isSilent(payload)) {
+    return {
+      token,
+      data: stringifyData({ body: JSON.stringify(appData(payload)) }),
+      android: { priority: "HIGH", ttl: `${p.ttlSeconds}s` },
+    };
+  }
   const dataOnly = !!p.categoryId;
   return {
     token,

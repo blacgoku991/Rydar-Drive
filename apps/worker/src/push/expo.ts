@@ -1,5 +1,20 @@
 import { Expo, type ExpoPushMessage, type ExpoPushReceipt } from "expo-server-sdk";
-import { appData, presentation, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
+import { appData, isSilent, presentation, type PushPayload, type PushProvider, type PushResult, type PushTarget } from "./types";
+
+/**
+ * Réveil silencieux (Expo « headless background notification ») : données seules, sans titre / corps / son.
+ * iOS : contentAvailable + priorité « normal » (APNs 5, seule acceptée pour un réveil) ; Android : « high »
+ * (message data-only prioritaire, livré même en Doze), jamais affiché par expo-notifications (sans titre ni texte).
+ */
+export function expoSilentMessage(t: PushTarget, payload: PushPayload, ttlSeconds: number): ExpoPushMessage {
+  return {
+    to: t.token,
+    data: appData(payload),
+    contentAvailable: true,
+    priority: t.platform === "ios" ? "normal" : "high",
+    ttl: ttlSeconds,
+  };
+}
 
 /** Sous-ensemble du client Expo utilisé ici (remplaçable en test). */
 export type ExpoClient = Pick<Expo, "chunkPushNotifications" | "sendPushNotificationsAsync" | "chunkPushNotificationReceiptIds" | "getPushNotificationReceiptsAsync">;
@@ -14,7 +29,7 @@ export function expoProvider(expo: ExpoClient = new Expo()): PushProvider {
       const results: PushResult[] = targets
         .filter((t) => !Expo.isExpoPushToken(t.token))
         .map((t) => ({ token: t.token, ok: false, error: "InvalidExpoToken", invalid: true }));
-      const messages: ExpoPushMessage[] = valid.map((t) => ({
+      const messages: ExpoPushMessage[] = valid.map((t) => isSilent(payload) ? expoSilentMessage(t, payload, p.ttlSeconds) : ({
         to: t.token,
         title: payload.title,
         body: payload.body,

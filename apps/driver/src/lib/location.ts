@@ -13,8 +13,23 @@ export const MAX_ACCURACY_M = 1500;
 let lastSent = 0;
 let lastPoint: { lat: number; lng: number } | null = null;
 let lastAccuracy: number | null = null;
-let lastLocation: Location.LocationObject | null = null;
 let intervalS = 10;
+
+/**
+ * État du suivi dans CE processus : « on » après startTracking, « off » après stopTracking (hors ligne) ;
+ * « unknown » au lancement — relance sans interface par le système (tâche GPS, réveil silencieux) : le
+ * chauffeur était en ligne, le suivi continue. Hors ligne, plus aucune position ne part.
+ */
+let trackingState: "unknown" | "on" | "off" = "unknown";
+/** Change à chaque démarrage / arrêt : une réponse d'une session précédente n'a plus d'effet. */
+let trackingSession = 0;
+/** Mode course (précision maximale) : conservé pour toute relance du suivi. */
+let rideMode = false;
+
+/** Jamais de position ancienne : un point de plus de 2 min n'est pas envoyé (le serveur le croirait frais). */
+const MAX_POINT_AGE_MS = 120_000;
+/** Battement : au moins une position fraîche par minute, même téléphone immobile. */
+const HEARTBEAT_MS = 55_000;
 
 function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
   const R = 6_371_000;
@@ -25,7 +40,8 @@ function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: n
 }
 
 export async function pushLocation(loc: Location.LocationObject, force = false) {
-  lastLocation = loc;
+  if (trackingState === "off") return;
+  if (Date.now() - loc.timestamp > MAX_POINT_AGE_MS) return;
   const point = { lat: loc.coords.latitude, lng: loc.coords.longitude };
   const accuracy = loc.coords.accuracy ?? null;
   const elapsed = (Date.now() - lastSent) / 1000;
@@ -35,6 +51,7 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
   if (!force && accuracy != null && lastAccuracy != null && accuracy > Math.max(100, lastAccuracy * 3) && elapsed < 30) return;
   const { data } = await supabase.auth.getSession();
   if (!data.session) return;
+  const session = trackingSession;
   lastSent = Date.now();
   lastPoint = point;
   lastAccuracy = accuracy;
@@ -50,6 +67,8 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
       recordedAt: new Date(loc.timestamp).toISOString(),
     });
     intervalS = Math.max(4, Math.min(120, res.next_interval_s ?? 10));
+    // Passé hors ligne ailleurs (autre appareil, centrale) : le suivi s'arrête ici aussi
+    if (res.presence === "offline" && session === trackingSession) void stopTracking();
   } catch {
     lastSent = 0; // réessai au prochain point
   }
@@ -58,27 +77,31 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
 const isWeb = Platform.OS === "web";
 let foregroundWatch: Location.LocationSubscription | null = null;
 
+/** Position fraîche demandée au système, bornée dans le temps (null : pas de point, rien n'est envoyé). */
+async function freshFix(accuracy: Location.Accuracy, timeoutMs: number): Promise<Location.LocationObject | null> {
+  return Promise.race([
+    Location.getCurrentPositionAsync({ accuracy }).catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ]);
+}
+
 /**
- * Battement : une position part au moins toutes les minutes tant que le chauffeur est en ligne, même
- * téléphone immobile et verrouillé (iOS ne livre plus de point quand rien ne bouge). Sans cela le serveur
- * le croit injoignable (alerte « position non reçue » à 5 min, hors ligne à 30 min).
+ * Battement par minuterie : utile sur iPhone (les minuteries JS tournent en arrière-plan tant que la session de
+ * localisation garde l'app en vie) et au premier plan. Sur Android les minuteries JS sont suspendues en
+ * arrière-plan : le battement y part de la tâche GPS (voir plus bas), le service de premier plan livrant un
+ * point toutes les 5 s. Toujours une position FRAÎCHE, jamais la dernière connue.
  */
-const HEARTBEAT_MS = 60_000;
 let heartbeat: ReturnType<typeof setInterval> | null = null;
 
 async function beat() {
-  if (Date.now() - lastSent < HEARTBEAT_MS - 5_000) return;
-  // Point récent si le système en donne un vite ; sinon le dernier connu (téléphone à l'arrêt)
-  const fresh = await Promise.race([
-    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
-  ]);
-  const loc = fresh ?? lastLocation ?? (await Location.getLastKnownPositionAsync().catch(() => null));
-  if (loc) await pushLocation(loc, true);
+  if (trackingState === "off") return stopHeartbeat();
+  if (Date.now() - lastSent < HEARTBEAT_MS) return;
+  const fresh = await freshFix(Location.Accuracy.High, 15_000);
+  if (fresh) await pushLocation(fresh, true);
 }
 
 function startHeartbeat() {
-  if (heartbeat || isWeb) return;
+  if (heartbeat || isWeb || trackingState === "off") return;
   heartbeat = setInterval(() => void beat(), HEARTBEAT_MS);
 }
 
@@ -91,26 +114,30 @@ function stopHeartbeat() {
 // (avant le routeur) pour exister aussi lors d'une relance sans interface.
 if (!isWeb) {
   TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
-    if (error) return;
+    if (error || trackingState === "off") return;
     const { locations } = (data ?? {}) as { locations?: Location.LocationObject[] };
     const last = locations?.[locations.length - 1];
-    // Relance sans interface (iOS : déplacement important, app fermée par le système) : battement aussi
+    if (!last) return;
+    // Relance sans interface (système) : le chauffeur est toujours en ligne, le suivi continue
+    if (trackingState === "unknown") trackingState = "on";
     startHeartbeat();
-    if (last) await pushLocation(last);
+    // Battement porté par le flux GPS : au moins une position par minute, même immobile
+    await pushLocation(last, Date.now() - lastSent >= HEARTBEAT_MS);
   });
 }
 
 /**
- * Options de la tâche. iOS n'a pas d'intervalle de temps (distance seulement) : précision élevée
- * pour garder un flux régulier même à l'arrêt ; Android garde Balanced + timeInterval.
+ * Options de la tâche : flux CONTINU. Précision maximale (en ligne comme en course), aucun filtre de distance,
+ * jamais de pause automatique (la valeur native par défaut est « pause »), pas de regroupement des points
+ * (deferredUpdatesInterval 0 : un lot bloqué ne part plus si iOS cesse de livrer). Android : service de
+ * premier plan « EN LIGNE » qui livre un point toutes les 5 s (3 s en course).
  */
 function taskOptions(ride: boolean): Location.LocationTaskOptions {
   return {
-    // GPS précis dès qu'on est en ligne (une position à ±1,5 km est ignorée par le dispatch) ; maximal en course
-    accuracy: ride ? Location.Accuracy.BestForNavigation : Location.Accuracy.High,
+    accuracy: ride ? Location.Accuracy.BestForNavigation : Location.Accuracy.Highest,
     timeInterval: ride ? 3000 : 5000,
     distanceInterval: 0,
-    deferredUpdatesInterval: ride ? 0 : 5000,
+    deferredUpdatesInterval: 0,
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.AutomotiveNavigation,
     showsBackgroundLocationIndicator: true,
@@ -133,6 +160,12 @@ export async function locationPermissionState(): Promise<"ok" | "coarse" | "deni
   return "ok";
 }
 
+/** Position « Toujours » (iOS) / « Toujours autoriser » (Android) accordée. */
+export async function backgroundLocationGranted() {
+  const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
+  return bg?.status === "granted";
+}
+
 /** Premier point GPS précis, borné dans le temps ; repli sur un point réseau/Wi-Fi. Jamais attendu par l'interface. */
 async function firstFix(): Promise<Location.LocationObject | null> {
   const high = await Promise.race([
@@ -146,8 +179,9 @@ async function firstFix(): Promise<Location.LocationObject | null> {
 let backgroundAsked = false;
 
 /**
- * Autorisations avant de passer EN LIGNE. « Pendant l'utilisation » suffit (service de premier plan
- * Android, indicateur iOS) ; « Toujours » est demandé mais facultatif. Position exacte obligatoire.
+ * Autorisations avant de passer EN LIGNE. Position exacte obligatoire ; « Toujours » demandé (une fenêtre par
+ * lancement) : sur iPhone il est exigé pour passer en ligne (driver-context), seul moyen pour que le système
+ * relance l'app et son GPS s'il l'a fermée. Android : le service de premier plan suffit, « Toujours » aide.
  * Lecture d'abord (instantanée, sans fenêtre) : la demande n'a lieu que si l'autorisation manque.
  */
 export async function requestLocationPermissions(): Promise<PermissionState> {
@@ -181,10 +215,13 @@ export type TrackingResult = {
  * Démarre le partage de position — à appeler une fois le chauffeur EN LIGNE côté serveur (le premier
  * point forcé reçoit alors l'intervalle « disponible »). Rend la main tout de suite : un point récent en
  * cache part immédiatement, la tâche de fond livre les suivants et le point précis est cherché en parallèle.
+ * La tâche est (ré)enregistrée à chaque appel : c'est aussi la relance d'un suivi qui ne livre plus rien.
  */
 export async function startTracking(): Promise<TrackingResult> {
   const fg = await Location.getForegroundPermissionsAsync().catch(() => null);
   if (fg?.status !== "granted") throw new Error("Autorisez la localisation pour passer en ligne.");
+  trackingState = "on";
+  trackingSession++;
   const cached = await Location.getLastKnownPositionAsync({ maxAge: 30_000, requiredAccuracy: 100 }).catch(() => null);
   if (cached) void pushLocation(cached, true);
   const firstAccuracy = firstFix().then(async (p) => {
@@ -198,9 +235,7 @@ export async function startTracking(): Promise<TrackingResult> {
     return { firstAccuracy, background: false };
   }
   try {
-    if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) {
-      await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(false));
-    }
+    await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(rideMode));
     foregroundWatch?.remove();
     foregroundWatch = null;
     startHeartbeat();
@@ -217,6 +252,8 @@ export async function startTracking(): Promise<TrackingResult> {
 }
 
 export async function stopTracking() {
+  trackingState = "off";
+  trackingSession++;
   stopHeartbeat();
   foregroundWatch?.remove();
   foregroundWatch = null;
@@ -227,21 +264,35 @@ export async function stopTracking() {
 }
 
 /**
- * Chauffeur EN LIGNE qui revient dans l'app (ou alerte « position non reçue ») : suivi relancé s'il a été
- * arrêté (système, économie de batterie), et position envoyée tout de suite.
+ * Chauffeur EN LIGNE qui revient dans l'app (ou alerte « position non reçue ») : suivi relancé s'il est arrêté
+ * OU s'il ne livre plus de position depuis 90 s (tâche enregistrée ne veut pas dire points reçus).
  */
 export async function ensureTracking() {
-  if (isWeb) return;
+  if (isWeb || trackingState === "off") return;
   const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => true);
-  if (!started) {
+  if (!started || Date.now() - lastSent > 90_000) {
     await startTracking().catch(() => null);
     return;
   }
   startHeartbeat();
-  if (Date.now() - lastSent < 20_000) return;
-  const cached = await Location.getLastKnownPositionAsync({ maxAge: 60_000 }).catch(() => null);
-  if (cached) void pushLocation(cached, true);
-  else void beat();
+}
+
+/**
+ * Réveil silencieux envoyé par le serveur (position non reçue depuis 90 s) — app en arrière-plan ou relancée
+ * sans interface : tâche GPS réenregistrée si elle ne tourne plus (iPhone : exige « Toujours »), puis une
+ * position fraîche est envoyée tout de suite. Rien si le chauffeur s'est mis hors ligne sur ce téléphone.
+ */
+export async function wakeTracking() {
+  if (isWeb || trackingState === "off") return;
+  const fg = await Location.getForegroundPermissionsAsync().catch(() => null);
+  if (fg?.status !== "granted") return;
+  if (trackingState === "unknown") trackingState = "on";
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false);
+  if (!started || Date.now() - lastSent > 90_000) {
+    await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(rideMode)).catch(() => null);
+  }
+  const fresh = await freshFix(Location.Accuracy.High, 20_000);
+  if (fresh) await pushLocation(fresh, true);
 }
 
 /**
@@ -249,6 +300,7 @@ export async function ensureTracking() {
  * ses options à jour (pas d'arrêt : un redémarrage depuis l'arrière-plan est refusé sur Android).
  */
 export async function setHighAccuracy(enabled: boolean) {
+  rideMode = enabled;
   if (isWeb) return;
   if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) return;
   await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(enabled));

@@ -247,6 +247,34 @@ describe("nouveaux types (messagerie, signalements, vols, documents, retrait)", 
     expect(fcmMessage("t", report, NOW).android).toMatchObject({ priority: "NORMAL", ttl: "2700s", notification: { channel_id: "fleet-reports" } });
   });
 
+  it("réveil GPS silencieux : ni titre, ni son, ni bannière — Expo (iOS priorité normal, Android high), FCM data-only, APNs background", async () => {
+    const ping = n("location_ping", { type: "location_ping" });
+    const { client } = fakeExpo();
+    await expoProvider(client).send(
+      [
+        { token: "ExponentPushToken[i]", provider: "expo", platform: "ios" },
+        { token: "ExponentPushToken[a]", provider: "expo", platform: "android" },
+      ],
+      ping,
+    );
+    const [ios, android] = client.sendPushNotificationsAsync.mock.calls[0]![0];
+    for (const m of [ios!, android!]) {
+      expect(m).not.toHaveProperty("title");
+      expect(m).not.toHaveProperty("body");
+      expect(m).not.toHaveProperty("sound");
+      expect(m).toMatchObject({ contentAvailable: true, data: { type: "location_ping" }, ttl: 60 });
+    }
+    expect(ios!.priority).toBe("normal");
+    expect(android!.priority).toBe("high");
+
+    const f = fcmMessage("fcm-token", ping, NOW);
+    expect(f).not.toHaveProperty("notification");
+    expect(f.data).toEqual({ body: JSON.stringify({ type: "location_ping" }) });
+    expect(f.android).toEqual({ priority: "HIGH", ttl: "60s" });
+
+    expect(apnsPayload(ping, NOW)).toEqual({ aps: { "content-available": 1 }, body: { type: "location_ping" } });
+  });
+
   it("position non reçue / hors ligne : « ride-updates », time-sensitive, regroupées ; alerte GPS inutile après 15 min", () => {
     expect(presentation(n("gps_lost", { type: "gps_lost" }), NOW)).toMatchObject({
       channelId: "ride-updates", interruptionLevel: "time-sensitive", threadId: "presence", ttlSeconds: 900, categoryId: undefined,

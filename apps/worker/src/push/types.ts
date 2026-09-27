@@ -40,6 +40,13 @@ const RIDE_UPDATE_TYPES = new Set(["ride_cancelled", "ride_assigned", "ride_unas
  * Il doit rouvrir l'app pour continuer à recevoir les courses → canal « ride-updates », time-sensitive.
  */
 const PRESENCE_TYPES = new Set(["gps_lost", "driver_offline"]);
+
+/**
+ * Réveil GPS (private.watch_driver_gps) : push SILENCIEUX — ni titre, ni son, ni bannière. Il réveille l'app
+ * (tâche de notification en arrière-plan) qui relance le suivi et renvoie une position fraîche.
+ * iOS : content-available, priorité 5 (exigée par Apple pour un réveil) ; Android : message « data only » HIGH.
+ */
+export const isSilent = (payload: PushPayload) => payload.type === "location_ping";
 /**
  * Événements vol qui déplacent la prise en charge ou l'annulent (data.event, cf. apply_flight_status) :
  * le chauffeur doit agir → time-sensitive. Atterrissage, terminal, retard au départ (heure inchangée) : « active ».
@@ -115,6 +122,8 @@ function ttlSeconds(payload: PushPayload, now: number) {
   if (payload.type.startsWith("document_")) return 86_400;
   // position non reçue : sans intérêt une fois la coupure passée (un nouveau passage alerte de nouveau)
   if (payload.type === "gps_lost") return 900;
+  // réveil GPS : un nouveau suit s'il n'a pas suffi ; inutile de livrer un réveil périmé
+  if (isSilent(payload)) return 60;
   return 3600;
 }
 

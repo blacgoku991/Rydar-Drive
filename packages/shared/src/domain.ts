@@ -194,13 +194,6 @@ export const DEFAULT_DISPATCH_RADII_M = [4000, 8000, 12000, 16000] as const;
 /** Relance quand personne n'a accepté après le dernier rayon (miroir de organization_settings.dispatch_retry_radii_m). */
 export const DEFAULT_RETRY_RADII_M = [4000, 8000] as const;
 
-/**
- * Ancienneté maximale (s) de la dernière position d'un chauffeur EN LIGNE pour être sollicité, et au-delà de
- * laquelle il passe hors ligne : 30 min, ou la « position récente » de l'organisation si elle est plus longue
- * (miroir de private.dispatch_location_window).
- */
-export const dispatchLocationWindowS = (locationMaxAgeS: number | null | undefined) => Math.max(locationMaxAgeS ?? 180, 1800);
-
 /** Rayons successifs de la recherche GPS : premier passage puis relance (miroir de private.dispatch_plan). */
 export function dispatchPlan(radii?: readonly number[] | null, retry?: readonly number[] | null) {
   const first = radii?.length ? [...radii] : [...DEFAULT_DISPATCH_RADII_M];

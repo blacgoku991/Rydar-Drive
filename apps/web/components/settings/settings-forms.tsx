@@ -244,7 +244,7 @@ export function DispatchSettingsForm({
             <Field label="Chauffeurs notifiés max. par vague">
               <Input type="number" min={1} max={500} value={s.max_offers_per_wave} disabled={readOnly} onChange={(e) => set("max_offers_per_wave", Number(e.target.value))} className="num" />
             </Field>
-            <Field label="Position GPS récente (s)" hint="Au-delà, signalée comme ancienne. Un chauffeur en ligne reste sollicité (hors ligne après 30 min sans position).">
+            <Field label="Position GPS considérée fraîche (s)" hint="Au-delà, le chauffeur n'est plus sollicité : l'app est réveillée, puis il est prévenu.">
               <Input type="number" min={30} max={3600} value={s.location_max_age_seconds} disabled={readOnly} onChange={(e) => set("location_max_age_seconds", Number(e.target.value))} className="num" />
             </Field>
           </div>

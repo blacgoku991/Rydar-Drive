@@ -10,14 +10,14 @@ import { api, ApiError } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
 import {
-  ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking,
+  backgroundLocationGranted, ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking,
 } from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
 import { settlementSession } from "@/lib/settlement-session";
 import { supabase } from "@/lib/supabase";
 
-export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "foreground-only" };
+export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "foreground-only" | "background" };
 
 type Ctx = {
   session: Session | null;
@@ -68,6 +68,10 @@ export function isUrgentOffer(o: Pick<DriverOffer, "mode" | "sent_at" | "expires
 /** Pourquoi la position approximative empêche de recevoir des courses (passage en ligne et redémarrage). */
 const COARSE_MESSAGE =
   "Les courses sont proposées aux chauffeurs situés à 4 km, puis 8 km du client : avec une position approximative, vous ne pouvez pas en recevoir. Dans les réglages de Rydar Drive › Position, activez la position exacte.";
+
+/** iPhone : « Toujours » exigé pour passer en ligne (comme les apps VTC) — position en direct app fermée. */
+export const BACKGROUND_MESSAGE =
+  "Pour que votre position reste en direct téléphone verrouillé ou dans une autre application, et recevoir les courses, autorisez la position « Toujours » : Réglages › Rydar Drive › Position › Toujours.";
 
 /** Écran Commissions : rafraîchi s'il est déjà affiché, sinon ouvert. */
 function openCommissions() {
@@ -314,7 +318,13 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       if (h.driver.presence !== "offline") {
         // Déjà en ligne au redémarrage : la position exacte a pu être retirée entre-temps dans les réglages
         const perm = await locationPermissionState();
-        if (perm === "ok") startTracking().catch(() => null);
+        if (perm === "ok") {
+          startTracking().catch(() => null);
+          // Déjà en ligne mais « Toujours » retiré entre-temps (iPhone) : prévenu, il reste en ligne
+          if (Platform.OS === "ios" && !(await backgroundLocationGranted())) {
+            Alert.alert("Autorisez la position « Toujours »", BACKGROUND_MESSAGE);
+          }
+        }
         else {
           await api.setOnline(false).catch(() => null);
           patchPresence("offline");
@@ -563,6 +573,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         const perm = await requestLocationPermissions();
         if (perm === "denied") return { ok: false, message: "Autorisez la localisation pour passer en ligne." };
         if (perm === "coarse") return { ok: false, code: "coarse", message: COARSE_MESSAGE };
+        // iPhone : sans « Toujours », iOS peut couper le GPS en arrière-plan et ne relance jamais l'app
+        if (perm === "foreground-only" && Platform.OS === "ios") return { ok: false, code: "background", message: BACKGROUND_MESSAGE };
         patchPresence("available");
         setBusy(true);
         const res = await api.setOnline(true);
