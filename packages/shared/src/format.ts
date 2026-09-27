@@ -97,15 +97,22 @@ export function formatRelative(date: Date | string | null | undefined, now = new
   return rtf.format(Math.round(diff / 86_400_000), "day");
 }
 
-/** Normalise un numéro FR/international en E.164 (+33612345678). Retourne null si invalide. */
+/**
+ * Normalise un numéro FR/international en E.164 (+33612345678). Retourne null si invalide.
+ * « +33 (0)6… », « +33 06… », « 0033 (0)6… » → +336… : le 0 national n'est jamais composé après l'indicatif
+ * (+33 et DOM : +262, +590, +594, +596). Mêmes règles que private.identity_normalize (empreintes des bannissements).
+ */
 export function normalizePhone(input: string | null | undefined, defaultCountry = "33"): string | null {
   if (!input) return null;
-  let v = input.replace(/[^\d+]/g, "");
+  let raw = input.trim();
+  if (/^(\+|00)/.test(raw)) raw = raw.replace(/\(\s*0\s*\)/g, "");
+  let v = raw.replace(/[^\d+]/g, "");
   if (v.startsWith("00")) v = `+${v.slice(2)}`;
   if (!v.startsWith("+")) {
     if (v.startsWith("0") && v.length === 10) v = `+${defaultCountry}${v.slice(1)}`;
-    else if (v.length >= 9) v = `+${v}`;
+    else if (v.length >= 10) v = `+${v}`;
   }
+  v = v.replace(/^\+(33|262|590|594|596)0(?=[1-9])/, "+$1");
   return /^\+[1-9]\d{7,14}$/.test(v) ? v : null;
 }
 

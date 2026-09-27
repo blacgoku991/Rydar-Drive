@@ -500,7 +500,8 @@ describe("Bannissement définitif", () => {
     expect((await expectPgError(svc("svc_platform_ban", [reportId, orgA.ownerId, null]))).code).toBe("42501");
     const sa = await createAuthUser(`super-${randomUUID().slice(0, 6)}@rydar.dev`, "Super Admin");
     await sql(`update public.users set is_super_admin = true where id = $1`, [sa]);
-    const ban = await svc("svc_platform_ban", [reportId, sa, "Confirmé"]);
+    // Fiche d'une autre centrale : touchée seulement si le super admin la confirme (20260924004600)
+    const ban = await svc("svc_platform_ban", [reportId, sa, "Confirmé", [twin.id]]);
     expect(ban).toMatchObject({ ok: true, code: "PLATFORM_BANNED", drivers: 2 });
     expect(ban.user_ids).toEqual(expect.arrayContaining([bad.userId, twin.userId]));
     const [t] = await sql(`select status, ban_scope from public.drivers where id = $1`, [twin.id]);

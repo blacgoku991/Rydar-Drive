@@ -291,7 +291,10 @@ export async function setOrganizationMemberStatus(orgId: string, memberId: strin
 // -----------------------------------------------------------------------------
 // Signalements de fraude : bannissement de toute la plateforme (service role + audit)
 // -----------------------------------------------------------------------------
-type SvcBanResult = { ok: boolean; code: string; message?: string; user_ids?: string[]; drivers?: number; identities?: number };
+type SvcBanResult = {
+  ok: boolean; code: string; message?: string; user_ids?: string[]; drivers?: number; identities?: number;
+  identities_skipped?: number; extended?: number; skipped_drivers?: number; kept_user_ids?: string[];
+};
 
 async function reportContext(reportId: string) {
   const { data } = await createAdminClient()
@@ -316,12 +319,48 @@ async function setAuthBan(userIds: string[], banned: boolean) {
   return results.filter(Boolean).length;
 }
 
-/** « Bannir de toute la plateforme » : identités refusées dans toutes les centrales, comptes liés suspendus et bannis (Auth). */
-export async function platformBanReport(reportId: string, reviewNote?: string): Promise<Result<{ drivers: number; identities: number; message: string }>> {
+type FraudReportPreview = {
+  reportedAt: string;
+  /** Identités du signalement ; edited_by_org_at = dernière saisie de cette valeur par la centrale qui signale. */
+  identities: { kind: import("@rydar/shared").IdentityKind; hint: string | null; edited_by_org_at: string | null }[];
+  /** Fiches qui partagent une identité : même centrale (suspendues avec lui) ou autres centrales (à confirmer). */
+  matches: {
+    driver_id: string; number: number; first_name: string; last_name: string; organization_id: string; organization_name: string;
+    same_org: boolean; created_at: string; status: import("@rydar/shared").DriverStatus; application_status: string | null;
+    banned: boolean; kinds: import("@rydar/shared").IdentityKind[]; manages_org: boolean;
+  }[];
+};
+
+/** Aperçu avant « Bannir de toute la plateforme » : fiches qui partagent une identité du signalement (toutes centrales). */
+export async function fraudReportMatches(reportId: string): Promise<Result<{ preview: FraudReportPreview }>> {
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(reportId).success) return { ok: false, error: "Signalement inconnu." };
+  // Session du super admin : contrôle d'accès dans la fonction SQL
+  const { data, error } = await session.supabase.rpc("admin_fraud_report_matches", { p_report_id: reportId });
+  if (error || !data) return { ok: false, error: "Aperçu indisponible." };
+  const res = data as { ok: boolean; message?: string; reported_at?: string } & Partial<Omit<FraudReportPreview, "reportedAt">>;
+  if (!res.ok) return { ok: false, error: res.message ?? "Signalement introuvable." };
+  return { ok: true, preview: { reportedAt: res.reported_at ?? new Date().toISOString(), identities: res.identities ?? [], matches: res.matches ?? [] } };
+}
+
+/**
+ * « Bannir de toute la plateforme » : identités refusées dans toutes les centrales ; chauffeur signalé et fiches de sa
+ * centrale suspendus ; fiches d'AUTRES centrales seulement si confirmées (extendDriverIds, cf. fraudReportMatches) ;
+ * comptes bannis (Auth), sauf ceux qui gèrent aussi une centrale (fiche bannie, connexion conservée).
+ */
+export async function platformBanReport(
+  reportId: string,
+  reviewNote?: string,
+  extendDriverIds: string[] = [],
+): Promise<Result<{ drivers: number; identities: number; identitiesSkipped: number; extended: number; message: string }>> {
+  const session = await requireSuperAdmin();
+  if (!uuid.safeParse(reportId).success) return { ok: false, error: "Signalement inconnu." };
+  const extend = z.array(uuid).max(500).safeParse(extendDriverIds);
+  if (!extend.success) return { ok: false, error: "Sélection de fiches invalide." };
   const admin = createAdminClient();
-  const { data, error } = await admin.rpc("svc_platform_ban", { p_report_id: reportId, p_actor: session.user.id, p_note: note(reviewNote) });
+  const { data, error } = await admin.rpc("svc_platform_ban", {
+    p_report_id: reportId, p_actor: session.user.id, p_note: note(reviewNote), p_extend_driver_ids: [...new Set(extend.data)],
+  });
   if (error || !data) return { ok: false, error: "Bannissement impossible." };
   const res = data as SvcBanResult;
   if (!res.ok) return { ok: false, error: res.message ?? "Action impossible." };
@@ -339,11 +378,15 @@ export async function platformBanReport(reportId: string, reviewNote?: string): 
     severity: "critical",
     metadata: {
       driver: report?.driver_label, category: report?.category, drivers: res.drivers ?? 0, identities: res.identities ?? 0,
-      auth_banned: authBanned, user_ids: userIds, note: note(reviewNote),
+      identities_skipped: res.identities_skipped ?? 0, extended: res.extended ?? 0, skipped_drivers: res.skipped_drivers ?? 0,
+      auth_banned: authBanned, auth_kept: (res.kept_user_ids ?? []).length, user_ids: userIds, note: note(reviewNote),
     },
   });
   revalidatePath("/admin/centrales");
-  return { ok: true, drivers: res.drivers ?? 0, identities: res.identities ?? 0, message: res.message ?? "Banni de toute la plateforme." };
+  return {
+    ok: true, drivers: res.drivers ?? 0, identities: res.identities ?? 0, identitiesSkipped: res.identities_skipped ?? 0,
+    extended: res.extended ?? 0, message: res.message ?? "Banni de toute la plateforme.",
+  };
 }
 
 /** « Classer » : le bannissement reste limité à la centrale qui a signalé. */
