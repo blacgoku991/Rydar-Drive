@@ -276,8 +276,8 @@ export default async function DataProcessingPage() {
           leurs fichiers ; courses et coordonnées des clients ; messages ; positions ; comptes de l&apos;équipe et journal
           de leurs actions ; mini-site), copies comprises, sauf obligation légale de conservation ; les sauvegardes sont
           effacées à l&apos;expiration de leur cycle. Il conserve, comme responsable de traitement distinct, la fiche
-          archivée de la centrale, le registre des frais plateforme et les paiements (obligations comptables, 10 ans au
-          moins) et la preuve d&apos;acceptation des CGV et du présent accord, avec l&apos;e-mail de la personne qui les a
+          archivée de la centrale, le registre des frais plateforme et les paiements, avec le journal des actions qui s&apos;y
+          rapportent (obligations comptables, 10 ans au moins) et la preuve d&apos;acceptation des CGV et du présent accord, avec l&apos;e-mail de la personne qui les a
           acceptés (preuve du contrat).
         </p>
       </LegalSection>

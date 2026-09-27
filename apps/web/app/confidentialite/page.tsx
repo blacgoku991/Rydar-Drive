@@ -179,7 +179,7 @@ export default async function PrivacyPage() {
             <>Notifications, y compris les relances WhatsApp : 90 jours après leur envoi prévu, qu&apos;elles aient abouti ou non. Journaux d&apos;appels de l&apos;API : 90 jours.</>,
             <>Adresse IP et navigateur enregistrés dans le journal de sécurité (inscription par lien, actions sensibles de l&apos;équipe) : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
             <>Courses (y compris les coordonnées du client), gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course, pour les obligations comptables de la centrale, puis supprimés.</>,
-            <>Comptes et journal des actions de l&apos;équipe d&apos;une centrale : tant qu&apos;elle utilise le service, puis supprimés dans les 30 jours qui suivent la fin du contrat.</>,
+            <>Comptes et journal des actions de l&apos;équipe d&apos;une centrale : tant qu&apos;elle utilise le service, puis supprimés dans les 30 jours qui suivent la fin du contrat, sauf les actions sur les frais plateforme et leurs paiements, gardées avec ce registre comptable.</>,
             <>Preuves d&apos;acceptation : celle des CGU et de cette politique reste, détachée du compte s&apos;il est supprimé (document, version, date) ; celle des CGV et de l&apos;accord de traitement, avec l&apos;e-mail de la personne qui les a acceptés, est gardée comme preuve du contrat, y compris après sa fin (la fiche de la centrale est alors archivée, jamais supprimée).</>,
             <>
               Bannissement pour fraude : la centrale conserve des empreintes de vos identifiants (téléphone, e-mail, numéros

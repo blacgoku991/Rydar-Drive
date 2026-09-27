@@ -69,7 +69,11 @@ la centrale doit les frais plateforme à Rydar.
   `platform_fee_entries` (changement = correction delta ; BAISSE `pending` jusqu'à validation super admin), paiements FIFO.
 - Temps réel : `realtime.send` topics `org:{id}` (lu par TOUT membre, dispatcher compris : rien qu'un dispatcher ne lirait pas via
   RLS ; `platform.updated` = ids seulement), `driver:{id}`, `fleet:{org}`.
-- Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` (version `LEGAL_VERSION` dans `apps/web/lib/legal.ts`).
+- Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` idempotente (version `LEGAL_VERSION` de `@rydar/shared`,
+  changer = nouvelle acceptation : bandeaux web + écran app `terms-gate`).
+- Suppression de compte chauffeur : `svc_delete_driver_account` (mig 004000) + file `private.account_deletions` (worker 5 min,
+  besoin de SUPABASE_URL/SERVICE_ROLE_KEY) ; fiche supprimée figée (DRIVER_DELETED) ; outil /admin/suppressions.
+- Messagerie flotte modérée (004100) ; registre des frais `on delete restrict` (004200) : une centrale avec frais s'archive.
 
 ## Design
 Sombre « radar », accent lime. Jamais de hex en dur : jetons `apps/web/app/globals.css` (@theme `--color-ink-*`, `fg`, `fg-muted`,

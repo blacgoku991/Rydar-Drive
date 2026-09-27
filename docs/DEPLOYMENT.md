@@ -257,8 +257,8 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
      `settlement_instructions` d'`organization_settings`, remises à vide), adhésions de l'équipe et comptes de
      connexion qui ne servent à aucune autre centrale, journal d'audit de la centrale (sauf les lignes
      `platform_fee.*` et `platform_payment.*`, qui accompagnent le registre) ;
-  5. restent : la fiche archivée, l'abonnement et ses factures, le registre des frais et les paiements (10 ans au
-     moins, obligations comptables) et les preuves d'acceptation.
+  5. restent : la fiche archivée, l'abonnement et ses factures, le registre des frais et les paiements avec leurs
+     lignes d'audit (10 ans au moins, obligations comptables) et les preuves d'acceptation.
 
 ## 7. Checklist de mise en production
 
