@@ -1,7 +1,7 @@
 import {
-  OFFER_STATUS_META, PAYMENT_METHOD_LABELS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, canAssign, canCancel, canRedispatch,
+  DRIVER_STATUS_META, OFFER_STATUS_META, PAYMENT_METHOD_LABELS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, canAssign, canCancel, canRedispatch,
   formatDistance, formatDuration, formatPhone, formatPrice, formatTime, haversine,
-  type OfferStatus, type PaymentMethod, type RideSource, type RideStatus, type VehicleCategory,
+  type DriverStatus, type OfferStatus, type PaymentMethod, type RideSource, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeft, BellRing, Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
 import type { Metadata } from "next";
@@ -27,6 +27,11 @@ import type { LiveDriver, LiveOffer, LiveRide } from "@/lib/queries/live";
 export const metadata: Metadata = { title: "Course" };
 export const dynamic = "force-dynamic";
 
+const DRIVER_COLUMNS =
+  "id, number, first_name, last_name, phone, photo_url, presence, status, current_ride_id, online_since, vehicle:vehicles(brand, model, plate, color, category, seats), location:driver_locations(lat, lng, heading, speed_mps, updated_at)";
+/** Course attribuée pas encore terminée : un chauffeur qui n'est plus actif ne peut plus la faire avancer. */
+const DRIVER_STUCK = new Set(["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"]);
+
 function Info({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3">
@@ -48,18 +53,14 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   if (!ride) notFound();
 
   const centrale = ctx.org.dispatch_model === "centrale";
-  const [events, offers, drivers, alerts, settlement] = await Promise.all([
+  const [events, offers, drivers, alerts, settlement, rideDriver] = await Promise.all([
     ctx.supabase.from("ride_events").select("id, category, level, type, message, actor_type, data, created_at").eq("ride_id", id).order("id"),
     ctx.supabase
       .from("ride_offers")
       .select("id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, responded_at, expires_at, closed_reason")
       .eq("ride_id", id)
       .order("sent_at"),
-    ctx.supabase
-      .from("drivers")
-      .select("id, number, first_name, last_name, phone, photo_url, presence, status, current_ride_id, online_since, vehicle:vehicles(brand, model, plate, color, category, seats), location:driver_locations(lat, lng, heading, speed_mps, updated_at)")
-      .eq("organization_id", ctx.org.id)
-      .eq("status", "active"),
+    ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("organization_id", ctx.org.id).eq("status", "active"),
     // Alertes de suivi (retard, immobile, GPS muet, pas démarrée), les plus récentes d'abord
     ctx.supabase
       .from("ride_alerts")
@@ -72,9 +73,15 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
     centrale
       ? ctx.supabase.from("ride_settlements").select("*").eq("ride_id", id).eq("organization_id", ctx.org.id).maybeSingle()
       : Promise.resolve({ data: null }),
+    // Chauffeur de la course même s'il n'est plus actif (suspendu, désactivé) : la liste ci-dessus ne garde que les actifs
+    ride.driver_id
+      ? ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("id", ride.driver_id).eq("organization_id", ctx.org.id).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
 
-  const allDrivers = ((drivers.data ?? []) as any[]).map((d) => ({
+  const driverRows = [...((drivers.data ?? []) as any[])];
+  if (rideDriver.data && !driverRows.some((d) => d.id === ride.driver_id)) driverRows.push(rideDriver.data);
+  const allDrivers = driverRows.map((d) => ({
     ...d,
     vehicle: Array.isArray(d.vehicle) ? d.vehicle[0] ?? null : d.vehicle,
     location: Array.isArray(d.location) ? d.location[0] ?? null : d.location,
@@ -85,10 +92,11 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const mapDrivers = allDrivers.filter((d) => involved.has(d.id));
   const driver = ride.driver_id ? byId.get(ride.driver_id) : undefined;
   const status = ride.status as RideStatus;
+  const driverStuck = !!driver && driver.status !== "active" && DRIVER_STUCK.has(status);
   const tz = ctx.org.timezone;
 
   const assignable: AssignableDriver[] = allDrivers
-    .filter((d) => d.id !== ride.driver_id)
+    .filter((d) => d.id !== ride.driver_id && d.status === "active")
     .map((d) => ({
       id: d.id,
       name: `${d.first_name} ${d.last_name}`,
@@ -207,7 +215,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               </CardBody>
             </Card>
             <Card>
-              <CardHeader title="Chauffeur" description={driver ? "Affecté à la course" : "En attente d'attribution"} />
+              <CardHeader title="Chauffeur" description={ride.driver_id ? "Affecté à la course" : "En attente d'attribution"} />
               <CardBody>
                 {driver ? (
                   <div className="space-y-4">
@@ -220,6 +228,15 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                         <p className="text-[12.5px] text-fg-subtle">Chauffeur #{driver.number} · {formatPhone(driver.phone)}</p>
                       </div>
                     </div>
+                    {driverStuck && (
+                      <p className="rounded-xl border border-red/25 bg-red/[0.07] px-4 py-3 text-[13px] text-red">
+                        Chauffeur {(DRIVER_STATUS_META[driver.status as DriverStatus]?.label ?? "inactif").toLowerCase()}&nbsp;: il ne peut plus
+                        faire avancer la course.{" "}
+                        {status === "PASSENGER_ONBOARD" || status === "IN_PROGRESS"
+                          ? "Réactivez-le pour qu'il la termine, ou annulez-la."
+                          : "Réattribuez-la à un autre chauffeur ou réactivez-le."}
+                      </p>
+                    )}
                     {driver.vehicle && (
                       <div className="rounded-lg border border-line bg-white/[0.02] px-3 py-2.5 text-[13px]">
                         {driver.vehicle.brand} {driver.vehicle.model} · <span className="num">{driver.vehicle.plate}</span>
@@ -238,9 +255,11 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                   </div>
                 ) : (
                   <p className="text-[13px] text-fg-muted">
-                    {status === "NO_DRIVER_FOUND"
-                      ? "Aucun chauffeur n'a accepté. Relancez le dispatch ou attribuez manuellement."
-                      : "Le dispatch est en cours — le premier chauffeur qui accepte obtient la course."}
+                    {ride.driver_id
+                      ? "Fiche du chauffeur indisponible."
+                      : status === "NO_DRIVER_FOUND"
+                        ? "Aucun chauffeur n'a accepté. Relancez le dispatch ou attribuez manuellement."
+                        : "Le dispatch est en cours — le premier chauffeur qui accepte obtient la course."}
                   </p>
                 )}
               </CardBody>

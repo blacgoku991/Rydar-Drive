@@ -1,6 +1,6 @@
 "use client";
 import {
-  DEFAULT_DISPATCH_RADII_M, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, VEHICLE_CATEGORY_META, formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate,
+  DEFAULT_DISPATCH_RADII_M, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, VEHICLE_CATEGORY_META, canCancel, formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate,
   formatTime, haversine, initials, type DriverPresence, type PaymentMethod, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeft, BellOff, ExternalLink, Luggage, MessageSquareText, Phone, Users } from "lucide-react";
@@ -271,7 +271,7 @@ export function RideFocus({
               compact
               rideId={ride.id}
               number={ride.number}
-              canCancel={!TERMINAL.has(status)}
+              canCancel={canCancel(status)}
               canRedispatch={status === "NO_DRIVER_FOUND" || SEARCHING.has(status)}
               canAssign={ASSIGNABLE.has(status)}
               assignLabel={ride.driver_id ? "Réattribuer" : "Attribuer"}

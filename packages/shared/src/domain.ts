@@ -205,6 +205,9 @@ export const DEFAULT_REMINDER_OFFSETS_MIN = [1440, 180, 60, 30] as const;
 /** Codes d'erreur métier renvoyés par les RPC / l'API. */
 export const ERROR_MESSAGES: Record<string, string> = {
   RIDE_ALREADY_ASSIGNED: "Course déjà attribuée.",
+  // Acceptation refusée : motif réel (20260924004500)
+  RIDE_CANCELLED: "Course annulée.",
+  SEARCH_ENDED: "Recherche terminée : la course n'est plus proposée.",
   OFFER_NOT_FOUND: "Offre introuvable.",
   OFFER_CLOSED: "Cette offre n'est plus disponible.",
   DRIVER_BUSY: "Vous avez déjà une course en cours.",
