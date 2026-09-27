@@ -2,15 +2,20 @@
 import { memo, useEffect, useState } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { Marker } from "react-native-maps";
-import Svg, { Circle, Defs, Path, RadialGradient, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, Path, RadialGradient, Stop } from "react-native-svg";
 import { useStillHeading } from "@/hooks/use-my-position";
 import {
   BEAM_GRADIENT, BEAM_PATH, BEAM_STOPS, DOT, ME_BLUE, ME_SHADOW, ME_SIZE, ME_WHITE, NAV_PATH, NAV_STROKE, meLabel, meMode,
   type MeMode,
 } from "./me-marker-shape";
 
-/** Dessin fixe pointé vers le nord (mémorisé : seul le conteneur tourne quand le cap change). */
-const MeGlyph = memo(function MeGlyph({ mode }: { mode: MeMode }) {
+/**
+ * Dessin pointé vers le nord, tourné DANS le SVG autour du centre du point (rotation en degrés).
+ * Jamais de transformation sur la vue du marqueur : sur iPhone, react-native-maps (AIRMapMarker.m, layoutSubviews)
+ * prend le cadre de la vue tournée — plus grand — pour taille du marqueur et décale le point de sa vraie position
+ * (en haut à gauche, jusqu'à ~20 px à 45°) : le point semblait « bouger » en zoomant.
+ */
+const MeGlyph = memo(function MeGlyph({ mode, rotation }: { mode: MeMode; rotation: number }) {
   const dot = (
     <>
       <Circle cx={DOT.cx} cy={DOT.cy} r={DOT.shadow} fill={ME_SHADOW} />
@@ -20,6 +25,7 @@ const MeGlyph = memo(function MeGlyph({ mode }: { mode: MeMode }) {
   );
   return (
     <Svg width={ME_SIZE} height={ME_SIZE} viewBox={`0 0 ${ME_SIZE} ${ME_SIZE}`}>
+      <G rotation={rotation} origin={`${DOT.cx}, ${DOT.cy}`}>
       {mode === "nav" ? (
         <>
           <Path d={NAV_PATH} fill="none" stroke={ME_SHADOW} strokeWidth={NAV_STROKE + 3} strokeLinejoin="round" />
@@ -42,6 +48,7 @@ const MeGlyph = memo(function MeGlyph({ mode }: { mode: MeMode }) {
           {dot}
         </>
       )}
+      </G>
     </Svg>
   );
 });
@@ -63,15 +70,16 @@ function MeMarkerView({ lat, lng, mode, dir, mapHeading, label }: MeMarkerViewPr
       coordinate={{ latitude: lat, longitude: lng }}
       anchor={{ x: 0.5, y: 0.5 }}
       // Rotation native réservée à Google Maps (Android : marqueur à plat, cap par rapport au nord) ;
-      // sur iPhone la vue elle-même tourne, cap moins orientation de la carte
+      // sur iPhone le dessin tourne dans le SVG (cap moins orientation de la carte), la vue reste fixe
       flat={!ios}
       rotation={!ios && dir != null ? dir : undefined}
       tracksViewChanges={ios || track}
       zIndex={40}
       accessibilityLabel={label}
     >
-      <View style={[styles.wrap, ios && dir != null && { transform: [{ rotate: `${dir - mapHeading}deg` }] }]}>
-        <MeGlyph mode={mode} />
+      {/* Taille fixe, sans transformation (voir MeGlyph) : le centre de la vue = la position GPS */}
+      <View style={styles.wrap}>
+        <MeGlyph mode={mode} rotation={ios && dir != null ? Math.round(dir - mapHeading) : 0} />
       </View>
     </Marker>
   );
