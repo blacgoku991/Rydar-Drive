@@ -40,11 +40,6 @@ export function settlementStatusLabel(status: SettlementStatus, direction: Settl
   return direction === "centrale_owes" ? meta.payoutLabel : meta.label;
 }
 
-export const SETTLEMENT_DIRECTION_META: Record<SettlementDirection, { label: string; driverLabel: string }> = {
-  driver_owes: { label: "Commission à encaisser", driverLabel: "Commission à régler" },
-  centrale_owes: { label: "Part chauffeur à verser", driverLabel: "Gain à recevoir" },
-};
-
 export const SETTLEMENT_METHOD_META: Record<SettlementMethod | "other", { label: string; ionicon: string; lucide: string }> = {
   link: { label: "Lien de paiement", ionicon: "link-outline", lucide: "Link" },
   cash: { label: "Espèces", ionicon: "cash-outline", lucide: "Banknote" },
@@ -201,7 +196,6 @@ export const centraleSettingsSchema = z
       ctx.addIssue({ code: "custom", path: ["instructions"], message: "Décrivez l'autre moyen de paiement (ou retirez « Autre moyen »)" });
     }
   });
-export type CentraleSettingsInput = z.output<typeof centraleSettingsSchema>;
 
 /** Super admin : modèle d'exploitation + frais plateforme d'un compte. */
 export const dispatchModelSchema = z.object({
@@ -225,7 +219,6 @@ export const joinApplicationSchema = z.object({
   /** piège à robots : doit rester vide */
   website: z.string().max(0).optional(),
 });
-export type JoinApplicationInput = z.output<typeof joinApplicationSchema>;
 
 /** Bannissement (dashboard). */
 export const banDriverSchema = z.object({
@@ -234,4 +227,3 @@ export const banDriverSchema = z.object({
   reportToPlatform: z.boolean().default(false),
   banVehicle: z.boolean().default(false),
 });
-export type BanDriverInput = z.output<typeof banDriverSchema>;

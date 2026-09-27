@@ -234,7 +234,6 @@ export default function OfferScreen() {
         return true;
       });
       return () => sub.remove();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [state, urgent]),
   );
 

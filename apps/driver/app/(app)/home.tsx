@@ -156,7 +156,6 @@ export default function Home() {
       void refreshChat();
       openReport(String(params.report));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.report]);
   // Position connue une fois la messagerie relue ; signalement expiré entre-temps → message
   useEffect(() => {
@@ -171,7 +170,6 @@ export default function Home() {
       closeReport();
     }, 1500);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, chat, activeReports]);
 
   // Relue à l'ouverture et au retour dans l'app (le chauffeur a pu l'autoriser dans les réglages du téléphone)

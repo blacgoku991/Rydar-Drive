@@ -99,8 +99,6 @@ export const RIDE_ALERT_META: Record<RideAlertKind, { label: string; short: stri
   not_started: { label: "Course pas démarrée", short: "Pas parti", lucide: "timer-off", ionicon: "timer" },
 };
 
-export const ALERT_SEVERITY_TONE: Record<RideAlertSeverity, "amber" | "red"> = { warning: "amber", critical: "red" };
-
 // -----------------------------------------------------------------------------
 // Documents chauffeur (migration 20260924002400) : statut calculé côté serveur
 // -----------------------------------------------------------------------------
@@ -234,12 +232,6 @@ export interface ChatModerationEvent {
   organization_id: string;
   message_id: string;
   report_id?: string;
-}
-
-/** Temps réel « chat.removed » sur fleet:<org> (applications chauffeur : relire la messagerie). */
-export interface ChatRemovedEvent {
-  id: string;
-  organization_id: string;
 }
 
 /** Motifs proposés au signalement d'un message (facultatifs ; le chauffeur peut préciser, 200 caractères au plus). */

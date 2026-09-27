@@ -115,7 +115,6 @@ export const rideFormSchema = z
     }
   });
 export type RideFormInput = z.input<typeof rideFormSchema>;
-export type RideForm = z.output<typeof rideFormSchema>;
 
 // -----------------------------------------------------------------------------
 // API publique v1 — POST /api/v1/rides
@@ -161,7 +160,6 @@ export const apiRideCreateSchema = z
       ctx.addIssue({ code: "custom", path: ["pickup_at"], message: "Utilisez pickup_at OU date + time" });
     }
   });
-export type ApiRideCreate = z.output<typeof apiRideCreateSchema>;
 
 export const apiRideCancelSchema = z.strictObject({ reason: optionalText(300) });
 
@@ -211,7 +209,6 @@ export const vehicleSchema = z.object({
   seats: z.coerce.number().int().min(1).max(20),
   luggageCapacity: z.coerce.number().int().min(0).max(30).default(3),
 });
-export type VehicleInput = z.output<typeof vehicleSchema>;
 
 export const driverCreateSchema = z
   .object({
@@ -396,7 +393,6 @@ export const planLimitsSchema = z.object({
   advanced_stats: z.boolean(),
   history_days: z.number().int().min(1).nullable(),
 });
-export type PlanLimits = z.output<typeof planLimitsSchema>;
 
 export const planSchema = z.object({
   code: z.string().regex(/^[a-z0-9_]+$/),

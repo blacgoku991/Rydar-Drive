@@ -123,7 +123,6 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
     ) {
       void request();
     } else if (Date.now() - current.at > REFRESH_MS && since > REFRESH_MS) void request();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos, enabled]);
 
   return useMemo(() => {

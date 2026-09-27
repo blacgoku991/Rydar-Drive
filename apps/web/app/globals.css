@@ -42,22 +42,6 @@
   --color-green: #4fd58f;
   --color-red: #f2555a;
 
-  /* Sémantique (compatibilité composants type shadcn) */
-  --color-background: var(--color-ink-900);
-  --color-foreground: var(--color-fg);
-  --color-card: var(--color-ink-800);
-  --color-popover: var(--color-ink-700);
-  --color-primary: var(--color-brand);
-  --color-primary-foreground: var(--color-brand-fg);
-  --color-secondary: var(--color-ink-600);
-  --color-muted: var(--color-ink-700);
-  --color-muted-foreground: var(--color-fg-muted);
-  --color-accent: var(--color-ink-600);
-  --color-destructive: var(--color-red);
-  --color-border: var(--color-line);
-  --color-input: var(--color-line-strong);
-  --color-ring: var(--color-brand);
-
   --radius-xs: 6px;
   --radius-sm: 8px;
   --radius-md: 10px;
@@ -73,7 +57,6 @@
   --animate-breathe: breathe 2.6s ease-in-out infinite;
   --animate-shimmer: shimmer 2.2s linear infinite;
   --animate-rise: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  --animate-flash: flash 1.4s ease-out both;
 
   @keyframes radar-sweep {
     to {
@@ -118,14 +101,6 @@
     to {
       opacity: 1;
       transform: translateY(0);
-    }
-  }
-  @keyframes flash {
-    0% {
-      background-color: rgb(200 240 60 / 0.16);
-    }
-    100% {
-      background-color: transparent;
     }
   }
 }

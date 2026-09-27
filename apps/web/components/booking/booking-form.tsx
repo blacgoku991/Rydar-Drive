@@ -96,7 +96,6 @@ export function BookingForm({
       window.clearTimeout(t);
       ctrl.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, pickup.lat, pickup.lng, dropoff.lat, dropoff.lng, category, when, date, time, slug]);
   const routeCoords = useMemo(() => (quote?.polyline ? decodePolyline(quote.polyline) : null), [quote?.polyline]);
   const estimate = showPrice ? (quote?.priceCents ?? null) : null;

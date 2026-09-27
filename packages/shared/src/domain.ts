@@ -32,7 +32,6 @@ export const RIDE_STATUS_META: Record<RideStatus, { label: string; short: string
   NO_DRIVER_FOUND: { label: "Sans chauffeur", short: "Sans chauffeur", tone: "red" },
 };
 
-export const TERMINAL_STATUSES: readonly RideStatus[] = ["COMPLETED", "CANCELLED", "NO_DRIVER_FOUND"];
 export const SEARCHING_STATUSES: readonly RideStatus[] = ["CREATED", "SEARCHING_DRIVER", "OFFERED"];
 export const ONGOING_STATUSES: readonly RideStatus[] = [
   "DRIVER_EN_ROUTE",
@@ -41,10 +40,7 @@ export const ONGOING_STATUSES: readonly RideStatus[] = [
   "IN_PROGRESS",
 ];
 
-export const isTerminal = (s: RideStatus) => TERMINAL_STATUSES.includes(s);
 export const isSearching = (s: RideStatus) => SEARCHING_STATUSES.includes(s);
-export const isOngoing = (s: RideStatus) => ONGOING_STATUSES.includes(s);
-export const isLive = (s: RideStatus) => !isTerminal(s);
 export const canCancel = (s: RideStatus) => s !== "COMPLETED" && s !== "CANCELLED";
 export const canRedispatch = (s: RideStatus) => isSearching(s) || s === "NO_DRIVER_FOUND";
 export const canAssign = (s: RideStatus) => isSearching(s) || s === "NO_DRIVER_FOUND" || s === "ACCEPTED";
@@ -57,10 +53,6 @@ export const DRIVER_FLOW: Partial<Record<RideStatus, { next: RideStatus; label: 
   PASSENGER_ONBOARD: { next: "IN_PROGRESS", label: "Démarrer", hint: "Départ vers la destination" },
   IN_PROGRESS: { next: "COMPLETED", label: "Terminer la course", hint: "Arrivé à destination" },
 };
-
-export function canDriverTransition(from: RideStatus, to: RideStatus): boolean {
-  return DRIVER_FLOW[from]?.next === to;
-}
 
 /** Filtres de l'écran Courses (dashboard). */
 export const RIDE_FILTERS = [
@@ -184,12 +176,6 @@ export const ORG_STATUS_META: Record<OrgStatus, { label: string; tone: Tone }> =
   archived: { label: "Archivé", tone: "neutral" },
 };
 
-/** Classification instantanée / planifiée (miroir du trigger SQL). */
-export function classifyRide(pickupAt: Date | null, now: Date, instantThresholdMinutes = 45): RideType {
-  if (!pickupAt) return "instant";
-  return pickupAt.getTime() <= now.getTime() + instantThresholdMinutes * 60_000 ? "instant" : "scheduled";
-}
-
 export const DEFAULT_DISPATCH_RADII_M = [4000, 8000, 12000, 16000] as const;
 /** Relance quand personne n'a accepté après le dernier rayon (miroir de organization_settings.dispatch_retry_radii_m). */
 export const DEFAULT_RETRY_RADII_M = [4000, 8000] as const;
@@ -200,7 +186,6 @@ export function dispatchPlan(radii?: readonly number[] | null, retry?: readonly 
   const again = retry ? [...retry] : first.slice(0, 2);
   return { first, retry: again, waves: [...first, ...again] };
 }
-export const DEFAULT_REMINDER_OFFSETS_MIN = [1440, 180, 60, 30] as const;
 
 /** Codes d'erreur métier renvoyés par les RPC / l'API. */
 export const ERROR_MESSAGES: Record<string, string> = {

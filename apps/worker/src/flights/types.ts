@@ -121,11 +121,6 @@ export function wallTimeToIso(wall: unknown, timeZone: string | null | undefined
   }
 }
 
-/** Date locale « AAAA-MM-JJ » d'un instant dans un fuseau. */
-export function localDate(iso: string | number | Date, timeZone = "Europe/Paris"): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
-}
-
 /** « Terminal 2E » / « T2E » / « 2e » → « 2E » (l'affichage ajoute « T »). */
 export function normalizeTerminal(t: unknown): string | null {
   if (t == null) return null;

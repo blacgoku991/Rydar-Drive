@@ -4,8 +4,6 @@ export const env = {
   supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "",
   appUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
   rootDomain: process.env.NEXT_PUBLIC_ROOT_DOMAIN || "rydar.app",
-  mapStyleUrl:
-    process.env.NEXT_PUBLIC_MAP_STYLE_URL || "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
 };
 
 export function serverEnv() {

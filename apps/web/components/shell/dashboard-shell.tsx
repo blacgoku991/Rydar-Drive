@@ -67,7 +67,6 @@ function useCentraleCounts(orgId: string, enabled: boolean, initial: CentraleCou
     if (!enabled) return;
     const id = window.setInterval(reload, 120_000);
     return () => window.clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, orgId]);
   return counts;
 }

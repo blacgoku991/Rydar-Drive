@@ -26,19 +26,6 @@ export function estimateRoute(a: LatLng, b: LatLng): { distanceM: number; durati
   return { distanceM, durationS: Math.round((km / speedKmh) * 3600) + 180 };
 }
 
-export function bounds(points: LatLng[]): [[number, number], [number, number]] | null {
-  const valid = points.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
-  if (!valid.length) return null;
-  let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
-  for (const p of valid) {
-    minLat = Math.min(minLat, p.lat);
-    maxLat = Math.max(maxLat, p.lat);
-    minLng = Math.min(minLng, p.lng);
-    maxLng = Math.max(maxLng, p.lng);
-  }
-  return [[minLng, minLat], [maxLng, maxLat]];
-}
-
 /** Cercle (polygone GeoJSON) de rayon r mètres — pour visualiser les vagues de dispatch. */
 export function circlePolygon(center: LatLng, radiusM: number, steps = 96): [number, number][] {
   const coords: [number, number][] = [];
@@ -116,13 +103,6 @@ export function decodePolyline(str: string, precision = 5): Coord[] {
 }
 
 const toLatLng = ([lng, lat]: Coord): LatLng => ({ lat, lng });
-
-/** Longueur d'une ligne (m). */
-export function lineLength(coords: Coord[]): number {
-  let d = 0;
-  for (let k = 1; k < coords.length; k++) d += haversine(toLatLng(coords[k - 1]!), toLatLng(coords[k]!));
-  return d;
-}
 
 /** Simplification Douglas-Peucker (tolérance en mètres) — allège les tracés stockés. */
 export function simplifyLine(coords: Coord[], toleranceM = 8): Coord[] {

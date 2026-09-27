@@ -156,12 +156,12 @@ function RydarMapImpl({
   useEffect(() => {
     if (!follow || !me || focus || !navigation) return;
     if (Date.now() - lastNavCamera.current >= NAV_CAMERA_MS) navCamera(900);
-  }, [follow, me?.lat, me?.lng, me?.heading, focus, navigation, navCamera]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [follow, me?.lat, me?.lng, me?.heading, focus, navigation, navCamera]);
   // Hors guidage : centre seulement, zoom choisi conservé (un changement de cap, boussole comprise, ne bouge pas la carte)
   useEffect(() => {
     if (!follow || !me || focus || navigation || framed) return;
     ref.current?.animateCamera({ center: toLL(me) }, { duration: 500 });
-  }, [follow, me?.lat, me?.lng, framed, focus, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [follow, me?.lat, me?.lng, framed, focus, navigation]);
 
   const accuracy = me?.accuracy ?? null;
   return (

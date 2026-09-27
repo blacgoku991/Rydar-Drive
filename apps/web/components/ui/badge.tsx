@@ -32,17 +32,6 @@ export const toneDot: Record<Tone, string> = {
   green: "bg-green",
   red: "bg-red",
 };
-export const toneHex: Record<Tone, string> = {
-  neutral: "#666d79",
-  brand: "#c8f03c",
-  amber: "#f5b544",
-  blue: "#6aa6ff",
-  violet: "#b39dfa",
-  cyan: "#45d6e6",
-  green: "#4fd58f",
-  red: "#f2555a",
-};
-
 export function Badge({
   tone = "neutral",
   dot = true,

@@ -150,7 +150,6 @@ export function RydarMap({
       meMarker.current = null;
       reportMarkers.current.clear();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -194,7 +193,6 @@ export function RydarMap({
       const b = pts.reduce((acc, p) => acc.extend(p), new L.LngLatBounds(pts[0]!, pts[0]!));
       m.fitBounds(b, { padding, maxZoom: 15.5, duration: 700 });
     } else if (me) m.easeTo({ center: [me.lng, me.lat], zoom, duration: 600 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, me?.lat, me?.lng, me?.heading, pickup?.lat, pickup?.lng, dropoff?.lat, dropoff?.lng, route, routeMuted, navigation, focus?.lat, focus?.lng]);
 
   // Position du chauffeur : même dessin que l'app (point + faisceau d'orientation, flèche en guidage), orienté par
@@ -226,7 +224,7 @@ export function RydarMap({
     // Guidage sans cap connu : flèche dans l'axe de la carte (elle-même tournée selon le dernier cap)
     entry.marker.setRotation(heading ?? (mode === "nav" ? m.getBearing() : 0));
     entry.el.setAttribute("aria-label", meLabel(heading));
-  }, [ready, me?.lat, me?.lng, me?.heading, me?.accuracy, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ready, me?.lat, me?.lng, me?.heading, me?.accuracy, navigation]);
 
   // Signalements de la flotte : un marqueur par id (ajout, déplacement, retrait à l'expiration)
   useEffect(() => {
