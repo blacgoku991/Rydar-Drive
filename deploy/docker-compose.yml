@@ -46,6 +46,8 @@ services:
       OSRM_URL: ${OSRM_URL:-https://router.project-osrm.org}
       MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # Budget quotidien des fournisseurs payants (Google, Mapbox) : vide = 20000 (docs/DEPLOYMENT.md § 2)
+      GEO_DAILY_BUDGET: ${GEO_DAILY_BUDGET:-}
       DRIVER_APP_ORIGINS: ${DRIVER_APP_ORIGINS:-}
       APPLE_APP_IDS: ${APPLE_APP_IDS:-}
       IOS_APP_URL: ${IOS_APP_URL:-}
@@ -79,6 +81,7 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?}
       ACCOUNT_DELETIONS_MS: ${ACCOUNT_DELETIONS_MS:-}
       OSRM_URL: ${OSRM_URL:-https://router.project-osrm.org}
+      # Recommandé en production, avec « Enhanced Security for Push Notifications » chez Expo (docs/DEPLOYMENT.md § 3)
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       FCM_SERVICE_ACCOUNT_B64: ${FCM_SERVICE_ACCOUNT_B64:-}
       APNS_KEY_P8_B64: ${APNS_KEY_P8_B64:-}

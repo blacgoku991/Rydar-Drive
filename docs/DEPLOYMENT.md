@@ -41,10 +41,20 @@ Architecture cible :
        <p>Code à saisir dans l'application Rydar Drive :</p>
        <p style="font-size:28px;font-weight:700;letter-spacing:6px">{{ .Token }}</p>
        <p>Vous pouvez aussi ouvrir ce lien pour choisir un nouveau mot de passe : <a href="{{ .ConfirmationURL }}">changer mon mot de passe</a>.</p>
-       <p>Le code et le lien expirent dans une heure ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
+       <p>Le code et le lien expirent dans 15 minutes ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
        ```
 
-     Laissez *Email OTP Length* à 6 chiffres (l'app accepte 6 à 10) et *Email OTP Expiration* à 3600 s (*Sign In / Providers → Email*).
+   - **Codes envoyés par e-mail** (*Sign In / Providers → Email*) : *Email OTP Length* = **8** chiffres et *Email OTP
+     Expiration* = **900 s** (15 min). Les limites de Rydar (connexion, vérification du code) ne protègent que ses
+     propres routes : l'API Auth de Supabase reste appelable directement avec la clé publique, et elle ne compte pas
+     les essais par code (seulement une limite par IP). 8 chiffres valables 15 min mettent le devinage hors de portée,
+     même depuis de nombreuses adresses IP. Rien à reconstruire : l'app chauffeur et
+     `/api/auth/driver-password-reset/confirm` acceptent 6 à 10 chiffres. Ce délai vaut aussi pour les liens
+     d'invitation (même réglage) : un invité qui ouvre l'e-mail trop tard passe par « Mot de passe oublié ? » (app
+     chauffeur) ou `/forgot-password` (tableau de bord), qui lui envoie un nouveau code et un nouveau lien.
+   - *Rate Limits* : la limite des vérifications de code (*token verifications*, par IP) peut être abaissée ; ne
+     baissez pas trop celles des connexions et du rafraîchissement des sessions, car les téléphones des chauffeurs
+     partagent souvent l'adresse IP de leur opérateur.
    - **Journal d'audit Auth (conservation)** : Supabase Auth inscrit chaque connexion (nom, e-mail, adresse IP) dans
      `auth.audit_log_entries`. `private.housekeeping` (migration 004800, une fois par heure) en efface les lignes de plus
      d'un an, et la file de suppression (`private.complete_account_deletion`) celles d'un chauffeur dès que son compte de
@@ -67,6 +77,8 @@ Architecture cible :
 > Les migrations sont testées en CI sur PostgreSQL 16 + PostGIS, avec des stubs des schémas Supabase (`scripts/sql/local-supabase-stubs.sql`). Elles utilisent uniquement des API Supabase standard : `auth.uid()`, `auth.jwt()`, `realtime.send()` et `storage.buckets`.
 >
 > Sur Supabase, le rôle `postgres` qui applique les migrations n'est pas super-utilisateur, et les tables `auth.*`, `storage.*` et `realtime.messages` appartiennent aux services. Les migrations n'y créent donc que des policies (autorisées par l'extension supautils) et deux déclencheurs sur `auth.users`, sans jamais modifier ces tables. Elles ont été rejouées avec les droits d'un projet hébergé : image `supabase/postgres`, supautils, schémas Storage, Auth et Realtime.
+>
+> Les colonnes de `public.organizations` lisibles par les clients (tableau de bord, super admin par sa session) sont accordées une à une (`grant select (…)`, migration 004300) ; les autres (Stripe, relances et conditions de paiement de Rydar, compteurs…) restent réservées au serveur et aux RPC. Toute nouvelle colonne lue par un client doit être ajoutée à ce GRANT par une nouvelle migration, sinon elle est illisible et un `select('*')` échoue (42501).
 
 ## 2. Application web (Vercel)
 
@@ -98,6 +110,7 @@ Architecture cible :
 | `ROUTING_PROVIDER` | `osrm` | `osrm` auto-hébergé, ou `mapbox` / `google` (trafic en temps réel) |
 | `OSRM_URL` | serveur de démo OSRM | **à remplacer** : le serveur public de démo est limité. Voir ci-dessous |
 | `MAPBOX_TOKEN`, `GOOGLE_MAPS_API_KEY` | | selon le fournisseur choisi |
+| `GEO_DAILY_BUDGET` | `20000` | Budget quotidien global d'un fournisseur payant (Google, Mapbox), compté à part pour les adresses et pour les itinéraires, toutes requêtes confondues (mini-site compris ; guidage des chauffeurs non compté). Au-delà : Géoplateforme / BAN pour les adresses, estimation à vol d'oiseau pour les itinéraires. Compteur dans Redis |
 
 **OSRM auto-hébergé** (recommandé, sans coût par requête) :
 
@@ -126,7 +139,7 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 | `DATABASE_URL` | **Requise.** Connexion à la base (voir ci-dessous) |
 | `SUPABASE_URL` (à défaut `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (ou `SUPABASE_SECRET_KEY`) | **Requises en production.** API Storage et administration d'Auth, avec la clé service role : le worker termine les suppressions de compte chauffeur restées inachevées (dossier des justificatifs, compte de connexion). Sans elles, il écrit l'erreur `account deletions cannot be completed` au démarrage, puis toutes les heures tant que la file n'est pas vide, et `/admin/suppressions` affiche ces suppressions « en retard ». Le kit VPS les transmet (`deploy/docker-compose.yml`) |
 | `DATABASE_SSLMODE`, `DATABASE_CA_FILE` | Chiffrement de la connexion à la base, prioritaire sur le `sslmode` de `DATABASE_URL` : `verify-full` (certificat du serveur vérifié avec la racine `DATABASE_CA_FILE`) ou `no-verify` (repli). Vide : `DATABASE_URL` telle quelle. Voir « Connexion chiffrée à la base » |
-| `EXPO_ACCESS_TOKEN` | Pushs par Expo (voir « Pushs » plus bas) ; `FCM_*` / `APNS_*` pour un envoi direct (`APNS_PRODUCTION=false` : serveur sandbox d'Apple) |
+| `EXPO_ACCESS_TOKEN` | Pushs par Expo (voir « Pushs » plus bas). **Recommandé en production**, avec l'option Expo *Enhanced Security for Push Notifications* : sans elle, quiconque connaît le jeton push d'un téléphone peut lui envoyer une notification affichée comme venant de Rydar Drive. `FCM_*` / `APNS_*` pour un envoi direct (`APNS_PRODUCTION=false` : serveur sandbox d'Apple) |
 | `WHATSAPP_API_VERSION` | Facultative ([WHATSAPP.md](WHATSAPP.md)). Aucun jeton WhatsApp dans l'environnement : ils sont en base, lisibles par le seul service role |
 | `*_MS` | Fréquences des tâches (tableau ci-dessous), défauts conseillés |
 | `NOTIFICATION_BATCH`, `WHATSAPP_BATCH` | Notifications push (200) et relances WhatsApp (20) réservées par passage |
@@ -150,7 +163,7 @@ Tâches périodiques :
 | --- | --- | --- |
 | `private.dispatch_tick()` | 2 s (`DISPATCH_TICK_MS`) | vagues, délais des offres, bascule des planifiées |
 | notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s ; relances WhatsApp (`private.claim_whatsapp`, [WHATSAPP.md](WHATSAPP.md)) |
-| `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | durées de conservation (§ 6) : positions, messages, notifications, journaux, adresses IP, courses, bannissements (`private.purge_expired_bans`) ; un échec de la purge des courses ou des bannissements est renvoyé dans `errors` (journal `housekeeping`) sans bloquer le reste ; ne met jamais un chauffeur hors ligne |
+| `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | durées de conservation (§ 6) : positions, messages, notifications, journaux (celui de Supabase Auth une fois par heure), adresses IP, courses, bannissements (`private.purge_expired_bans`) ; un échec de la purge des courses, des bannissements ou du journal Auth est renvoyé dans `errors` (journal `housekeeping incomplete`, niveau warn) sans bloquer le reste ; ne met jamais un chauffeur hors ligne |
 | `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |
 | `private.watch_driver_gps()` | 30 s (`WATCH_DRIVER_GPS_MS`) | application fermée (ni position ni signe de vie depuis 3 min) : chauffeur hors ligne, sans notification (jamais en course) |
 | `private.document_reminders()` | au démarrage puis 6 h (`DOCUMENT_REMINDERS_MS`) | documents échus, rappels d'échéance (30 j, 7 j, jour J), jamais avant 9 h locale |
@@ -222,6 +235,11 @@ Une course avec un numéro de vol est suivie de 24 h avant à 3 h après la pris
 - Pushs : l'app chauffeur enregistre des **jetons Expo**, donc **Expo Push est la voie supportée** (`EXPO_ACCESS_TOKEN`) :
   - Android : téléversez la clé de compte de service **FCM v1** dans EAS (`eas credentials`) ;
   - iOS : la **clé APNs** (.p8) dans EAS ;
+  - production : créez un jeton (expo.dev › réglages du compte › *Access tokens*), renseignez `EXPO_ACCESS_TOKEN`,
+    vérifiez qu'un push arrive, **puis** activez *Enhanced Security for Push Notifications* (même page) : Expo refuse
+    alors tout envoi sans ce jeton (dans l'ordre inverse, plus aucun push ne part). Les jetons push ne sont lisibles
+    par aucun client (migration 004300) et n'apparaissent jamais en entier dans `notifications.last_error` ni dans le
+    journal du worker (6 premiers caractères) ;
   - le worker vérifie les accusés de réception Expo (15 s à 5 min après l'envoi) : un jeton `DeviceNotRegistered` est désactivé, et une notification qu'aucun appareil n'a reçue passe en échec ;
   - FCM v1 direct (`FCM_SERVICE_ACCOUNT_B64`) et APNs direct (`APNS_KEY_P8_B64`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID`) ne servent qu'à un build spécifique qui enregistre des jetons natifs (provider `fcm` / `apns`) ;
   - chaque envoi est borné dans le temps (10 s par requête FCM ou APNs, 20 s par fournisseur, Expo compris) : un service qui ne répond pas ne bloque plus la file, la notification est réessayée (`PUSH_TIMEOUT`, `APNS_TIMEOUT`).
@@ -287,11 +305,13 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
   signataire pour les CGV et l'accord de traitement) ;
 - les durées annoncées par `/confidentialite` (§ 9 et § 10), `/suppression-compte` et `/dpa` (§ 11) sont appliquées
   par le code :
-  - `private.housekeeping` (worker, toutes les 5 min ; dernière définition : migration 003900, toute redéfinition
-    part de celle-ci) : historique des positions 30 jours ; messages, signalements de la flotte (copie dans le
-    journal comprise) et signalements de messages 180 jours ; notifications (90 jours après l'envoi prévu) et
-    journaux d'API 90 jours ; adresse IP et navigateur du journal d'audit 1 an ; courses 10 ans après la fin de leur
-    année ; bannissements 3 ans (`private.purge_expired_bans`) ;
+  - `private.housekeeping` (worker, toutes les 5 min ; dernière définition : migration 004800, toute redéfinition
+    part de celle-ci) : historique des positions, et position du chauffeur relevée par une alerte close, 30 jours ;
+    messages, signalements de la flotte (copie dans le journal comprise) et signalements de messages 180 jours ;
+    notifications (90 jours après l'envoi prévu) et journaux d'API 90 jours ; adresse IP et navigateur du journal
+    d'audit 1 an ; journal d'audit de Supabase Auth 1 an (§ 1) ; courses 10 ans après la fin de l'année de la prise
+    en charge, quel que soit leur statut ; bannissements 3 ans (`private.purge_expired_bans`) ; empreintes d'un
+    chauffeur supprimé qui devait des commissions, dès que plus rien n'est dû ;
   - suppression d'un compte chauffeur (`private.delete_driver_account`, migration 004000) : données effacées ou
     anonymisées aussitôt, adresse IP et navigateur de son inscription retirés du journal d'audit, indices en clair
     des empreintes effacés ; bannissements des comptes supprimés depuis 3 ans : `private.purge_deleted_driver_bans`
@@ -326,6 +346,8 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
 ## 7. Checklist de mise en production
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
+- [ ] Auth : code e-mail à 8 chiffres valable 900 s (§ 1)
+- [ ] Pushs : `EXPO_ACCESS_TOKEN` renseigné, puis *Enhanced Security for Push Notifications* activée chez Expo (§ 3)
 - [ ] Realtime : *Allow public access* désactivé (canaux privés uniquement)
 - [ ] Premier Super Admin créé, offres Stripe reliées
 - [ ] `API_KEY_PEPPER` long et secret, `SUPABASE_SERVICE_ROLE_KEY` uniquement côté serveur

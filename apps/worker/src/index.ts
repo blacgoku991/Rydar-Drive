@@ -46,7 +46,8 @@ function single(name: string, fn: () => Promise<unknown>) {
   return job;
 }
 
-async function dispatchTick() {
+/** Toutes les 2 s : vagues d'offres et relances ; un tick lent n'est pas doublé par le suivant (single). */
+const dispatchTick = single("dispatchTick", async () => {
   try {
     const { rows } = await pool.query<{ r: Record<string, number> }>("select private.dispatch_tick() as r");
     const r = rows[0]?.r ?? {};
@@ -58,7 +59,7 @@ async function dispatchTick() {
     state.errors++;
     log("error", "dispatch tick failed", { error: (error as Error).message, ...dbTlsHint(error) });
   }
-}
+});
 
 /**
  * Toutes les 30 s : application fermée (ni position ni signe de vie depuis 3 min) → chauffeur hors ligne, sans
