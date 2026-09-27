@@ -209,6 +209,8 @@ export default function SetPasswordPage() {
                   : "Mot de passe enregistré. Pour activer votre accès à la centrale, ouvrez le lien reçu par e-mail.",
               );
             }
+            // Accès activé : seul un jeton émis après l'activation l'ouvre (migration 005300) → session rafraîchie
+            if (res?.code === "ACTIVATED") await getBrowserClient().auth.refreshSession().catch(() => undefined);
             router.replace("/dashboard");
             router.refresh();
           }}

@@ -289,3 +289,34 @@ describe("set_driver_status (activer / désactiver / suspendre)", () => {
     expect(err.message).toMatch(/DRIVER_BANNED/);
   });
 });
+
+describe("Invitation activée : un jeton émis AVANT l'activation ne donne pas l'accès (20260924005300)", () => {
+  it("jeton antérieur (compte pré-créé par un tiers) : aucun accès ; jeton rafraîchi après l'activation : accès", async () => {
+    const A = await createOrg("Invit jeton");
+    const x = await newUser("jeton");
+    await invite(A.id, x, "admin");
+    const before = Math.floor(Date.now() / 1000) - 60; // jeton du tiers, émis avant l'activation
+    expect(await accept(x, "recovery")).toMatchObject({ ok: true, code: "ACTIVATED", activated: 1 });
+    const [{ activated_at }] = await sql("select activated_at from public.organization_users where organization_id = $1 and user_id = $2", [A.id, x]);
+    expect(activated_at).not.toBeNull();
+
+    const probe = (iat: number) =>
+      asClaims({ sub: x, iat }, async (q) => ({
+        members: (await q("select private.member_org_ids() as id")).map((r) => r.id),
+        admins: (await q("select private.admin_org_ids() as id")).map((r) => r.id),
+        role: (await q("select private.has_org_role($1, array['owner','admin']::public.org_role[]) as ok", [A.id]))[0].ok,
+        own: (await q("select organization_id from public.organization_users where user_id = $1", [x])).map((r) => r.organization_id),
+      }));
+
+    expect(await probe(before)).toEqual({ members: [], admins: [], role: false, own: [] });
+    const fresh = Math.floor(Date.now() / 1000) + 1;
+    expect(await probe(fresh)).toEqual({ members: [A.id], admins: [A.id], role: true, own: [A.id] });
+  });
+
+  it("adhésion créée directement active (sans activation) : aucun changement, même sans claim iat", async () => {
+    const A = await createOrg("Invit jeton direct");
+    const m = await createMember(A, "admin");
+    const [row] = await as({ sub: m }, (q) => q("select array(select private.member_org_ids()) as ids"));
+    expect(row.ids).toEqual([A.id]);
+  });
+});
