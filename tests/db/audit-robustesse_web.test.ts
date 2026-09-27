@@ -99,8 +99,8 @@ describe("Documents — rappel d'échéance avec un renouvellement déjà dépos
   it("dépôt refusé par la centrale : les rappels suivants redemandent le document", async () => {
     const org = await createOrg("Audit Robustesse Docs Refus");
     const d = await createDriver(org);
-    const old = await insertDoc(org, d, "medical", 20);
-    const sub = await submit(d, org, "medical", 700);
+    const old = await insertDoc(org, d, "insurance", 20);
+    const sub = await submit(d, org, "insurance", 700);
 
     await run(); // J-30 : renouvellement en attente
     expect((await notifOf(old))[0].body).toContain("en cours de validation");
