@@ -282,6 +282,8 @@ export const organizationUpdateSchema = z.object({
   address: optionalText(200),
   city: optionalText(80),
   postalCode: optionalText(12),
+  /** Inscription au registre des exploitants VTC / déclaration de centrale de réservation */
+  vtcRegistration: optionalText(120),
 });
 
 export const orgSettingsSchema = z.object({

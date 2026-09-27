@@ -7,7 +7,7 @@ import { VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, type VehicleCategory } from 
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
   type StyleProp, type TextInputProps, type TextStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -15,7 +15,7 @@ import { Notice } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
 import { BigButton, Screen } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { fetchJoinCentrale, joinCentrale, signIn, type JoinCentrale } from "@/lib/api";
+import { fetchJoinCentrale, joinCentrale, legalUrl, signIn, type JoinCentrale } from "@/lib/api";
 import { colors, control, mono, radius, space, type, weight } from "@/theme";
 
 type Form = {
@@ -295,9 +295,21 @@ export default function JoinScreen() {
                     >
                       <Ionicons name={accept ? "checkbox" : "square-outline"} size={24} color={accept ? colors.brand : colors.muted} />
                       <Text style={styles.acceptText}>
-                        {frTypo(`J'accepte que ${org.name} traite mes données pour gérer mon activité de chauffeur, et je certifie être chauffeur VTC en règle.`)}
+                        {frTypo(
+                          `J'accepte les conditions d'utilisation de Rydar Drive et que ${org.name} traite mes données pour gérer mon activité de chauffeur, et je certifie être chauffeur VTC en règle.`,
+                        )}
                       </Text>
                     </Pressable>
+                    <View style={styles.legalRow}>
+                      {([["cgu", "Conditions d'utilisation"], ["confidentialite", "Confidentialité"]] as const).map(([page, label]) => {
+                        const url = legalUrl(page);
+                        return url ? (
+                          <Pressable key={page} onPress={() => void Linking.openURL(url).catch(() => null)} hitSlop={8} accessibilityRole="link">
+                            <Text style={styles.legalLink}>{label}</Text>
+                          </Pressable>
+                        ) : null;
+                      })}
+                    </View>
 
                     {error && <Notice tone="error" message={frTypo(error)} />}
 
@@ -362,4 +374,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: space.md },
   accept: { flexDirection: "row", gap: space.md, alignItems: "flex-start", minHeight: control.sm, paddingVertical: space.xs, marginTop: space.xs },
   acceptText: { flex: 1, color: colors.muted, fontSize: type.body, lineHeight: 21 },
+  legalRow: { flexDirection: "row", flexWrap: "wrap", gap: space.lg, paddingLeft: 24 + space.md, marginTop: -space.xs },
+  legalLink: { color: colors.fg, fontSize: type.footnote, textDecorationLine: "underline", paddingVertical: space.xs },
 });

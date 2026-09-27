@@ -13,9 +13,11 @@
 | **Serveur Next.js** | Validation zod de chaque entrée, contrôle du rôle dans chaque server action. La clé *service role* n'est utilisée que côté serveur (`server-only`), après authentification. |
 | **Temps réel** | Canaux privés. Une policy RLS sur `realtime.messages` limite `org:{id}` aux membres de l'organisation et `driver:{id}` au chauffeur concerné. `fleet:{id}` (fil flotte, signalements) est ouvert aux chauffeurs de l'organisation, sans donnée client. |
 | **Messagerie** | Lecture par RLS uniquement : un chauffeur ne voit que son fil direct et le fil flotte de **son** organisation. Aucune écriture directe : tout passe par des RPC qui vérifient le tenant et limitent le débit (`PT429`). Le nom de l'auteur est dénormalisé, un chauffeur n'accède donc jamais à la fiche des autres. Les signalements exigent une position ; les votes sont uniques par votant. |
+| **Modération du fil « Chauffeurs »** | Signalements de messages (`chat_message_reports`) lisibles par les membres de la centrale, le super admin et leur auteur ; masquages (`chat_blocks`) par le seul chauffeur qui masque (la centrale ne voit pas qui masque qui). Écritures par RPC seulement : `report_chat_message`, `block_chat_author` (chauffeur), `remove_chat_message` et `dismiss_chat_report` (owner, admin, dispatcher ; accès contrôlé avant tout verrou, audit). Un message retiré (`deleted_at`) est exclu par la RLS pour tout le monde. Temps réel `chat.moderation` (`org:`) et `chat.removed` (`fleet:`) : identifiants seulement, jamais le texte. |
+| **Moyens de paiement des centrales** | Lien, bénéficiaire, IBAN et BIC de la centrale (`organization_settings`) : modifiables par owner / admin seulement (RLS + droits par colonne, formats vérifiés en base), lisibles par les membres ; un chauffeur ne les reçoit que par `driver_settlements`, pour les moyens cochés **et** renseignés (`private.settlement_methods_available`). Coordonnées de paiement de Rydar (`platform_billing`) : écriture par le super admin seulement. |
 | **Documents chauffeur** | Dépôt dans le stockage limité au dossier `<org>/<chauffeur>/` du chauffeur connecté (policy Storage). Validation par la centrale seulement (`review_driver_document`, auteur et date conservés). |
 | **Mode centrale : argent** | Modèle d'exploitation et frais plateforme modifiables par le seul super admin (aucun droit client). Répartition calculée en base, règlements écrits uniquement par RPC : le chauffeur ne peut que déclarer **ses** paiements, seule la centrale confirme, conteste ou annule (owner / admin). Prix et commission verrouillés dès qu'un règlement est déclaré ou encaissé. |
-| **Bannissement** | Identités stockées **hachées** (sha256 de la valeur normalisée) avec un simple indice masqué ; triggers en base sur `drivers`, `vehicles`, `driver_documents` et `driver_devices` (`IDENTITY_BANNED`, `DRIVER_BANNED`). Un bannissement vaut pour la centrale ; le bannissement de toute la plateforme n'est décidé que par le super admin, sur signalement, et peut être levé. Compte Auth banni en plus (`ban_duration`) et sessions révoquées. Les autres centrales ne voient jamais les bannissements d'une centrale. |
+| **Bannissement** | Identités stockées **hachées** (sha256 de la valeur normalisée, préfixe fixe et non secret : un hachage de téléphone reste attaquable par force brute par qui lit la base, d'où l'accès limité aux admins de la centrale et au super admin) avec un simple indice masqué ; triggers en base sur `drivers`, `vehicles`, `driver_documents` et `driver_devices` (`IDENTITY_BANNED`, `DRIVER_BANNED`). Un bannissement vaut pour la centrale ; le bannissement de toute la plateforme n'est décidé que par le super admin, sur signalement, et peut être levé. Compte Auth banni en plus (`ban_duration`) et sessions révoquées. Les autres centrales ne voient jamais les bannissements d'une centrale. Empreintes et signalements effacés 3 ans après le bannissement (`private.purge_expired_bans`) ; indices en clair effacés dès la suppression du compte. |
 
 ## Scénario obligatoire : A tente de récupérer une course de B
 
@@ -57,12 +59,24 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 ## Secrets et navigateur
 
 - Le navigateur ne reçoit que l'URL Supabase et la clé **publique** (anon). Les clés service role, Stripe, FCM, APNs et le poivre des clés API restent sur le serveur ou dans le worker.
+- Jetons WhatsApp (Meta) : tables `org_whatsapp_secrets` et `platform_whatsapp_secrets`, lisibles par le seul service role (RLS activée, aucun droit pour `anon` ni `authenticated`). Ils sont lus côté serveur (vérification du numéro, message test) et par le worker (`private.claim_whatsapp`), jamais renvoyés au navigateur ni journalisés. La configuration visible (numéro, modèle, état) est dans `org_whatsapp` (owner / admin de la centrale) et `platform_whatsapp` (super admin).
 - En-têtes HTTP : CSP stricte (`frame-ancestors 'none'` hors mini-site), HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`.
 - Le mini-site public n'expose aucune donnée. Il crée une course par une action serveur limitée en débit, avec pot de miel et consentement.
 
 ## Journal d'audit
 
-`audit_logs` enregistre automatiquement, par trigger, les changements sensibles : organisations, chauffeurs, membres, clés API, réglages. Les gravités *warning* et *critical* sont utilisées pour une suspension, une révocation ou une tentative d'accès inter-tenant. Le Super Admin consulte l'audit de toutes les organisations ; un rattacheur ne voit que le sien.
+`audit_logs` enregistre automatiquement, par trigger, les changements sensibles : organisations, chauffeurs, membres, clés API, réglages. Les gravités *warning* et *critical* sont utilisées pour une suspension, une révocation ou une tentative d'accès inter-tenant. Le Super Admin consulte l'audit de toutes les organisations ; un rattacheur ne voit que le sien. Adresse IP et navigateur : effacés au bout d'un an (`private.housekeeping`), et aussitôt pour un chauffeur qui supprime son compte.
+
+## Suppression du compte chauffeur
+
+- Route `/api/driver/delete-account` : confirmation « SUPPRIMER » ; limitation par IP, puis par adresse (même compteur que la connexion chauffeur), puis par compte ; jeton de l'app, ou e-mail et mot de passe vérifiés par un client isolé (sans cookie, session aussitôt révoquée) ; compte Auth banni : empreinte bcrypt vérifiée en base (`svc_driver_password_check`, service role, fiche non supprimée seulement). Supabase Auth injoignable : 503, jamais « mot de passe incorrect ».
+- SQL (`private.delete_driver_account`) : refus si une course est attribuée ; effacement et anonymisation dans une seule transaction ; journal d'audit caviardé ; fiche « Chauffeur supprimé (#N) » détachée du compte et **figée** par le garde-fou `DRIVER_DELETED` (42501), quelle que soit la voie (tableau de bord, RPC, service role) : ni réactivation ni suspension, ni coordonnées, ni niveau de confiance, ni nouveau bannissement ou levée par la centrale, ni rattachement à un compte ou à un véhicule, ni nouveau justificatif. Seul le système peut encore l'effacer (purges des bannissements) ; la plateforme bannit ou lève les identités d'un signalement sans toucher la fiche. Un membre de centrale garde son compte de gestion et ses sessions (`rydar.keep_sessions`).
+- File `private.account_deletions` : RLS activée et aucun droit, service role compris ; accès par les fonctions `svc_*` et par le worker (propriétaire). Fichiers et compte de connexion supprimés par la route, sinon repris par le worker avec la clé service role (10 essais), puis relance par le super admin (`/admin/suppressions`, `svc_admin_delete_driver`, audités). Une demande reçue par e-mail passe par cet outil, jamais par du SQL.
+
+## Documents légaux
+
+- `platform_legal` (éditeur, hébergeurs) : lecture publique par `public_legal_info()`, écriture par le super admin (`svc_platform_legal_update`, audit).
+- `legal_acceptances` : preuve en ajout seul (déclencheur `LEGAL_PROOF_IMMUTABLE` ; le service role ne peut que lire et ajouter). Écriture par `accept_legal_documents` (CGV et accord de traitement : owner / admin de la centrale) ; l'e-mail du signataire est copié par un déclencheur, jamais fourni par l'appelant. Compte supprimé : la preuve reste, détachée du compte ; une centrale qui a accepté ne peut plus être supprimée (`on delete restrict`).
 
 ## Limites des offres
 
@@ -73,7 +87,8 @@ Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domain
 - Les frais d'une course terminée sont **dus par la centrale** dès la fin de course (`platform_fee_entries`, trigger
   `rides_e_platform_fee`) : annuler ou contester le règlement du chauffeur n'y change rien.
 - **Registre immuable** : aucune écriture ne se modifie ni ne se supprime (trigger `platform_entry_guard`, même en service
-  role) ; tout changement de frais est une nouvelle écriture de correction. Une **baisse** (prix corrigé après la course)
+  role) ; tout changement de frais est une nouvelle écriture de correction. Registre et paiements ne partent pas non plus
+  avec la centrale : clés étrangères en `on delete restrict` (migration 004200), une centrale qui en a s'archive. Une **baisse** (prix corrigé après la course)
   reste « en attente » et ne compte qu'après l'accord du super admin.
 - **Seul le super admin** confirme un paiement (montant réellement reçu), le refuse, le rouvre, saisit un paiement, accorde
   un avoir ou change les conditions : fonctions `svc_platform_*` réservées au service role, auteur super admin vérifié en

@@ -12,6 +12,8 @@ const EVENTS = [
   "driver.location", "driver.updated", "ride.updated", "offer.updated", "ride.event",
   // alertes de suivi (002200), messagerie et signalements (002300), documents chauffeur (002400)
   "ride.alert", "chat.message", "chat.report", "chat.read", "driver.document",
+  // modération du fil « Chauffeurs » (004100) : message signalé, classé ou retiré (identifiants seulement)
+  "chat.moderation",
 ] as const;
 
 /**

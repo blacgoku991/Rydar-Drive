@@ -1,9 +1,19 @@
 "use client";
 import { FLEET_REPORT_META, fleetReportTitle, initials, type ChatMessage, type FleetReportType } from "@rydar/shared";
-import { Check, CheckCheck, MapPinned, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Check, CheckCheck, Flag, MapPinned, ThumbsDown, ThumbsUp } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ago, clockTime, dayLabel, firstName, minutesLeft, sameDay } from "./chat-utils";
+import { RemoveMessageButton, reportedLabel } from "./moderation";
+
+/** Marque « Signalé » d'un message (fil flotte, signalements en attente). */
+function FlagMark({ count }: { count: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 px-1 text-[11px] font-medium text-amber">
+      <Flag className="size-3" aria-hidden /> {reportedLabel(count)}
+    </span>
+  );
+}
 
 /** Texte par défaut d'un signalement sans commentaire (send_chat_message) : inutile de le répéter sous le titre. */
 const DEFAULT_REPORT_BODY: Record<FleetReportType, string> = {
@@ -76,6 +86,8 @@ export function MessageGroup({
   timeZone,
   showAuthor,
   receipt,
+  onRemove,
+  flagged,
 }: {
   side: "me" | "team" | "driver";
   author: string;
@@ -85,6 +97,10 @@ export function MessageGroup({
   showAuthor: boolean;
   /** Accusé sous le dernier message envoyé (fil direct) */
   receipt?: "sent" | "seen" | null;
+  /** Modération (fil flotte) : bouton « Supprimer » à côté de chaque message */
+  onRemove?: (m: ChatMessage) => void;
+  /** Messages signalés en attente → nombre de signalements */
+  flagged?: ReadonlyMap<string, number>;
 }) {
   const right = side !== "driver";
   return (
@@ -100,26 +116,40 @@ export function MessageGroup({
             {side === "team" ? `${author} · centrale` : author}
           </span>
         )}
-        {messages.map((m, i) => (
-          <div
-            key={m.id}
-            className={cn(
-              "chat-bubble relative max-w-full rounded-2xl px-3.5 py-2 text-[13.5px] leading-[1.45]",
-              side === "me" && "chat-bubble--me",
-              side === "team" && "border border-line-strong bg-ink-600 text-fg",
-              side === "driver" && "border border-line bg-ink-700 text-fg",
-              right ? (i === messages.length - 1 ? "rounded-br-md" : "") : i === messages.length - 1 ? "rounded-bl-md" : "",
-            )}
-          >
-            <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</span>
-            <time
-              dateTime={m.created_at}
-              className={cn("float-right ml-3 mt-[5px] font-mono text-[10.5px] leading-none", side === "me" ? "text-brand/60" : "text-fg-subtle")}
+        {messages.map((m, i) => {
+          const bubble = (key?: string) => (
+            <div
+              key={key}
+              className={cn(
+                "chat-bubble relative min-w-0 max-w-full rounded-2xl px-3.5 py-2 text-[13.5px] leading-[1.45]",
+                side === "me" && "chat-bubble--me",
+                side === "team" && "border border-line-strong bg-ink-600 text-fg",
+                side === "driver" && "border border-line bg-ink-700 text-fg",
+                flagged?.has(m.id) && "ring-1 ring-amber/40",
+                right ? (i === messages.length - 1 ? "rounded-br-md" : "") : i === messages.length - 1 ? "rounded-bl-md" : "",
+              )}
             >
-              {clockTime(m.created_at, timeZone)}
-            </time>
-          </div>
-        ))}
+              <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</span>
+              <time
+                dateTime={m.created_at}
+                className={cn("float-right ml-3 mt-[5px] font-mono text-[10.5px] leading-none", side === "me" ? "text-brand/60" : "text-fg-subtle")}
+              >
+                {clockTime(m.created_at, timeZone)}
+              </time>
+            </div>
+          );
+          const count = flagged?.get(m.id);
+          if (!onRemove && !count) return bubble(m.id);
+          return (
+            <div key={m.id} className={cn("flex max-w-full flex-col gap-0.5", right ? "items-end" : "items-start")}>
+              <div className={cn("group/msg flex max-w-full items-center gap-1", right && "flex-row-reverse")}>
+                {bubble()}
+                {onRemove && <RemoveMessageButton onClick={() => onRemove(m)} />}
+              </div>
+              {count ? <FlagMark count={count} /> : null}
+            </div>
+          );
+        })}
         {receipt && (
           <span className={cn("flex items-center gap-1 px-1 text-[11px]", receipt === "seen" ? "text-brand" : "text-fg-subtle")}>
             {receipt === "seen" ? <CheckCheck className="size-3.5" /> : <Check className="size-3.5" />}
@@ -140,7 +170,23 @@ export function SystemLine({ message, timeZone }: { message: ChatMessage; timeZo
 }
 
 /** Carte de signalement flotte : type, auteur, âge, votes, actif / expiré, lien vers la carte. */
-export function ReportCard({ message: m, side, timeZone, now }: { message: ChatMessage; side: "me" | "team" | "driver"; timeZone: string; now: number }) {
+export function ReportCard({
+  message: m,
+  side,
+  timeZone,
+  now,
+  onRemove,
+  flaggedCount,
+}: {
+  message: ChatMessage;
+  side: "me" | "team" | "driver";
+  timeZone: string;
+  now: number;
+  /** Modération : supprimer ce signalement (fil flotte) */
+  onRemove?: (m: ChatMessage) => void;
+  /** Signalé comme abusif par des chauffeurs (en attente de décision) */
+  flaggedCount?: number;
+}) {
   const type = (m.report_type ?? "other") as FleetReportType;
   const meta = FLEET_REPORT_META[type];
   const left = minutesLeft(m.expires_at, now);
@@ -150,7 +196,11 @@ export function ReportCard({ message: m, side, timeZone, now }: { message: ChatM
   return (
     <div className={cn("flex", side === "driver" ? "justify-start" : "justify-end")}>
       <article
-        className={cn("w-full max-w-[440px] overflow-hidden rounded-2xl border", active ? "border-line-strong bg-ink-700" : "border-line bg-ink-800/60")}
+        className={cn(
+          "group/msg w-full max-w-[440px] overflow-hidden rounded-2xl border",
+          active ? "border-line-strong bg-ink-700" : "border-line bg-ink-800/60",
+          flaggedCount ? "ring-1 ring-amber/40" : null,
+        )}
         aria-label={fleetReportTitle(type, author)}
       >
         <div className="flex items-start gap-3 p-3.5">
@@ -192,14 +242,18 @@ export function ReportCard({ message: m, side, timeZone, now }: { message: ChatM
                   <span>pas encore de vote</span>
                 )}
               </p>
-              {active && (
-                <Link
-                  href={`/dashboard?report=${m.id}`}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line-strong px-2.5 text-[12px] font-medium text-fg-muted transition-colors hover:border-white/20 hover:bg-white/[0.04] hover:text-fg"
-                >
-                  <MapPinned className="size-3.5" /> Voir sur la carte
-                </Link>
-              )}
+              <span className="flex items-center gap-1.5">
+                {flaggedCount ? <FlagMark count={flaggedCount} /> : null}
+                {active && (
+                  <Link
+                    href={`/dashboard?report=${m.id}`}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line-strong px-2.5 text-[12px] font-medium text-fg-muted transition-colors hover:border-white/20 hover:bg-white/[0.04] hover:text-fg"
+                  >
+                    <MapPinned className="size-3.5" /> Voir sur la carte
+                  </Link>
+                )}
+                {onRemove && <RemoveMessageButton onClick={() => onRemove(m)} />}
+              </span>
             </div>
           </div>
         </div>

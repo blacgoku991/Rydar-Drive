@@ -1,13 +1,20 @@
 "use client";
-import type { ChatMessage, ChatOverview, ChatReadEvent, ChatThreadKey, DriverPresence, DriverStatus, FleetReportUpdate } from "@rydar/shared";
+import type {
+  ChatMessage, ChatModerationEvent, ChatModerationItem, ChatModerationQueue, ChatOverview, ChatReadEvent, ChatThreadKey, DriverPresence,
+  DriverStatus, FleetReportUpdate,
+} from "@rydar/shared";
 import { MessagesSquare, RadioTower } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchChatOverview, fetchThreadMessages, markChatRead, sendChatMessage } from "@/app/dashboard/messages/actions";
+import { toast } from "sonner";
+import {
+  dismissChatReport, fetchChatOverview, fetchModerationQueue, fetchThreadMessages, markChatRead, removeChatMessage, sendChatMessage,
+} from "@/app/dashboard/messages/actions";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FLEET_THREAD, driverThread, isUuid, sortDriverThreads, threadHref, type DriverThreadSummary } from "./chat-utils";
+import { RemoveMessageDialog, type ModerationBusy } from "./moderation";
 import { ThreadList } from "./thread-list";
 import { ThreadPane, type ThreadState } from "./thread-pane";
 import { useChatUnread } from "./unread-provider";
@@ -46,6 +53,7 @@ export function MessagesView({
   activeDrivers,
   initialThread,
   initialPage,
+  initialModeration,
 }: {
   orgId: string;
   timeZone: string;
@@ -55,6 +63,8 @@ export function MessagesView({
   activeDrivers: number;
   initialThread: ChatThreadKey | null;
   initialPage: Page | null;
+  /** Messages signalés en attente (null : modération indisponible sur ce serveur) */
+  initialModeration: ChatModerationQueue | null;
 }) {
   const sp = useSearchParams();
   const selected = threadFromParams(sp);
@@ -69,6 +79,11 @@ export function MessagesView({
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const { setOpenThread, refresh: refreshUnread } = useChatUnread();
+  // Modération du fil flotte : messages signalés, confirmation de suppression, action en cours
+  const [moderation, setModeration] = useState<ChatModerationQueue | null>(initialModeration);
+  const [confirming, setConfirming] = useState<ChatMessage | null>(null);
+  const [moderationBusy, setModerationBusy] = useState<ModerationBusy>(null);
+  const moderationTimer = useRef<number | null>(null);
 
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
@@ -123,6 +138,39 @@ export function MessagesView({
     }, 400);
   }, []);
 
+  const refreshModeration = useCallback(() => {
+    if (moderationTimer.current) window.clearTimeout(moderationTimer.current);
+    moderationTimer.current = window.setTimeout(async () => {
+      const q = await fetchModerationQueue().catch(() => null);
+      if (q) setModeration(q);
+    }, 300);
+  }, []);
+  useEffect(
+    () => () => {
+      if (moderationTimer.current) window.clearTimeout(moderationTimer.current);
+      if (overviewTimer.current) window.clearTimeout(overviewTimer.current);
+    },
+    [],
+  );
+
+  /** Message retiré (ici ou par un autre membre de la centrale) : hors du fil chargé et de la file, résumés relus. */
+  const dropMessage = useCallback(
+    (id: string) => {
+      setThreads((t) => {
+        const cur = t[FLEET_THREAD];
+        if (!cur?.items.some((x) => x.id === id)) return t;
+        return { ...t, [FLEET_THREAD]: { ...cur, items: cur.items.filter((x) => x.id !== id) } };
+      });
+      setModeration((q) =>
+        q && q.items.some((i) => i.message.id === id)
+          ? { ...q, open: Math.max(0, q.open - 1), items: q.items.filter((i) => i.message.id !== id) }
+          : q,
+      );
+      refreshOverview();
+    },
+    [refreshOverview],
+  );
+
   const markRead = useCallback(
     (thread: ChatThreadKey) => {
       patchThread(thread, () => ({ unread: 0 }));
@@ -152,6 +200,28 @@ export function MessagesView({
     });
   }, []);
 
+  /**
+   * Relecture de la dernière page du fil ouvert (repli du temps réel) : messages manqués ajoutés, messages disparus
+   * retirés (supprimés par un autre membre de la centrale, ou avec le compte de leur auteur, sans aucun événement).
+   * Seule la période couverte par la page relue est comparée ; un message arrivé pendant la lecture est conservé.
+   */
+  const resync = useCallback(async (thread: ChatThreadKey) => {
+    const st = threadsRef.current[thread];
+    if (!st?.loaded || st.loading) return;
+    const res = await fetchThreadMessages(thread, null).catch(() => null);
+    if (!res?.ok || !res.messages.length) return;
+    const ids = new Set(res.messages.map((m) => m.id));
+    const from = res.messages[0]!.created_at;
+    const to = res.messages[res.messages.length - 1]!.created_at;
+    setThreads((t) => {
+      const cur = t[thread];
+      if (!cur?.loaded) return t;
+      // Page complète (pas de messages plus anciens) : tout message absent a disparu ; sinon, seulement après le plus ancien relu
+      const kept = cur.items.filter((m) => ids.has(m.id) || m.created_at > to || (res.hasMore && m.created_at <= from));
+      return { ...t, [thread]: { ...cur, items: merge(kept, res.messages) } };
+    });
+  }, []);
+
   // Ouverture d'un fil : chargement, marquage lu, fil « ouvert » pour le compteur global.
   useEffect(() => {
     setOpenThread(selected);
@@ -163,22 +233,29 @@ export function MessagesView({
   }, [selected, setOpenThread, load, markRead, refreshOverview]);
   useEffect(() => () => setOpenThread(null), [setOpenThread]);
 
-  // Retour sur l'onglet : le fil affiché est lu.
+  // Retour sur l'onglet : le fil affiché est relu et marqué lu.
   useEffect(() => {
     const onVis = () => {
+      if (visible()) refreshModeration();
       const t = selectedRef.current;
       if (!t || !visible()) return;
+      void resync(t);
       const unread = t === FLEET_THREAD ? fleetRef.current.unread : (driversRef.current.find((d) => d.thread === t)?.unread ?? 0);
       if (unread > 0) markRead(t);
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [markRead]);
-  // Rafraîchissement lent (signalements expirés, présences) tant que l'onglet est visible.
+  }, [markRead, refreshModeration, resync]);
+  // Rafraîchissement lent (signalements expirés, présences, messages signalés, fil ouvert) tant que l'onglet est visible.
   useEffect(() => {
-    const id = window.setInterval(() => visible() && refreshOverview(), 60_000);
+    const id = window.setInterval(() => {
+      if (!visible()) return;
+      refreshOverview();
+      refreshModeration();
+      if (selectedRef.current) void resync(selectedRef.current);
+    }, 60_000);
     return () => window.clearInterval(id);
-  }, [refreshOverview]);
+  }, [refreshOverview, refreshModeration, resync]);
 
   /** Nouveau message (envoi ou temps réel) → fil + résumé + non-lus. */
   const ingest = useCallback(
@@ -225,6 +302,13 @@ export function MessagesView({
       };
     });
     refreshOverview();
+  });
+  // Modération (identifiants seulement) : message signalé, classé ou retiré par un membre de la centrale — la file
+  // est relue, un message retiré disparaît du fil (compteurs de la barre latérale : ChatUnreadProvider)
+  useRealtimeEvent("chat.moderation", (e: ChatModerationEvent) => {
+    if (e?.organization_id !== orgId) return;
+    if (e.action === "removed" && e.message_id) dropMessage(e.message_id);
+    refreshModeration();
   });
   useRealtimeEvent("chat.read", (e: ChatReadEvent) => {
     if (e?.organization_id !== orgId) return;
@@ -289,6 +373,78 @@ export function MessagesView({
     ingest(res.message);
   };
 
+  const confirmRemove = async (m: ChatMessage) => {
+    setModerationBusy({ id: m.id, action: "remove" });
+    const res = await removeChatMessage(m.id).catch(() => ({ ok: false as const, error: "Connexion perdue. Réessayez.", gone: false }));
+    setModerationBusy(null);
+    if (!res.ok) {
+      refreshModeration();
+      // Message qui n'existe plus (compte de son auteur supprimé) : retiré de l'affichage, rien d'autre à faire
+      if (res.gone) {
+        setConfirming(null);
+        dropMessage(m.id);
+        refreshUnread();
+        toast.info(res.error);
+        return;
+      }
+      // Sinon la file est relue (état peut-être dépassé)
+      toast.error(res.error);
+      return;
+    }
+    setConfirming(null);
+    dropMessage(m.id);
+    refreshModeration();
+    refreshUnread();
+    toast.success(res.code === "ALREADY_REMOVED" ? "Ce message était déjà supprimé." : "Message supprimé pour toute la flotte.");
+  };
+
+  /** Élément retiré de la file (le message reste dans le fil). */
+  const dropQueued = useCallback((messageId: string) => {
+    setModeration((q) =>
+      q && q.items.some((i) => i.message.id === messageId)
+        ? { ...q, open: Math.max(0, q.open - 1), items: q.items.filter((i) => i.message.id !== messageId) }
+        : q,
+    );
+  }, []);
+
+  const dismiss = async (item: ChatModerationItem) => {
+    const id = item.message.id;
+    const reportId = item.reports[0]?.id;
+    if (!reportId) return;
+    setModerationBusy({ id, action: "dismiss" });
+    const res = await dismissChatReport(reportId).catch(() => ({ ok: false as const, error: "Connexion perdue. Réessayez.", code: null }));
+    setModerationBusy(null);
+    if (!res.ok) {
+      if (res.code === "MESSAGE_NOT_FOUND") {
+        // Supprimé entre-temps avec le compte de son auteur : hors du fil et de la file
+        dropMessage(id);
+        refreshUnread();
+        toast.info("Ce message a déjà été supprimé.");
+        return;
+      }
+      // Signalement effacé avec le compte de son auteur (les autres restent) ou état dépassé : file relue
+      refreshModeration();
+      if (res.code === "REPORT_NOT_FOUND") toast.info("Ce signalement n'existe plus : la liste a été mise à jour.");
+      else toast.error(res.error);
+      return;
+    }
+    refreshModeration();
+    refreshUnread();
+    if (res.code === "ALREADY_RESOLVED") {
+      // Traité entre-temps par un autre membre de la centrale (écran pas encore à jour)
+      if (res.status === "removed") {
+        dropMessage(id);
+        toast.info("Ce message a déjà été supprimé.");
+      } else {
+        dropQueued(id);
+        toast.info(res.status === "dismissed" ? "Ces signalements ont déjà été traités." : "Ce signalement n'est plus en attente.");
+      }
+      return;
+    }
+    dropQueued(id);
+    toast.success("Signalement ignoré : le message reste visible.");
+  };
+
   const sorted = useMemo(() => sortDriverThreads(drivers), [drivers]);
   const unreadTotal = fleet.unread + drivers.reduce((n, d) => n + (d.unread || 0), 0);
   const driverSummary = selected && selected !== FLEET_THREAD ? (drivers.find((d) => d.thread === selected) ?? null) : null;
@@ -309,6 +465,7 @@ export function MessagesView({
           timeZone={timeZone}
           now={now}
           unreadTotal={unreadTotal}
+          openReports={moderation?.open ?? 0}
         />
       </aside>
 
@@ -337,6 +494,11 @@ export function MessagesView({
               if (first) void load(selected, first.created_at);
             }}
             onBack={back}
+            moderation={moderation?.items}
+            moderationTotal={moderation?.open ?? 0}
+            moderationBusy={moderationBusy}
+            onRemove={moderation ? setConfirming : undefined}
+            onDismiss={moderation ? (item) => void dismiss(item) : undefined}
           />
         ) : (
           <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-6 text-center">
@@ -371,6 +533,13 @@ export function MessagesView({
           </div>
         )}
       </section>
+
+      <RemoveMessageDialog
+        message={confirming}
+        pending={!!confirming && moderationBusy?.id === confirming.id && moderationBusy.action === "remove"}
+        onConfirm={(m) => void confirmRemove(m)}
+        onClose={() => setConfirming(null)}
+      />
     </div>
   );
 }

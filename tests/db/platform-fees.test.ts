@@ -178,7 +178,7 @@ describe("Frais plateforme : dus par la centrale dès la fin de la course", () =
     expect(refused).toMatchObject({ status: "rejected", superseded: false });
   });
 
-  it("registre immuable : ni modification ni suppression, sauf avec l'organisation", async () => {
+  it("registre immuable : ni modification ni suppression, même avec l'organisation (elle s'archive)", async () => {
     const org = await centrale("Centrale Immuable");
     const rideId = await insertRideBypass(org, { completed_at: new Date() });
     const [e] = await sql(`select id from public.platform_fee_entries where ride_id = $1`, [rideId]);
@@ -193,9 +193,41 @@ describe("Frais plateforme : dus par la centrale dès la fin de la course", () =
     const ins = await expectPgError(as({ sub: org.ownerId }, (q) =>
       q(`insert into public.platform_payments (organization_id, amount_cents, method, status, received_cents) values ($1, 500, 'cash', 'confirmed', 500)`, [org.id])));
     expect(ins.code).toBe("42501");
-    // Suppression de l'organisation (super admin) : le registre part avec elle
-    await sql(`delete from public.organizations where id = $1`, [org.id]);
-    expect(await sql(`select id from public.platform_fee_entries where organization_id = $1`, [org.id])).toHaveLength(0);
+    // Suppression de l'organisation refusée, même en accès direct : registre de Rydar conservé (fin de contrat :
+    // archivage)
+    const drop = await expectPgError(sql(`delete from public.organizations where id = $1`, [org.id]));
+    expect(drop.code).toBe("23503");
+    expect(drop.message).toContain("platform_fee_entries");
+    expect(await sql(`select id from public.platform_fee_entries where organization_id = $1`, [org.id])).toHaveLength(1);
+    expect(await sql(`select id from public.organizations where id = $1`, [org.id])).toHaveLength(1);
+
+    // Paiements seuls (aucune écriture) : conservés de même
+    const paid = await centrale("Centrale Paiement Seul");
+    await sql(`insert into public.platform_payments (organization_id, amount_cents, method) values ($1, 500, 'transfer')`, [paid.id]);
+    const dropPaid = await expectPgError(sql(`delete from public.organizations where id = $1`, [paid.id]));
+    expect(dropPaid.code).toBe("23503");
+    expect(dropPaid.message).toContain("platform_payments");
+    // Sans registre ni paiement (création annulée par le super admin) : suppression toujours possible
+    const empty = await centrale("Centrale Création Annulée");
+    await sql(`delete from public.organizations where id = $1`, [empty.id]);
+    expect(await sql(`select id from public.organizations where id = $1`, [empty.id])).toHaveLength(0);
+  });
+
+  it("course purgée au bout de 10 ans (ménage) : son écriture reste au registre, sans lien vers la course", async () => {
+    const org = await centrale("Centrale Dix Ans");
+    const [{ limit }] = await sql(`select date_trunc('year', now() - interval '10 years') as limit`);
+    const old = new Date((limit as Date).getTime() - DAY * 1000);
+    const rideId = await insertRideBypass(org, { pickup_at: old, completed_at: old });
+    const [entry] = await sql(`select id, amount_cents from public.platform_fee_entries where ride_id = $1`, [rideId]);
+    expect(entry).toBeTruthy();
+    const [{ r }] = await sql(`select private.housekeeping() as r`);
+    expect(r.errors).toBeUndefined();
+    expect(r.rides_purged).toBeGreaterThanOrEqual(1);
+    expect(await sql(`select id from public.rides where id = $1`, [rideId])).toHaveLength(0);
+    expect(await sql(`select ride_id, amount_cents from public.platform_fee_entries where id = $1`, [entry.id])).toEqual([
+      { ride_id: null, amount_cents: entry.amount_cents },
+    ]);
+    expect((await account(org)).balance_cents).toBe(entry.amount_cents);
   });
 });
 

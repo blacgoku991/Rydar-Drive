@@ -17,6 +17,17 @@ export const config = {
   documentRemindersMs: num("DOCUMENT_REMINDERS_MS", 6 * 3600_000),
   /** Mode centrale : relance des commissions en retard (au démarrage puis toutes les 15 min) : private.settlement_reminders(). */
   settlementRemindersMs: num("SETTLEMENT_REMINDERS_MS", 15 * 60_000),
+  /** Suppressions de compte chauffeur à terminer (fichiers, compte de connexion) : account-deletions.ts, toutes les 5 min. */
+  accountDeletionsMs: num("ACCOUNT_DELETIONS_MS", 5 * 60_000),
+  /**
+   * API Supabase avec la clé service role (Storage, administration d'Auth) : REQUISE en production. Sans elle, la file
+   * des suppressions de compte n'est jamais reprise (échecs de la route web, rattrapage des anciennes suppressions) :
+   * erreur au démarrage puis toutes les heures tant qu'elle n'est pas vide (account-deletions.ts).
+   */
+  supabase: {
+    url: (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, ""),
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "",
+  },
   /** Suivi des vols (fournisseur : voir flights/index.ts, FLIGHT_PROVIDER). */
   flights: {
     pollMs: num("FLIGHT_POLL_MS", 60_000),

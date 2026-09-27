@@ -1,5 +1,5 @@
 import "server-only";
-import type { ChatMessage, ChatMessageRow, ChatOverview, ChatThreadKey } from "@rydar/shared";
+import type { ChatMessage, ChatMessageRow, ChatModerationQueue, ChatOverview, ChatThreadKey } from "@rydar/shared";
 import { CHAT_PAGE_SIZE, threadDriverId, toChatMessage } from "@/components/chat/chat-utils";
 
 type Supa = { from: (t: string) => any; rpc: (fn: string, args?: Record<string, unknown>) => any };
@@ -23,4 +23,14 @@ export async function loadChatOverview(supabase: Supa, orgId: string): Promise<C
   const { data, error } = await supabase.rpc("chat_overview", { p_org: orgId });
   if (error || !data) return null;
   return data as ChatOverview;
+}
+
+/**
+ * Messages du fil flotte signalés par les chauffeurs, en attente de décision (supprimer / ignorer).
+ * null si la lecture échoue (serveur sans la migration 20260924004100 : la messagerie reste utilisable).
+ */
+export async function loadModerationQueue(supabase: Supa, orgId: string): Promise<ChatModerationQueue | null> {
+  const { data, error } = await supabase.rpc("chat_moderation_queue", { p_org: orgId });
+  if (error || !data) return null;
+  return data as ChatModerationQueue;
 }

@@ -21,12 +21,16 @@ type ShellProps = {
   alerts?: number;
   /** Messages non lus (chat_overview.unread_total) au chargement */
   unreadMessages?: number;
+  /** Messages du fil « Chauffeurs » signalés, en attente de décision (chat_overview.open_reports) au chargement */
+  openReports?: number;
   /** Documents chauffeur déposés, en attente de validation */
   pendingDocuments?: number;
   /** Modèle d'exploitation + réglages d'encaissement (mode centrale) */
   centrale: CentraleInfo;
   /** Mode centrale : règlements à confirmer / en retard, candidatures en attente (null en mode flotte) */
   centraleCounts?: CentraleCounts | null;
+  /** Bandeau au-dessus du contenu (conditions à accepter) */
+  topBanner?: React.ReactNode;
 };
 
 export function DashboardShell(props: ShellProps) {
@@ -34,7 +38,7 @@ export function DashboardShell(props: ShellProps) {
   return (
     <RealtimeProvider topic={`org:${org.id}`}>
       <CentraleProvider value={props.centrale}>
-        <ChatUnreadProvider key={org.id} initial={props.unreadMessages ?? 0} userId={user.id}>
+        <ChatUnreadProvider key={org.id} initial={props.unreadMessages ?? 0} initialOpenReports={props.openReports} userId={user.id}>
           <ShellBody {...props} />
         </ChatUnreadProvider>
       </CentraleProvider>
@@ -70,10 +74,10 @@ function useCentraleCounts(orgId: string, enabled: boolean, initial: CentraleCou
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
-function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts }: ShellProps) {
+function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner }: ShellProps) {
   const router = useRouter();
   const [, start] = useTransition();
-  const { unread } = useChatUnread();
+  const { unread, openReports } = useChatUnread();
   const isCentrale = centrale.model === "centrale";
   const counts = useCentraleCounts(org.id, isCentrale, centraleCounts);
   // Documents à valider : valeur serveur, ajustée en temps réel (dépôt / validation / refus)
@@ -88,6 +92,11 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
     counts.declared ? plural(counts.declared, "paiement à confirmer", "paiements à confirmer") : null,
     counts.overdue ? plural(counts.overdue, "commission en retard", "commissions en retard") : null,
   ].filter(Boolean).join(" · ");
+  // « Messages » : messages signalés à traiter (ambre) en priorité, sinon non-lus
+  const unreadLabel = plural(unread, "message non lu", "messages non lus");
+  const messagesLabel = openReports
+    ? [plural(openReports, "message signalé à traiter", "messages signalés à traiter"), unread ? unreadLabel : null].filter(Boolean).join(" · ")
+    : unreadLabel;
   const sections: NavSection[] = [
     {
       title: "Opérations",
@@ -97,9 +106,9 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
           href: "/dashboard/messages",
           label: "Messages",
           icon: "message",
-          badge: unread,
-          badgeTone: "brand",
-          badgeLabel: `${unread} message${unread > 1 ? "s" : ""} non lu${unread > 1 ? "s" : ""}`,
+          badge: openReports || unread,
+          badgeTone: openReports ? "amber" : "brand",
+          badgeLabel: messagesLabel,
         },
         { href: "/dashboard/rides", label: "Courses", icon: "route", badge: alerts },
         ...(isCentrale
@@ -167,6 +176,7 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
       <div className="lg:pl-[232px]">
         {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}
         <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isCentrale && (org.role === "owner" || org.role === "admin")} />
+        {topBanner}
         {children}
       </div>
     </AlertsProvider>

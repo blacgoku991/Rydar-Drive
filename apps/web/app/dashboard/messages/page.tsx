@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { MessagesView } from "@/components/chat/messages-view";
 import { FLEET_THREAD, driverThread, isUuid, type DriverThreadSummary } from "@/components/chat/chat-utils";
 import { requireOrg } from "@/lib/auth";
-import { loadChatOverview, loadThreadPage, type ThreadPage } from "./queries";
+import { loadChatOverview, loadModerationQueue, loadThreadPage, type ThreadPage } from "./queries";
 
 export const metadata: Metadata = { title: "Messages" };
 export const dynamic = "force-dynamic";
@@ -14,13 +14,15 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const initialThread: ChatThreadKey | null = sp.thread === FLEET_THREAD ? FLEET_THREAD : isUuid(sp.driver) ? driverThread(sp.driver) : null;
 
-  const [overview, { data: contacts }, initialPage] = await Promise.all([
+  const [overview, { data: contacts }, initialPage, moderation] = await Promise.all([
     loadChatOverview(ctx.supabase, ctx.org.id),
     ctx.supabase
       .from("drivers")
       .select("id, number, first_name, last_name, phone, presence, status, photo_url")
       .eq("organization_id", ctx.org.id),
     initialThread ? loadThreadPage(ctx.supabase, ctx.org.id, initialThread).catch(() => null) : Promise.resolve(null),
+    // Messages du fil flotte signalés par les chauffeurs (null : modération indisponible, la messagerie reste utilisable)
+    loadModerationQueue(ctx.supabase, ctx.org.id).catch(() => null),
   ]);
 
   const base: ChatOverview = overview ?? {
@@ -60,6 +62,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
       activeDrivers={((contacts ?? []) as any[]).filter((d) => d.status === "active").length}
       initialThread={validThread}
       initialPage={validThread ? (initialPage as ThreadPage | null) : null}
+      initialModeration={moderation}
     />
   );
 }

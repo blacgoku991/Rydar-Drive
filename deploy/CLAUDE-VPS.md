@@ -12,6 +12,7 @@ Tu tournes sur le **serveur de production** (Ubuntu, dossier `/opt/rydar`), pilo
 4. **Pas de modification du code** sur le serveur, pas de commit : le code vient de GitHub (`git pull`). Si un correctif est nécessaire, rédige pour le propriétaire un résumé précis (fichier, erreur, extrait de journal, sans secret) à transmettre à la session de développement, puis `git pull && sudo bash deploy/install.sh` une fois le correctif publié.
 5. **Pare-feu** : ne retire jamais l'accès SSH. Avant toute action risquée (suppression, autre site sur la machine, modification DNS), demande.
 6. Explique chaque commande en une phrase avant de la lancer : le propriétaire la valide dans l'app.
+7. **Demande de suppression de compte reçue par e-mail** (chauffeur sans l'app, compte bloqué) : jamais en SQL ni dans le dashboard Supabase. Elle se traite par le Super Admin, dans `https://DOMAINE/admin/suppressions` : recherche par e-mail ou téléphone, suppression confirmée en tapant SUPPRIMER, suivi des suppressions en cours ou en échec (« Réessayer »). Seul cet outil applique tout le traitement promis par `/suppression-compte` (données effacées ou anonymisées, justificatifs et leurs fichiers, compte de connexion, journal d'audit). Avant d'agir, vérifier que la demande vient de l'adresse du compte (sinon, faire confirmer l'identité, par exemple par la centrale) ; confirmer ensuite au chauffeur par e-mail, sous 30 jours (`docs/STORES.md`, § 11).
 
 ## Utilisateur non root (ex. `ubuntu` chez OVH)
 
@@ -60,7 +61,7 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
 
 1. Toi : `sudo bash deploy/install.sh`. Le 1er passage installe Docker, le pare-feu et le swap, crée `deploy/.env` puis s'arrête (tu n'as pas de terminal pour les questions).
 2. Le propriétaire, dans son terminal SSH : `sudo bash /opt/rydar/deploy/configure.sh` (domaine, e-mail, URL, deux clés, chaîne de connexion et mot de passe de la base).
-3. Toi : `sudo bash deploy/install.sh`. Il applique les 27 migrations (chacune dans une transaction : un échec est annulé entièrement), construit les images (5 à 10 minutes la 1ʳᵉ fois), démarre et contrôle la santé du site.
+3. Toi : `sudo bash deploy/install.sh`. Il applique les migrations (chacune dans une transaction : un échec est annulé entièrement), construit les images (5 à 10 minutes la 1ʳᵉ fois), démarre et contrôle la santé du site.
 
 ### 4. Vérifications
 
@@ -69,6 +70,7 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
 - `curl -sI https://www.DOMAINE | head -3` : redirection 301 vers `https://DOMAINE`.
 - `sudo docker compose logs --tail 80 caddy | grep -i -E "certificate obtained|error"` : certificat obtenu.
 - `sudo docker compose logs --tail 80 worker` : pas d'erreur en boucle.
+- `sudo docker compose logs worker | grep 'rydar worker starting' | tail -1` (dernier démarrage, aucun secret dans cette ligne) : elle contient `"accountDeletions":"on"` (le worker reçoit l'URL Supabase et la clé secret, nécessaires pour terminer les suppressions de compte). Sinon, `docker-compose.yml` n'est pas à jour : `git pull` puis `sudo bash deploy/install.sh`.
 - `sudo bash /opt/rydar/deploy/migrate.sh` : « 0 migration(s) appliquée(s) ».
 
 ### 5. Super Admin
@@ -98,6 +100,7 @@ Termine par un résumé pour le propriétaire : ce qui fonctionne (adresses), ce
 - Les variables `NEXT_PUBLIC_*` sont intégrées à la construction du site : après un changement de domaine, d'URL ou de clé publishable, relancer `sudo bash deploy/install.sh`, qui reconstruit.
 - Mini-sites : un certificat n'est délivré que pour une centrale existante (`/api/tls/allowed`). Un sous-domaine inconnu reste sans certificat, c'est voulu.
 - Mémoire : la construction du site prend 2 à 3 Go ; `install.sh` crée 2 Go de swap.
+- `/admin/suppressions` affiche des suppressions « en retard » et le journal du worker « account deletions cannot be completed » : le worker ne reçoit pas `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`. Vérifier que `deploy/.env` a bien les deux valeurs (`sudo grep -c '^NEXT_PUBLIC_SUPABASE_URL=.' deploy/.env`, idem pour `SUPABASE_SERVICE_ROLE_KEY` : `1` attendu, sans afficher la valeur), puis `sudo bash deploy/install.sh`. En attendant, « Réessayer » sur `/admin/suppressions` termine une suppression depuis le site.
 
 ## Au quotidien
 

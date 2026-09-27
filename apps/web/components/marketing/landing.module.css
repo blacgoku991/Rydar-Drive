@@ -1,0 +1,92 @@
+/* Animations de la page d'accueil (couleurs : jetons de globals.css).
+   Tout est désactivé quand l'utilisateur demande moins d'animations. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Entrée du héro, décalée par --delay */
+@media (prefers-reduced-motion: no-preference) {
+  .enter {
+    animation: rise 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation-delay: var(--delay, 0ms);
+  }
+}
+
+/* Apparition au défilement : navigateurs compatibles et écran seulement (jamais à l'impression) ;
+   ailleurs, le contenu est affiché tel quel */
+@supports (animation-timeline: view()) {
+  @media screen and (prefers-reduced-motion: no-preference) {
+    .reveal {
+      animation: rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 22%;
+    }
+  }
+}
+
+/* Vagues de dispatch (carte « Dispatch par vagues ») : chaque rayon s'allume à son tour */
+@keyframes wave {
+  0%,
+  30%,
+  100% {
+    border-color: var(--color-line);
+    background-color: rgb(255 255 255 / 0.02);
+  }
+  7%,
+  18% {
+    border-color: color-mix(in srgb, var(--color-brand) 55%, transparent);
+    background-color: color-mix(in srgb, var(--color-brand) 10%, transparent);
+  }
+}
+
+@keyframes wave-dot {
+  0%,
+  30%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  7%,
+  18% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.waveStep {
+  border-color: var(--color-line);
+  background-color: rgb(255 255 255 / 0.02);
+}
+
+.waveDot {
+  opacity: 0.35;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .waveStep {
+    animation: wave 6s ease-in-out infinite;
+    animation-delay: calc(var(--i, 0) * 0.9s);
+  }
+  .waveDot {
+    animation: wave-dot 6s ease-in-out infinite;
+    animation-delay: calc(var(--i, 0) * 0.9s);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waveStep:first-child {
+    border-color: color-mix(in srgb, var(--color-brand) 55%, transparent);
+    background-color: color-mix(in srgb, var(--color-brand) 10%, transparent);
+  }
+  .waveStep:first-child .waveDot {
+    opacity: 1;
+  }
+}

@@ -1,17 +1,21 @@
-import { createClient } from "@supabase/supabase-js";
+import { loginSchema } from "@rydar/shared";
+import { createClient, isAuthRetryableFetchError, type AuthError } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { driverAppCors } from "@/lib/driver-app-cors";
+import { deleteDriverAccount } from "@/lib/driver-deletion";
+import { DRIVER_LOGIN_WINDOW, driverLoginEmailKey } from "@/lib/driver-session";
 import { env } from "@/lib/env";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit, rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
+import { ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
-/** Bucket privé des justificatifs (apps/driver/src/lib/api.ts DOCUMENTS_BUCKET). */
-const DOCUMENTS_BUCKET = "driver-documents";
-const schema = z.object({ confirm: z.literal("SUPPRIMER") });
+/** Fenêtre de l'anti brute force par IP (15 min, comme la connexion chauffeur). */
+const WINDOW = 15 * 60;
+const confirmSchema = z.object({ confirm: z.literal("SUPPRIMER") });
 
 export function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: driverAppCors(req) });
@@ -19,13 +23,22 @@ export function OPTIONS(req: Request) {
 
 /**
  * Suppression du compte par le chauffeur, depuis l'application (App Store 5.1.1(v), Google Play).
- * Bearer = jeton de l'app ; corps { confirm: "SUPPRIMER" }.
- *  - 200 { ok, code: "DELETED" } : données personnelles supprimées ou anonymisées (svc_delete_driver_account),
- *    justificatifs effacés du stockage, compte de connexion supprimé ;
- *  - 409 RIDES_ASSIGNED : une course lui est attribuée (message à afficher) ;
- *  - 401 / 403 / 422 / 429.
- * Un chauffeur qui est aussi membre d'une centrale (gérant, dispatcher) ou super admin garde son compte de
- * connexion : seul son profil chauffeur est supprimé (code DRIVER_PROFILE_DELETED).
+ * Corps { confirm: "SUPPRIMER", email?, password? }. Authentification :
+ *  - jeton de l'app (Bearer), vérifié par Supabase Auth ;
+ *  - jeton refusé (expiré, session révoquée : compte suspendu, banni, centrale suspendue…) : e-mail + mot de passe,
+ *    vérifiés par un client anonyme sans cookie ni persistance ; refus de Supabase Auth pour une autre raison que
+ *    de mauvais identifiants (compte Auth banni…) : empreinte vérifiée par la base (svc_driver_password_check).
+ * Anti brute force : IP, puis adresse avec le MÊME compteur que la connexion (/api/auth/driver-login : pas de second
+ * budget de mots de passe), puis compte (1 h).
+ * Réponses :
+ *  - 200 { code: "DELETED" } : tout est supprimé (données, fichiers, compte de connexion) ;
+ *  - 200 { code: "DRIVER_PROFILE_DELETED", pending } : profil chauffeur supprimé, compte de gestion conservé ;
+ *  - 202 { code: "DELETION_PENDING" } : données effacées, fichiers ou compte de connexion en cours de suppression
+ *    (repris automatiquement par le serveur) ;
+ *  - 401 UNAUTHORIZED (mot de passe à demander) / INVALID_CREDENTIALS, 404 NOT_DRIVER, 409 RIDES_ASSIGNED
+ *    (message à afficher), 422, 429, 500 ;
+ *  - 503 UNAVAILABLE : Supabase Auth injoignable (réseau, erreur 5xx, limite de débit) — ni « session expirée » ni
+ *    « mot de passe incorrect » : rien n'a été vérifié, réessayer.
  */
 export async function POST(req: Request) {
   const res = await handle(req);
@@ -33,47 +46,113 @@ export async function POST(req: Request) {
   return res;
 }
 
-async function handle(req: Request): Promise<NextResponse> {
-  const token = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "")?.[1];
-  if (!token || token.length > 8192) return NextResponse.json({ ok: false, code: "UNAUTHORIZED", error: "Accès refusé." }, { status: 401, headers: NO_STORE });
-  const client = createClient(env.supabaseUrl, env.supabaseAnonKey, {
+const reply = (status: number, body: Record<string, unknown>) => NextResponse.json(body, { status, headers: NO_STORE });
+const unavailable = () =>
+  NextResponse.json(
+    { ok: false, code: "UNAVAILABLE", error: "Service momentanément indisponible : réessayez." },
+    { status: 503, headers: { ...NO_STORE, "Retry-After": "30" } },
+  );
+
+/** Client anonyme isolé : aucune session conservée (ni cookie, ni stockage, ni rafraîchissement). */
+const isolatedClient = () =>
+  createClient(env.supabaseUrl, env.supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
-  const { data: auth } = await client.auth.getUser(token);
-  const userId = auth.user?.id;
-  if (!userId) return NextResponse.json({ ok: false, code: "UNAUTHORIZED", error: "Session expirée : reconnectez-vous." }, { status: 401, headers: NO_STORE });
 
-  const limit = await rateLimit(`ddelete:${userId}`, 5, 3600);
-  if (!limit.ok) return NextResponse.json({ ok: false, code: "RATE_LIMITED", error: "Trop de tentatives : réessayez plus tard." }, { status: 429, headers: NO_STORE });
-  if (!schema.safeParse(await req.json().catch(() => null)).success) {
-    return NextResponse.json({ ok: false, code: "CONFIRMATION_REQUIRED", error: "Confirmez la suppression." }, { status: 422, headers: NO_STORE });
-  }
+/**
+ * Supabase Auth n'a pas répondu (réseau, 5xx, réponse illisible) ou limite son débit : aucune décision sur le jeton
+ * ni sur le mot de passe. Un refus (400 session absente, 401, 403) n'en est pas un.
+ */
+function authUnavailable(error: AuthError) {
+  return isAuthRetryableFetchError(error) || !error.status || error.status >= 500 || error.status === 429;
+}
 
-  const admin = createAdminClient();
-  const { data, error } = await admin.rpc("svc_delete_driver_account", { p_user_id: userId });
-  if (error) return NextResponse.json({ ok: false, code: "SERVER_ERROR", error: "Suppression impossible pour le moment. Réessayez." }, { status: 500, headers: NO_STORE });
-  const r = data as { ok: boolean; code: string; message?: string; files?: string[] };
-  if (!r.ok) {
-    const status = r.code === "RIDES_ASSIGNED" ? 409 : 403;
-    return NextResponse.json({ ok: false, code: r.code, error: r.message ?? "Suppression impossible." }, { status, headers: NO_STORE });
-  }
+async function handle(req: Request): Promise<NextResponse> {
+  const ip = ipFromHeaders(req.headers) ?? "0.0.0.0";
+  const body = (await req.json().catch(() => null)) as unknown;
+  const credentials = loginSchema.safeParse(body);
 
-  // Justificatifs : fichiers effacés du stockage (les lignes le sont déjà)
-  const files = (r.files ?? []).filter(Boolean);
-  if (files.length) await admin.storage.from(DOCUMENTS_BUCKET).remove(files).catch(() => null);
-
-  // Compte de connexion : supprimé, sauf s'il sert aussi à gérer une centrale ou la plateforme
-  const [{ count: memberships }, { data: profile }] = await Promise.all([
-    admin.from("organization_users").select("id", { count: "exact", head: true }).eq("user_id", userId),
-    admin.from("users").select("is_super_admin").eq("id", userId).maybeSingle(),
+  const limit = await rateLimitAll([
+    { key: `ddelete:ip:${ip}`, limit: 20, windowSec: WINDOW },
+    ...(credentials.success ? [{ key: driverLoginEmailKey(credentials.data.email), limit: 6, windowSec: DRIVER_LOGIN_WINDOW }] : []),
   ]);
-  if ((memberships ?? 0) > 0 || profile?.is_super_admin) {
-    return NextResponse.json({ ok: true, code: "DRIVER_PROFILE_DELETED" }, { headers: NO_STORE });
+  if (!limit.ok) {
+    return NextResponse.json(
+      { ok: false, code: "RATE_LIMITED", error: "Trop de tentatives : réessayez dans quelques minutes." },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": String(WINDOW) } },
+    );
   }
-  const { error: delError } = await admin.auth.admin.deleteUser(userId);
-  if (delError) {
-    // Profil déjà anonymisé ; la connexion est de toute façon refusée (fiche inactive, sessions révoquées)
-    return NextResponse.json({ ok: true, code: "DELETED", pending: true }, { headers: NO_STORE });
+  if (!confirmSchema.safeParse(body).success) {
+    return reply(422, { ok: false, code: "CONFIRMATION_REQUIRED", error: "Confirmez la suppression." });
   }
-  return NextResponse.json({ ok: true, code: "DELETED" }, { headers: NO_STORE });
+
+  // 1) Jeton de l'application
+  let userId: string | null = null;
+  const token = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "")?.[1];
+  if (token && token.length <= 8192) {
+    const { data, error } = await isolatedClient().auth.getUser(token);
+    if (data.user) userId = data.user.id;
+    else if (error && authUnavailable(error)) return unavailable();
+    // Sinon : jeton refusé (expiré, session révoquée…) → mot de passe
+  }
+
+  // 2) À défaut : e-mail + mot de passe
+  if (!userId) {
+    if (!credentials.success) {
+      return reply(401, {
+        ok: false,
+        code: "UNAUTHORIZED",
+        error: "Session expirée : saisissez le mot de passe de votre compte pour confirmer la suppression.",
+      });
+    }
+    const check = await verifyPassword(credentials.data.email, credentials.data.password);
+    if (check.status === "unavailable") return unavailable();
+    if (check.status === "invalid") return reply(401, { ok: false, code: "INVALID_CREDENTIALS", error: "E-mail ou mot de passe incorrect." });
+    userId = check.userId;
+    // Mot de passe juste : compteur de l'adresse remis à zéro, comme après une connexion réussie
+    await resetRateLimit(driverLoginEmailKey(credentials.data.email), DRIVER_LOGIN_WINDOW);
+  }
+
+  const perAccount = await rateLimit(`ddelete:user:${userId}`, 5, 3600);
+  if (!perAccount.ok) return reply(429, { ok: false, code: "RATE_LIMITED", error: "Trop de tentatives : réessayez plus tard." });
+
+  const result = await deleteDriverAccount({ userId });
+  if (!result.ok) return reply(result.status, { ok: false, code: result.code, error: result.message });
+  return reply(result.code === "DELETION_PENDING" ? 202 : 200, {
+    ok: true,
+    code: result.code,
+    pending: result.pending,
+    message: result.message,
+  });
+}
+
+type PasswordCheck = { status: "ok"; userId: string } | { status: "invalid" } | { status: "unavailable" };
+
+/**
+ * Vérifie e-mail + mot de passe. La session ouverte pour la vérification est aussitôt révoquée (celle-ci seulement :
+ * un gérant garde ses sessions du tableau de bord).
+ *  - « invalid_credentials » : identifiants incorrects ;
+ *  - autre refus (compte Auth banni : suspension, bannissement, centrale suspendue…), où Supabase Auth ne dit rien
+ *    du mot de passe : empreinte bcrypt vérifiée par la base (fiche chauffeur non supprimée uniquement) ;
+ *  - Supabase Auth ou la base injoignable : « unavailable », jamais « incorrect ».
+ */
+async function verifyPassword(email: string, password: string): Promise<PasswordCheck> {
+  const client = isolatedClient();
+  const { data, error } = await client.auth.signInWithPassword({ email, password });
+  if (!error && data.user) {
+    await client.auth.signOut({ scope: "local" }).catch(() => undefined);
+    return { status: "ok", userId: data.user.id };
+  }
+  if (!error || authUnavailable(error)) return { status: "unavailable" };
+  if (error.code === "invalid_credentials" || /invalid login credentials/i.test(error.message)) return { status: "invalid" };
+
+  const { data: id, error: checkError } = await createAdminClient().rpc("svc_driver_password_check", {
+    p_email: email,
+    p_password: password,
+  });
+  if (checkError) {
+    console.error("[delete-account] vérification du mot de passe impossible", checkError.message);
+    return { status: "unavailable" };
+  }
+  return typeof id === "string" ? { status: "ok", userId: id } : { status: "invalid" };
 }

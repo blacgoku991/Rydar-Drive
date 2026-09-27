@@ -1,6 +1,6 @@
 "use client";
 import { FLEET_REPORT_META, PRESENCE_META, fleetReportTitle, type ChatMessage, type ChatOverview, type FleetReportType } from "@rydar/shared";
-import { CheckCheck, RadioTower, Search, X } from "lucide-react";
+import { CheckCheck, Flag, RadioTower, Search, X } from "lucide-react";
 import { PRESENCE_COLOR } from "@/components/map/map-theme";
 import { Avatar } from "@/components/ui/misc";
 import { cn } from "@/lib/utils";
@@ -37,6 +37,7 @@ export function ThreadList({
   timeZone,
   now,
   unreadTotal,
+  openReports = 0,
 }: {
   fleet: ChatOverview["fleet"];
   drivers: DriverThreadSummary[];
@@ -48,6 +49,8 @@ export function ThreadList({
   timeZone: string;
   now: number;
   unreadTotal: number;
+  /** Messages du fil flotte signalés par les chauffeurs, en attente de décision */
+  openReports?: number;
 }) {
   const term = query.trim().toLowerCase();
   const list = term
@@ -173,10 +176,23 @@ export function ThreadList({
                 </span>
                 <UnreadBadge n={fleet.unread} />
               </span>
-              {fleet.active_reports > 0 && (
-                <span className="mt-1.5 inline-flex h-5 items-center gap-1.5 rounded-full bg-amber/10 px-2 text-[11px] font-medium text-amber">
-                  <span className="size-1.5 animate-breathe rounded-full bg-amber" />
-                  {fleet.active_reports} signalement{fleet.active_reports > 1 ? "s" : ""} actif{fleet.active_reports > 1 ? "s" : ""}
+              {(fleet.active_reports > 0 || openReports > 0) && (
+                <span className="mt-1.5 flex flex-wrap gap-1.5">
+                  {fleet.active_reports > 0 && (
+                    <span className="inline-flex h-5 items-center gap-1.5 rounded-full bg-amber/10 px-2 text-[11px] font-medium text-amber">
+                      <span className="size-1.5 animate-breathe rounded-full bg-amber" />
+                      {fleet.active_reports} signalement{fleet.active_reports > 1 ? "s" : ""} actif{fleet.active_reports > 1 ? "s" : ""}
+                    </span>
+                  )}
+                  {openReports > 0 && (
+                    <span
+                      className="inline-flex h-5 items-center gap-1.5 rounded-full bg-red/10 px-2 text-[11px] font-medium text-red"
+                      title="Messages signalés par vos chauffeurs : à supprimer ou à ignorer"
+                    >
+                      <Flag className="size-3" aria-hidden />
+                      {openReports} message{openReports > 1 ? "s" : ""} signalé{openReports > 1 ? "s" : ""}
+                    </span>
+                  )}
                 </span>
               )}
             </span>

@@ -495,9 +495,12 @@ describe("Bannissement définitif", () => {
     const reportId = res.report_id as string;
     expect(reportId).toBeTruthy();
 
-    // Réservé au service role (routes serveur du super admin)
+    // Réservé au service role (routes serveur du super admin), acteur revérifié en SQL : super admin seulement
     expect((await expectPgError(rpc(orgA.ownerId, "svc_platform_ban", [reportId, orgA.ownerId, null]))).code).toBe("42501");
-    const ban = await svc("svc_platform_ban", [reportId, orgA.ownerId, "Confirmé"]);
+    expect((await expectPgError(svc("svc_platform_ban", [reportId, orgA.ownerId, null]))).code).toBe("42501");
+    const sa = await createAuthUser(`super-${randomUUID().slice(0, 6)}@rydar.dev`, "Super Admin");
+    await sql(`update public.users set is_super_admin = true where id = $1`, [sa]);
+    const ban = await svc("svc_platform_ban", [reportId, sa, "Confirmé"]);
     expect(ban).toMatchObject({ ok: true, code: "PLATFORM_BANNED", drivers: 2 });
     expect(ban.user_ids).toEqual(expect.arrayContaining([bad.userId, twin.userId]));
     const [t] = await sql(`select status, ban_scope from public.drivers where id = $1`, [twin.id]);
@@ -506,7 +509,8 @@ describe("Bannissement définitif", () => {
     expect((await expectPgError(driverIn(orgC, { vtc: vtc.toLowerCase().replace(/ /g, "") }))).message).toMatch(/IDENTITY_BANNED/);
     expect((await rpc(orgA.ownerId, "lift_driver_ban", [bad.id, null])).code).toBe("PLATFORM_BAN");
 
-    const lift = await svc("svc_platform_unban", [reportId, orgA.ownerId, "Erreur d'identité"]);
+    expect((await expectPgError(svc("svc_platform_unban", [reportId, orgA.ownerId, null]))).code).toBe("42501");
+    const lift = await svc("svc_platform_unban", [reportId, sa, "Erreur d'identité"]);
     expect(lift.user_ids).toEqual([twin.userId]);
     const [t2] = await sql(`select status, banned_at from public.drivers where id = $1`, [twin.id]);
     expect(t2).toEqual({ status: "suspended", banned_at: null });
@@ -517,6 +521,22 @@ describe("Bannissement définitif", () => {
     // Levée par la centrale : le numéro redevient utilisable chez elle
     expect((await rpc(orgA.ownerId, "lift_driver_ban", [bad.id, "Dette réglée"])).code).toBe("LIFTED");
     expect((await driverIn(orgA, { phone: phone.replace(/^0/, "+33") })).id).toBeTruthy();
+  });
+
+  it("signalement classé par le super admin seulement (acteur revérifié en SQL)", async () => {
+    const org = await centrale("Centrale Classement");
+    const d = await driverIn(org, { phone: uniquePhone() });
+    const reportId = (await rpc(org.ownerId, "ban_driver", [d.id, "Comportement", "behavior", true, false])).report_id as string;
+    expect(reportId).toBeTruthy();
+    expect((await expectPgError(svc("svc_platform_dismiss_report", [reportId, org.ownerId, null]))).code).toBe("42501");
+    expect((await expectPgError(svc("svc_platform_dismiss_report", [reportId, null, null]))).code).toBe("42501");
+    expect((await expectPgError(rpc(org.ownerId, "svc_platform_dismiss_report", [reportId, org.ownerId, null]))).code).toBe("42501");
+    const sa = await createAuthUser(`super-${randomUUID().slice(0, 6)}@rydar.dev`, "Super Admin");
+    await sql(`update public.users set is_super_admin = true where id = $1`, [sa]);
+    expect((await svc("svc_platform_dismiss_report", [reportId, sa, "Limité à la centrale"])).code).toBe("DISMISSED");
+    const [r] = await sql(`select status, reviewed_by from public.fraud_reports where id = $1`, [reportId]);
+    expect(r).toEqual({ status: "dismissed", reviewed_by: sa });
+    expect((await svc("svc_platform_dismiss_report", [reportId, sa, null])).code).toBe("NOT_OPEN");
   });
 });
 

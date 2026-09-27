@@ -1,8 +1,11 @@
 "use server";
-import type { ChatMessage, ChatOverview, ChatThreadKey } from "@rydar/shared";
-import { CHAT_MAX_LENGTH, chatErrorMessage, isThreadKey, threadDriverId, toChatMessage } from "@/components/chat/chat-utils";
+import {
+  extractErrorCode, type ChatMessage, type ChatModerationQueue, type ChatOverview, type ChatOverviewModerated, type ChatThreadKey,
+  type DismissChatReportResult, type RemoveChatMessageResult,
+} from "@rydar/shared";
+import { CHAT_MAX_LENGTH, chatErrorMessage, isThreadKey, isUuid, threadDriverId, toChatMessage } from "@/components/chat/chat-utils";
 import { getOrgContext } from "@/lib/org-context";
-import { loadChatOverview, loadThreadPage, type ThreadPage } from "./queries";
+import { loadChatOverview, loadModerationQueue, loadThreadPage, type ThreadPage } from "./queries";
 
 type Fail = { ok: false; error: string };
 
@@ -13,10 +16,13 @@ export async function fetchChatOverview(): Promise<ChatOverview | null> {
   return loadChatOverview(ctx.supabase, ctx.org.id);
 }
 
-/** Compteur de non-lus de la barre latérale. */
-export async function fetchChatUnread(): Promise<number | null> {
-  const overview = await fetchChatOverview();
-  return overview ? overview.unread_total : null;
+/**
+ * Compteurs de la barre latérale : messages non lus, et messages du fil flotte signalés par les chauffeurs en
+ * attente de décision (chat_overview.open_reports ; 0 sur un serveur sans la migration 20260924004100).
+ */
+export async function fetchChatUnread(): Promise<{ unread: number; openReports: number } | null> {
+  const overview = (await fetchChatOverview()) as ChatOverviewModerated | null;
+  return overview ? { unread: overview.unread_total, openReports: overview.open_reports ?? 0 } : null;
 }
 
 export async function fetchThreadMessages(thread: string, before?: string | null): Promise<({ ok: true } & ThreadPage) | Fail> {
@@ -56,4 +62,46 @@ export async function markChatRead(thread: string): Promise<{ ok: true; thread: 
   const { data, error } = await ctx.supabase.rpc("mark_chat_read", { p_org: ctx.org.id, p_thread: thread });
   if (error || !data) return { ok: false, error: chatErrorMessage(error, "Impossible de marquer comme lu.") };
   return data as { ok: true; thread: ChatThreadKey; last_read_at: string };
+}
+
+// ---------------------------------------------------------------- Modération du fil « Toute la flotte »
+// La centrale modère son fil : Rydar Drive fournit l'outil (20260924004100_chat_moderation).
+
+/** Messages signalés en attente de décision. */
+export async function fetchModerationQueue(): Promise<ChatModerationQueue | null> {
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  return loadModerationQueue(ctx.supabase, ctx.org.id);
+}
+
+/**
+ * Supprime un message du fil flotte : masqué pour tous, ses signalements sont clos.
+ * gone : le message n'existe plus du tout (compte de son auteur supprimé, purge) : à retirer de l'affichage.
+ */
+export async function removeChatMessage(messageId: string): Promise<RemoveChatMessageResult | (Fail & { gone?: boolean })> {
+  if (!isUuid(messageId)) return { ok: false, error: "Message introuvable." };
+  const ctx = await getOrgContext();
+  if (!ctx) return { ok: false, error: "Accès refusé." };
+  const { data, error } = await ctx.supabase.rpc("remove_chat_message", { p_message: messageId });
+  if (error || !data) {
+    const gone = extractErrorCode(error?.message) === "MESSAGE_NOT_FOUND";
+    return { ok: false, error: chatErrorMessage(error, "Suppression impossible. Réessayez."), gone };
+  }
+  return data as RemoveChatMessageResult;
+}
+
+/**
+ * « Ignorer » : le message est jugé acceptable, tous ses signalements ouverts sont classés.
+ * Échec : code MESSAGE_NOT_FOUND (message supprimé entre-temps avec le compte de son auteur : à retirer de
+ * l'affichage) ou REPORT_NOT_FOUND (signalement effacé avec le compte de son auteur : file à relire).
+ */
+export async function dismissChatReport(reportId: string): Promise<DismissChatReportResult | (Fail & { code: string | null })> {
+  if (!isUuid(reportId)) return { ok: false, error: "Signalement introuvable.", code: null };
+  const ctx = await getOrgContext();
+  if (!ctx) return { ok: false, error: "Accès refusé.", code: null };
+  const { data, error } = await ctx.supabase.rpc("dismiss_chat_report", { p_report: reportId });
+  if (error || !data) {
+    return { ok: false, error: chatErrorMessage(error, "Action impossible. Réessayez."), code: extractErrorCode(error?.message) ?? null };
+  }
+  return data as DismissChatReportResult;
 }

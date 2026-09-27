@@ -18,7 +18,7 @@ export function RadarMark({ size = 28, animated = false, className }: { size?: n
         <circle cx="23.4" cy="9.2" r="1.9" fill="#eaff9a" />
       </svg>
       <span
-        className={cn("absolute inset-[2px] rounded-full", animated && "animate-radar")}
+        className={cn("absolute inset-[2px] rounded-full", animated && "animate-radar motion-reduce:animate-none")}
         style={{
           background: "conic-gradient(from 0deg, rgb(200 240 60 / 0.55), rgb(200 240 60 / 0) 70deg, transparent 360deg)",
           maskImage: "radial-gradient(circle, black 60%, transparent 62%)",

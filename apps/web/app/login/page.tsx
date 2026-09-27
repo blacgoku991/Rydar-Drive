@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Logo } from "@/components/brand/logo";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { RadarScene } from "@/components/marketing/radar-scene";
 import { LoginForm } from "./login-form";
 
@@ -71,6 +72,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             Espace réservé aux rattacheurs, centrales et à l'équipe Rydar. Chauffeurs : connectez-vous depuis l'application
             mobile Rydar Drive.
           </p>
+          <LegalLinks className="mt-4 text-[12px]" only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies"]} />
         </div>
       </section>
     </main>

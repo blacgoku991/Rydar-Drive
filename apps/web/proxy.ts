@@ -30,6 +30,8 @@ async function resolveBookingSlug(host: string): Promise<string | null> {
 }
 
 const PROTECTED = ["/dashboard", "/admin"];
+/** Pages légales de la plateforme : servies telles quelles sur les mini-sites (liens du mini-site et du bandeau cookies). */
+const LEGAL_PATHS = new Set(["/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte"]);
 
 export async function proxy(request: NextRequest) {
   const host = (request.headers.get("host") ?? "").split(":")[0]!.toLowerCase();
@@ -38,7 +40,10 @@ export async function proxy(request: NextRequest) {
   // 1) Mini-sites de réservation sur sous-domaine / domaine personnalisé
   //    (/rejoindre/{code} : inscription chauffeur publique, jamais réécrite vers le mini-site)
   const isPlatformHost = host === APP_HOST || host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}` || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host);
-  if (!isPlatformHost && host && !pathname.startsWith("/api/") && !pathname.startsWith("/book/") && !pathname.startsWith("/rejoindre/")) {
+  if (
+    !isPlatformHost && host && !pathname.startsWith("/api/") && !pathname.startsWith("/book/") && !pathname.startsWith("/rejoindre/") &&
+    !LEGAL_PATHS.has(pathname)
+  ) {
     const slug = await resolveBookingSlug(host);
     if (slug) {
       const url = request.nextUrl.clone();

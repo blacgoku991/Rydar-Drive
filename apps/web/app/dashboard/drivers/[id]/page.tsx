@@ -3,7 +3,7 @@ import {
   formatRelative, formatRideDate, formatTime, shortAddress,
   type DocumentType, type DriverStatus, type FraudReport, type IdentityKind, type TrustLevel, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowLeft, Car, Globe2, Link2, MapPin, MessageCircle, ShieldBan, ShieldCheck, UserPlus } from "lucide-react";
+import { ArrowLeft, Car, Globe2, Link2, MapPin, MessageCircle, ShieldBan, ShieldCheck, UserPlus, UserX } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -111,6 +111,8 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
   const reviewer = one(d.reviewer as { full_name: string | null; email: string } | null);
   const banner = one(d.banner as { full_name: string | null; email: string } | null);
   const banned = !!d.banned_at;
+  // Compte supprimé par le chauffeur (004000) : fiche anonyme gardée pour les courses et règlements, non modifiable
+  const deleted = !!d.deleted_at;
   const platformBan = d.ban_scope === "platform";
   const pendingApplication = d.application_status === "pending" && !banned;
   const candidate = d.application_status === "pending" || d.application_status === "rejected";
@@ -145,30 +147,53 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
                   <span className="num text-[14px] text-fg-subtle">#{d.number}</span>
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <PresenceBadge presence={d.presence} />
-                  <Badge tone={DRIVER_STATUS_META[d.status as DriverStatus].tone}>{DRIVER_STATUS_META[d.status as DriverStatus].label}</Badge>
+                  {deleted ? (
+                    <Badge tone="neutral">Compte supprimé</Badge>
+                  ) : (
+                    <>
+                      <PresenceBadge presence={d.presence} />
+                      <Badge tone={DRIVER_STATUS_META[d.status as DriverStatus].tone}>{DRIVER_STATUS_META[d.status as DriverStatus].label}</Badge>
+                    </>
+                  )}
                   {banned && <Badge tone="red"><ShieldBan className="size-3" /> Banni</Badge>}
                   {pendingApplication && <Badge tone="amber" pulse>Candidature en attente</Badge>}
-                  {centrale && !banned && !pendingApplication && <Badge tone={TRUST_LEVEL_META[trust].tone} dot={false}>{TRUST_LEVEL_META[trust].label}</Badge>}
-                  <span className="text-[12.5px] text-fg-subtle">{formatPhone(d.phone)} · {d.email}</span>
+                  {centrale && !banned && !pendingApplication && !deleted && <Badge tone={TRUST_LEVEL_META[trust].tone} dot={false}>{TRUST_LEVEL_META[trust].label}</Badge>}
+                  {!deleted && <span className="text-[12.5px] text-fg-subtle">{formatPhone(d.phone)} · {d.email}</span>}
                 </div>
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="primary" asChild>
-              <Link href={`/dashboard/messages?driver=${d.id}`}>
-                <MessageCircle /> Message
-              </Link>
-            </Button>
-            {/* Banni : levée d'abord ; candidat : validation par la candidature (pas d'activation directe) */}
-            <DriverControls driver={{ ...d, vehicle }} canManage={canManage && !banned && !candidate} />
-          </div>
+          {/* Compte supprimé : ni message, ni modification, ni document, ni changement de statut */}
+          {!deleted && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="primary" asChild>
+                <Link href={`/dashboard/messages?driver=${d.id}`}>
+                  <MessageCircle /> Message
+                </Link>
+              </Button>
+              {/* Banni : levée d'abord ; candidat : validation par la candidature (pas d'activation directe) */}
+              <DriverControls driver={{ ...d, vehicle }} canManage={canManage && !banned && !candidate} />
+            </div>
+          )}
         </div>
       </div>
 
       {/* overflow-x-clip : l'infobulle du graphique de gains (dernière barre) ne doit pas créer de défilement horizontal sur mobile */}
       <PageBody className="space-y-6 overflow-x-clip">
+        {deleted && (
+          <section aria-label="Chauffeur supprimé" className="flex flex-col gap-4 rounded-xl border border-line-strong bg-white/[0.02] px-5 py-4 md:flex-row md:items-center">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-line-strong bg-white/[0.04] text-fg-muted">
+              <UserX className="size-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[14.5px] font-semibold">Chauffeur supprimé : fiche anonyme conservée pour la comptabilité</p>
+              <p className="mt-0.5 text-[12.5px] text-fg-muted">
+                Compte supprimé à la demande du chauffeur le {formatDate(d.deleted_at, tz)}. Ses courses et règlements passés restent
+                consultables ; la fiche ne peut plus être modifiée.
+              </p>
+            </div>
+          </section>
+        )}
         {banned && (
           <section aria-label="Bannissement" className="flex flex-col gap-4 rounded-xl border border-red/30 bg-red/[0.07] px-5 py-4 md:flex-row md:items-start">
             <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-red/30 bg-red/10 text-red">
@@ -235,8 +260,8 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
 
         <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
           <Card className="flex flex-col overflow-hidden">
-            <CardHeader title="Position et trajet des 3 dernières heures" icon={<MapPin />} description={location ? `Mise à jour ${formatRelative(location.updated_at)}${location.battery_level != null ? ` · batterie ${Math.round(location.battery_level * 100)} %` : ""}` : "Jamais connecté"} />
-            <div className="relative min-h-[340px] flex-1">{location ? <DriverMap driver={live} trail={((trail ?? []) as { lat: number; lng: number }[]).map((p) => [p.lng, p.lat] as [number, number])} /> : <EmptyState icon={<MapPin />} title="Pas encore de position" description="La position apparaît dès que le chauffeur passe EN LIGNE." />}</div>
+            <CardHeader title="Position et trajet des 3 dernières heures" icon={<MapPin />} description={location ? `Mise à jour ${formatRelative(location.updated_at)}${location.battery_level != null ? ` · batterie ${Math.round(location.battery_level * 100)} %` : ""}` : deleted ? "Compte supprimé" : "Jamais connecté"} />
+            <div className="relative min-h-[340px] flex-1">{location ? <DriverMap driver={live} trail={((trail ?? []) as { lat: number; lng: number }[]).map((p) => [p.lng, p.lat] as [number, number])} /> : deleted ? <EmptyState icon={<MapPin />} title="Aucune position" description="Positions et trajets effacés avec le compte." /> : <EmptyState icon={<MapPin />} title="Pas encore de position" description="La position apparaît dès que le chauffeur passe EN LIGNE." />}</div>
           </Card>
           <div className="grid gap-6">
             <Card>
@@ -264,7 +289,12 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
             {centrale && (
               <div className="space-y-2.5 p-5">
                 <p className="text-[12.5px] font-medium text-fg-muted">Niveau de confiance</p>
-                <TrustLevelControl driverId={d.id} value={trust} canManage={canManage} lockedReason={banned ? "Chauffeur banni : niveau figé." : null} />
+                <TrustLevelControl
+                  driverId={d.id}
+                  value={trust}
+                  canManage={canManage}
+                  lockedReason={deleted ? "Chauffeur supprimé : niveau figé." : banned ? "Chauffeur banni : niveau figé." : null}
+                />
                 {trust === "new" && (settings?.new_driver_max_price_cents != null || settings?.trust_after_rides) ? (
                   <p className="text-[12px] text-fg-subtle">
                     {settings?.new_driver_max_price_cents != null && <>Plafond actuel : <span className="num text-fg-muted">{formatPrice(settings.new_driver_max_price_cents)}</span>. </>}
@@ -303,6 +333,8 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
               <p className="text-[12.5px] font-medium text-fg-muted">Bannissement définitif</p>
               {banned ? (
                 <p className="text-[13px] text-red">Banni le {formatDate(d.banned_at, tz)}{platformBan ? " par la plateforme Rydar" : ""}.</p>
+              ) : deleted ? (
+                <p className="text-[12.5px] text-fg-muted">Compte supprimé : identité effacée, bannissement impossible.</p>
               ) : (
                 <>
                   <p className="text-[12.5px] leading-relaxed text-fg-subtle">
@@ -319,13 +351,16 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
           </div>
         </Card>
 
-        <DriverDocuments
-          driverId={d.id}
-          firstName={d.first_name}
-          items={documents}
-          missing={docView.missing}
-          canReview={["owner", "admin", "dispatcher"].includes(ctx.role)}
-        />
+        {/* Compte supprimé : justificatifs effacés, rien à demander ni à valider */}
+        {!deleted && (
+          <DriverDocuments
+            driverId={d.id}
+            firstName={d.first_name}
+            items={documents}
+            missing={docView.missing}
+            canReview={["owner", "admin", "dispatcher"].includes(ctx.role)}
+          />
+        )}
 
         <Card className="overflow-hidden">
           <CardHeader title="Historique des courses" description="25 dernières courses attribuées." />

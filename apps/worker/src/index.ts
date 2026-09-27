@@ -1,8 +1,10 @@
 import { createServer } from "node:http";
+import { accountDeletionStats, processAccountDeletions, supabaseApi } from "./account-deletions";
 import { config, log } from "./config";
 import { listen, pool } from "./db";
 import { selectFlightProvider, withCache } from "./flights";
 import { flightJob, type QueryFn } from "./flights/job";
+import { runHousekeeping } from "./housekeeping";
 import { checkPushReceipts, processNotifications, stopNotifications } from "./notifications";
 import { processWhatsApp, stopWhatsApp } from "./whatsapp";
 
@@ -15,6 +17,7 @@ const state = {
   watch: { lastRun: 0, runs: 0, last: null as Record<string, unknown> | null },
   documents: { lastRun: 0, last: null as Record<string, unknown> | null },
   settlements: { lastRun: 0, reminders: 0, last: null as Record<string, unknown> | null },
+  deletions: accountDeletionStats,
 };
 
 /** Travaux en cours (tick, envoi, accusés, ménage) : attendus à l'arrêt avant de fermer le pool. */
@@ -71,14 +74,15 @@ const watchDriverGps = single("watchDriverGps", async () => {
   }
 });
 
-async function housekeeping() {
+/** Toutes les 5 min : durées de conservation ; purge longue en échec (« errors ») → niveau warn (housekeeping.ts). */
+const housekeeping = single("housekeeping", async () => {
   try {
-    const { rows } = await pool.query("select private.housekeeping() as r");
-    log("info", "housekeeping", rows[0]?.r);
+    await runHousekeeping((sql, params) => pool.query(sql, params));
   } catch (error) {
+    state.errors++;
     log("error", "housekeeping failed", { error: (error as Error).message });
   }
-}
+});
 
 // ----------------------------------------------------------------- vols
 const flightChoice = selectFlightProvider(process.env, config.flights.timeoutMs);
@@ -167,6 +171,19 @@ const settlementReminders = single("settlementReminders", async () => {
   }
 });
 
+/**
+ * Au démarrage puis toutes les 5 min : suppressions de compte chauffeur à terminer (dossier de stockage, compte de
+ * connexion), reprises après un échec de la route web ; abandon au 10e essai (alerte).
+ */
+const accountDeletions = single("accountDeletions", async () => {
+  try {
+    await processAccountDeletions();
+  } catch (error) {
+    state.errors++;
+    log("error", "account deletions failed", { error: (error as Error).message });
+  }
+});
+
 /** Attente d'un travail en cours pendant l'arrêt : 1 s (LISTEN) + 8 s (tick / lot) + 1 s (pool) ≈ grâce de `docker stop`. */
 const SHUTDOWN_TIMEOUT_MS = 8_000;
 const RECEIPT_POLL_MS = 5_000;
@@ -188,6 +205,7 @@ async function main() {
     apns: !!config.apns,
     flights: flightChoice.provider?.name ?? "off",
     flightsReason: flightChoice.reason,
+    accountDeletions: supabaseApi() ? "on" : "off: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing",
   });
   const stop = await listen("rydar_notifications", () => {
     state.lastNotify = Date.now();
@@ -204,12 +222,14 @@ async function main() {
     setInterval(() => run(watchDriverGps), config.watchDriverGpsMs),
     setInterval(() => run(documentReminders), config.documentRemindersMs),
     setInterval(() => run(settlementReminders), config.settlementRemindersMs),
+    setInterval(() => run(accountDeletions), config.accountDeletionsMs),
     ...(flights ? [setInterval(() => run(flightCheck), config.flights.pollMs)] : []),
   ];
   run(processNotifications);
   run(processWhatsApp);
   run(documentReminders);
   run(settlementReminders);
+  run(accountDeletions);
   if (flights) run(flightCheck);
 
   const health = createServer((req, res) => {

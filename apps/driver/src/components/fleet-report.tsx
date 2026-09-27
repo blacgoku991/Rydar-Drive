@@ -105,10 +105,13 @@ export function useReportSender(me: Pos) {
       } catch (e) {
         hapticResult(false);
         const err = e as ApiError;
+        // Autorisation acquise avant l'ouverture de la feuille (prepareFleetReport) : il manque un point GPS
         setError(
-          err.code === "LOCATION_REQUIRED"
-            ? `Position GPS introuvable${NBSP}: activez la localisation puis réessayez.`
-            : frTypo(err.message || "Envoi impossible. Réessayez."),
+          frTypo(
+            err.code === "LOCATION_REQUIRED"
+              ? "Position introuvable : vérifiez que la localisation du téléphone est activée, placez-vous à découvert puis réessayez."
+              : err.message || "Envoi impossible. Réessayez.",
+          ),
         );
         return false;
       } finally {

@@ -8,7 +8,7 @@ Rydar Drive repose sur un principe : **la base de données est l'arbitre**. Isol
 | --- | --- | --- |
 | **PostgreSQL / Supabase** | Données, RLS, moteur de dispatch, temps réel, outbox des notifications | PostgreSQL 16, PostGIS 3, Supabase Auth, Realtime (broadcast), Storage |
 | **apps/web** | Dashboard rattacheur, Super Admin, API publique v1, mini-site de réservation, facturation | Next.js 16 (App Router, `proxy.ts`), React 19, Tailwind v4, Radix, MapLibre GL, Recharts, @supabase/ssr, Stripe |
-| **apps/worker** | Tick du dispatch (expirations, vagues suivantes, escalades), envoi des pushs, ménage | Node 22, `pg` (LISTEN/NOTIFY, `FOR UPDATE SKIP LOCKED`), Expo Push, FCM HTTP v1, APNs HTTP/2 |
+| **apps/worker** | Tick du dispatch (expirations, vagues suivantes, escalades), envoi des pushs et des relances WhatsApp, ménage (durées de conservation), reprise des suppressions de compte chauffeur | Node 22, `pg` (LISTEN/NOTIFY, `FOR UPDATE SKIP LOCKED`), Expo Push, FCM HTTP v1, APNs HTTP/2, API WhatsApp Cloud, API Storage et Auth de Supabase (clé service role) |
 | **apps/driver** | Application chauffeur : EN LIGNE / HORS LIGNE, GPS, offres, cycle de course | Expo SDK 57, React Native 0.86, expo-router, expo-location (tâche de fond), expo-notifications, react-native-maps |
 | **packages/shared** | Vocabulaire commun : statuts, transitions, catégories, schémas zod (messages FR), formatage | TypeScript, zod 4 |
 
@@ -24,7 +24,12 @@ Toutes les tables métier portent `organization_id`. Les relations entre tables 
 | Courses | `rides`, `ride_offers`, `ride_assignments`, `ride_events` (timeline + journal du dispatch), `ride_status_history`, `pricing_rules` |
 | Intégrations | `api_keys` (métadonnées), `api_key_secrets` (hash HMAC, service role uniquement), `api_logs`, `notifications` (outbox) |
 | Suivi & échanges | `ride_alerts` (alertes de suivi), `chat_messages` (fils direct / flotte, signalements géolocalisés), `chat_reads` (accusés de lecture), `chat_report_votes` |
+| Modération | `chat_message_reports` (messages du fil flotte signalés), `chat_blocks` (auteurs masqués par un chauffeur) |
 | Centrale à commission | `ride_settlements` (règlement de chaque course terminée), `banned_identities` (identités bannies, hachées), `fraud_reports` (signalements au super admin) |
+| Frais plateforme | `platform_billing` (coordonnées de paiement de Rydar), `platform_fee_entries` (registre immuable), `platform_payments` |
+| WhatsApp | `org_whatsapp`, `platform_whatsapp` (configuration), `org_whatsapp_secrets`, `platform_whatsapp_secrets` (jetons, service role seul) |
+| Légal | `platform_legal` (éditeur, hébergeurs), `legal_acceptances` (preuves d'acceptation, ajout seul) |
+| Suppressions | `private.account_deletions` (file : dossier des justificatifs et compte de connexion à supprimer) |
 
 Les paramètres de dispatch sont réglables par organisation (`organization_settings`) :
 
@@ -52,7 +57,7 @@ Les paramètres de dispatch sont réglables par organisation (`organization_sett
 | `settlement_credit_limit_cents` | — | Mode centrale : encours maximal à régler avant blocage |
 | `new_driver_max_price_cents` | — | Mode centrale : prix maximal des courses proposées à un chauffeur « Nouveau » |
 | `trust_after_rides` | 10 | Mode centrale : passage automatique « Confirmé » après N courses réglées |
-| `settlement_methods`, `settlement_link`, `settlement_instructions` | lien, espèces | Mode centrale : moyens de paiement acceptés, lien prérempli (`{montant}`, `{montant_centimes}`, `{reference}`), consignes |
+| `settlement_methods`, `settlement_link`, `settlement_instructions`, `settlement_payee_name`, `settlement_iban`, `settlement_bic` | lien, espèces | Mode centrale : moyens de paiement acceptés (lien, virement avec RIB, espèces, autre), lien prérempli (`{montant}`, `{montant_centimes}`, `{reference}`), consignes. Un moyen n'est proposé au chauffeur que s'il est renseigné (`private.settlement_methods_available`) ; sinon, espèces |
 
 ## Moteur de dispatch
 
@@ -89,7 +94,7 @@ Séquence par défaut : **4 → 8 → 12 → 16 km**, puis **relance 4 → 8 km*
 
 Position en direct (migrations 003200 → 003400) — règle : **app ouverte = en ligne et position en direct, app fermée = hors ligne** :
 
-- **App ouverte** (premier plan, arrière-plan, téléphone verrouillé, autre application) : tâche GPS de fond (`apps/driver/src/lib/location.ts`, `startLocationUpdatesAsync` : précision maximale, aucun filtre de distance, jamais de pause, pas de regroupement), service de premier plan Android « EN LIGNE » (un point toutes les 5 s), au moins une position fraîche par minute même immobile (battement porté par le flux GPS, minuterie en plus sur iPhone), jamais de position de plus de 2 min ; sans point GPS (sous-sol), signe de vie `driver_heartbeat()`. Android : fenêtre « toujours s'exécuter en arrière-plan » (économie de batterie) au passage en ligne.
+- **App ouverte** (premier plan, arrière-plan, téléphone verrouillé, autre application) : tâche GPS de fond (`apps/driver/src/lib/location.ts`, `startLocationUpdatesAsync` : précision maximale, aucun filtre de distance, jamais de pause, pas de regroupement), service de premier plan Android « EN LIGNE » (un point toutes les 5 s), au moins une position fraîche par minute même immobile (battement porté par le flux GPS, minuterie en plus sur iPhone), jamais de position de plus de 2 min ; sans point GPS (sous-sol), signe de vie `driver_heartbeat()`. Android : si l'économie de batterie restreint l'app, une alerte propose au passage en ligne d'ouvrir ses réglages (Batterie › Non restreinte), sans permission d'exemption (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` bloquée).
 - **App fermée** (balayée, arrêtée par le système) : service Android arrêté avec l'app (`killServiceOnDestroy`), une relance sans interface ne reprend pas le suivi ; ni position ni signe de vie depuis 3 min (15 min pour les versions de l'app antérieures à 1.1.0, sans battement) → **hors ligne en silence** (`private.watch_driver_gps`, worker 30 s), offres en attente closes. Aucune notification. Un chauffeur en course n'est jamais touché.
 - Le ménage (`private.housekeeping`) ne met jamais un chauffeur hors ligne.
 
@@ -147,6 +152,8 @@ Pour « Relancer » : `DRIVER_CHANGED` est renvoyé si la course a changé de ch
 
 `chat_messages` porte deux types de fils : `driver` (centrale ⇄ un chauffeur) et `fleet` (toute l'organisation). Un signalement (`report_type` police, control, accident, traffic, danger) est un message de flotte avec position obligatoire et expiration. Chaque vote « toujours là » le prolonge d'au moins 30 min. Deux votes « plus là » l'expirent, de même qu'un seul vote de son auteur ou de la centrale. Chaque votant n'a qu'un vote, qu'il peut changer. Les envois passent par `send_chat_message`, avec une limite de débit en base (`PT429`). Un signalement notifie les chauffeurs en ligne à moins de 25 km (`fleet_report`) ; un message direct de la centrale notifie le chauffeur (`chat_message`). Les accusés de lecture sont stockés dans `chat_reads`.
 
+**Modération du fil flotte** (migration 004100) : la centrale en est responsable. Un chauffeur signale un message (`report_chat_message`, motif facultatif ; le message disparaît aussitôt de son fil) ou masque un auteur (`block_chat_author` : ses messages et ses alertes de signalement ne lui parviennent plus, l'auteur n'en sait rien). La centrale reçoit `chat.moderation` (alerte et badge dans Messages), puis supprime le message pour tous (`remove_chat_message` : `deleted_at`, signalements « removed », alertes en file annulées, texte retiré du journal) ou classe le signalement (`dismiss_chat_report`). Avant la première publication dans le fil, l'app fait accepter les règles (CGU § 8, `LEGAL_VERSION`), sur l'écran d'acceptation des conditions ou, à défaut, dans une feuille « Règles du fil » ; `driver_chat_overview` renvoie la dernière version acceptée (`rules_version`). Un compte chauffeur supprimé perd ses masquages et les signalements qu'il a rédigés (déclencheur `drivers_chat_forget_deleted`).
+
 ### 9. Gains et documents
 
 `driver_earnings(p_days)` agrège les courses terminées du chauffeur : jour, semaine du lundi et mois dans le fuseau de l'organisation, série sur 7 jours, net estimé si une commission est réglée. Le chauffeur dépose ses documents avec `driver_submit_document` ; ils restent « en attente » jusqu'à `review_driver_document` par la centrale. `private.document_reminders()` (worker, toutes les 6 h) passe les documents échus en « expiré » et envoie des rappels à J-30, J-7 et J-0, sans doublon.
@@ -160,6 +167,15 @@ Le super admin choisit pour chaque compte un modèle d'exploitation (`organizati
 - **Blocages** (`private.centrale_blocker`) appliqués aux vagues GPS, à l'offre à la flotte et à l'acceptation (`DRIVER_BLOCKED`) : commission en retard ou contestée (`unpaid`), encours au-delà du plafond (`credit_limit`), chauffeur « Nouveau » au-dessus du prix plafond (`new_driver`). Un paiement déclaré débloque tout de suite ; la centrale peut le contester. Passage automatique « Confirmé » après `trust_after_rides` courses réglées sans impayé.
 - **Bannissement définitif** (`ban_driver`, owner / admin) : compte suspendu, courses non commencées remises en recherche, offres fermées, et identités **hachées** (sha256 de la valeur normalisée : téléphone, e-mail avec variantes Gmail, carte VTC, permis, pièce d'identité, identifiant d'appareil, plaque en option) enregistrées dans `banned_identities`. Des triggers refusent ensuite ces identités à toute création ou inscription (`IDENTITY_BANNED`) et interdisent la réactivation (`DRIVER_BANNED`) ; un appareil déjà utilisé par un banni suspend le nouveau compte et alerte la centrale (`driver.flagged`). Le bannissement vaut pour la centrale ; un signalement (`fraud_reports`) permet au super admin de bannir de **toute la plateforme** (`svc_platform_ban`, y compris les comptes existants dans d'autres centrales) ou de lever (`svc_platform_unban`).
 - **Inscription par lien** (`/rejoindre/{code}`, `set_join_link`) : la route serveur vérifie l'identité (`svc_identity_check`), crée le compte Auth puis la candidature (`svc_driver_apply` : chauffeur « inactif », `application_status = 'pending'`, niveau « Nouveau »). La centrale valide (`approve_driver_application`, limites de l'offre vérifiées) ou refuse ; validation automatique possible. Le candidat se connecte à l'app avant validation (`driver_account_state()`) et peut déjà déposer ses documents.
+- **Moyens de paiement** (migration 003800) : la centrale renseigne un lien de paiement, un RIB (bénéficiaire, IBAN, BIC), des consignes pour « autre » (Wero, Lydia, au bureau…) et coche les moyens acceptés ; le chauffeur ne se voit proposer que les moyens cochés **et** renseignés, puis déclare « J'ai payé » avec le moyen utilisé.
+
+### 11. Suppression du compte chauffeur (migrations 003500, 004000)
+
+Depuis l'app (`POST /api/driver/delete-account`) ou, pour une demande reçue par e-mail, depuis `/admin/suppressions` (super admin) : `private.delete_driver_account` refuse si une course est attribuée, puis, dans une seule transaction, efface les données personnelles (justificatifs, positions, appareils, jetons, notifications, messages, signalements, votes), retire le nom partout où il était recopié (journal des courses, alertes, règlements, signalement de fraude, journal d'audit caviardé avec l'IP et le navigateur du chauffeur), anonymise la fiche (« Chauffeur supprimé (#N) », détachée du compte, puis figée par le garde-fou `DRIVER_DELETED` : ni réactivation, ni bannissement, ni changement de niveau de confiance, ni nouveau justificatif) et met en file (`private.account_deletions`) la purge du dossier `{centrale}/{chauffeur}/` des justificatifs et la suppression du compte de connexion. La route (ou l'outil) traite aussitôt la file avec la clé service role ; en cas d'échec, le worker la reprend toutes les 5 min (nouvel essai espacé jusqu'à 6 h, abandon au 10ᵉ essai avec audit critique, « Réessayer » sur `/admin/suppressions`). Le compte d'un membre de centrale ou d'un super admin est conservé : seul le profil chauffeur disparaît. Bannissement : empreintes gardées (indices en clair effacés), puis effacées 3 ans après le bannissement (`private.purge_expired_bans`, filet `private.purge_deleted_driver_bans`).
+
+### 12. Documents légaux (migration 003900)
+
+`platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). La version en vigueur est `LEGAL_VERSION` (`@rydar/shared`), commune au site et à l'app. Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
 
 ## Temps réel
 
@@ -167,9 +183,9 @@ Des triggers publient les changements avec `realtime.send` (Supabase Realtime, c
 
 | Topic | Événements | Abonnés |
 | --- | --- | --- |
-| `org:{organization_id}` | `driver.location`, `driver.updated`, `ride.updated`, `ride.event`, `offer.updated`, `ride.alert`, `chat.message`, `chat.report`, `chat.read`, `driver.document`, `settlement.updated`, `driver.application`, `driver.flagged` | Dashboard (carte, listes, timeline, alertes, messagerie, encaissements, candidatures) |
+| `org:{organization_id}` | `driver.location`, `driver.updated`, `ride.updated`, `ride.event`, `offer.updated`, `ride.alert`, `chat.message`, `chat.report`, `chat.read`, `chat.moderation`, `driver.document`, `settlement.updated`, `driver.application`, `driver.flagged`, `platform.updated` | Dashboard (carte, listes, timeline, alertes, messagerie et modération, encaissements, candidatures, frais plateforme) |
 | `driver:{driver_id}` | `offer.updated`, `ride.updated`, `ride.unassigned`, `chat.message`, `chat.read`, `driver.document`, `settlement.updated` | App chauffeur |
-| `fleet:{organization_id}` | `chat.message` (fil flotte), `chat.report` | Chauffeurs et membres de l'organisation |
+| `fleet:{organization_id}` | `chat.message` (fil flotte), `chat.report`, `chat.removed` (message retiré par la centrale) | Chauffeurs et membres de l'organisation |
 
 La policy RLS sur `realtime.messages` n'autorise l'écoute d'un topic qu'aux membres de l'organisation, ou au chauffeur concerné. `fleet:{org}` est ouvert aux chauffeurs de l'organisation, mais **jamais** `org:{org}` : ce topic transporte les données clients. Le dashboard garde un rafraîchissement de secours toutes les 6 s en cas de coupure du WebSocket.
 
@@ -182,6 +198,8 @@ Les notifications sont insérées dans `notifications` **dans la même transacti
 3. finalise avec `private.complete_notification` : succès, nouvel essai avec backoff exponentiel (2 tentatives au plus pour une offre, qui n'a de sens que 30 s ; 5 pour le reste) ou échec définitif. Les jetons refusés par le fournisseur sont désactivés (`private.deactivate_push_tokens`).
 
 Côté app chauffeur, l'offre s'affiche aussi par Realtime quand l'app est ouverte : le push n'est qu'un canal parmi d'autres.
+
+Les relances WhatsApp passent par la même file (canal `whatsapp`) : `private.claim_whatsapp` réserve un lot avec les identifiants de l'expéditeur (jetons lus dans les tables `*_whatsapp_secrets`, service role seul), le worker envoie un modèle approuvé par l'API WhatsApp Cloud de Meta et `private.complete_whatsapp` termine l'envoi ; un échec définitif repasse par l'application ([WHATSAPP.md](WHATSAPP.md)).
 
 ## Géolocalisation chauffeur
 

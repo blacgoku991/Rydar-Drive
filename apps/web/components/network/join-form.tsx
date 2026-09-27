@@ -279,8 +279,11 @@ export function JoinForm({ code, organizationName, autoApprove }: { code: string
           <label className={cn("flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 text-[13px] leading-relaxed", err("acceptTerms") ? "border-red/50 bg-red/[0.05]" : "border-line")}>
             <input type="checkbox" name="acceptTerms" className="mt-0.5 size-[18px] shrink-0 accent-[var(--color-brand)]" aria-invalid={!!err("acceptTerms")} />
             <span className="text-fg-muted">
-              J&apos;accepte les conditions d&apos;utilisation de Rydar Drive et la transmission de mes informations à <span className="text-fg">{organizationName}</span> pour
-              l&apos;étude de ma candidature.
+              J&apos;accepte les{" "}
+              <a href="/cgu" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">conditions d&apos;utilisation</a> de Rydar Drive et la
+              transmission de mes informations à <span className="text-fg">{organizationName}</span> pour l&apos;étude de ma candidature (voir la{" "}
+              <a href="/confidentialite" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">politique de confidentialité</a>). Je certifie
+              être chauffeur VTC en règle.
             </span>
           </label>
           {err("acceptTerms") && <p className="mt-1.5 text-xs text-red">{err("acceptTerms")}</p>}

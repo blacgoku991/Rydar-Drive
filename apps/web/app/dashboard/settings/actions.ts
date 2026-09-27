@@ -39,7 +39,7 @@ export async function updateOrganization(input: z.input<typeof organizationUpdat
     .from("organizations")
     .update({
       name: v.name, legal_name: v.legalName ?? null, siret: v.siret ?? null, email: v.email || null, phone: v.phone ?? null,
-      address: v.address ?? null, city: v.city ?? null, postal_code: v.postalCode ?? null,
+      address: v.address ?? null, city: v.city ?? null, postal_code: v.postalCode ?? null, vtc_registration: v.vtcRegistration ?? null,
     })
     .eq("id", ctx.org.id);
   if (error) return { ok: false, error: actionError(error) };

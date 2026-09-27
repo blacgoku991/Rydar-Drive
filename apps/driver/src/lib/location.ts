@@ -1,7 +1,7 @@
 import * as Battery from "expo-battery";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
-import { AppState, Platform } from "react-native";
+import { Alert, AppState, Platform } from "react-native";
 import { api, ApiError } from "./api";
 import { supabase } from "./supabase";
 
@@ -186,7 +186,16 @@ function taskOptions(ride: boolean): Location.LocationTaskOptions {
   };
 }
 
-export type PermissionState = "granted" | "foreground-only" | "coarse" | "denied";
+/**
+ * Résultat de la demande d'autorisation (passage EN LIGNE) :
+ *  - « granted » / « foreground-only » (navigateur : premier plan seulement) : position exacte accordée ;
+ *  - « coarse »    : position approximative (Android) ou « Position exacte » désactivée (iOS) ;
+ *  - « denied »    : refusée, le système pourra redemander au prochain essai ;
+ *  - « blocked »   : refusée DÉFINITIVEMENT (iOS après un refus, Android après deux) : seul le réglage du
+ *                    téléphone peut la rétablir, aucune fenêtre ne s'ouvrira plus ;
+ *  - « cancelled » : le chauffeur a refermé l'information préalable (rien n'a été demandé au système).
+ */
+export type PermissionState = "granted" | "foreground-only" | "coarse" | "denied" | "blocked" | "cancelled";
 
 /** État actuel, sans rien demander (redémarrage de l'app alors que le chauffeur est déjà en ligne). */
 export async function locationPermissionState(): Promise<"ok" | "coarse" | "denied"> {
@@ -194,6 +203,60 @@ export async function locationPermissionState(): Promise<"ok" | "coarse" | "deni
   if (!fg || fg.status !== "granted") return "denied";
   if (fg.android?.accuracy === "coarse" || fg.ios?.accuracy === "reduced") return "coarse";
   return "ok";
+}
+
+/**
+ * Autorisation refusée définitivement (plus aucune fenêtre possible : réglages du téléphone seulement).
+ * Lecture seule, instantanée ; toujours false dans le navigateur (aperçu web).
+ */
+export async function locationPermissionBlocked(): Promise<boolean> {
+  if (isWeb) return false;
+  const fg = await Location.getForegroundPermissionsAsync().catch(() => null);
+  return !!fg && fg.status !== "granted" && fg.canAskAgain === false;
+}
+
+// Autorisation accordée : les écrans qui attendent la position (carte de l'accueil) reprennent aussitôt.
+const grantedListeners = new Set<() => void>();
+
+/** Abonnement à l'accord de l'autorisation de position (renvoie la fonction de désabonnement). */
+export function onLocationPermissionGranted(listener: () => void) {
+  grantedListeners.add(listener);
+  return () => void grantedListeners.delete(listener);
+}
+
+function notifyGranted() {
+  for (const listener of grantedListeners) {
+    try {
+      listener();
+    } catch {
+      /* un écran ne doit pas bloquer les autres */
+    }
+  }
+}
+
+/** Espace insécable (typographie française : avant « : ; ! ? », dans les guillemets). */
+const NBSP = "\u00A0";
+
+/**
+ * Information préalable (règles App Store 5.1.1 / Google Play « divulgation visible ») : à quoi sert la position,
+ * quand elle est collectée, comment l'arrêter. Affichée JUSTE AVANT la fenêtre du système, et seulement quand
+ * celle-ci va vraiment s'ouvrir (jamais si l'autorisation est déjà accordée ou refusée définitivement).
+ * Résout false si le chauffeur annule : rien n'est alors demandé au système.
+ */
+function confirmLocationDisclosure() {
+  const indicator =
+    Platform.OS === "android" ? `La notification «${NBSP}Rydar Drive — EN LIGNE${NBSP}»` : "L'indicateur de localisation";
+  return new Promise<boolean>((resolve) =>
+    Alert.alert(
+      "Utilisation de votre position",
+      `Rydar Drive collecte votre position quand vous êtes EN LIGNE, y compris application en arrière-plan ou écran éteint, pour vous proposer les courses proches et permettre à votre centrale de suivre vos courses. ${indicator} l'indique. Passer hors ligne ou fermer l'application arrête cette collecte${NBSP}; hors ligne, votre position n'est envoyée qu'avec un signalement que vous publiez.`,
+      [
+        { text: "Annuler", style: "cancel", onPress: () => resolve(false) },
+        { text: "Continuer", onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    ),
+  );
 }
 
 /** Premier point GPS précis, borné dans le temps ; repli sur un point réseau/Wi-Fi. Jamais attendu par l'interface. */
@@ -206,24 +269,26 @@ async function firstFix(): Promise<Location.LocationObject | null> {
 }
 
 /**
- * Autorisations avant de passer EN LIGNE : position « Pendant l'utilisation », exacte. Elle suffit : le suivi,
- * démarré app ouverte, continue en arrière-plan et téléphone verrouillé (indicateur iOS, service de premier plan
- * Android) ; fermer l'app met hors ligne. « Toujours » n'est donc jamais demandé.
- * Lecture d'abord (instantanée, sans fenêtre) : la demande n'a lieu que si l'autorisation manque.
+ * SEULE porte d'entrée de la demande d'autorisation de position (aucun autre code n'appelle
+ * requestForegroundPermissionsAsync) : lecture d'abord (instantanée, sans fenêtre) ; si l'autorisation manque et
+ * que le système peut encore la demander, information préalable PUIS fenêtre du système.
+ * Position « Pendant l'utilisation », exacte. Elle suffit : le suivi, démarré app ouverte, continue en
+ * arrière-plan et téléphone verrouillé (indicateur iOS, service de premier plan Android) ; fermer l'app met
+ * hors ligne. « Toujours » (arrière-plan) n'est donc jamais demandé.
  */
 export async function requestLocationPermissions(): Promise<PermissionState> {
   let fg = await Location.getForegroundPermissionsAsync().catch(() => null);
-  if (fg?.status !== "granted") fg = await Location.requestForegroundPermissionsAsync().catch(() => null);
-  if (!fg || fg.status !== "granted") return "denied";
+  if (fg?.status !== "granted") {
+    // Refus définitif : aucune fenêtre ne s'ouvrirait, l'information préalable ne servirait à rien
+    if (!isWeb && fg?.canAskAgain === false) return "blocked";
+    if (!isWeb && !(await confirmLocationDisclosure())) return "cancelled";
+    fg = await Location.requestForegroundPermissionsAsync().catch(() => null);
+    if (fg?.status === "granted") notifyGranted();
+  }
+  if (!fg || fg.status !== "granted") return !isWeb && fg?.canAskAgain === false ? "blocked" : "denied";
   // Position approximative (Android) / « Position exacte » désactivée (iOS) : inexploitable pour le dispatch
   if (fg.android?.accuracy === "coarse" || fg.ios?.accuracy === "reduced") return "coarse";
   return isWeb ? "foreground-only" : "granted";
-}
-
-/** Autorisation de position pas encore accordée (la fenêtre du système va s'ouvrir). */
-export async function locationPermissionNeeded() {
-  const fg = await Location.getForegroundPermissionsAsync().catch(() => null);
-  return fg?.status !== "granted";
 }
 
 async function startForegroundWatch() {

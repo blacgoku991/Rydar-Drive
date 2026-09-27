@@ -1,5 +1,5 @@
 "use client";
-import { PRESENCE_META, formatPhone, type ChatMessage, type ChatOverview } from "@rydar/shared";
+import { PRESENCE_META, formatPhone, type ChatMessage, type ChatModerationItem, type ChatOverview } from "@rydar/shared";
 import { ArrowDown, ChevronLeft, IdCard, Map as MapIcon, MessageSquareDashed, Phone, RadioTower } from "lucide-react";
 import Link from "next/link";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { FLEET_THREAD, firstName, type DriverThreadSummary } from "./chat-utils";
 import { Composer } from "./composer";
 import { DaySeparator, MessageGroup, ReportCard, SystemLine, buildBlocks } from "./message-blocks";
+import { ModerationPanel, type ModerationBusy } from "./moderation";
 
 export type ThreadState = { items: ChatMessage[]; hasMore: boolean; loading: boolean; loaded: boolean; error?: string };
 
@@ -51,6 +52,11 @@ export function ThreadPane({
   error,
   onLoadOlder,
   onBack,
+  moderation,
+  moderationTotal = 0,
+  moderationBusy = null,
+  onRemove,
+  onDismiss,
 }: {
   thread: string;
   fleet: ChatOverview["fleet"];
@@ -67,8 +73,18 @@ export function ThreadPane({
   error: string | null;
   onLoadOlder: () => void;
   onBack: () => void;
+  /** Fil flotte : messages signalés par les chauffeurs, en attente de décision */
+  moderation?: ChatModerationItem[];
+  moderationTotal?: number;
+  /** Suppression / classement en cours */
+  moderationBusy?: ModerationBusy;
+  /** Fil flotte : demande de suppression d'un message (confirmation par l'appelant) */
+  onRemove?: (m: ChatMessage) => void;
+  onDismiss?: (item: ChatModerationItem) => void;
 }) {
   const isFleet = thread === FLEET_THREAD;
+  const flagged = useMemo(() => new Map((moderation ?? []).map((i) => [i.message.id, i.report_count] as const)), [moderation]);
+  const remove = isFleet ? onRemove : undefined;
   const items = useMemo(() => state?.items ?? [], [state?.items]);
   const scroller = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -185,6 +201,18 @@ export function ThreadPane({
         </div>
       </header>
 
+      {isFleet && moderation && onRemove && onDismiss && (
+        <ModerationPanel
+          items={moderation}
+          total={Math.max(moderationTotal, moderation.length)}
+          timeZone={timeZone}
+          now={now}
+          busy={moderationBusy}
+          onRemove={onRemove}
+          onDismiss={onDismiss}
+        />
+      )}
+
       {/* Fil */}
       <div ref={scroller} onScroll={onScroll} className="chat-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-4 sm:px-6" aria-live="polite">
         {state?.hasMore && (
@@ -231,7 +259,19 @@ export function ThreadPane({
           {blocks.map((b, i) => {
             if (b.kind === "day") return <DaySeparator key={b.key} label={b.label} />;
             if (b.kind === "system") return <SystemLine key={b.key} message={b.message} timeZone={timeZone} />;
-            if (b.kind === "report") return <ReportCard key={b.key} message={b.message} side={b.side} timeZone={timeZone} now={now} />;
+            if (b.kind === "report") {
+              return (
+                <ReportCard
+                  key={b.key}
+                  message={b.message}
+                  side={b.side}
+                  timeZone={timeZone}
+                  now={now}
+                  onRemove={remove}
+                  flaggedCount={flagged.get(b.message.id)}
+                />
+              );
+            }
             const isLast = i === blocks.length - 1;
             return (
               <MessageGroup
@@ -242,6 +282,8 @@ export function ThreadPane({
                 timeZone={timeZone}
                 showAuthor={b.side === "team" || (isFleet && b.side === "driver")}
                 receipt={isLast ? receiptFor : null}
+                onRemove={remove}
+                flagged={isFleet ? flagged : undefined}
               />
             );
           })}

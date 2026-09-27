@@ -339,12 +339,15 @@ export function AuthField({
 
 // --- Liens, en-têtes, messages -------------------------------------------------------------------
 
-/** Lien texte (« Mot de passe oublié ? », « Renvoyer le code ») : cible de 48 px, désactivé en gris lisible. */
+/**
+ * Lien texte (« Mot de passe oublié ? », « Renvoyer le code ») : cible de 48 px, désactivé en gris lisible.
+ * role « link » : page ouverte dans le navigateur (conditions d'utilisation, confidentialité).
+ */
 export function TextLink({
-  title, onPress, disabled, muted, icon, align = "center", accessibilityLabel,
+  title, onPress, disabled, muted, icon, align = "center", accessibilityLabel, role = "button",
 }: {
   title: string; onPress: () => void; disabled?: boolean; muted?: boolean; icon?: IconName;
-  align?: "center" | "flex-end" | "flex-start"; accessibilityLabel?: string;
+  align?: "center" | "flex-end" | "flex-start"; accessibilityLabel?: string; role?: "button" | "link";
 }) {
   const color = disabled || muted ? colors.muted : colors.fg;
   return (
@@ -352,7 +355,7 @@ export function TextLink({
       onPress={onPress}
       disabled={disabled}
       hitSlop={4}
-      accessibilityRole="button"
+      accessibilityRole={role}
       accessibilityLabel={accessibilityLabel ?? title}
       accessibilityState={{ disabled: !!disabled }}
       style={({ pressed }) => [styles.textLink, { alignSelf: align }, pressed && styles.pressed]}

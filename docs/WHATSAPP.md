@@ -51,7 +51,7 @@ Un modèle portant un autre nom peut être utilisé : il faut alors l'indiquer d
 
 - **Base de données (migrations 003600 et 003700)**
   - Tables de configuration : `org_whatsapp` et `platform_whatsapp`. Elles sont lisibles par les owner et admin de la centrale et par le super admin.
-  - Jetons : `org_whatsapp_secrets` et `platform_whatsapp_secrets`. Seul le **service role** peut les lire.
+  - Jetons : `org_whatsapp_secrets` et `platform_whatsapp_secrets`. Seul le **service role** peut les lire (RLS activée, aucun droit pour les rôles clients) : ils ne sont jamais renvoyés au navigateur ni écrits dans les journaux.
   - Les messages passent par la file `notifications`, sur le canal `whatsapp`.
 - **Worker (`apps/worker/src/whatsapp.ts`)** : il est réveillé par `LISTEN rydar_notifications` et interroge aussi la file toutes les 3 s.
   1. `private.claim_whatsapp(n)` réserve un lot de messages avec les identifiants de l'expéditeur.

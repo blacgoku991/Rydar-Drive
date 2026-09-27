@@ -31,11 +31,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     supportsTablet: false,
     associatedDomains: LINK_DOMAIN ? [`applinks:${LINK_DOMAIN}`] : [],
     infoPlist: {
-      // Seul mode d'arrière-plan utilisé : la position EN LIGNE (Apple refuse les modes déclarés sans usage)
+      // Seul mode d'arrière-plan utilisé : la position EN LIGNE (Apple refuse les modes déclarés sans usage).
+      // expo-task-manager ajoute « fetch » : retiré par ./plugins/with-background-modes.js (dernier plugin)
       UIBackgroundModes: ["location"],
-      NSLocationWhenInUseUsageDescription: "Rydar Drive utilise votre position pour vous proposer les courses les plus proches.",
-      NSLocationAlwaysAndWhenInUseUsageDescription:
-        "Lorsque vous êtes EN LIGNE, votre position est partagée avec votre centrale même application fermée, pour recevoir les courses proches.",
+      // Textes des autorisations (position, mouvement, Face ID) : fixés par les plugins plus bas, en français
       ITSAppUsesNonExemptEncryption: false,
     },
     // Offres de course en « time-sensitive » (traversent les résumés / modes Concentration)
@@ -64,12 +63,25 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   web: { bundler: "metro", output: "single", favicon: "./assets/images/icon.png" },
   plugins: [
     "expo-router",
-    "expo-secure-store",
+    // Trousseau sans Face ID (requireAuthentication n'est jamais utilisé) : pas de texte d'autorisation Face ID,
+    // plutôt que le texte anglais par défaut du module. À fixer en français si Face ID est utilisé un jour.
+    ["expo-secure-store", { faceIDPermission: false }],
     [
       "expo-location",
       {
+        // Seul texte affiché par iOS (« Pendant l'utilisation de l'app ») : usage complet, arrière-plan et
+        // signalements hors ligne compris (règle App Store 5.1.1)
+        locationWhenInUsePermission:
+          "Quand vous êtes EN LIGNE, votre position est partagée avec votre centrale, y compris application en arrière-plan, pour vous proposer les courses proches et suivre vos courses. Hors ligne, elle accompagne seulement les signalements que vous publiez.",
+        // « Toujours » n'est jamais demandé (position EN LIGNE = app ouverte) : textes en français plutôt que le
+        // texte anglais par défaut du module
         locationAlwaysAndWhenInUsePermission:
           "Lorsque vous êtes EN LIGNE, votre position est partagée avec votre centrale pour recevoir les courses proches.",
+        locationAlwaysPermission:
+          "Lorsque vous êtes EN LIGNE, votre position est partagée avec votre centrale pour recevoir les courses proches.",
+        // Activité de mouvement jamais demandée, mais CoreMotion est lié au module : la clé doit exister (sinon
+        // avertissement ITMS-90683 à l'envoi du build), en français
+        motionUsagePermission: "Rydar Drive n'utilise pas les données de mouvement de votre téléphone.",
         isAndroidBackgroundLocationEnabled: false,
         isAndroidForegroundServiceEnabled: true,
       },
@@ -92,6 +104,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         microphonePermission: false,
       },
     ],
+    // EN DERNIER : retire de UIBackgroundModes le « fetch » ajouté par expo-task-manager (inutilisé)
+    "./plugins/with-background-modes.js",
   ],
   experiments: { typedRoutes: false },
   // Mises à jour à distance (JavaScript seulement) : « eas update --channel production ». Une mise à jour ne

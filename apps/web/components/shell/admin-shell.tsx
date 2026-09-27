@@ -8,6 +8,7 @@ export function AdminShell({
   user,
   openReports = 0,
   platformToReview = 0,
+  deletionsToReview = 0,
 }: {
   children: React.ReactNode;
   user: { name: string; email: string };
@@ -15,6 +16,11 @@ export function AdminShell({
   openReports?: number;
   /** Paiements de frais plateforme à confirmer + baisses de frais à valider (pastille « Frais plateforme ») */
   platformToReview?: number;
+  /**
+   * Suppressions de compte en échec (10 essais) ou en retard (le worker ne reprend pas la file) : pastille
+   * « Suppressions de comptes » (admin_account_deletions : failed + stalled)
+   */
+  deletionsToReview?: number;
 }) {
   const [, start] = useTransition();
   const sections: NavSection[] = [
@@ -41,6 +47,7 @@ export function AdminShell({
           badgeLabel: `${platformToReview} élément${platformToReview > 1 ? "s" : ""} à confirmer (paiements, baisses de frais)`,
         },
         { href: "/admin/plans", label: "Offres & limites", icon: "card" },
+        { href: "/admin/legal", label: "Informations légales", icon: "scroll" },
       ],
     },
     {
@@ -48,6 +55,14 @@ export function AdminShell({
       items: [
         { href: "/admin/dispatch", label: "Dispatch & erreurs", icon: "radar" },
         { href: "/admin/notifications", label: "Notifications", icon: "sparkles" },
+        {
+          href: "/admin/suppressions",
+          label: "Suppressions de comptes",
+          icon: "userX",
+          badge: deletionsToReview,
+          badgeTone: "red",
+          badgeLabel: `${deletionsToReview} suppression${deletionsToReview > 1 ? "s" : ""} de compte en échec ou en retard`,
+        },
         { href: "/admin/audit", label: "Sécurité & audit", icon: "shield" },
       ],
     },

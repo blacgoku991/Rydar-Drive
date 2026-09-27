@@ -23,7 +23,20 @@ function Counter({ value, set, min, max }: { value: number; set: (v: number) => 
   );
 }
 
-export function BookingForm({ slug, categories, pricing, showPrice, phone, near }: { slug: string; categories: VehicleCategory[]; pricing: PricingRule[]; showPrice: boolean; phone?: string | null; near?: { lat: number; lng: number } | null }) {
+export function BookingForm({
+  slug, categories, pricing, showPrice, phone, near, operator, privacyUrl,
+}: {
+  slug: string;
+  categories: VehicleCategory[];
+  pricing: PricingRule[];
+  showPrice: boolean;
+  phone?: string | null;
+  near?: { lat: number; lng: number } | null;
+  /** Centrale qui organise la course (destinataire des coordonnées) */
+  operator?: string;
+  /** Politique de confidentialité (adresse absolue de la plateforme) */
+  privacyUrl?: string;
+}) {
   const [pickup, setPickup] = useState<PlaceValue>(empty);
   const [dropoff, setDropoff] = useState<PlaceValue>(empty);
   const [when, setWhen] = useState<"now" | "scheduled">("scheduled");
@@ -193,7 +206,18 @@ export function BookingForm({ slug, categories, pricing, showPrice, phone, near 
 
       <label className="flex items-start gap-2.5 text-[12px] leading-relaxed text-fg-muted">
         <input type="checkbox" name="consent" required className="mt-0.5 accent-[var(--color-brand)]" />
-        J&apos;accepte que mes coordonnées soient utilisées pour organiser cette course (aucun compte n&apos;est créé).
+        <span>
+          J&apos;accepte que mes coordonnées soient transmises à {operator ?? "la centrale"} et utilisées pour organiser cette course (aucun compte n&apos;est
+          créé).
+          {privacyUrl && (
+            <>
+              {" "}
+              <a href={privacyUrl} target="_blank" rel="noopener" className="text-fg underline underline-offset-2">
+                Données personnelles
+              </a>
+            </>
+          )}
+        </span>
       </label>
       {(error || errors.consent) && <p className="rounded-lg border border-red/25 bg-red/10 px-3 py-2 text-[13px] text-red">{error ?? errors.consent}</p>}
       <Button type="submit" variant="primary" size="lg" loading={pending} className="w-full">Réserver mon chauffeur</Button>

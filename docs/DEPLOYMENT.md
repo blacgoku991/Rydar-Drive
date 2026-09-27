@@ -101,24 +101,37 @@ Si le routage échoue, la création de course **n'est jamais bloquée**. Rydar u
 ```bash
 docker build -f apps/worker/Dockerfile -t rydar-worker .
 docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/postgres \
+           -e SUPABASE_URL=https://<ref>.supabase.co \
+           -e SUPABASE_SERVICE_ROLE_KEY=… \
            -e EXPO_ACCESS_TOKEN=… rydar-worker
 ```
 
+| Variable | Rôle |
+| --- | --- |
+| `DATABASE_URL` | **Requise.** Connexion à la base (voir ci-dessous) |
+| `SUPABASE_URL` (à défaut `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (ou `SUPABASE_SECRET_KEY`) | **Requises en production.** API Storage et administration d'Auth, avec la clé service role : le worker termine les suppressions de compte chauffeur restées inachevées (dossier des justificatifs, compte de connexion). Sans elles, il écrit l'erreur `account deletions cannot be completed` au démarrage, puis toutes les heures tant que la file n'est pas vide, et `/admin/suppressions` affiche ces suppressions « en retard ». Le kit VPS les transmet (`deploy/docker-compose.yml`) |
+| `EXPO_ACCESS_TOKEN` | Pushs par Expo (voir « Pushs » plus bas) ; `FCM_*` / `APNS_*` pour un envoi direct |
+| `WHATSAPP_API_VERSION` | Facultative ([WHATSAPP.md](WHATSAPP.md)). Aucun jeton WhatsApp dans l'environnement : ils sont en base, lisibles par le seul service role |
+| `*_MS` | Fréquences des tâches (tableau ci-dessous), défauts conseillés |
+
 - `DATABASE_URL` doit être une **connexion directe** (port 5432) et non le pooler transactionnel : le worker utilise `LISTEN/NOTIFY`.
 - Vous pouvez lancer plusieurs instances : les tâches sont réparties par `FOR UPDATE SKIP LOCKED` ou protégées par un verrou SQL.
-- Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`, `settlements`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ».
+- Healthcheck : `GET :8080/` renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`, `settlements`, `deletions`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ». `deletions.enabled` vaut `false` sans l'API Supabase ; `deletions.waiting` compte alors les suppressions bloquées.
+- Au démarrage, le journal indique `"accountDeletions":"on"` (ou `off: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing`).
 
 Tâches périodiques :
 
 | Tâche | Fréquence (variable) | Rôle |
 | --- | --- | --- |
 | `private.dispatch_tick()` | 2 s (`DISPATCH_TICK_MS`) | vagues, délais des offres, bascule des planifiées |
-| notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s |
-| `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | ménage (dont messages de plus de 180 jours) ; ne met jamais un chauffeur hors ligne |
+| notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s ; relances WhatsApp (`private.claim_whatsapp`, [WHATSAPP.md](WHATSAPP.md)) |
+| `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | durées de conservation (§ 6) : positions, messages, notifications, journaux, adresses IP, courses, bannissements (`private.purge_expired_bans`) ; un échec de la purge des courses ou des bannissements est renvoyé dans `errors` (journal `housekeeping`) sans bloquer le reste ; ne met jamais un chauffeur hors ligne |
 | `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |
 | `private.watch_driver_gps()` | 30 s (`WATCH_DRIVER_GPS_MS`) | application fermée (ni position ni signe de vie depuis 3 min) : chauffeur hors ligne, sans notification (jamais en course) |
 | `private.document_reminders()` | au démarrage puis 6 h (`DOCUMENT_REMINDERS_MS`) | documents échus, rappels d'échéance (30 j, 7 j, jour J), jamais avant 9 h locale |
 | `private.settlement_reminders()` | au démarrage puis 15 min (`SETTLEMENT_REMINDERS_MS`) | mode centrale : relance des commissions en retard (une par chauffeur toutes les 24 h, 3 au plus) |
+| suppressions de compte : `private.claim_account_deletions(10)` → Storage + Auth → `private.complete_account_deletion` | au démarrage puis 5 min (`ACCOUNT_DELETIONS_MS`) | reprend la file `private.account_deletions` quand la route de l'app ou `/admin/suppressions` n'a pas pu finir : purge du dossier `{centrale}/{chauffeur}/` des justificatifs, puis suppression du compte de connexion (sauf s'il sert aussi à gérer une centrale). Nouvel essai espacé de 5 min à 6 h, abandon au 10ᵉ essai (journal d'audit critique, bouton « Réessayer » sur `/admin/suppressions`). Exige l'API Supabase (variables ci-dessus) |
+| `private.purge_deleted_driver_bans()` | toutes les 6 h (dans la tâche précédente) | bannissements des comptes supprimés depuis 3 ans : empreintes, signalements et motif effacés (filet de `private.purge_expired_bans`, qui les efface déjà 3 ans après le bannissement) ; fonctionne même sans l'API Supabase |
 | vols : `private.flights_to_check(n)` → fournisseur → `private.apply_flight_status(...)` | 60 s (`FLIGHT_POLL_MS`) | horaires des vols, prise en charge recalée, notification au chauffeur |
 
 ### Suivi des vols
@@ -182,7 +195,72 @@ La **localisation en arrière-plan** exige un *development build* ou un build de
 
 Aperçu navigateur (démo) : `pnpm --filter @rydar/driver web`, ou `export:web` pour une version statique.
 
-## 6. Checklist de mise en production
+## 6. Pages légales
+
+Les pages publiques `/mentions-legales`, `/cgu`, `/cgv`, `/confidentialite`, `/cookies`, `/dpa` (accord de
+traitement des données) et `/suppression-compte` lisent l'identité de l'éditeur et des hébergeurs dans la base :
+
+- **avant l'ouverture au public**, le Super Admin remplit **`/admin/legal`** (raison sociale, forme, capital, siège,
+  RCS, TVA, directeur de la publication, contacts, hébergeur du serveur et des données). Tant qu'un champ manque,
+  `/mentions-legales` affiche « à compléter par l'éditeur ». `LEGAL_NAME`, `LEGAL_EMAIL` et `LEGAL_ADDRESS`
+  (`deploy/configure.sh`) ne servent que de repli ;
+- les textes sont des modèles fidèles au fonctionnement du logiciel (Rydar = éditeur de logiciel, les courses
+  appartiennent aux centrales) : **faites-les relire par un juriste** avant l'ouverture ;
+- après toute modification importante des textes, changez `LEGAL_VERSION` (valeur commune au site et à l'app
+  chauffeur, `packages/shared/src/features.ts`, reprise par `apps/web/lib/legal.ts`) et `LEGAL_UPDATED_AT`
+  (`apps/web/lib/legal.ts`). La nouvelle version est alors présentée à tous pour acceptation :
+  - tableau de bord : un bandeau (non bloquant) demande à chaque membre, dispatchers compris, d'accepter les CGU et
+    la politique de confidentialité ; le propriétaire ou un administrateur accepte en plus, au nom de la centrale,
+    les CGV et l'accord de traitement. `/admin/legal` liste les centrales qui n'ont pas encore accepté ;
+  - application chauffeur : un écran plein fait accepter les CGU et la politique de confidentialité à chaque
+    chauffeur, invité par sa centrale ou inscrit par lien (jamais pendant une offre ou une course ; « J'accepte »
+    sans réseau est envoyé dès que possible) ; l'écran de connexion rappelle qu'en se connectant, on les accepte. Les
+    règles du fil « Chauffeurs » (CGU § 8), résumées sur cet écran, sont ainsi acceptées avant toute publication dans
+    le fil ; à défaut, une feuille « Règles du fil » les fait accepter avant le premier envoi ;
+  - **l'app embarque `LEGAL_VERSION`** : après un changement, publiez une mise à jour à distance (EAS Update,
+    [STORES.md](STORES.md) § 10), sinon les chauffeurs ne voient pas la nouvelle version ;
+- les preuves d'acceptation (`legal_acceptances`) sont en ajout seul : ni modification ni suppression, même en
+  service role, et jamais purgées. Un compte supprimé laisse la preuve, détachée du compte (avec l'e-mail du
+  signataire pour les CGV et l'accord de traitement) ;
+- les durées annoncées par `/confidentialite` (§ 9 et § 10), `/suppression-compte` et `/dpa` (§ 11) sont appliquées
+  par le code :
+  - `private.housekeeping` (worker, toutes les 5 min ; dernière définition : migration 003900, toute redéfinition
+    part de celle-ci) : historique des positions 30 jours ; messages, signalements de la flotte (copie dans le
+    journal comprise) et signalements de messages 180 jours ; notifications (90 jours après l'envoi prévu) et
+    journaux d'API 90 jours ; adresse IP et navigateur du journal d'audit 1 an ; courses 10 ans après la fin de leur
+    année ; bannissements 3 ans (`private.purge_expired_bans`) ;
+  - suppression d'un compte chauffeur (`private.delete_driver_account`, migration 004000) : données effacées ou
+    anonymisées aussitôt, adresse IP et navigateur de son inscription retirés du journal d'audit, indices en clair
+    des empreintes effacés ; bannissements des comptes supprimés depuis 3 ans : `private.purge_deleted_driver_bans`
+    (worker, toutes les 6 h) ;
+  - jamais purgés : registre des frais plateforme et paiements (immuables), preuves d'acceptation, fiche archivée
+    d'une centrale, fiches anonymes « Chauffeur supprimé (#N) ».
+
+  Toute nouvelle durée écrite dans ces pages doit être appliquée par le code ;
+- **fin de contrat d'une centrale** (promesse des CGV § 8 et de l'accord de traitement § 11 ; aucun outil de
+  fermeture automatique, procédure manuelle du Super Admin) :
+  1. ne supprimez jamais la ligne `organizations` : c'est refusé (erreur 23503) dès qu'elle a accepté les conditions
+     (`legal_acceptances`, migration 003900) ou qu'elle a des frais plateforme ou des paiements (`platform_fee_entries`,
+     `platform_payments` en `on delete restrict`, migration 004200) ; le registre n'a aucun chemin de suppression.
+     La centrale s'**archive** (étape 3) ;
+  2. export, si la centrale l'a demandé avant la fin : Supabase › *SQL Editor*, une requête par table filtrée sur
+     `organization_id` (`rides`, `drivers`, `vehicles`, `ride_settlements`…), résultat exporté en CSV et transmis
+     par un moyen sûr (lien à durée limitée, jamais en clair par e-mail). Le relevé des frais plateforme s'exporte
+     depuis le tableau de bord (Encaissements) ;
+  3. archivage (`/admin/organizations`, fiche de la centrale › « Archiver ») : plus aucun accès au tableau de bord, à
+     l'app, au mini-site ni à l'API ;
+  4. sous 30 jours, suppression des données traitées pour son compte : chaque chauffeur dans `/admin/suppressions`
+     (jamais en SQL : l'outil supprime aussi ses justificatifs, leur dossier de stockage et son compte de
+     connexion) ; puis ses courses (journal, offres, alertes et règlements partent avec elles ; le registre des
+     frais garde ses écritures), messages, mini-site (`booking_sites`), moyens de paiement proposés aux chauffeurs
+     (colonnes `settlement_link`, `settlement_payee_name`, `settlement_iban`, `settlement_bic` et
+     `settlement_instructions` d'`organization_settings`, remises à vide), adhésions de l'équipe et comptes de
+     connexion qui ne servent à aucune autre centrale, journal d'audit de la centrale (sauf les lignes
+     `platform_fee.*` et `platform_payment.*`, qui accompagnent le registre) ;
+  5. restent : la fiche archivée, l'abonnement et ses factures, le registre des frais et les paiements (10 ans au
+     moins, obligations comptables) et les preuves d'acceptation.
+
+## 7. Checklist de mise en production
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
 - [ ] Realtime : *Allow public access* désactivé (canaux privés uniquement)
@@ -191,5 +269,11 @@ Aperçu navigateur (démo) : `pnpm --filter @rydar/driver web`, ou `export:web` 
 - [ ] `REDIS_URL` configuré (sinon le rate limiting reste en mémoire, instance par instance)
 - [ ] OSRM auto-hébergé (ou Mapbox / Google) à la place du serveur de démo
 - [ ] Worker déployé (connexion directe) et healthcheck surveillé
+- [ ] Worker : `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` transmis (journal de démarrage `"accountDeletions":"on"`).
+      Sinon : erreur `account deletions cannot be completed` dans le journal du worker et suppressions « en retard »
+      sur `/admin/suppressions`
+- [ ] Contact « données personnelles » renseigné dans `/admin/legal` ; demandes de suppression reçues par e-mail
+      traitées dans `/admin/suppressions` sous 30 jours ([STORES.md](STORES.md) § 11)
 - [ ] Domaine wildcard pour les mini-sites, domaines personnalisés ajoutés
 - [ ] Builds EAS signés, pushs testés sur un vrai téléphone Android et un vrai iPhone
+- [ ] `/admin/legal` rempli (aucun « à compléter par l'éditeur » sur `/mentions-legales`), textes légaux relus par un juriste

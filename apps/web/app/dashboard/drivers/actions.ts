@@ -222,7 +222,8 @@ export async function addDriverDocument(driverId: string, input: z.input<typeof 
     file_path: parsed.data.filePath || null,
     status: "valid",
   });
-  if (error) return { ok: false, error: actionError(error) };
+  // Fiche supprimée par le chauffeur : refus DRIVER_DELETED (42501) en clair, pas « Accès refusé. »
+  if (error) return { ok: false, error: humanizeError(error.message, actionError(error)) };
   revalidatePath(`/dashboard/drivers/${driverId}`);
   return { ok: true };
 }

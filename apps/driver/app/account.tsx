@@ -2,7 +2,7 @@
 //  - candidature en attente (inscription par lien) : étapes, dépôt des justificatifs, vérification toutes les 20 s
 //    et bascule vers l'accueil dès la validation par la centrale ;
 //  - refusé, banni, suspendu, désactivé, centrale suspendue… : écran bloquant avec le motif,
-//    appel de la centrale et déconnexion.
+//    appel de la centrale, déconnexion et suppression du compte (mot de passe demandé si la session est refusée).
 // Sobre : pas d'animation décorative ; la couleur ne sert qu'à l'état (étiquette, pictogramme d'état).
 import { Ionicons } from "@expo/vector-icons";
 import { TRUST_LEVEL_META, formatDate, formatTime, type DriverAccountState, type DriverAccountStateKind } from "@rydar/shared";
@@ -395,7 +395,11 @@ function AccountBlocked({ account }: { account: DriverAccountState }) {
                 router.replace("/login");
               }}
             />
-            <BigButton title="Supprimer mon compte" variant="ghost" height={control.sm} onPress={() => router.push("/delete-account")} />
+            {/* Aussi pour un compte suspendu, banni ou d'une centrale suspendue : session refusée par le serveur →
+                l'écran demande le mot de passe. Sans fiche chauffeur (« none »), rien à supprimer. */}
+            {account.state !== "none" && (
+              <BigButton title="Supprimer mon compte" variant="ghost" height={control.sm} onPress={() => router.push("/delete-account")} />
+            )}
           </View>
         </ScrollView>
       </SafeAreaView>

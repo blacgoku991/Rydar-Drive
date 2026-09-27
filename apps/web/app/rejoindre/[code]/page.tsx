@@ -3,6 +3,7 @@ import { BadgeEuro, HandCoins, Link2Off, MapPin, Navigation, Phone } from "lucid
 import type { Metadata } from "next";
 import { cache } from "react";
 import { Logo, RadarMark } from "@/components/brand/logo";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { JoinForm } from "@/components/network/join-form";
 import { OpenInApp } from "@/components/network/open-in-app";
 import { loadJoinInfo } from "@/lib/join";
@@ -151,11 +152,14 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           </section>
         </div>
 
-        <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5 text-[12px] text-fg-subtle">
-          <span>© {new Date().getFullYear()} {org.name}{org.email ? ` · ${org.email}` : ""}</span>
-          <span className="flex items-center gap-2">
-            Propulsé par <RadarMark size={16} /> <span className="text-fg-muted">Rydar Drive</span>
-          </span>
+        <footer className="mt-10 space-y-3 border-t border-line pt-5 text-[12px] text-fg-subtle">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>© {new Date().getFullYear()} {org.name}{org.email ? ` · ${org.email}` : ""}</span>
+            <span className="flex items-center gap-2">
+              Propulsé par <RadarMark size={16} /> <span className="text-fg-muted">Rydar Drive</span>
+            </span>
+          </div>
+          <LegalLinks only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies"]} />
         </footer>
       </div>
     </main>

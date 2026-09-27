@@ -23,9 +23,10 @@ import { alpha, colors, control, mono, radius, space, type, weight } from "@/the
 type Mode = "login" | "forgot" | "join";
 type Failure = { message: string; code: string | null };
 
-/** Espace insécable avant « ? : ; ! » (typographie française). */
-/** Politique de confidentialité (exigée par les stores, accessible sans compte). */
+/** Conditions d'utilisation et politique de confidentialité (exigées par les stores, accessibles sans compte). */
+const CGU_URL = legalUrl("cgu");
 const PRIVACY_URL = legalUrl("confidentialite");
+/** Espace insécable avant « ? : ; ! » (typographie française). */
 const NB = " ";
 /** Dernière adresse utilisée (pré-remplie à la prochaine connexion). */
 const LAST_EMAIL_KEY = "rydar.driver.lastEmail";
@@ -47,6 +48,12 @@ const DENIED: Record<string, { title: string; icon: IconName; tone: "error" | "w
   WEAK_PASSWORD: { title: "Mot de passe refusé", icon: "key-outline", tone: "warning" },
   PASSWORD_UPDATE_FAILED: { title: "Mot de passe non enregistré", icon: "key-outline", tone: "error" },
 };
+
+/**
+ * Connexion refusée à un compte qui existe toujours (banni, inactif, centrale suspendue, candidature refusée) : la
+ * suppression du compte reste possible sans session, par e-mail et mot de passe (écran /delete-account).
+ */
+const DELETABLE = new Set(["BANNED", "INACTIVE", "ORGANIZATION_SUSPENDED", "REJECTED"]);
 
 /** Code valable mais mot de passe refusé : le code a été consommé par le serveur. */
 const CODE_USED_HINT: Record<string, string> = {
@@ -255,6 +262,15 @@ function LoginPanel({
       </View>
 
       {failure && <FailureNotice failure={failure} />}
+      {failure?.code && DELETABLE.has(failure.code) && (
+        <TextLink
+          title="Supprimer mon compte"
+          icon="trash-outline"
+          muted
+          disabled={loading}
+          onPress={() => router.push({ pathname: "/delete-account", params: { email: email.trim().toLowerCase() } })}
+        />
+      )}
 
       <BigButton title="Se connecter" onPress={submit} loading={loading} height={control.md} />
 
@@ -272,9 +288,23 @@ function LoginPanel({
           </Text>
         </Pressable>
       )}
-      {PRIVACY_URL && (
-        <TextLink title="Politique de confidentialité" onPress={() => void Linking.openURL(PRIVACY_URL)} align="center" muted disabled={loading} />
-      )}
+      {/* Information légale, discrète (acceptation explicite ensuite dans l'app : components/terms-gate.tsx). Clavier
+          ouvert : la phrase seule, pour garder « Se connecter » visible ; les liens reviennent clavier fermé */}
+      <View style={styles.legal}>
+        <Text style={styles.legalText} maxFontSizeMultiplier={TEXT_SCALE}>
+          En vous connectant, vous acceptez les conditions d&apos;utilisation et la politique de confidentialité.
+        </Text>
+        {!compact && (CGU_URL || PRIVACY_URL) && (
+          <View style={styles.legalLinks}>
+            {CGU_URL && (
+              <TextLink title="Conditions d'utilisation" role="link" onPress={() => void Linking.openURL(CGU_URL).catch(() => null)} muted />
+            )}
+            {PRIVACY_URL && (
+              <TextLink title="Confidentialité" role="link" onPress={() => void Linking.openURL(PRIVACY_URL).catch(() => null)} muted />
+            )}
+          </View>
+        )}
+      </View>
     </EnterView>
   );
 }
@@ -654,6 +684,10 @@ const styles = StyleSheet.create({
   },
   joinText: { color: colors.muted, fontSize: type.body, textAlign: "center" },
   joinStrong: { color: colors.fg, fontWeight: weight.semibold },
+  legal: { alignItems: "center" },
+  legalText: { color: colors.muted, fontSize: type.footnote, lineHeight: 18, textAlign: "center" },
+  // Liens de 48 px de haut (cibles tactiles), côte à côte, à la ligne en très grands caractères
+  legalLinks: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", columnGap: space.lg },
   codeInput: { fontSize: type.title3, fontWeight: weight.semibold, letterSpacing: 4, ...mono },
   resendRow: { alignItems: "center", marginTop: -space.sm },
   joinField: { gap: space.sm },

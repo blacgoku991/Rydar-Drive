@@ -198,13 +198,24 @@ ask EXPO_ACCESS_TOKEN "Jeton Expo pour les notifications push (facultatif, Entr�
 put EXPO_ACCESS_TOKEN "$answer"
 
 echo
-echo "Éditeur de l'application — pages /confidentialite et /suppression-compte (exigées par l'App Store et Google Play)"
+echo "Éditeur de l'application — pages légales (mentions légales, CGU, CGV, confidentialité, cookies, accord de"
+echo "traitement, suppression de compte ; exigées par l'App Store et Google Play)."
+echo "  L'identité légale complète (raison sociale, forme, capital, RCS, TVA, directeur de la publication, contacts,"
+echo "  hébergeurs) se saisit après l'installation, par le Super Admin, dans /admin/legal : elle a priorité."
+echo "  Les trois valeurs ci-dessous ne servent que de repli tant que /admin/legal n'est pas rempli."
 ask LEGAL_NAME "Société éditrice (ex. Rydar SAS)"
 put LEGAL_NAME "$answer"
-ask LEGAL_EMAIL "E-mail de contact pour les données personnelles"
+while :; do
+  ask LEGAL_EMAIL "E-mail de contact (support, données personnelles, signalement de contenus, suppression de compte)"
+  if [ -z "$answer" ] || printf '%s' "$answer" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'; then break; fi
+  echo "  ✗ Adresse e-mail invalide (forme attendue : nom@domaine.fr)"
+done
 put LEGAL_EMAIL "$answer"
 ask LEGAL_ADDRESS "Adresse du siège (facultatif)"
 put LEGAL_ADDRESS "$answer"
+if [ -z "$(get LEGAL_NAME)" ] || [ -z "$(get LEGAL_EMAIL)" ]; then
+  echo "  ⚠ Éditeur ou e-mail vide : remplissez /admin/legal avant l'ouverture au public et l'envoi aux stores."
+fi
 
 echo
 echo "Application chauffeur publiée (facultatif, Entrée pour passer)"

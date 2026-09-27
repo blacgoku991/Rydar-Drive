@@ -35,7 +35,7 @@ export function errorText(raw: string | null | undefined, fallback: string) {
 const jwtRejected = (e: { code?: string; message?: string }) =>
   e.code === "PGRST301" || e.code === "PGRST303" || /JWT expired/i.test(e.message ?? "");
 
-async function rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
+export async function rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
   let { data, error } = await supabase.rpc(fn, args ?? {});
   // Jeton expiré : renouvelé puis UN nouvel essai (sinon chaque envoi échouerait jusqu'au renouvellement suivant)
   if (error && jwtRejected(error) && !(await supabase.auth.refreshSession()).error) {
@@ -112,24 +112,50 @@ export async function requestPasswordReset(email: string): Promise<void> {
 }
 
 /** Pages légales publiques du serveur web (App Store / Google Play) ; null sans URL d'API configurée. */
-export const legalUrl = (page: "confidentialite" | "suppression-compte") => (appConfig.apiUrl ? `${appConfig.apiUrl}/${page}` : null);
+export const legalUrl = (page: "confidentialite" | "suppression-compte" | "cgu" | "mentions-legales") =>
+  appConfig.apiUrl ? `${appConfig.apiUrl}/${page}` : null;
+
+/** Issue de la suppression du compte (route web /api/driver/delete-account). */
+export type DeleteAccountResult = {
+  /**
+   * DELETED : compte et données supprimés ; DRIVER_PROFILE_DELETED : profil chauffeur supprimé, compte de gestion
+   * (tableau de bord de la centrale) conservé ; DELETION_PENDING : données effacées, fichiers ou compte de connexion
+   * en cours de suppression (terminée automatiquement par le serveur).
+   */
+  code: "DELETED" | "DRIVER_PROFILE_DELETED" | "DELETION_PENDING";
+  /** Étapes restantes côté serveur (fichiers, compte de connexion). */
+  pending: boolean;
+  /** Message du serveur, prêt à afficher. */
+  message: string;
+};
+
+const DELETE_CODES = new Set<DeleteAccountResult["code"]>(["DELETED", "DRIVER_PROFILE_DELETED", "DELETION_PENDING"]);
 
 /**
  * Suppression définitive du compte chauffeur (route web /api/driver/delete-account, confirmation « SUPPRIMER »).
- * Codes d'erreur : RIDES_ASSIGNED (course attribuée, message à afficher), UNAUTHORIZED, RATE_LIMITED, NETWORK…
+ * Jeton de la session ; session refusée (compte suspendu, banni, centrale suspendue…) : mot de passe du compte
+ * (`password`), avec l'e-mail de la session ou `email`.
+ * Codes d'erreur : UNAUTHORIZED (demander le mot de passe), INVALID_CREDENTIALS, EMAIL_REQUIRED, RIDES_ASSIGNED
+ * (course attribuée, message à afficher), NOT_DRIVER, RATE_LIMITED (essais de mot de passe comptés avec la
+ * connexion), UNAVAILABLE (serveur d'authentification injoignable : rien n'a été vérifié, réessayer), NETWORK…
  */
-export async function deleteAccount(): Promise<void> {
+export async function deleteAccount(password?: string, email?: string): Promise<DeleteAccountResult> {
   if (!appConfig.apiUrl) throw new ApiError("Suppression indisponible : contactez votre centrale.", "CONFIG");
-  const token = (await supabase.auth.getSession()).data.session?.access_token;
-  if (!token) throw new ApiError("Session expirée : reconnectez-vous.", "UNAUTHORIZED");
+  const session = (await supabase.auth.getSession()).data.session;
+  const token = session?.access_token;
+  const login = (email ?? session?.user.email ?? "").trim().toLowerCase();
+  if (!token && !password) throw new ApiError("Session expirée : saisissez le mot de passe de votre compte.", "UNAUTHORIZED");
+  if (password && !login) throw new ApiError("Saisissez l'adresse e-mail de votre compte.", "EMAIL_REQUIRED");
   const res = await fetch(`${appConfig.apiUrl}/api/driver/delete-account`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ confirm: "SUPPRIMER" }),
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(password ? { confirm: "SUPPRIMER", email: login, password } : { confirm: "SUPPRIMER" }),
   }).catch(() => null);
   if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
-  if (res.ok) return;
-  const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  const json = (await res.json().catch(() => ({}))) as { code?: string; error?: string; message?: string; pending?: boolean };
+  if (res.ok && json.code && DELETE_CODES.has(json.code as DeleteAccountResult["code"])) {
+    return { code: json.code as DeleteAccountResult["code"], pending: !!json.pending, message: json.message ?? "" };
+  }
   throw new ApiError(json.error ?? "Suppression impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
 }
 

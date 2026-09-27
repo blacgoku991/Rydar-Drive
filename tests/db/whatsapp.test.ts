@@ -197,6 +197,14 @@ describe("WhatsApp : relances centrale → chauffeur", () => {
     expect(await sql(`select 1 from public.org_whatsapp_secrets where organization_id = $1`, [org.id])).toHaveLength(0);
     const [log] = await sql(`select metadata from public.audit_logs where organization_id = $1 and action = 'whatsapp.configured' order by id limit 1`, [org.id]);
     expect(JSON.stringify(log.metadata)).not.toContain(TOKEN);
+
+    // Helpers private sans security definer (CLAUDE.md, 20260924004200) : appelés par des RPC definer ou le worker
+    const definer = await sql(
+      `select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'private' and p.prosecdef and p.proname = any ($1::text[])`,
+      [["whatsapp_ready", "queue_whatsapp", "remind_driver", "platform_whatsapp_target", "claim_whatsapp", "complete_whatsapp"]],
+    );
+    expect(definer).toEqual([]);
   });
 });
 

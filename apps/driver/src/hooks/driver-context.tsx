@@ -5,20 +5,22 @@ import type { RealtimeChannel, Session } from "@supabase/supabase-js";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, AppState, Platform, Vibration } from "react-native";
+import { Alert, AppState, Linking, Platform, Vibration } from "react-native";
+import { frTypo } from "@/components/centrale";
 import { api, ApiError } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
-import {
-  ensureTracking, locationPermissionNeeded, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking,
-  stopTracking,
-} from "@/lib/location";
+import { ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking } from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
 import { settlementSession } from "@/lib/settlement-session";
 import { supabase } from "@/lib/supabase";
 
-export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "foreground-only" | "cancelled" };
+/**
+ * Résultat du passage en ligne. code : « coarse » (position approximative) et « blocked » (localisation refusée
+ * définitivement) → proposer « Ouvrir les réglages » ; « cancelled » : information préalable refermée, rien à afficher.
+ */
+export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "blocked" | "denied" | "foreground-only" | "cancelled" };
 
 type Ctx = {
   session: Session | null;
@@ -66,26 +68,65 @@ export function isUrgentOffer(o: Pick<DriverOffer, "mode" | "sent_at" | "expires
   return new Date(o.expires_at).getTime() - new Date(o.sent_at).getTime() <= URGENT_OFFER_S * 1000;
 }
 
+/**
+ * Chemin dans les réglages de l'app (ouverts par Linking.openSettings : page de Rydar Drive) jusqu'à la position,
+ * avec les libellés du système.
+ */
+const SETTINGS_PATH =
+  Platform.OS === "android"
+    ? {
+        position: "Autorisations › Position",
+        allow: "« Autoriser seulement si l'appli est en cours d'utilisation »",
+        exact: "« Utiliser la position exacte »",
+      }
+    : { position: "Position", allow: "« Lorsque l'app est active »", exact: "« Position exacte »" };
+
 /** Pourquoi la position approximative empêche de recevoir des courses (passage en ligne et redémarrage). */
-const COARSE_MESSAGE =
-  "Les courses sont proposées aux chauffeurs situés à 4 km, puis 8 km du client : avec une position approximative, vous ne pouvez pas en recevoir. Dans les réglages de Rydar Drive › Position, activez la position exacte.";
+const COARSE_MESSAGE = `Les courses sont proposées aux chauffeurs situés à 4 km, puis 8 km du client : avec une position approximative, vous ne pouvez pas en recevoir. Dans les réglages (${SETTINGS_PATH.position}), activez ${SETTINGS_PATH.exact}.`;
+
+/** Localisation refusée définitivement : plus aucune fenêtre du système, seuls les réglages du téléphone la rétablissent. */
+export const LOCATION_BLOCKED_MESSAGE = `La localisation de Rydar Drive est refusée. Pour recevoir des courses, ouvrez les réglages : ${SETTINGS_PATH.position}, choisissez ${SETTINGS_PATH.allow} puis activez ${SETTINGS_PATH.exact}.`;
+
+/** Même refus définitif, au moment de publier un signalement de la flotte (la position l'accompagne). */
+const REPORT_LOCATION_BLOCKED_MESSAGE = `Un signalement part avec votre position. Pour en publier, ouvrez les réglages : ${SETTINGS_PATH.position}, puis choisissez ${SETTINGS_PATH.allow}.`;
 
 /**
- * Information préalable (règles App Store / Google Play) avant la première demande de position : à quoi elle sert,
- * quand elle est collectée, comment l'arrêter. Résout false si le chauffeur annule.
+ * Avant d'ouvrir la feuille « Signaler » (accueil, messagerie), même hors ligne : la position accompagne le
+ * signalement. Autorisation jamais donnée (installation neuve) ou temporaire expirée (iOS « Demander la prochaine
+ * fois », Android « Uniquement cette fois-ci ») : information préalable PUIS fenêtre du système, par la seule porte
+ * d'entrée (requestLocationPermissions). Refus définitif : accès aux réglages du téléphone. Position approximative :
+ * acceptée (elle situe le signalement, moins précisément).
+ * true : la feuille peut s'ouvrir ; false : le chauffeur a été informé, ou a refermé l'information préalable.
  */
-function confirmLocationDisclosure() {
-  const indicator = Platform.OS === "android" ? "la notification « Rydar Drive — EN LIGNE »" : "l'indicateur de localisation";
-  return new Promise<boolean>((resolve) =>
-    Alert.alert(
-      "Utilisation de votre position",
-      `Rydar Drive utilise votre position quand vous êtes EN LIGNE, y compris application en arrière-plan ou écran éteint, pour vous proposer les courses proches et permettre à votre centrale de suivre vos courses. ${indicator.charAt(0).toUpperCase()}${indicator.slice(1)} l'indique. Passer hors ligne ou fermer l'application arrête la collecte.`,
-      [
-        { text: "Annuler", style: "cancel", onPress: () => resolve(false) },
-        { text: "Continuer", onPress: () => resolve(true) },
-      ],
-      { cancelable: true, onDismiss: () => resolve(false) },
-    ),
+export async function prepareFleetReport(): Promise<boolean> {
+  const perm = await requestLocationPermissions();
+  if (perm === "cancelled") return false;
+  if (perm === "blocked") {
+    Alert.alert("Localisation refusée", frTypo(REPORT_LOCATION_BLOCKED_MESSAGE), [
+      { text: "Plus tard", style: "cancel" },
+      { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
+    ]);
+    return false;
+  }
+  if (perm === "denied") {
+    Alert.alert("Localisation nécessaire", frTypo("Un signalement part avec votre position : autorisez la localisation pour le publier."));
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Localisation retirée pendant que le chauffeur était EN LIGNE (réglages du téléphone) : il est passé hors ligne.
+ * Accès direct aux réglages, seul endroit où la rétablir (le système ne redemande pas une autorisation retirée).
+ */
+function alertLocationLost(perm: "coarse" | "denied") {
+  Alert.alert(
+    perm === "coarse" ? "Position exacte désactivée" : "Localisation désactivée",
+    frTypo(perm === "coarse" ? `Vous êtes passé hors ligne. ${COARSE_MESSAGE}` : "Vous êtes passé hors ligne : autorisez la localisation pour recevoir des courses."),
+    [
+      { text: "Plus tard", style: "cancel" },
+      { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
+    ],
   );
 }
 
@@ -323,10 +364,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         void stopTracking().catch(() => null);
         patchPresence("offline");
         void refresh();
-        Alert.alert(
-          perm === "coarse" ? "Position exacte désactivée" : "Localisation désactivée",
-          perm === "coarse" ? `Vous êtes passé hors ligne. ${COARSE_MESSAGE}` : "Vous êtes passé hors ligne : autorisez la localisation pour recevoir des courses.",
-        );
+        alertLocationLost(perm);
       })();
     });
     return () => sub.remove();
@@ -353,10 +391,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
           await api.setOnline(false).catch(() => null);
           patchPresence("offline");
           void refresh();
-          Alert.alert(
-            perm === "coarse" ? "Position exacte désactivée" : "Localisation désactivée",
-            perm === "coarse" ? `Vous êtes passé hors ligne. ${COARSE_MESSAGE}` : "Vous êtes passé hors ligne : autorisez la localisation pour recevoir des courses.",
-          );
+          alertLocationLost(perm);
         }
       }
       void refreshChat();
@@ -395,11 +430,13 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
           }
         });
       channelRef.current = ch;
-      // Fil de la flotte (messages + signalements, votes « toujours là ») : topic privé fleet:<org>
+      // Fil de la flotte (messages + signalements, votes « toujours là », messages retirés par la centrale) :
+      // topic privé fleet:<org>
       const fleet = supabase.channel(`fleet:${h.organization.id}`, { config: { private: true } });
       fleet
         .on("broadcast", { event: "chat.message" }, scheduleChat)
         .on("broadcast", { event: "chat.report" }, scheduleChat)
+        .on("broadcast", { event: "chat.removed" }, scheduleChat)
         .subscribe();
       fleetChannelRef.current = fleet;
     })();
@@ -593,13 +630,12 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     const previous = homeRef.current?.driver.presence ?? "offline";
     try {
       if (online) {
-        // Première fois : information sur la position, puis fenêtre du système
-        if (Platform.OS !== "web" && (await locationPermissionNeeded()) && !(await confirmLocationDisclosure())) {
-          return { ok: false, code: "cancelled" };
-        }
-        // Autorisations : lecture instantanée, fenêtre seulement si elles manquent (position exacte exigée)
+        // Autorisation : lecture instantanée ; si elle manque, information préalable PUIS fenêtre du système
+        // (requestLocationPermissions est la seule porte d'entrée) ; refus définitif → réglages du téléphone
         const perm = await requestLocationPermissions();
-        if (perm === "denied") return { ok: false, message: "Autorisez la localisation pour passer en ligne." };
+        if (perm === "cancelled") return { ok: false, code: "cancelled" };
+        if (perm === "blocked") return { ok: false, code: "blocked", message: LOCATION_BLOCKED_MESSAGE };
+        if (perm === "denied") return { ok: false, code: "denied", message: "Autorisez la localisation pour passer en ligne." };
         if (perm === "coarse") return { ok: false, code: "coarse", message: COARSE_MESSAGE };
         patchPresence("available");
         setBusy(true);

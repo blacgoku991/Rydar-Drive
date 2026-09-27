@@ -93,7 +93,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </div>
     );
   } else if (tab === "org") {
-    const { data } = await ctx.supabase.from("organizations").select("name, legal_name, siret, email, phone, address, city, postal_code").eq("id", orgId).single();
+    const { data } = await ctx.supabase.from("organizations").select("name, legal_name, siret, email, phone, address, city, postal_code, vtc_registration").eq("id", orgId).single();
     content = <OrganizationForm org={data} readOnly={!admin} />;
   } else if (tab === "pricing") {
     const { data } = await ctx.supabase.from("pricing_rules").select("*").eq("organization_id", orgId).eq("is_active", true);

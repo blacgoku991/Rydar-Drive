@@ -1,5 +1,7 @@
 import { formatTime } from "./format";
-import type { DocumentState, FleetReportType, FlightStatus, RideAlertKind, RideAlertSeverity } from "./types";
+import type {
+  ChatMessage, ChatOverview, DocumentState, DriverChatOverview, FleetReportType, FlightStatus, RideAlertKind, RideAlertSeverity,
+} from "./types";
 
 // -----------------------------------------------------------------------------
 // Libellés communs dashboard ⇄ app chauffeur : signalements, vols, alertes de suivi.
@@ -129,4 +131,159 @@ export function documentStateLabel(state: DocumentDisplayState, daysLeft?: numbe
   if (state === "expiring" && daysLeft != null) return daysLeft <= 0 ? "Expire aujourd'hui" : `Expire dans ${daysLeft} j`;
   if (state === "expired" && daysLeft != null && daysLeft < 0) return `Expiré depuis ${-daysLeft} j`;
   return DOCUMENT_STATE_META[state].label;
+}
+
+// -----------------------------------------------------------------------------
+// Modération du fil « Chauffeurs » (migration 20260924004100_chat_moderation) : signaler un message, masquer
+// un auteur (app chauffeur) ; supprimer un message, ignorer un signalement (dashboard de la centrale).
+// -----------------------------------------------------------------------------
+
+export type ChatReportStatus = "open" | "dismissed" | "removed";
+
+/** Chauffeur dont le chauffeur connecté a masqué les messages (driver_chat_overview.blocked). */
+export interface ChatBlockedAuthor {
+  driver_id: string;
+  /** « Sofiane T. » (comme dans les messages) */
+  name: string;
+  blocked_at: string;
+}
+
+/**
+ * driver_chat_overview, avec les auteurs masqués et la dernière version des CGU acceptée par le compte (champs
+ * absents des réponses d'un serveur antérieur à la migration).
+ */
+export type DriverChatOverviewModerated = DriverChatOverview & {
+  blocked?: ChatBlockedAuthor[];
+  /** Dernière version des CGU (= règles du fil) acceptée : à l'inscription par lien ou dans l'application ; null : jamais */
+  rules_version?: string | null;
+};
+
+/** chat_overview (dashboard), avec le nombre de messages du fil flotte signalés en attente de décision. */
+export type ChatOverviewModerated = ChatOverview & { open_reports?: number };
+
+export interface ReportChatMessageResult {
+  ok: true;
+  code: "REPORTED" | "ALREADY_REPORTED";
+  report_id: string;
+  message_id: string;
+  status: ChatReportStatus;
+}
+
+export interface BlockChatAuthorResult {
+  ok: true;
+  code: "BLOCKED" | "ALREADY_BLOCKED";
+  driver_id: string;
+  name: string;
+}
+
+export interface UnblockChatAuthorResult {
+  ok: true;
+  code: "UNBLOCKED" | "NOT_BLOCKED";
+  driver_id: string;
+}
+
+export interface RemoveChatMessageResult {
+  ok: true;
+  code: "REMOVED" | "ALREADY_REMOVED";
+  message_id: string;
+  /** Signalements ouverts passés à « removed » */
+  reports?: number;
+}
+
+export interface DismissChatReportResult {
+  ok: true;
+  code: "DISMISSED" | "ALREADY_RESOLVED";
+  message_id: string;
+  /** Signalements ouverts de ce message classés ensemble */
+  dismissed?: number;
+  /**
+   * ALREADY_RESOLVED : « removed » (message retiré entre-temps, par exemple par un autre membre), « dismissed »
+   * (signalements déjà classés) ou null (signalement effacé avec le compte de son auteur).
+   */
+  status?: ChatReportStatus | null;
+}
+
+/** Un signalement d'un message (file de modération). */
+export interface ChatModerationReport {
+  id: string;
+  reason: string | null;
+  created_at: string;
+  reporter_type: "driver" | "user";
+  reporter_name: string;
+}
+
+/** Message signalé en attente de décision (chat_moderation_queue), avec tous ses signalements ouverts. */
+export interface ChatModerationItem {
+  message: ChatMessage;
+  report_count: number;
+  first_reported_at: string;
+  last_reported_at: string;
+  reports: ChatModerationReport[];
+}
+
+export interface ChatModerationQueue {
+  organization_id: string;
+  /** Messages signalés en attente (au-delà de la page renvoyée si elle est pleine) */
+  open: number;
+  items: ChatModerationItem[];
+}
+
+/** Temps réel « chat.moderation » sur org:<org> : identifiants seulement, jamais le texte. */
+export interface ChatModerationEvent {
+  action: "reported" | "dismissed" | "removed";
+  organization_id: string;
+  message_id: string;
+  report_id?: string;
+}
+
+/** Temps réel « chat.removed » sur fleet:<org> (applications chauffeur : relire la messagerie). */
+export interface ChatRemovedEvent {
+  id: string;
+  organization_id: string;
+}
+
+/** Motifs proposés au signalement d'un message (facultatifs ; le chauffeur peut préciser, 200 caractères au plus). */
+export const CHAT_REPORT_REASONS = ["Insultes ou harcèlement", "Contenu choquant", "Spam ou publicité", "Fausse information"] as const;
+export const CHAT_REPORT_REASON_MAX = 200;
+
+/**
+ * Règles d'usage du fil « Chauffeurs », rappelées au-dessus du champ de saisie de l'app (la centrale modère son fil ;
+ * Rydar Drive fournit l'outil). Typographie : frTypo à l'affichage.
+ */
+export const FLEET_CHAT_RULES =
+  "Fil modéré par votre centrale : restez courtois. Appui long sur un message pour le signaler ou masquer son auteur.";
+
+/**
+ * Règles du fil « Chauffeurs » (résumé du § 8 des CGU), acceptées dans l'app avant la première publication dans
+ * le fil (message ou signalement de la flotte). Typographie : frTypo à l'affichage.
+ */
+export const FLEET_CHAT_RULES_POINTS = [
+  "Vos messages et signalements sont visibles par tous les chauffeurs de votre centrale et par son équipe.",
+  "Restez courtois et limitez-vous à l'activité : trafic, contrôles, entraide.",
+  "Aucune tolérance pour les contenus choquants ni pour les comportements abusifs : propos injurieux, discriminatoires, menaçants ou à caractère sexuel, harcèlement, données personnelles de tiers (clients notamment), publicité et faux signalements sont interdits.",
+  "Votre centrale modère le fil : elle peut retirer un message, suspendre ou exclure son auteur. Appui long sur un message pour le signaler ou masquer son auteur.",
+] as const;
+
+// -----------------------------------------------------------------------------
+// Documents légaux (CGU, confidentialité, CGV, accord de traitement) : version en vigueur, commune au web (pages
+// légales, acceptation des centrales) et à l'app chauffeur (règles du fil « Chauffeurs » = CGU).
+// -----------------------------------------------------------------------------
+
+/**
+ * Version des documents légaux : date ISO (AAAA-MM-JJ), comparable comme du texte. À changer quand leur contenu
+ * change de façon importante : centrales et chauffeurs sont alors invités à accepter la nouvelle version.
+ */
+export const LEGAL_VERSION = "2026-09-27";
+
+/** Version acceptée (la plus récente, ex. driver_chat_overview.rules_version) égale ou postérieure à celle en vigueur. */
+export function legalVersionAccepted(accepted: string | null | undefined, current: string = LEGAL_VERSION): boolean {
+  return !!accepted && accepted >= current;
+}
+
+/** Motif envoyé : motif choisi, précision libre, ou les deux (« Spam ou publicité — lien douteux »), borné à 200. */
+export function chatReportReason(choice: string | null | undefined, detail: string | null | undefined): string | null {
+  const d = (detail ?? "").replace(/\s+/g, " ").trim();
+  const c = (choice ?? "").trim();
+  const text = c && d ? `${c} — ${d}` : c || d;
+  return text ? text.slice(0, CHAT_REPORT_REASON_MAX) : null;
 }

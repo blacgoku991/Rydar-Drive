@@ -42,6 +42,12 @@ const CHAT_ERRORS: Record<string, string> = {
   INVALID_CHANNEL: "Conversation introuvable.",
   FORBIDDEN_TENANT: "Ce chauffeur ne fait pas partie de votre flotte.",
   FORBIDDEN_ROLE: "Votre rôle ne permet pas d'écrire aux chauffeurs.",
+  // Modération (20260924004100)
+  NOT_REMOVABLE: "Seuls les messages du fil « Toute la flotte » peuvent être supprimés.",
+  MESSAGE_NOT_FOUND: "Ce message a déjà été supprimé.",
+  REPORT_NOT_FOUND: "Ce signalement n'existe plus.",
+  INVALID_MESSAGE: "Message introuvable.",
+  INVALID_REPORT: "Signalement introuvable.",
 };
 
 /** Erreur PostgREST (« CODE: texte », PT429…) → phrase claire. */

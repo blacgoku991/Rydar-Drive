@@ -67,6 +67,11 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?}
+      # API Supabase avec la clé service role (Storage, administration d'Auth) : reprise des suppressions de compte
+      # chauffeur (dossier des justificatifs, compte de connexion). Sans elles, la file n'est jamais reprise.
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?}
+      ACCOUNT_DELETIONS_MS: ${ACCOUNT_DELETIONS_MS:-}
       OSRM_URL: ${OSRM_URL:-https://router.project-osrm.org}
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       FCM_SERVICE_ACCOUNT_B64: ${FCM_SERVICE_ACCOUNT_B64:-}

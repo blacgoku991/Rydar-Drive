@@ -4,19 +4,21 @@ import {
 } from "@rydar/shared";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
+import { ActivityIndicator, Alert, AppState, Linking, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { frTypo, SettlementBanner } from "@/components/centrale";
 import { ReportCard, ReportSheet } from "@/components/fleet-report";
 import { RydarMap } from "@/components/map/rydar-map";
 import type { LatLng, MapReport } from "@/components/map/types";
 import { BigButton, CountBadge, Pill, RouteLine, Screen, Sheet, useFlash } from "@/components/ui";
-import { useDriver } from "@/hooks/driver-context";
+import { LOCATION_BLOCKED_MESSAGE, prepareFleetReport, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { useNow } from "@/hooks/use-now";
 import { api } from "@/lib/api";
 import { batteryRestricted, requestBatteryExemption } from "@/lib/battery";
+import { useFleetRules } from "@/lib/chat-moderation";
 import { useAppEvent } from "@/lib/events";
+import { locationPermissionBlocked } from "@/lib/location";
 import { colors, control, mono, overlay, presenceColor, radius, space, type, weight } from "@/theme";
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -41,6 +43,8 @@ async function reachabilityHint() {
 /** Écart entre les boutons posés sur la carte et le panneau du bas. */
 const GAP = space.md;
 
+const openSettings = () => void Linking.openSettings().catch(() => null);
+
 export default function Home() {
   const { home, offers, setOnline, busy, chat, refreshChat } = useDriver();
   const params = useLocalSearchParams<{ report?: string }>();
@@ -52,6 +56,12 @@ export default function Home() {
   const [focus, setFocus] = useState<LatLng | null>(null);
   // Hauteur occupée en bas de l'écran (panneau, ou carte d'un signalement) : place du bouton « Recentrer »
   const [bottomH, setBottomH] = useState(0);
+  // Localisation refusée définitivement : « Ouvrir les réglages » remplace « Passer en ligne » (l'information
+  // préalable ne se répète pas, aucune fenêtre du système ne s'ouvrirait plus)
+  const [locationBlocked, setLocationBlocked] = useState(false);
+  // « Signaler » publie dans le fil « Chauffeurs » : règles (CGU) acceptées avant la première publication
+  const rules = useFleetRules(chat, refreshChat);
+  const openingReport = useRef(false);
   const me = useMyPosition();
   const now = useNow(20_000);
   const loading = !home;
@@ -140,16 +150,52 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, chat, activeReports]);
 
+  // Relue à l'ouverture et au retour dans l'app (le chauffeur a pu l'autoriser dans les réglages du téléphone)
+  useEffect(() => {
+    let alive = true;
+    const check = () => void locationPermissionBlocked().then((b) => alive && setLocationBlocked(b));
+    check();
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") check();
+    });
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, []);
+
+  /**
+   * « Signaler », même hors ligne : règles du fil acceptées, puis autorisation de position (information préalable et
+   * fenêtre du système si elle n'a jamais été donnée ou a expiré : la position accompagne le signalement).
+   */
+  async function openReportSheet() {
+    if (openingReport.current) return;
+    openingReport.current = true;
+    try {
+      if (!(await rules.ensure())) return;
+      if (!(await prepareFleetReport())) {
+        // Refus définitif : « Ouvrir les réglages » remplace aussi « Passer en ligne »
+        setLocationBlocked(await locationPermissionBlocked());
+        return;
+      }
+      setReporting(true);
+    } finally {
+      openingReport.current = false;
+    }
+  }
+
   // La bascule est immédiate (setOnline est optimiste) : seul l'appel au serveur reste en cours (busy)
   async function toggle() {
     if (!home) return;
     const res = await setOnline(!online);
     if (res.code === "cancelled") return;
-    if (res.code === "coarse") {
-      Alert.alert("Activez la position exacte", frTypo(res.message ?? ""), [
-        { text: "Plus tard", style: "cancel" },
-        { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
-      ]);
+    if (res.code === "coarse" || res.code === "blocked") {
+      if (res.code === "blocked") setLocationBlocked(true);
+      Alert.alert(
+        res.code === "coarse" ? "Activez la position exacte" : "Localisation refusée",
+        frTypo(res.message ?? LOCATION_BLOCKED_MESSAGE),
+        [{ text: "Plus tard", style: "cancel" }, { text: "Ouvrir les réglages", onPress: openSettings }],
+      );
       return;
     }
     if (!res.ok) Alert.alert("Action impossible", frTypo(res.message ?? "Réessayez."));
@@ -183,7 +229,9 @@ export default function Home() {
       ? blockedOffers
         ? "Aucune course ne vous est proposée tant que vos commissions ne sont pas réglées."
         : "Les courses proches vous sont proposées automatiquement."
-      : "Passez en ligne pour recevoir des courses.";
+      : locationBlocked
+        ? frTypo("Localisation refusée : autorisez-la dans les réglages pour recevoir des courses.")
+        : "Passez en ligne pour recevoir des courses.";
   const dotColor = online ? (blockedOffers ? colors.red : colors.brand) : colors.subtle;
 
   const next = home?.next_scheduled ?? null;
@@ -281,7 +329,7 @@ export default function Home() {
               </Pressable>
             )}
             <Pressable
-              onPress={() => setReporting(true)}
+              onPress={() => void openReportSheet()}
               style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
               accessibilityRole="button"
               accessibilityLabel="Signaler à la flotte"
@@ -375,6 +423,14 @@ export default function Home() {
                     <BigButton title="Passer en ligne" icon="power" height={control.xl} onPress={() => undefined} disabled />
                   ) : online ? (
                     <BigButton title="Passer hors ligne" variant="secondary" icon="pause-circle-outline" height={control.md} onPress={toggle} />
+                  ) : locationBlocked ? (
+                    <BigButton
+                      title="Ouvrir les réglages"
+                      icon="settings-outline"
+                      height={control.xl}
+                      onPress={openSettings}
+                      accessibilityHint="Autorisez la localisation de Rydar Drive pour passer en ligne"
+                    />
                   ) : (
                     <BigButton title="Passer en ligne" icon="power" height={control.xl} onPress={toggle} />
                   )}
@@ -384,6 +440,8 @@ export default function Home() {
           </Sheet>
         </View>
       )}
+
+      {rules.node}
 
       <ReportSheet
         visible={reporting}

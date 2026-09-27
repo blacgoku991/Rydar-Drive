@@ -1,6 +1,7 @@
 import * as Location from "expo-location";
 import { useEffect, useSyncExternalStore } from "react";
 import { AppState, Platform, type NativeEventSubscription } from "react-native";
+import { onLocationPermissionGranted } from "@/lib/location";
 
 /** Origine du cap : « course » (GPS, sens de la marche en roulant), « compass » (boussole du téléphone, à l'arrêt). */
 export type HeadingSource = "course" | "compass";
@@ -23,12 +24,16 @@ export type MyPosition = {
 };
 
 // Un seul abonnement GPS pour toute l'application (accueil, offre, course, messagerie) : premier point
-// instantané en changeant d'écran, une seule demande d'autorisation, moins de batterie.
+// instantané en changeant d'écran, moins de batterie. Il ne DEMANDE jamais l'autorisation : la seule porte
+// d'entrée est requestLocationPermissions() (lib/location.ts), qui affiche l'information préalable avant la
+// fenêtre du système. Sans autorisation, la carte attend et le suivi repart dès qu'elle est accordée.
 let current: MyPosition | null = null;
 const listeners = new Set<() => void>();
 let users = 0;
 let sub: Location.LocationSubscription | null = null;
 let starting: Promise<void> | null = null;
+/** Démarrage redemandé pendant qu'un autre était en cours (autorisation accordée entre-temps) */
+let restartWanted = false;
 
 /** Au-delà de cette vitesse (m/s), le cap GPS est fiable ; en dessous : boussole, sinon dernier cap. */
 const HEADING_MIN_SPEED = 1.5;
@@ -189,8 +194,8 @@ function stopCompass() {
 }
 
 async function start() {
-  let perm = await Location.getForegroundPermissionsAsync().catch(() => null);
-  if (perm?.status !== "granted") perm = await Location.requestForegroundPermissionsAsync().catch(() => null);
+  // Lecture seule : aucune fenêtre du système ici (voir plus haut)
+  const perm = await Location.getForegroundPermissionsAsync().catch(() => null);
   if (perm?.status !== "granted" || users === 0) return;
   void startCompass();
   // Dernier point connu seulement s'il est récent et précis (le cache iOS peut dater et être à ±100 m)
@@ -207,17 +212,40 @@ async function start() {
   }
 }
 
+/** Démarre le suivi s'il est attendu et arrêté (un seul démarrage à la fois ; relancé s'il a été redemandé). */
+function launch() {
+  if (users === 0 || sub) return;
+  if (starting) {
+    restartWanted = true;
+    return;
+  }
+  starting = start().finally(() => {
+    starting = null;
+    if (restartWanted) {
+      restartWanted = false;
+      launch();
+    }
+  });
+}
+
+// Autorisation accordée (passage en ligne) : la carte affichée reprend sans attendre un changement d'écran
+onLocationPermissionGranted(launch);
+
 function acquire() {
   users += 1;
-  // Boussole coupée en arrière-plan (batterie), reprise au retour dans l'application
+  // Boussole coupée en arrière-plan (batterie), reprise au retour dans l'application. Au retour, le suivi
+  // repart aussi s'il attendait l'autorisation (accordée entre-temps dans les réglages du téléphone).
   if (Platform.OS !== "web" && !appStateSub) {
     appStateSub = AppState.addEventListener("change", (state) => {
       if (state === "background") stopCompass();
-      else if (state === "active" && users > 0 && sub) void startCompass();
+      else if (state === "active" && users > 0) {
+        if (sub) void startCompass();
+        else launch();
+      }
     });
   }
-  if (!sub && !starting) starting = start().finally(() => (starting = null));
-  else if (sub) void startCompass();
+  if (sub) void startCompass();
+  else launch();
 }
 
 function release() {

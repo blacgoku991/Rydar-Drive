@@ -21,7 +21,11 @@ export const DRIVER_DENIED: Record<DriverLoginDenied, string> = {
   NOT_DRIVER: "Ce compte n'est pas un compte chauffeur.",
 };
 
-/** Fenêtre et clé du compteur « tentatives de connexion par adresse » (anti brute force de driver-login). */
+/**
+ * Fenêtre et clé du compteur « essais de mot de passe par adresse » (anti brute force) : UN seul compteur pour la
+ * connexion (/api/auth/driver-login) et la suppression du compte (/api/driver/delete-account), sinon chaque route
+ * ajouterait son propre budget d'essais.
+ */
 export const DRIVER_LOGIN_WINDOW = 15 * 60;
 export const driverLoginEmailKey = (email: string) => `dlogin:email:${email}`;
 
@@ -41,6 +45,8 @@ type DriverRow = {
   status: string;
   application_status: string | null;
   banned_at: string | null;
+  /** Compte supprimé par le chauffeur (fiche anonyme conservée pour la comptabilité) */
+  deleted_at: string | null;
   organization: { status: string } | { status: string }[] | null;
 };
 
@@ -57,7 +63,7 @@ export async function checkDriverAccount(auth: SupabaseClient, userId: string): 
 
   const { data: row, error: rowError } = await createAdminClient()
     .from("drivers")
-    .select("id, status, application_status, banned_at, organization:organizations(status)")
+    .select("id, status, application_status, banned_at, deleted_at, organization:organizations(status)")
     .eq("user_id", userId)
     .maybeSingle();
   if (rowError) {
@@ -66,6 +72,8 @@ export async function checkDriverAccount(auth: SupabaseClient, userId: string): 
   }
   const driver = row as DriverRow | null;
   if (!driver) return deny("NOT_DRIVER");
+  // Fiche supprimée (en principe déjà détachée du compte) : jamais d'accès, même « en attente »
+  if (driver.deleted_at) return deny("INACTIVE");
   const org = Array.isArray(driver.organization) ? driver.organization[0] : driver.organization;
 
   if (driver.banned_at) return deny("BANNED");

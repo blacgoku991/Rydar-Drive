@@ -1,19 +1,22 @@
 import type { SettlementMethod } from "@rydar/shared";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
-import { requireOrg } from "@/lib/auth";
+import { TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
+import { isAdminRole, requireOrg } from "@/lib/auth";
+import { LEGAL_VERSION } from "@/lib/legal";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireOrg();
   const centrale = ctx.org.dispatch_model === "centrale";
-  const [{ count }, { data: chat }, { count: pendingDocs }, centraleCounts, centraleSettings] = await Promise.all([
+  const admin = isAdminRole(ctx.role);
+  const [{ count }, { data: chat }, { count: pendingDocs }, centraleCounts, centraleSettings, terms, userTerms] = await Promise.all([
     ctx.supabase
       .from("rides")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", ctx.org.id)
       .eq("status", "NO_DRIVER_FOUND")
       .gte("pickup_at", new Date(Date.now() - 6 * 3600_000).toISOString()),
-    // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus
+    // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus, et messages signalés à traiter
     ctx.supabase.rpc("chat_overview", { p_org: ctx.org.id }),
     // Compteur « Chauffeurs » : documents déposés à valider
     ctx.supabase
@@ -31,7 +34,28 @@ export default async function DashboardLayout({ children }: { children: React.Re
           .eq("organization_id", ctx.org.id)
           .maybeSingle()
       : Promise.resolve(null),
+    // CGV + accord de traitement acceptés pour la version en vigueur ? (owner / admin)
+    admin
+      ? ctx.supabase
+          .from("legal_acceptances")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", ctx.org.id)
+          .eq("document", "dpa")
+          .eq("version", LEGAL_VERSION)
+      : Promise.resolve(null),
+    // CGU + politique de confidentialité acceptées à titre personnel (tout membre, dispatcher compris) : ses propres
+    // lignes (RLS), quelle que soit la centrale au nom de laquelle il les a acceptées
+    ctx.supabase
+      .from("legal_acceptances")
+      .select("document")
+      .eq("user_id", ctx.user.id)
+      .eq("version", LEGAL_VERSION)
+      .in("document", ["cgu", "privacy"]),
   ]);
+  // Un seul bandeau à la fois : celui de la centrale (owner / admin, CGU et politique comprises) d'abord
+  const orgTermsDue = admin && !!terms && !terms.error && (terms.count ?? 0) === 0;
+  const accepted = new Set(((userTerms.data ?? []) as { document: string }[]).map((a) => a.document));
+  const userTermsDue = !userTerms.error && !(accepted.has("cgu") && accepted.has("privacy"));
   const cs = (centraleSettings?.data ?? null) as {
     settlement_link: string | null;
     settlement_instructions: string | null;
@@ -48,6 +72,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       user={{ id: ctx.user.id, name: ctx.profile.full_name ?? ctx.profile.email, email: ctx.profile.email }}
       alerts={count ?? 0}
       unreadMessages={Number((chat as { unread_total?: number } | null)?.unread_total ?? 0)}
+      openReports={Number((chat as { open_reports?: number } | null)?.open_reports ?? 0)}
       pendingDocuments={pendingDocs ?? 0}
       centrale={{
         model: ctx.org.dispatch_model ?? "fleet",
@@ -62,6 +87,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         blockUnpaid: cs?.block_unpaid ?? true,
       }}
       centraleCounts={centraleCounts}
+      topBanner={orgTermsDue ? <TermsBanner orgName={ctx.org.name} /> : userTermsDue ? <UserTermsBanner /> : null}
     >
       {children}
     </DashboardShell>

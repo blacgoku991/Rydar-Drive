@@ -41,7 +41,7 @@ export function OrganizationForm({ org, readOnly }: { org: any; readOnly: boolea
         <form
           onSubmit={submitWith((f) => {
             const g = (k: string) => String(f.get(k) ?? "");
-            save(() => updateOrganization({ name: g("name"), legalName: g("legalName"), siret: g("siret"), email: g("email"), phone: g("phone"), address: g("address"), city: g("city"), postalCode: g("postalCode") }));
+            save(() => updateOrganization({ name: g("name"), legalName: g("legalName"), siret: g("siret"), email: g("email"), phone: g("phone"), address: g("address"), city: g("city"), postalCode: g("postalCode"), vtcRegistration: g("vtcRegistration") }));
           })}
           className="grid gap-4 sm:grid-cols-2"
         >
@@ -53,6 +53,14 @@ export function OrganizationForm({ org, readOnly }: { org: any; readOnly: boolea
           <Field label="Adresse" optional><Input name="address" defaultValue={org.address ?? ""} disabled={readOnly} /></Field>
           <Field label="Ville" optional><Input name="city" defaultValue={org.city ?? ""} disabled={readOnly} /></Field>
           <Field label="Code postal" optional><Input name="postalCode" defaultValue={org.postal_code ?? ""} disabled={readOnly} /></Field>
+          <Field
+            label="Inscription VTC"
+            optional
+            className="sm:col-span-2"
+            hint="N° d'inscription au registre des exploitants VTC et, si vous prenez des réservations pour d'autres chauffeurs, de déclaration de centrale de réservation. Affiché sur votre mini-site."
+          >
+            <Input name="vtcRegistration" defaultValue={org.vtc_registration ?? ""} placeholder="Registre VTC n° EVTC075…" disabled={readOnly} maxLength={120} />
+          </Field>
           {!readOnly && (
             <div className="sm:col-span-2 flex justify-end">
               <Button type="submit" variant="primary" loading={pending}>Enregistrer</Button>

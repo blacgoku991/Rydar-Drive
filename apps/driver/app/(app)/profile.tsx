@@ -183,8 +183,11 @@ export default function Profile() {
             </>
           )}
 
-          <Text style={styles.section} accessibilityRole="header">Confidentialité</Text>
+          <Text style={styles.section} accessibilityRole="header">Conditions et confidentialité</Text>
           <Group>
+            {legalUrl("cgu") ? (
+              <Row icon="document-text-outline" title="Conditions d'utilisation" onPress={() => void Linking.openURL(legalUrl("cgu")!).catch(() => null)} />
+            ) : null}
             {legalUrl("confidentialite") ? (
               <Row icon="shield-checkmark-outline" title="Politique de confidentialité" onPress={() => void Linking.openURL(legalUrl("confidentialite")!)} />
             ) : null}

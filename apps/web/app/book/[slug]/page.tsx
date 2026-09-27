@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { BookingForm } from "@/components/booking/booking-form";
 import { RadarMark } from "@/components/brand/logo";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { getSession } from "@/lib/auth";
 import { publicAnchor } from "@/lib/geo/anchor";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -14,7 +15,7 @@ async function load(slug: string) {
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
-    .select("id, name, status, logo_url, booking:booking_sites(*)")
+    .select("id, name, status, logo_url, legal_name, siret, address, postal_code, city, vtc_registration, booking:booking_sites(*)")
     .eq("slug", slug)
     .maybeSingle();
   if (!org || (org as any).status !== "active") return null;
@@ -111,7 +112,16 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             <h2 className="text-[17px] font-semibold tracking-tight">Réserver une course</h2>
             <p className="mt-0.5 text-[12.5px] text-fg-muted">Sans compte · confirmation immédiate</p>
           </div>
-          <BookingForm near={await publicAnchor(data.org.id).catch(() => null)} slug={slug} categories={(site.vehicle_categories ?? ["standard"]) as VehicleCategory[]} pricing={(pricing ?? []) as PricingRule[]} showPrice={site.show_price_estimate} phone={site.phone} />
+          <BookingForm
+            near={await publicAnchor(data.org.id).catch(() => null)}
+            slug={slug}
+            categories={(site.vehicle_categories ?? ["standard"]) as VehicleCategory[]}
+            pricing={(pricing ?? []) as PricingRule[]}
+            showPrice={site.show_price_estimate}
+            phone={site.phone}
+            operator={org.legal_name || org.name}
+            privacyUrl="/confidentialite"
+          />
         </div>
       </section>
 
@@ -119,6 +129,18 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-6 text-[12px] text-fg-subtle">
           <span>© {new Date().getFullYear()} {org.name}{site.email ? ` · ${site.email}` : ""}</span>
           <span className="flex items-center gap-2">Réservations propulsées par <RadarMark size={16} /> <span className="text-fg-muted">Rydar Drive</span></span>
+        </div>
+        {/* Exploitant du service de transport (Code des transports : réservation préalable auprès d'un exploitant VTC inscrit) */}
+        <div className="mx-auto max-w-6xl space-y-2 px-6 pb-6 text-[11.5px] leading-relaxed text-fg-subtle">
+          <p>
+            Transport de personnes par voiture de transport avec chauffeur (VTC), sur réservation préalable, organisé par{" "}
+            <span className="text-fg-muted">{org.legal_name || org.name}</span>
+            {org.siret ? ` · SIRET ${org.siret}` : ""}
+            {org.vtc_registration ? ` · ${org.vtc_registration}` : ""}
+            {org.address ? ` · ${[org.address, [org.postal_code, org.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}` : ""}.
+            Rydar Drive fournit uniquement le logiciel de réservation.
+          </p>
+          <LegalLinks only={["/mentions-legales", "/confidentialite", "/cookies"]} />
         </div>
       </footer>
     </main>

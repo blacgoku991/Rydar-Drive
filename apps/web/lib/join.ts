@@ -6,6 +6,7 @@ import "server-only";
 import { fieldErrors, joinApplicationSchema, type DriverApplyResult, type IdentityCheck, type JoinInfo } from "@rydar/shared";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
+import { LEGAL_VERSION } from "@/lib/legal";
 import { rateLimitAll } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -138,6 +139,15 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
         return { ok: false, error: res?.message ?? "Inscription impossible pour le moment. Réessayez." };
     }
   }
+
+  // Preuve d'acceptation : CGU + politique de confidentialité (case obligatoire du formulaire), version en vigueur.
+  // Idempotente (index unique personne + centrale + document + version) : un doublon (23505) n'est pas une erreur.
+  await admin
+    .from("legal_acceptances")
+    .insert(["cgu", "privacy"].map((document) => ({ user_id: userId, organization_id: org.id, document, version: LEGAL_VERSION, source: "join" })))
+    .then(({ error }) => {
+      if (error && error.code !== "23505") console.error("legal_acceptances", error.code, error.message);
+    });
 
   await audit({
     organizationId: org.id,

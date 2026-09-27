@@ -465,3 +465,26 @@ describe("WhatsApp Business (Meta)", () => {
     expect(down).toMatchObject({ ok: false, retryable: true });
   });
 });
+
+import { LEGAL_VERSION, legalVersionAccepted } from "./index";
+
+describe("documents légaux : version acceptée (CGU, confidentialité, règles du fil)", () => {
+  it("à accepter : jamais acceptés (null, absent, vide) ou version antérieure", () => {
+    expect(legalVersionAccepted(null, "2026-09-27")).toBe(false);
+    expect(legalVersionAccepted(undefined, "2026-09-27")).toBe(false);
+    expect(legalVersionAccepted("", "2026-09-27")).toBe(false);
+    expect(legalVersionAccepted("2026-09-26", "2026-09-27")).toBe(false);
+    expect(legalVersionAccepted("2025-12-31", "2026-01-01")).toBe(false);
+  });
+  it("acquis : version en vigueur (égale) ou postérieure", () => {
+    expect(legalVersionAccepted("2026-09-27", "2026-09-27")).toBe(true);
+    expect(legalVersionAccepted("2026-09-28", "2026-09-27")).toBe(true);
+    expect(legalVersionAccepted("2027-01-01", "2026-12-31")).toBe(true);
+  });
+  it("par défaut, comparaison avec la version en vigueur (date ISO AAAA-MM-JJ)", () => {
+    expect(LEGAL_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(legalVersionAccepted(LEGAL_VERSION)).toBe(true);
+    expect(legalVersionAccepted(null)).toBe(false);
+    expect(legalVersionAccepted("2000-01-01")).toBe(false);
+  });
+});

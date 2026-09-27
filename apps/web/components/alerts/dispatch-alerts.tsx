@@ -3,7 +3,8 @@
 // Sources temps réel (org:{id}) :
 //  - `ride.updated` (nouvelles courses) et `ride.event` (acceptation, aucun chauffeur, bascule GPS, annulation, vols) ;
 //  - `ride.alert` (retard, immobile, GPS muet, pas démarrée : la centrale décide — Relancer, Réattribuer, Garder) ;
-//  - `chat.message` (message ou signalement d'un chauffeur) ; `driver.document` (document déposé à valider).
+//  - `chat.message` (message ou signalement d'un chauffeur) ; `driver.document` (document déposé à valider) ;
+//  - `chat.moderation` (004100) : message du fil « Chauffeurs » signalé, à supprimer ou à ignorer dans Messages.
 // Mode centrale (002600) :
 //  - `settlement.updated` : course terminée (commission à encaisser / part à verser), « J'ai payé » à confirmer ;
 //  - `driver.application` (candidature par le lien d'inscription) ; `driver.flagged` (appareil d'un compte banni) ;
@@ -12,12 +13,12 @@
 import {
   DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatPhone, formatPrice, formatRideDate, formatTime,
   shortAddress,
-  type ChatMessage, type DriverApplicationEvent, type DriverDocumentEvent, type DriverFlaggedEvent, type OrgPlatformAccount, type PaymentMethod, type PlatformEvent,
+  type ChatMessage, type ChatModerationEvent, type DriverApplicationEvent, type DriverDocumentEvent, type DriverFlaggedEvent, type OrgPlatformAccount, type PaymentMethod, type PlatformEvent,
   type RideAlertBroadcast,
   type RideAlertKind, type RideAlertSeverity, type SettlementDirection, type SettlementEvent,
 } from "@rydar/shared";
 import {
-  AlertTriangle, ArrowUpRight, Bell, BellOff, BellRing, Check, CheckCheck, CheckCircle2, CircleSlash, Clock3, FileText, Globe, HandCoins, KeyRound, Landmark,
+  AlertTriangle, ArrowUpRight, Bell, BellOff, BellRing, Check, CheckCheck, CheckCircle2, CircleSlash, Clock3, FileText, Flag, Globe, HandCoins, KeyRound, Landmark,
   MessageSquareText, Monitor, Plane, PlaneLanding, Reply, RotateCw, ShieldAlert, UserPlus, Volume2, VolumeX, X, type LucideIcon,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -35,7 +36,7 @@ import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 export type AlertKind =
-  | "new" | "accepted" | "no_driver" | "escalated" | "cancelled" | "ride_alert" | "flight" | "message" | "report" | "document"
+  | "new" | "accepted" | "no_driver" | "escalated" | "cancelled" | "ride_alert" | "flight" | "message" | "report" | "document" | "moderation"
   // mode centrale
   | "settlement" | "application" | "flagged" | "platform";
 type Level = "info" | "success" | "warning" | "critical";
@@ -87,6 +88,7 @@ const BASE: Record<AlertKind, { icon: LucideIcon; color: string }> = {
   message: { icon: MessageSquareText, color: "var(--color-blue)" },
   report: { icon: AlertTriangle, color: "var(--color-amber)" },
   document: { icon: FileText, color: "var(--color-violet)" },
+  moderation: { icon: Flag, color: "var(--color-amber)" },
   settlement: { icon: HandCoins, color: "var(--color-amber)" },
   application: { icon: UserPlus, color: "var(--color-brand)" },
   flagged: { icon: ShieldAlert, color: "var(--color-red)" },
@@ -143,6 +145,9 @@ function behavior(i: AlertItem): { sound: SoundKind | null; desktop: boolean; du
       return { sound: "notice", desktop: true, duration: 10_000 };
     case "document":
       return { sound: "notice", desktop: false, duration: 10_000 };
+    case "moderation":
+      // Message signalé : la centrale décide (supprimer / ignorer), éventuellement onglet en arrière-plan
+      return { sound: "notice", desktop: true, duration: 12_000 };
     case "settlement":
       // « J'ai payé » attend une décision : reste plus longtemps à l'écran
       return i.settlement?.action === "declared"
@@ -590,8 +595,38 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
       rideId: null,
       title: `${m.author_name || who}${direct ? "" : " · flotte"}`,
       body: m.body,
-      href: direct ? `/dashboard/messages?driver=${m.driver_id}` : `/dashboard/messages?channel=fleet`,
+      href: direct ? `/dashboard/messages?driver=${m.driver_id}` : "/dashboard/messages?thread=fleet",
       cta: "Répondre",
+    });
+  });
+
+  // ---------------------------------------------------------------- modération du fil « Chauffeurs » (004100)
+  // Identifiants seulement (jamais le texte). Alerte `mod:<message>:<signalement>` ; message supprimé ou signalement
+  // classé (ici ou par un autre membre) : toast fermé, historique « traitée ».
+  useRealtimeEvent("chat.moderation", (e: ChatModerationEvent) => {
+    if (!e?.message_id) return;
+    const prefix = `mod:${e.message_id}:`;
+    if (e.action === "removed" || e.action === "dismissed") {
+      for (const i of itemsRef.current) {
+        if (!i.id.startsWith(prefix)) continue;
+        toast.dismiss(i.id);
+        shown.current.delete(i.id);
+      }
+      update((list) =>
+        list.some((i) => i.id.startsWith(prefix) && !i.done) ? list.map((i) => (i.id.startsWith(prefix) ? { ...i, done: true } : i)) : list,
+      );
+      return;
+    }
+    if (e.action !== "reported" || !e.report_id) return;
+    if (window.location.pathname.startsWith("/dashboard/messages")) return; // la file de modération est déjà affichée
+    push({
+      id: `${prefix}${e.report_id}`,
+      kind: "moderation",
+      rideId: null,
+      title: "Un message du fil Chauffeurs a été signalé",
+      body: "À supprimer ou à ignorer dans Messages.",
+      href: "/dashboard/messages?thread=fleet",
+      cta: "Voir",
     });
   });
 

@@ -89,6 +89,8 @@ export default async function NetworkPage() {
       .eq("organization_id", orgId)
       .eq("application_status", "pending")
       .is("banned_at", null)
+      // Candidat qui a supprimé son compte : plus de candidature (fiche anonyme)
+      .is("deleted_at", null)
       .order("applied_at", { ascending: false }),
     db
       .from("drivers")
@@ -110,6 +112,7 @@ export default async function NetworkPage() {
       .eq("organization_id", orgId)
       .eq("joined_via", "join_link")
       .in("application_status", ["approved", "rejected"])
+      .is("deleted_at", null)
       .not("application_reviewed_at", "is", null)
       .order("application_reviewed_at", { ascending: false })
       .limit(6),
