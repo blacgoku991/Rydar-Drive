@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 import type { DocumentView } from "./documents";
 
@@ -72,7 +73,7 @@ export function DriverDocuments({
 
   const review = (doc: DocumentView, approve: boolean, opts: { note?: string; expiresAt?: string } = {}) => {
     setBusy(doc.id);
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await reviewDriverDocument({ documentId: doc.id, approve, note: opts.note, expiresAt: opts.expiresAt });
       setBusy(null);
       if (!res.ok) {
@@ -89,7 +90,7 @@ export function DriverDocuments({
       setFixDate(null);
       setNote("");
       router.refresh();
-    });
+    }));
   };
 
   const counts = items.reduce<Record<string, number>>((acc, d) => ({ ...acc, [d.status]: (acc[d.status] ?? 0) + 1 }), {});

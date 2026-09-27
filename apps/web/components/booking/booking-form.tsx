@@ -10,6 +10,7 @@ import { RoutePreview } from "@/components/map/route-preview";
 import { AddressInput, type PlaceValue } from "@/components/rides/address-input";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 const empty: PlaceValue = { address: "", lat: null, lng: null };
@@ -126,7 +127,7 @@ export function BookingForm({
           setErrors({ pickup: pickup.lat == null ? "Choisissez une adresse dans la liste" : "", dropoff: dropoff.lat == null ? "Choisissez une adresse dans la liste" : "" });
           return;
         }
-        start(async () => {
+        start(() => runAction(async () => {
           const res = await submitBooking(slug, {
             pickup: { address: pickup.address, lat: pickup.lat!, lng: pickup.lng! },
             dropoff: { address: dropoff.address, lat: dropoff.lat!, lng: dropoff.lng! },
@@ -147,7 +148,7 @@ export function BookingForm({
             setErrors(res.fieldErrors ?? {});
             setError(res.error);
           } else setDone(res.number);
-        });
+        }, setError));
       })}
     >
       <div className="space-y-2.5">

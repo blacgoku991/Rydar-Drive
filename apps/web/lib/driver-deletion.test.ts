@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   limits: [] as { key: string; limit: number; windowSec: number }[],
   resets: [] as { key: string; windowSec: number }[],
   blocked: new Set<string>(),
+  /** Compteurs réels (fenêtre fixe) : null = seules les clés de `blocked` refusent */
+  counts: null as Map<string, number> | null,
 }));
 
 vi.mock("server-only", () => ({}));
@@ -20,7 +22,9 @@ vi.mock("@/lib/env", () => ({ env: { supabaseUrl: "https://supabase.test", supab
 vi.mock("@/lib/rate-limit", () => {
   const check = (c: { key: string; limit: number; windowSec: number }) => {
     h.limits.push(c);
-    return { ok: !h.blocked.has(c.key), remaining: 0, resetAt: 0, limit: c.limit };
+    const n = (h.counts?.get(c.key) ?? 0) + 1;
+    h.counts?.set(c.key, n);
+    return { ok: !h.blocked.has(c.key) && (!h.counts || n <= c.limit), remaining: 0, resetAt: 0, limit: c.limit };
   };
   return {
     rateLimit: async (key: string, limit: number, windowSec: number) => check({ key, limit, windowSec }),
@@ -32,7 +36,10 @@ vi.mock("@/lib/rate-limit", () => {
       }
       return last;
     },
-    resetRateLimit: async (key: string, windowSec: number) => void h.resets.push({ key, windowSec }),
+    resetRateLimit: async (key: string, windowSec: number) => {
+      h.resets.push({ key, windowSec });
+      h.counts?.delete(key);
+    },
   };
 });
 // Modules réels, importés par la route sous leur alias
@@ -154,6 +161,7 @@ beforeEach(() => {
   h.limits.length = 0;
   h.resets.length = 0;
   h.blocked.clear();
+  h.counts = null;
   h.admin = null;
   h.anon = null;
 });
@@ -294,11 +302,11 @@ describe("suppression du compte chauffeur — route /api/driver/delete-account",
     return calls;
   }
 
-  const post = async (body: Row | null, token?: string) => {
+  const post = async (body: Row | null, token?: string, ip = IP) => {
     const res = await POST(
       new Request("https://rydar.test/api/driver/delete-account", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-forwarded-for": IP, ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        headers: { "content-type": "application/json", "x-forwarded-for": ip, ...(token ? { authorization: `Bearer ${token}` } : {}) },
         body: body ? JSON.stringify(body) : "{",
       }),
     );
@@ -339,16 +347,20 @@ describe("suppression du compte chauffeur — route /api/driver/delete-account",
     expect(h.resets).toEqual([]);
   });
 
-  it("mot de passe : même compteur que la connexion ; juste → compteur remis à zéro et suppression ; faux → 401", async () => {
+  it("mot de passe : mêmes compteurs que la connexion ; juste → compteurs remis à zéro et suppression ; faux → 401", async () => {
     const anon = fakeAnon({ signIn: () => ({ user: { id: USER }, error: null }) });
     fakeAdmin({});
     const ok = await post(withPassword());
     expect(ok).toMatchObject({ status: 200, body: { code: "DELETED" } });
-    expect(h.limits.slice(0, 2)).toEqual([
+    expect(h.limits.slice(0, 3)).toEqual([
       { key: `ddelete:ip:${IP}`, limit: 20, windowSec: 900 },
-      { key: `dlogin:email:${EMAIL}`, limit: 6, windowSec: 900 },
+      { key: `dloginip:${IP}:${EMAIL}`, limit: 6, windowSec: 900 },
+      { key: `dlogin:email:${EMAIL}`, limit: 50, windowSec: 900 },
     ]);
-    expect(h.resets).toEqual([{ key: `dlogin:email:${EMAIL}`, windowSec: 900 }]);
+    expect(h.resets).toEqual([
+      { key: `dloginip:${IP}:${EMAIL}`, windowSec: 900 },
+      { key: `dlogin:email:${EMAIL}`, windowSec: 900 },
+    ]);
     // La session ouverte pour la vérification est révoquée localement (celles du tableau de bord restent)
     expect(anon.signOut).toEqual([{ scope: "local" }]);
 
@@ -361,12 +373,28 @@ describe("suppression du compte chauffeur — route /api/driver/delete-account",
     expect(h.resets).toEqual([]);
   });
 
-  it("adresse bloquée par la connexion (6 essais) : 429 sans vérifier le mot de passe", async () => {
+  it("essais épuisés depuis cette IP, ou plafond global de l'adresse atteint : 429 sans vérifier le mot de passe", async () => {
     const anon = fakeAnon({ signIn: () => ({ user: { id: USER }, error: null }) });
     fakeAdmin({});
+    h.blocked.add(`dloginip:${IP}:${EMAIL}`);
+    expect(await post(withPassword())).toMatchObject({ status: 429, body: { code: "RATE_LIMITED" } });
+    h.blocked.clear();
     h.blocked.add(`dlogin:email:${EMAIL}`);
     expect(await post(withPassword())).toMatchObject({ status: 429, body: { code: "RATE_LIMITED" } });
     expect(anon.signIn).toEqual([]);
+  });
+
+  it("un tiers qui épuise les essais de l'adresse depuis une autre IP ne bloque pas le chauffeur", async () => {
+    h.counts = new Map();
+    fakeAdmin({});
+    // 6 faux mots de passe depuis l'IP du tiers, puis le 7e refusé (couple adresse + IP épuisé)
+    fakeAnon({});
+    for (let i = 0; i < 6; i++) expect(await post(withPassword("mauvais"), undefined, "198.51.100.66")).toMatchObject({ status: 401 });
+    expect(await post(withPassword("mauvais"), undefined, "198.51.100.66")).toMatchObject({ status: 429, body: { code: "RATE_LIMITED" } });
+    // Le chauffeur, depuis son téléphone : mot de passe vérifié, compte supprimé
+    const anon = fakeAnon({ signIn: () => ({ user: { id: USER }, error: null }) });
+    expect(await post(withPassword())).toMatchObject({ status: 200, body: { code: "DELETED" } });
+    expect(anon.signIn).toHaveLength(1);
   });
 
   it("compte Auth banni : empreinte vérifiée par la base (svc_driver_password_check)", async () => {
@@ -375,7 +403,7 @@ describe("suppression du compte chauffeur — route /api/driver/delete-account",
     const sb = fakeAdmin({ rpc: { svc_driver_password_check: () => ({ data: USER }) } });
     expect(await post(withPassword())).toMatchObject({ status: 200, body: { code: "DELETED" } });
     expect(sb.calls.rpc[0]).toEqual({ fn: "svc_driver_password_check", args: { p_email: EMAIL, p_password: "Secret-2026" } });
-    expect(h.resets.map((r) => r.key)).toEqual([`dlogin:email:${EMAIL}`]);
+    expect(h.resets.map((r) => r.key)).toEqual([`dloginip:${IP}:${EMAIL}`, `dlogin:email:${EMAIL}`]);
 
     fakeAnon({ signIn: banned });
     fakeAdmin({ rpc: { svc_driver_password_check: () => ({ data: null }) } });

@@ -7,7 +7,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DOCUMENT_COLUMNS, buildDocumentView, fileKind, type DocumentRow, type DocumentView } from "@/components/drivers/documents";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
-import { ApplicationsCard, type Candidate } from "@/components/network/applications";
+import { ApplicationsCard, type Candidate, type CandidateDebt } from "@/components/network/applications";
 import { BannedDriversCard, type BannedDriverRow } from "@/components/network/banned-drivers";
 import { JoinLinkCard } from "@/components/network/join-link-card";
 import { REPORT_STATUS_FOR_ORG } from "@/components/network/labels";
@@ -41,7 +41,7 @@ function FleetOnly() {
     ["Lien d'inscription", "Les chauffeurs de vos groupes WhatsApp / Telegram s'inscrivent eux-mêmes et sont rattachés à votre centrale."],
     ["Part chauffeur affichée", "Chaque offre montre ce que gagne le chauffeur : prix = part chauffeur + commission + frais plateforme."],
     ["Commission encaissée", "À la fin de la course, le chauffeur règle la commission depuis l'application ; les mauvais payeurs sont bloqués."],
-    ["Bannissement définitif", "Un fraudeur banni ne revient pas, même avec un nouveau compte (téléphone, e-mail, carte VTC, appareil…)."],
+    ["Bannissement définitif", "Les identifiants connus d'un fraudeur banni (téléphone, e-mail, carte VTC, appareils) sont refusés à toute nouvelle inscription dans votre centrale."],
   ];
   return (
     <>
@@ -125,9 +125,31 @@ export default async function NetworkPage() {
 
   // Documents déposés par les candidats (application chauffeur), avec aperçu signé
   const ids = pending.map((d) => d.id as string);
-  const { data: docRows } = ids.length
-    ? await db.from("driver_documents").select(DOCUMENT_COLUMNS).eq("organization_id", orgId).in("driver_id", ids)
-    : { data: [] as unknown[] };
+  // Même identité qu'un ancien chauffeur parti en devant des commissions : journal driver.applied_debtor
+  // (20260924004800), écrit dans la transaction de la candidature (created_at ≥ applied_at)
+  const oldest = pending.reduce<string | null>((min, d) => (d.applied_at && (!min || d.applied_at < min) ? d.applied_at : min), null);
+  const [{ data: docRows }, { data: debtRows }] = await Promise.all([
+    ids.length
+      ? db.from("driver_documents").select(DOCUMENT_COLUMNS).eq("organization_id", orgId).in("driver_id", ids)
+      : Promise.resolve({ data: [] as unknown[] }),
+    ids.length && oldest
+      ? db
+          .from("ride_events")
+          .select("data")
+          .eq("organization_id", orgId)
+          .eq("type", "driver.applied_debtor")
+          .is("ride_id", null)
+          .gte("created_at", oldest)
+          .in("data->>driver_id", ids)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] as unknown[] }),
+  ]);
+  const debts = new Map<string, CandidateDebt>();
+  for (const row of (debtRows ?? []) as { data: { driver_id?: string; owed_cents?: number; owed_settlements?: number; debtor_numbers?: number[] } | null }[]) {
+    const e = row.data;
+    if (!e?.driver_id || debts.has(e.driver_id)) continue;
+    debts.set(e.driver_id, { owedCents: Number(e.owed_cents ?? 0), settlements: Number(e.owed_settlements ?? 0), numbers: e.debtor_numbers ?? [] });
+  }
   const candidates: Candidate[] = await Promise.all(
     pending.map(async (d) => {
       const view = buildDocumentView(((docRows ?? []) as unknown as DocumentRow[]).filter((x) => x.driver_id === d.id), tz);
@@ -135,7 +157,10 @@ export default async function NetworkPage() {
         view.items.map(async (doc) => ({ ...doc, kind: fileKind(doc.file_path), url: doc.file_path ? await signedUrl(db, doc.file_path) : null })),
       );
       const vehicle = one(d.vehicle) as Candidate["vehicle"];
-      return { ...d, vehicle: vehicle ? { ...vehicle, category: vehicle.category as VehicleCategory } : null, documents, missing: view.missing as DocumentType[] } as Candidate;
+      return {
+        ...d, vehicle: vehicle ? { ...vehicle, category: vehicle.category as VehicleCategory } : null, documents, missing: view.missing as DocumentType[],
+        debt: debts.get(d.id) ?? null,
+      } as Candidate;
     }),
   );
 

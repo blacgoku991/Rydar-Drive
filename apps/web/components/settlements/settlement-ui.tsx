@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -231,7 +232,7 @@ export function useSettlementRunner(onChanged?: () => void) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const run = (fn: () => Promise<SettlementActionResult>, success: (r: Extract<SettlementActionResult, { ok: true }>) => string, after?: () => void) =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await fn();
       if (!res.ok) {
         toast.error(res.error);
@@ -241,7 +242,7 @@ export function useSettlementRunner(onChanged?: () => void) {
       after?.();
       if (onChanged) onChanged();
       else router.refresh();
-    });
+    }));
   return { pending, run };
 }
 

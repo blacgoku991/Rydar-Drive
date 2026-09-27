@@ -8,6 +8,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { removeOrgWhatsApp, saveOrgWhatsApp, testOrgWhatsApp, updateReminderChannels } from "@/app/dashboard/settings/actions";
 import { WhatsAppCard, type WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 const OPTIONS: { key: string; channels: ReminderChannel[]; label: string; icon: typeof Bell }[] = [
@@ -24,13 +25,13 @@ export function ReminderSettings({ channels, whatsapp, readOnly }: { channels: R
   const waReady = !!whatsapp?.enabled;
 
   const pick = (next: ReminderChannel[]) =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await updateReminderChannels(next);
       if (!res.ok) return void toast.error(res.error);
       setCurrent(next);
       toast.success("Canal des relances enregistré");
       router.refresh();
-    });
+    }));
 
   return (
     <WhatsAppCard

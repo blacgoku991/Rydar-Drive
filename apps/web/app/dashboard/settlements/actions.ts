@@ -8,7 +8,7 @@ import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
 
 export type SettlementActionResult =
-  | { ok: true; code: string; message: string; count?: number; amount_cents?: number }
+  | { ok: true; code: string; message: string; count?: number; amount_cents?: number; received_cents?: number; paid_out_cents?: number }
   | { ok: false; code: string; error: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -19,7 +19,11 @@ async function centraleCtx() {
   return ctx && ctx.org.dispatch_model === "centrale" ? ctx : null;
 }
 
-type RpcPayload = { ok?: boolean; code?: string; message?: string; count?: number; amount_cents?: number };
+type RpcPayload = {
+  ok?: boolean; code?: string; message?: string; count?: number; amount_cents?: number;
+  /** confirm_settlements : commissions encaissées / parts versées, jamais additionnées (20260924004400) */
+  received_cents?: number; paid_out_cents?: number;
+};
 
 async function call(fn: string, args: Record<string, unknown>, opts: { adminOnly?: boolean } = {}): Promise<SettlementActionResult> {
   const ctx = await centraleCtx();
@@ -30,7 +34,10 @@ async function call(fn: string, args: Record<string, unknown>, opts: { adminOnly
   const res = (data ?? {}) as RpcPayload;
   if (!res.ok) return { ok: false, code: res.code ?? "ERROR", error: res.message ?? "Action impossible." };
   revalidatePath("/dashboard/settlements");
-  return { ok: true, code: res.code ?? "OK", message: res.message ?? "", count: res.count, amount_cents: res.amount_cents };
+  return {
+    ok: true, code: res.code ?? "OK", message: res.message ?? "", count: res.count, amount_cents: res.amount_cents,
+    received_cents: res.received_cents, paid_out_cents: res.paid_out_cents,
+  };
 }
 
 /** « Reçu » (commission encaissée) / « Versé » (part chauffeur payée) — un ou plusieurs règlements. */

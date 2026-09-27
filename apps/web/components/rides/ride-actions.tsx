@@ -9,6 +9,7 @@ import { PRESENCE_COLOR } from "@/components/map/map-theme";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 export type AssignableDriver = {
@@ -54,7 +55,7 @@ export function RideActions({
   const [picked, setPicked] = useState<string | null>(null);
 
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>, success: string, after?: () => void) =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await fn();
       if (!res.ok) toast.error(res.error ?? "Action impossible");
       else {
@@ -62,7 +63,7 @@ export function RideActions({
         after?.();
         router.refresh();
       }
-    });
+    }));
 
   return (
     <>

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { applyToCentrale, type JoinResult } from "@/app/rejoindre/[code]/actions";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 /** Champs 16 px sur mobile : pas de zoom automatique d'iOS à la saisie. */
@@ -113,7 +114,7 @@ export function JoinForm({ code, organizationName, autoApprove }: { code: string
         const f = new FormData(e.currentTarget);
         const g = (k: string) => String(f.get(k) ?? "");
         setError(null);
-        start(async () => {
+        start(() => runAction(async () => {
           const res = await applyToCentrale(code, {
             firstName: g("firstName"),
             lastName: g("lastName"),
@@ -136,7 +137,7 @@ export function JoinForm({ code, organizationName, autoApprove }: { code: string
           }
           setErrors({});
           setDone(res);
-        });
+        }, setError));
       }}
     >
       <Section step={1} title="Vous">

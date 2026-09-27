@@ -9,6 +9,7 @@ import { banDriver, liftDriverBan, setDriverTrustLevel } from "@/app/dashboard/d
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 export function TrustLevelControl({
@@ -31,7 +32,7 @@ export function TrustLevelControl({
     if (level === current) return;
     const previous = current;
     setCurrent(level);
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await setDriverTrustLevel(driverId, level);
       if (!res.ok) {
         setCurrent(previous);
@@ -39,7 +40,7 @@ export function TrustLevelControl({
       }
       toast.success(`Niveau de confiance : ${TRUST_LEVEL_META[level].label}`);
       router.refresh();
-    });
+    }));
   };
   return (
     <div className="space-y-2">
@@ -93,7 +94,7 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
   };
 
   const submit = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       setBlocker(null);
       const input = { reason, category, reportToPlatform: report, banVehicle: vehicle };
       const parsed = banDriverSchema.safeParse(input);
@@ -115,7 +116,7 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
       setOpen(false);
       reset();
       router.refresh();
-    });
+    }));
 
   return (
     <>
@@ -197,13 +198,13 @@ export function LiftBanButton({ driverId, driverName }: { driverId: string; driv
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const submit = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await liftDriverBan(driverId, reason);
       if (!res.ok) return void toast.error(res.error);
       toast.success(`Bannissement de ${driverName} levé`, { description: res.message, duration: 7000 });
       setOpen(false);
       router.refresh();
-    });
+    }));
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => { setReason(""); setOpen(true); }}>

@@ -12,6 +12,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 export type AccessMember = {
@@ -49,7 +50,7 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
 
   const setStatus = (m: AccessMember, status: "active" | "disabled") => {
     setBusy(m.id);
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await setOrganizationMemberStatus(orgId, m.id, status);
       setBusy(null);
       if (!res.ok) return void toast.error(res.error);
@@ -61,17 +62,17 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
       }
       setRevoke(null);
       router.refresh();
-    });
+    }));
   };
 
   const resend = (m: AccessMember) => {
     setBusy(m.id);
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await resendOrganizationInvitation(orgId, m.id);
       setBusy(null);
       if (!res.ok) return void toast.error(res.error);
       toast.success(`Invitation renvoyée : ${m.user?.email ?? m.user?.full_name}`);
-    });
+    }));
   };
 
   return (
@@ -140,7 +141,7 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
         >
           <form
             onSubmit={submitWith((f) =>
-              start(async () => {
+              start(() => runAction(async () => {
                 const res = await grantOrganizationAccess(orgId, {
                   fullName: String(f.get("fullName") ?? ""),
                   email: String(f.get("email") ?? ""),
@@ -174,7 +175,7 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
                 }
                 setOpen(false);
                 router.refresh();
-              }),
+              })),
             )}
             className="space-y-4"
           >

@@ -8,6 +8,7 @@ import { createDriver } from "@/app/dashboard/drivers/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, SheetContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 function generatePassword() {
@@ -27,7 +28,7 @@ export function DriverFormSheet() {
 
   function submit(form: FormData) {
     const g = (k: string) => String(form.get(k) ?? "");
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await createDriver({
         firstName: g("firstName"),
         lastName: g("lastName"),
@@ -61,7 +62,7 @@ export function DriverFormSheet() {
       });
       setOpen(false);
       router.push(`/dashboard/drivers/${res.id}`);
-    });
+    }));
   }
 
   return (

@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 export type ApiKeyRow = {
@@ -61,7 +62,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
   const effectiveScopes = browserKey ? [...BROWSER_KEY_SCOPES] : scopes;
 
   function create(form: FormData) {
-    start(async () => {
+    start(() => runAction(async () => {
       const origins = String(form.get("origins") ?? "").split(/[\s,]+/).filter(Boolean);
       const res = await createApiKey({
         name: String(form.get("name") ?? ""),
@@ -73,7 +74,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
       setCreateOpen(false);
       setRevealed({ key: res.key, prefix: res.prefix });
       router.refresh();
-    });
+    }));
   }
 
   const now = Date.now();
@@ -136,12 +137,12 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
                     aria-label="Rotation"
                     title="Rotation (l'ancienne clé reste valide 24 h)"
                     onClick={() =>
-                      start(async () => {
+                      start(() => runAction(async () => {
                         const res = await rotateApiKey(k.id);
                         if (!res.ok) return void toast.error(res.error);
                         setRevealed({ key: res.key, prefix: res.prefix });
                         router.refresh();
-                      })
+                      }))
                     }
                   >
                     <RefreshCw />
@@ -152,12 +153,12 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
                     aria-label="Révoquer"
                     title="Révoquer immédiatement"
                     onClick={() =>
-                      start(async () => {
+                      start(() => runAction(async () => {
                         const res = await revokeApiKey(k.id);
                         if (!res.ok) return void toast.error(res.error);
                         toast.success("Clé révoquée");
                         router.refresh();
-                      })
+                      }))
                     }
                   >
                     <Trash2 className="text-red" />

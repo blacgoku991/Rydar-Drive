@@ -338,7 +338,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
               ) : (
                 <>
                   <p className="text-[12.5px] leading-relaxed text-fg-subtle">
-                    Arnaque, commissions jamais réglées, faux documents : il ne pourra plus revenir, même avec un nouveau compte ou un autre numéro.
+                    Arnaque, commissions jamais réglées, faux documents : ses identifiants connus (téléphone, e-mail, carte VTC, appareils) seront refusés à toute nouvelle inscription dans votre centrale.
                   </p>
                   {canManage ? (
                     <BanDriverButton driverId={d.id} driverName={name} plate={vehicle?.plate ?? null} />

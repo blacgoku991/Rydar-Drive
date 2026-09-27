@@ -19,6 +19,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { Avatar, EmptyState } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 export type Candidate = {
@@ -35,7 +36,24 @@ export type Candidate = {
   vehicle: { brand: string | null; model: string; color: string | null; plate: string; category: VehicleCategory; seats: number } | null;
   documents: DocumentView[];
   missing: DocumentType[];
+  /** Même identité qu'un ancien chauffeur de la centrale parti en devant des commissions (journal driver.applied_debtor) */
+  debt?: CandidateDebt | null;
 };
+
+/** Montant dû au moment de la candidature, numéros des fiches supprimées concernées. */
+export type CandidateDebt = { owedCents: number; settlements: number; numbers: number[] };
+
+/** « Même téléphone, e-mail ou carte VTC que le chauffeur supprimé #12, parti en devant 38,00 € de commissions (2 courses). » */
+export function debtText(debt: CandidateDebt) {
+  const who =
+    debt.numbers.length > 1
+      ? `les chauffeurs supprimés ${debt.numbers.map((n) => `#${n}`).join(", ")}, partis`
+      : debt.numbers.length === 1
+        ? `le chauffeur supprimé #${debt.numbers[0]}, parti`
+        : "un chauffeur supprimé, parti";
+  const rides = debt.settlements > 0 ? ` (${debt.settlements} course${debt.settlements > 1 ? "s" : ""})` : "";
+  return `Même téléphone, e-mail ou carte VTC que ${who} en devant ${formatPrice(debt.owedCents)} de commissions${rides}.`;
+}
 
 const REJECT_REASONS = ["Carte VTC manquante", "Documents incomplets", "Véhicule non conforme", "Zone non couverte", "Réseau complet"];
 const REQUIRED: DocumentType[] = ["vtc_card", "driving_license", "identity", "insurance", "vehicle_registration"];
@@ -52,7 +70,7 @@ function DocDots({ c }: { c: Candidate }) {
   );
 }
 
-type ApplicationTarget = { id: string; first_name: string; last_name: string; missing?: DocumentType[] };
+type ApplicationTarget = { id: string; first_name: string; last_name: string; missing?: DocumentType[]; debt?: CandidateDebt | null };
 
 /** Boutons « Refuser » / « Valider » d'une candidature, avec leurs dialogues (page Réseau, fiche chauffeur). */
 export function ApplicationActions({
@@ -79,21 +97,21 @@ export function ApplicationActions({
     .join(" · ");
 
   const doApprove = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await approveApplication(candidate.id, trust);
       if (!res.ok) return void toast.error(res.error);
       toast.success(`${name} rejoint le réseau`, { description: `${TRUST_LEVEL_META[trust].label} · prévenu par notification.` });
       setDialog(null);
       router.refresh();
-    });
+    }));
   const doReject = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await rejectApplication(candidate.id, reason);
       if (!res.ok) return void toast.error(res.error);
       toast.success(`Candidature de ${name} refusée`, { description: reason ? `Motif transmis : ${reason}` : undefined });
       setDialog(null);
       router.refresh();
-    });
+    }));
 
   return (
     <>
@@ -124,6 +142,11 @@ export function ApplicationActions({
               </button>
             ))}
           </div>
+          {candidate.debt && (
+            <p className="mt-4 rounded-lg border border-red/25 bg-red/[0.07] px-3 py-2.5 text-[12.5px] text-red">
+              {debtText(candidate.debt)} Montant à la date de sa candidature : vérifiez vos encaissements avant de valider.
+            </p>
+          )}
           {missing.length > 0 && (
             <p className="mt-4 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">
               Documents manquants : {missing.map((t) => DOCUMENT_TYPE_LABELS[t]).join(", ")}. Il pourra les déposer depuis l&apos;application.
@@ -212,6 +235,11 @@ export function ApplicationsCard({
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <p className="text-[14px] font-semibold">{fullName(c)}</p>
                       <span className="num text-[11.5px] text-fg-subtle">#{c.number}</span>
+                      {c.debt && (
+                        <Badge tone="red" className="self-center">
+                          Commissions dues : <span className="num">{formatPrice(c.debt.owedCents)}</span>
+                        </Badge>
+                      )}
                       {c.applied_at && (
                         <span className="text-[12px] text-fg-subtle" title={formatDate(c.applied_at)} suppressHydrationWarning>
                           · candidature {formatRelative(c.applied_at)}
@@ -244,6 +272,11 @@ export function ApplicationsCard({
                         </span>
                       </span>
                     </div>
+                    {c.debt && (
+                      <p className="rounded-lg border border-red/25 bg-red/[0.06] px-3 py-2 text-[12.5px] leading-relaxed text-red">
+                        {debtText(c.debt)} Validation manuelle obligatoire.
+                      </p>
+                    )}
                     {c.application_message && (
                       <p className="rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-[12.5px] leading-relaxed text-fg">« {c.application_message} »</p>
                     )}

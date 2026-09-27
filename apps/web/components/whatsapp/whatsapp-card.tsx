@@ -1,7 +1,6 @@
 "use client";
 // Numéro WhatsApp Business (API Cloud de Meta) d'une centrale ou de Rydar : identifiant du numéro, jeton d'accès
 // (jamais relu : champ vide = jeton conservé), modèle validé par Meta, activation, message test, état des envois.
-import { WHATSAPP_API_VERSION } from "@rydar/shared";
 import { Check, ChevronDown, Copy, MessageCircle, Send, Unplug } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
@@ -11,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 export type WhatsAppRow = {
@@ -69,7 +69,7 @@ export function WhatsAppCard({ title, description, row, defaultTemplate, templat
   const lastFailed = !!row?.last_error_at && (!row.last_sent_at || row.last_error_at > row.last_sent_at);
 
   const save = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       setErrors({});
       const res = await onSave({ phoneNumberId: phoneNumberId.trim(), token: token.trim(), template: template.trim(), language: language.trim(), enabled });
       if (!res.ok) {
@@ -80,19 +80,19 @@ export function WhatsAppCard({ title, description, row, defaultTemplate, templat
       toast.success(res.message);
       setToken("");
       router.refresh();
-    });
+    }));
 
   const remove = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       if (!window.confirm("Déconnecter ce numéro WhatsApp ? Les relances repasseront par l'application.")) return;
       const res = await onRemove();
       if (!res.ok) return void toast.error(res.error);
       toast.success(res.message);
       router.refresh();
-    });
+    }));
 
   const test = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       setErrors({});
       const res = await onTest(to);
       if (!res.ok) {
@@ -100,7 +100,7 @@ export function WhatsAppCard({ title, description, row, defaultTemplate, templat
         toast.error(res.error);
       } else toast.success(res.message);
       router.refresh();
-    });
+    }));
 
   return (
     <Card>
@@ -217,7 +217,7 @@ export function WhatsAppCard({ title, description, row, defaultTemplate, templat
               </div>
               <p>
                 Chaque message est facturé par Meta à votre compte WhatsApp Business (conversation « Utilité »). Les destinataires doivent avoir accepté de recevoir
-                vos messages WhatsApp. API Graph {WHATSAPP_API_VERSION}.
+                vos messages WhatsApp.
               </p>
             </div>
           )}

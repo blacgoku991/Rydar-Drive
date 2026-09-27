@@ -598,7 +598,7 @@ function SettlementList({
                   (r) =>
                     `${r.count ?? picked.length} règlement${(r.count ?? picked.length) > 1 ? "s" : ""} confirmé${(r.count ?? picked.length) > 1 ? "s" : ""} · ${
                       mixed
-                        ? `${formatPrice(inCents, currency)} encaissés · ${formatPrice(outCents, currency)} versés`
+                        ? `${formatPrice(r.received_cents ?? inCents, currency)} encaissés · ${formatPrice(r.paid_out_cents ?? outCents, currency)} versés`
                         : formatPrice(r.amount_cents ?? inCents + outCents, currency)
                     }`,
                   () => setSelected(new Set()),

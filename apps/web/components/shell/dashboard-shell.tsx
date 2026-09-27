@@ -1,5 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
+import { AlertDialog as A } from "radix-ui";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
 import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-provider";
@@ -8,9 +9,12 @@ import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realti
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, type CentraleCounts } from "@/components/settlements/counts";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
+import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
 import { switchOrganization } from "@/app/dashboard/actions";
+import { announceOrgSwitch, onOrgSwitch } from "@/lib/org-switch";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
+import { runAction } from "@/lib/run-action";
 import { getBrowserClient } from "@/lib/supabase/client";
 
 type ShellProps = {
@@ -94,6 +98,12 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
   };
   useRealtimeEvent("driver.document", reloadPendingDocuments);
   useRealtimeEvent("driver.application", reloadPendingDocuments);
+  // Centrale changée dans un autre onglet (cookie commun) : les actions de cet onglet partiraient vers elle
+  const [switchedTo, setSwitchedTo] = useState<string | null>(null);
+  useEffect(() => {
+    setSwitchedTo(null);
+    return onOrgSwitch((id) => setSwitchedTo(id === org.id ? null : id));
+  }, [org.id]);
   const toSettle = counts.declared + counts.overdue;
   const settlementsLabel = [
     counts.declared ? plural(counts.declared, "paiement à confirmer", "paiements à confirmer") : null,
@@ -173,12 +183,13 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
         orgs={orgs}
         currentOrgId={org.id}
         onSwitchOrg={(id) =>
-          start(async () => {
+          start(() => runAction(async () => {
             await switchOrganization(id);
+            announceOrgSwitch(id);
             router.refresh();
-          })
+          }))
         }
-        signOut={() => start(() => signOut())}
+        signOut={() => start(() => runAction(() => signOut()))}
       />
       <div className="lg:pl-[232px]">
         {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}
@@ -186,6 +197,51 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
         {topBanner}
         {children}
       </div>
+      {switchedTo && (
+        <OrgSwitchedDialog
+          current={org}
+          otherName={orgs.find((o) => o.id === switchedTo)?.name ?? null}
+          onStay={() => setSwitchedTo(null)}
+        />
+      )}
     </AlertsProvider>
+  );
+}
+
+/**
+ * Bloque l'onglet dont la centrale a été changée ailleurs, sans le recharger (une saisie en cours reste visible) :
+ * « Continuer » recharge sur la nouvelle centrale, « Revenir » re-sélectionne celle de l'onglet (les autres sont prévenus).
+ */
+function OrgSwitchedDialog({ current, otherName, onStay }: { current: { id: string; name: string }; otherName: string | null; onStay: () => void }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const stay = () =>
+    start(() => runAction(async () => {
+      await switchOrganization(current.id);
+      announceOrgSwitch(current.id);
+      onStay();
+      router.refresh();
+    }));
+  return (
+    <A.Root open>
+      <A.Portal>
+        <A.Overlay className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm" />
+        <A.Content className="glass fixed left-1/2 top-1/2 z-[60] max-h-[90vh] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl p-6">
+          <A.Title className="text-lg font-semibold tracking-tight">Centrale changée dans un autre onglet</A.Title>
+          <A.Description className="mt-2 text-sm text-fg-muted">
+            Cet onglet affiche encore {current.name}, mais vos actions s&apos;appliqueraient maintenant à {otherName ?? "une autre centrale"}.
+            Rechargez-le avant de continuer.
+          </A.Description>
+          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" loading={pending} onClick={stay}>
+              Revenir à {current.name}
+            </Button>
+            <Button variant="primary" disabled={pending} onClick={() => window.location.reload()}>
+              {otherName ? `Continuer sur ${otherName}` : "Recharger la page"}
+            </Button>
+          </div>
+        </A.Content>
+      </A.Portal>
+    </A.Root>
   );
 }

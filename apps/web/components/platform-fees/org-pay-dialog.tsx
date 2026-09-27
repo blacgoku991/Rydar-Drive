@@ -13,6 +13,7 @@ import { CopyButton, PlatformMethodPicker } from "@/components/platform-fees/org
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 export function PlatformPayDialog({
@@ -67,7 +68,7 @@ export function PlatformPayDialog({
       return;
     }
     setErrors({});
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await declarePlatformPayment({
         amountCents: cents!,
         method: method!,
@@ -83,7 +84,7 @@ export function PlatformPayDialog({
       toast.success(res.message, { description: "Votre solde baissera dès que Rydar aura confirmé la réception." });
       onOpenChange(false);
       router.refresh();
-    });
+    }));
   };
 
   const hasBank = !!(pay.iban || pay.payee_name || pay.bic);

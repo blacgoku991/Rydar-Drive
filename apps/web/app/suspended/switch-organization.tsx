@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { switchOrganization } from "@/app/dashboard/actions";
 import { Button } from "@/components/ui/button";
+import { announceOrgSwitch } from "@/lib/org-switch";
+import { runAction } from "@/lib/run-action";
 
 /** Membre de plusieurs centrales : passer à une centrale active depuis l'écran « Compte suspendu ». */
 export function SwitchOrganization({ orgs }: { orgs: { id: string; name: string }[] }) {
@@ -19,11 +21,12 @@ export function SwitchOrganization({ orgs }: { orgs: { id: string; name: string 
           className="w-full justify-between"
           loading={pending}
           onClick={() =>
-            start(async () => {
+            start(() => runAction(async () => {
               await switchOrganization(o.id);
+              announceOrgSwitch(o.id);
               router.push("/dashboard");
               router.refresh();
-            })
+            }))
           }
         >
           <span className="truncate">{o.name}</span> <ArrowRight />

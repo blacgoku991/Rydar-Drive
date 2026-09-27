@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 export type CentraleSettingsRow = {
@@ -182,13 +183,13 @@ export function CentraleSettingsForm({
       toast.error(Object.values(issues)[0] ?? "Vérifiez les réglages.");
       return;
     }
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await updateCentraleSettings(input);
       if (!res.ok) return void toast.error(res.error);
       toast.success("Réglages d'encaissement enregistrés");
       setBaseline(f);
       router.refresh();
-    });
+    }));
   };
 
   return (

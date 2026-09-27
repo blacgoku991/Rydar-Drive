@@ -11,6 +11,7 @@ import { ago, platformMethodLabel, shortDay } from "@/components/platform-fees/o
 import { PLATFORM_METHOD_ICON, PlatformPaymentBadge } from "@/components/platform-fees/org-platform-ui";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 export function PlatformPaymentHistory({
@@ -150,7 +151,7 @@ function CancelDialog({ payment, currency, onClose }: { payment: PlatformPayment
             loading={pending}
             onClick={() =>
               payment &&
-              start(async () => {
+              start(() => runAction(async () => {
                 const res = await cancelPlatformPayment(payment.id);
                 if (!res.ok) {
                   toast.error(res.error);
@@ -164,7 +165,7 @@ function CancelDialog({ payment, currency, onClose }: { payment: PlatformPayment
                 toast.success(res.message);
                 onClose();
                 router.refresh();
-              })
+              }))
             }
           >
             <Undo2 /> Retirer

@@ -17,6 +17,7 @@ import { centsToInput, eurosToCents } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 import { PLATFORM_METHOD_ICON, formatDay, platformMethodLabel, signedPrice } from "./admin-platform-format";
 
@@ -28,7 +29,7 @@ export function usePlatformRunner() {
     fn: () => Promise<PlatformActionResult>,
     opts: { onDone?: () => void; onError?: (res: Extract<PlatformActionResult, { ok: false }>) => void; success?: (message: string) => string } = {},
   ) =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await fn();
       if (!res.ok) {
         toast.error(res.error);
@@ -38,7 +39,7 @@ export function usePlatformRunner() {
       toast.success(opts.success ? opts.success(res.message) : res.message || "Enregistré");
       opts.onDone?.();
       router.refresh();
-    });
+    }));
   return { pending, run };
 }
 
