@@ -27,7 +27,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     centrale
       ? ctx.supabase
           .from("organization_settings")
-          .select("settlement_link, settlement_instructions, settlement_methods, block_unpaid")
+          .select("settlement_link, settlement_instructions, settlement_methods, settlement_payee_name, settlement_iban, settlement_bic, block_unpaid")
           .eq("organization_id", ctx.org.id)
           .maybeSingle()
       : Promise.resolve(null),
@@ -36,6 +36,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     settlement_link: string | null;
     settlement_instructions: string | null;
     settlement_methods: SettlementMethod[] | null;
+    settlement_payee_name: string | null;
+    settlement_iban: string | null;
+    settlement_bic: string | null;
     block_unpaid: boolean | null;
   } | null;
   return (
@@ -55,6 +58,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         link: cs?.settlement_link ?? null,
         instructions: cs?.settlement_instructions ?? null,
         methods: cs?.settlement_methods ?? [],
+        bank: cs?.settlement_iban ? { payeeName: cs.settlement_payee_name || ctx.org.name, iban: cs.settlement_iban, bic: cs.settlement_bic } : null,
         blockUnpaid: cs?.block_unpaid ?? true,
       }}
       centraleCounts={centraleCounts}

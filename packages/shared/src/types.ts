@@ -657,7 +657,8 @@ export type TrustLevel = "new" | "trusted";
 export type DriverBlocker = "unpaid" | "credit_limit" | "new_driver";
 export type SettlementDirection = "driver_owes" | "centrale_owes";
 export type SettlementStatus = "due" | "declared" | "paid" | "waived" | "disputed";
-export type SettlementMethod = "link" | "cash" | "transfer";
+/** Moyens de règlement : lien de paiement, espèces, virement (RIB), autre moyen décrit par les instructions. */
+export type SettlementMethod = "link" | "cash" | "transfer" | "other";
 export type BanCategory = "unpaid" | "fraud" | "behavior" | "documents" | "other";
 export type IdentityKind = "phone" | "email" | "vtc_card" | "driving_license" | "identity_doc" | "plate" | "device";
 export type DriverApplicationStatus = "pending" | "approved" | "rejected";
@@ -792,8 +793,11 @@ export interface DriverSettlements {
     settlement_ids: Uuid[];
     reference: string | null;
     link: string | null;
+    /** Moyens cochés ET renseignés par la centrale (lien saisi, IBAN, instructions) */
     methods: SettlementMethod[];
     instructions: string | null;
+    /** Virement : coordonnées bancaires de la centrale (null sans IBAN) */
+    bank: SettlementBank | null;
   };
   blocked: DriverBlocker | null;
   blocked_message: string | null;
@@ -845,6 +849,13 @@ export interface CentraleSettings {
   methods: SettlementMethod[];
   link: string | null;
   instructions: string | null;
+}
+
+/** Coordonnées bancaires (virement) d'une centrale. */
+export interface SettlementBank {
+  payee_name: string;
+  iban: string;
+  bic: string | null;
 }
 
 /** RPC org_settlement_overview(p_org) */

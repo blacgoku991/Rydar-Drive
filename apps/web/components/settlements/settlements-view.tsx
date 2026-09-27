@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { confirmSettlements } from "@/app/dashboard/settlements/actions";
 import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
+import { useCentrale } from "@/components/settlements/centrale-context";
 import {
   DeclarationLine, METHOD_ICON, SettlementActions, SettlementBadge, SplitBar, WhatsAppButton, batchReference, buildSettlementWhatsApp,
   dueInfo, fromNow, methodLabel, rideNumberOf, useRemindDriver, useSettlementRunner, type ConfirmMethod,
@@ -96,6 +97,7 @@ export function SettlementsView({ overview, openItems, items, filter, driverId, 
   const m = overview.month;
   const currency = overview.currency || "EUR";
   const settings = overview.settings;
+  const centrale = useCentrale();
 
   // Relecture à chaque règlement créé / déclaré / confirmé (ici ou ailleurs) ; repli périodique sans temps réel
   const timer = useRef<number | null>(null);
@@ -149,7 +151,7 @@ export function SettlementsView({ overview, openItems, items, filter, driverId, 
         rideNumbers: owed.map((s) => rideNumberOf(s)).filter((n): n is number => n != null).sort((a, b) => a - b),
         reference: owed.length === 1 ? owed[0]!.reference : batchReference(d.number, timeZone),
       },
-      { orgName, link: settings.link, instructions: settings.instructions, methods: settings.methods ?? [] },
+      { orgName, link: settings.link, instructions: settings.instructions, methods: settings.methods ?? [], bank: centrale?.bank ?? null },
     );
   };
 
@@ -321,7 +323,7 @@ export function SettlementsView({ overview, openItems, items, filter, driverId, 
                     rideNumbers: [rideNumberOf(s) ?? s.reference],
                     reference: s.reference,
                   },
-                  { orgName, link: settings.link, instructions: settings.instructions, methods: settings.methods ?? [] },
+                  { orgName, link: settings.link, instructions: settings.instructions, methods: settings.methods ?? [], bank: centrale?.bank ?? null },
                 )
               : null
           }

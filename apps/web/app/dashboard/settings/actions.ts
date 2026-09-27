@@ -1,6 +1,7 @@
 "use server";
 import {
-  centraleSettingsSchema, describeError, emailSchema, humanizeError, orgSettingsSchema, organizationUpdateSchema, VEHICLE_CATEGORIES,
+  centraleSettingsSchema, describeError, emailSchema, humanizeError, orgSettingsSchema, organizationUpdateSchema, reminderChannelsSchema,
+  VEHICLE_CATEGORIES, whatsappConfigSchema,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import { env } from "@/lib/env";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { removeWhatsApp, saveWhatsApp, testWhatsApp, type WhatsAppActionResult } from "@/lib/whatsapp";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -83,6 +85,9 @@ export async function updateCentraleSettings(input: z.input<typeof centraleSetti
       settlement_methods: v.methods,
       settlement_link: v.link,
       settlement_instructions: v.instructions,
+      settlement_payee_name: v.payeeName,
+      settlement_iban: v.iban,
+      settlement_bic: v.bic,
     })
     .eq("organization_id", ctx.org.id);
   if (error) return { ok: false, error: actionError(error, "Enregistrement impossible.") };
@@ -168,4 +173,46 @@ export async function updateMember(memberId: string, patch: { role?: "admin" | "
   await audit({ organizationId: ctx.org.id, actorUserId: ctx.user.id, action: "member.updated", entityType: "organization_users", entityId: memberId, metadata: patch, severity: patch.status === "disabled" ? "warning" : "info" });
   revalidatePath("/dashboard/settings");
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------- relances WhatsApp (mode centrale)
+/** Canaux des relances de commission : application, WhatsApp, ou les deux. */
+export async function updateReminderChannels(channels: string[]): Promise<Result> {
+  const ctx = await adminCtx();
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  if (ctx.org.dispatch_model !== "centrale") return { ok: false, error: "Réservé au mode centrale." };
+  const parsed = reminderChannelsSchema.safeParse([...new Set(channels)]);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Canal invalide." };
+  if (parsed.data.includes("whatsapp")) {
+    const { data } = await ctx.supabase.from("org_whatsapp").select("enabled").eq("organization_id", ctx.org.id).maybeSingle();
+    if (!data?.enabled) return { ok: false, error: "Reliez d'abord votre numéro WhatsApp Business (ci-dessous)." };
+  }
+  const { error } = await ctx.supabase.from("organization_settings").update({ reminder_channels: parsed.data }).eq("organization_id", ctx.org.id);
+  if (error) return { ok: false, error: actionError(error) };
+  revalidatePath("/dashboard/settings");
+  return { ok: true };
+}
+
+export async function saveOrgWhatsApp(input: z.input<typeof whatsappConfigSchema>): Promise<WhatsAppActionResult> {
+  const ctx = await adminCtx();
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const res = await saveWhatsApp(ctx.org.id, ctx.user.id, input);
+  if (res.ok) revalidatePath("/dashboard/settings");
+  return res;
+}
+
+export async function removeOrgWhatsApp(): Promise<WhatsAppActionResult> {
+  const ctx = await adminCtx();
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const res = await removeWhatsApp(ctx.org.id, ctx.user.id);
+  if (res.ok) revalidatePath("/dashboard/settings");
+  return res;
+}
+
+export async function testOrgWhatsApp(to: string): Promise<WhatsAppActionResult> {
+  const ctx = await adminCtx();
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const res = await testWhatsApp(ctx.org.id, ctx.org.name, to);
+  revalidatePath("/dashboard/settings");
+  return res;
 }

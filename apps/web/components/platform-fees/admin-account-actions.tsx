@@ -3,7 +3,9 @@
 import { PLATFORM_CYCLE_META, formatPrice, formatTime, type PlatformAccount, type PlatformBillingCycle, type PlatformPaymentMethod } from "@rydar/shared";
 import { BellRing, CalendarClock, Check, HandCoins, Minus, Plus, Scale } from "lucide-react";
 import { useEffect, useState } from "react";
-import { adjustPlatformFees, recordPlatformPayment, remindPlatformCentrale, updatePlatformTerms } from "@/app/admin/frais/actions";
+import {
+  adjustPlatformFees, platformWhatsAppTarget, recordPlatformPayment, remindPlatformCentrale, updatePlatformTerms, type PlatformWhatsAppTarget,
+} from "@/app/admin/frais/actions";
 import { centsToInput, eurosToCents } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -263,12 +265,27 @@ function RemindDialog({
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [openedAt, setOpenedAt] = useState(0);
+  const [wa, setWa] = useState<PlatformWhatsAppTarget | null>(null);
+  const [viaWhatsApp, setViaWhatsApp] = useState(false);
   useEffect(() => {
     if (!open) return;
     setNote("");
     setError(null);
     setOpenedAt(Date.now());
-  }, [open]);
+    setWa(null);
+    setViaWhatsApp(false);
+    let live = true;
+    // Relance WhatsApp possible ? (numéro de Rydar relié, téléphone du propriétaire ou de la centrale)
+    void platformWhatsAppTarget(orgId).then((t) => {
+      if (!live) return;
+      setWa(t);
+      setViaWhatsApp(!!t?.ready && !!t.to_display);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, orgId]);
+  const waOk = !!wa?.ready && !!wa.to_display;
   const amount = account.due_cents > 0 ? account.due_cents : account.balance_cents;
   // Une relance par heure au plus (vérifié aussi en base) : on prévient avant l'envoi
   const nextAt = account.reminded_at ? Date.parse(account.reminded_at) + 3_600_000 : 0;
@@ -300,7 +317,7 @@ function RemindDialog({
         )}
         <form
           onSubmit={submitWith(() =>
-            run(() => remindPlatformCentrale(orgId, note), { onDone: () => onOpenChange(false), onError: (res) => setError(res.error) }),
+            run(() => remindPlatformCentrale(orgId, note, viaWhatsApp && waOk), { onDone: () => onOpenChange(false), onError: (res) => setError(res.error) }),
           )}
         >
           <Field
@@ -326,6 +343,21 @@ function RemindDialog({
               autoFocus
             />
           </Field>
+          <label className={cn("mt-4 flex items-center justify-between gap-4 rounded-xl border border-line bg-white/[0.02] px-4 py-3", !waOk && "opacity-70")}>
+            <span className="min-w-0">
+              <span className="block text-[13.5px] font-medium">Envoyer aussi par WhatsApp</span>
+              <span className="block text-[12px] text-fg-subtle">
+                {wa == null
+                  ? "Vérification…"
+                  : waOk
+                    ? `Au ${wa.source === "owner" ? "propriétaire" : "numéro de la centrale"}${wa.name ? ` (${wa.name})` : ""} : ${wa.to_display}. Modèle validé par Meta, sans votre message.`
+                    : wa.reason === "NOT_CONFIGURED"
+                      ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
+                      : "Aucun numéro valide pour le propriétaire ni pour la centrale."}
+              </span>
+            </span>
+            <Switch checked={viaWhatsApp && waOk} onCheckedChange={setViaWhatsApp} disabled={!waOk} aria-label="Envoyer aussi par WhatsApp" />
+          </label>
           <div className="mt-6 flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Annuler

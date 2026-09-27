@@ -25,6 +25,7 @@ async function centrale(name: string, settings: Record<string, unknown> = {}, or
     settings: {
       settlement_link: "https://revolut.me/centrale/{montant}?ref={reference}",
       settlement_methods: "{link,cash,transfer}",
+      settlement_iban: "FR7630006000011234567890189",
       ...settings,
     },
   });
@@ -201,6 +202,7 @@ describe("Offre et règlement de fin de course", () => {
     expect(mine.pay).toMatchObject({ amount_cents: 1900, count: 1, reference: `C${ride.number}` });
     expect(mine.pay.link).toBe(`https://revolut.me/centrale/19.00?ref=C${ride.number}`);
     expect(mine.pay.methods).toEqual(["link", "cash", "transfer"]);
+    expect(mine.pay.bank).toEqual({ payee_name: "Centrale Offre", iban: "FR7630006000011234567890189", bic: null });
     const home = await rpc(d.userId, "driver_home");
     expect(home.model).toBe("centrale");
     expect(home.today.net_cents).toBe(4000);

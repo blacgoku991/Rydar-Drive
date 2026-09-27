@@ -26,6 +26,11 @@ export const config = {
     cacheMs: num("FLIGHT_CACHE_MS", 120_000),
   },
   batchSize: num("NOTIFICATION_BATCH", 200),
+  /** Relances WhatsApp (API WhatsApp Business Cloud) : identifiants par expéditeur en base, voir docs/WHATSAPP.md. */
+  whatsapp: {
+    batch: num("WHATSAPP_BATCH", 20),
+    apiVersion: process.env.WHATSAPP_API_VERSION || undefined,
+  },
   healthPort: num("HEALTH_PORT", 8080),
   expoAccessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
   fcmServiceAccount: process.env.FCM_SERVICE_ACCOUNT_B64

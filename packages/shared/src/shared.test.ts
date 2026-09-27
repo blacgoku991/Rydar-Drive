@@ -403,3 +403,65 @@ describe("guidage : suivi sur le tracé", () => {
     expect(maneuverGlyph({ type: "arrive" })).toBe("arrive");
   });
 });
+
+import { centraleSettingsSchema, settlementRequestMessage } from "./centrale";
+import { isValidIban } from "./format";
+import { classifyWhatsAppError, sendWhatsAppTemplate, whatsappParam, whatsappTemplatePayload } from "./whatsapp";
+
+describe("moyens de paiement de la centrale", () => {
+  it("IBAN : clé de contrôle vérifiée", () => {
+    expect(isValidIban("FR76 3000 6000 0112 3456 7890 189")).toBe(true);
+    expect(isValidIban("FR76 3000 6000 0112 3456 7890 188")).toBe(false);
+    expect(isValidIban("FR76 1234")).toBe(false);
+  });
+  const base = {
+    commissionPercent: 20, commissionFixedCents: "", graceHours: 24, creditLimitCents: "", blockUnpaid: true,
+    newDriverMaxPriceCents: "", trustAfterRides: "", link: "", instructions: "",
+  };
+  it("virement : IBAN exigé ; autre moyen : instructions exigées", () => {
+    const t = centraleSettingsSchema.safeParse({ ...base, methods: ["transfer"] });
+    expect(t.success).toBe(false);
+    expect(t.error?.issues[0]?.path).toEqual(["iban"]);
+    const o = centraleSettingsSchema.safeParse({ ...base, methods: ["other"] });
+    expect(o.error?.issues[0]?.path).toEqual(["instructions"]);
+    const ok = centraleSettingsSchema.parse({ ...base, methods: ["transfer", "cash"], iban: "fr76 3000 6000 0112 3456 7890 189", bic: "agrifrpp" });
+    expect(ok).toMatchObject({ iban: "FR7630006000011234567890189", bic: "AGRIFRPP", payeeName: null });
+  });
+  it("réclamation WhatsApp : coordonnées bancaires et référence", () => {
+    const text = settlementRequestMessage({
+      firstName: "Mohamed", organizationName: "NovaLink", amountCents: 304, rideNumbers: [1009], reference: "C1009",
+      bank: { payeeName: "NovaLink SAS", iban: "FR7630006000011234567890189", bic: "AGRIFRPP" },
+    });
+    expect(text).toContain("Virement : NovaLink SAS — IBAN FR76 3000 6000 0112 3456 7890 189 — BIC AGRIFRPP (libellé : C1009)");
+  });
+});
+
+describe("WhatsApp Business (Meta)", () => {
+  it("modèle : variables nettoyées (pas de retour à la ligne)", () => {
+    expect(whatsappParam("  Karim\n\tTest  ")).toBe("Karim Test");
+    const p = whatsappTemplatePayload("33612345678", "rappel_commission", "fr", ["Karim", "19 €"]);
+    expect(p.template).toEqual({
+      name: "rappel_commission",
+      language: { code: "fr" },
+      components: [{ type: "body", parameters: [{ type: "text", text: "Karim" }, { type: "text", text: "19 €" }] }],
+    });
+  });
+  it("erreurs Meta : message français, reprise seulement si temporaire", () => {
+    expect(classifyWhatsAppError(401, { error: { code: 190, message: "Error validating access token" } })).toMatchObject({ retryable: false, code: 190 });
+    expect(classifyWhatsAppError(400, { error: { code: 132001 } }).error).toMatch(/^Modèle introuvable/);
+    expect(classifyWhatsAppError(429, { error: { code: 130429 } }).retryable).toBe(true);
+    expect(classifyWhatsAppError(503, null)).toMatchObject({ retryable: true, error: "Service Meta indisponible" });
+  });
+  it("envoi : identifiant du message renvoyé ; réseau coupé = reprise", async () => {
+    const ok = await sendWhatsAppTemplate({
+      phoneNumberId: "123", token: "t", to: "33612345678", template: "x", language: "fr", params: [],
+      fetchImpl: (async () => new Response(JSON.stringify({ messages: [{ id: "wamid.9" }] }), { status: 200 })) as typeof fetch,
+    });
+    expect(ok).toEqual({ ok: true, messageId: "wamid.9" });
+    const down = await sendWhatsAppTemplate({
+      phoneNumberId: "123", token: "t", to: "33612345678", template: "x", language: "fr", params: [],
+      fetchImpl: (async () => { throw new TypeError("fetch failed"); }) as typeof fetch,
+    });
+    expect(down).toMatchObject({ ok: false, retryable: true });
+  });
+});

@@ -182,6 +182,22 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   EAS Update (runtimeVersion = version, `eas update --channel production`) ; eas.json submit ; iOS UIBackgroundModes = location
   seul ; Android SANS ACCESS_BACKGROUND_LOCATION ni exemption batterie (service de premier plan) ; « Toujours » jamais demandé ;
   information préalable avant la 1re demande de position. Guide : docs/STORES.md.
+- [x] M15 RELANCES WHATSAPP + MOYENS DE PAIEMENT (mig 003600 canal `whatsapp`, 003700, 003800 ; 246 tests DB, `tests/db/whatsapp.test.ts`)
+  - API officielle WhatsApp Business Cloud (Meta), modèles « Utilité » fr : `rappel_commission` (4 variables) et
+    `rappel_frais_plateforme` (3 variables), textes dans `@rydar/shared` WHATSAPP_TEMPLATES et docs/WHATSAPP.md ; jamais d'outil non officiel
+  - centrale → chauffeurs : `organization_settings.reminder_channels` {app}|{whatsapp}|{app,whatsapp} ; `private.remind_driver` (WhatsApp
+    impossible → push) ; `remind_driver_settlements(p_driver_id, p_channels default null)`, `private.settlement_reminders` idem
+  - Rydar → propriétaire : `svc_platform_remind(p_org, p_actor, p_note, p_whatsapp default false)` (refus AVANT de consommer la limite
+    d'1/h si WhatsApp impossible), destinataire `private.platform_whatsapp_target` (users.phone du owner sinon organizations.phone),
+    `admin_platform_whatsapp(org)` (case de la relance)
+  - config : `org_whatsapp` / `platform_whatsapp` (RLS owner/admin | super admin), jetons dans `*_whatsapp_secrets` (service role SEUL) ;
+    écriture `svc_whatsapp_save|remove|record` (web, après vérification Graph `lib/whatsapp.ts`) ; file `notifications` canal whatsapp →
+    worker `src/whatsapp.ts` (`private.claim_whatsapp` / `private.complete_whatsapp` : reprises, état expéditeur, repli push `data.fallback`)
+  - web : Réglages › Commission & encaissement › « Relances des chauffeurs » (`components/settlements/reminder-settings.tsx`,
+    `components/whatsapp/whatsapp-card.tsx`), /admin/frais « WhatsApp de Rydar » + case dans Relancer
+  - moyens de paiement centrale : lien | virement (organization_settings.settlement_payee_name/iban/bic, IBAN vérifié mod 97
+    `isValidIban`) | espèces | autre (instructions) ; `private.settlement_methods_available` = cochés ET renseignés (repli espèces) ;
+    `driver_settlements.pay.bank` ; app Commissions : RIB copiable ; Rydar garde ses moyens dans platform_billing (/admin/frais)
 - **Design app chauffeur (sobre, « pas IA »)** : jetons `theme.ts` (type, weight ≤ 700, radius, space, control, alpha, overlay) ;
   aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
   lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;

@@ -4,6 +4,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { BillingCard } from "@/components/platform-fees/admin-billing";
+import { PlatformWhatsAppCard } from "@/components/platform-fees/admin-whatsapp";
+import type { WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
 import { PlatformLive } from "@/components/platform-fees/admin-platform-live";
 import { Metric } from "@/components/platform-fees/admin-platform-metric";
 import { CentralesTable, PaymentsToConfirm, PendingReductions } from "@/components/platform-fees/admin-platform-sections";
@@ -23,7 +25,14 @@ const RULES = [
 
 export default async function PlatformFeesPage() {
   const session = await requireSuperAdmin();
-  const { data, error } = await session.supabase.rpc("admin_platform_overview");
+  const [{ data, error }, { data: whatsapp }] = await Promise.all([
+    session.supabase.rpc("admin_platform_overview"),
+    // RLS : super admin (le jeton d'accès n'est jamais lisible)
+    session.supabase
+      .from("platform_whatsapp")
+      .select("phone_number_id, display_phone, verified_name, template, language, enabled, sent_count, last_sent_at, last_error, last_error_at")
+      .maybeSingle(),
+  ]);
   const o = (data ?? null) as AdminPlatformOverview | null;
   const rows = o?.organizations ?? [];
   const t = o?.totals;
@@ -124,7 +133,10 @@ export default async function PlatformFeesPage() {
 
         {o && (
           <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-            <BillingCard billing={o.billing} />
+            <div className="space-y-6">
+              <BillingCard billing={o.billing} />
+              <PlatformWhatsAppCard row={(whatsapp ?? null) as WhatsAppRow | null} />
+            </div>
             <Card>
               <CardHeader title="Règles" description="Appliquées par la base de données, pour chaque centrale." />
               <CardBody className="pt-4">

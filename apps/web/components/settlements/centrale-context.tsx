@@ -15,9 +15,13 @@ export type CentraleInfo = {
   link: string | null;
   instructions: string | null;
   methods: SettlementMethod[];
+  /** Virement : coordonnées bancaires de la centrale (null sans IBAN) */
+  bank: SettlementBankInfo | null;
   /** Blocage automatique des retardataires (commission en retard ou contestée) */
   blockUnpaid: boolean;
 };
+
+export type SettlementBankInfo = { payeeName: string; iban: string; bic: string | null };
 
 const CentraleContext = createContext<CentraleInfo | null>(null);
 

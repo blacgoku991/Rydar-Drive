@@ -6,6 +6,8 @@ import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { BillingPanel } from "@/components/settings/billing-panel";
 import { DispatchSettingsForm, OrganizationForm, PricingEditor, TeamPanel } from "@/components/settings/settings-forms";
 import { CentraleSettingsForm, type CentraleSettingsRow } from "@/components/settlements/centrale-settings-form";
+import { ReminderSettings } from "@/components/settlements/reminder-settings";
+import type { WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +25,7 @@ const TABS = [
 ] as const;
 
 const CENTRALE_COLUMNS =
-  "driver_commission_percent, driver_commission_fixed_cents, settlement_grace_hours, settlement_credit_limit_cents, block_unpaid, new_driver_max_price_cents, trust_after_rides, settlement_methods, settlement_link, settlement_instructions";
+  "driver_commission_percent, driver_commission_fixed_cents, settlement_grace_hours, settlement_credit_limit_cents, block_unpaid, new_driver_max_price_cents, trust_after_rides, settlement_methods, settlement_link, settlement_instructions, settlement_payee_name, settlement_iban, settlement_bic, reminder_channels";
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const ctx = await requireOrg();
@@ -61,19 +63,34 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       />
     );
   } else if (tab === "centrale") {
-    const [{ data: settings }, { data: org }] = await Promise.all([
+    const [{ data: settings }, { data: org }, { data: whatsapp }] = await Promise.all([
       ctx.supabase.from("organization_settings").select(CENTRALE_COLUMNS).eq("organization_id", orgId).single(),
-      ctx.supabase.from("organizations").select("name, currency, platform_fee_percent, platform_fee_fixed_cents").eq("id", orgId).single(),
+      ctx.supabase.from("organizations").select("name, legal_name, currency, platform_fee_percent, platform_fee_fixed_cents").eq("id", orgId).single(),
+      // RLS : owner / admin seulement (le jeton d'accès n'est jamais lisible)
+      ctx.supabase
+        .from("org_whatsapp")
+        .select("phone_number_id, display_phone, verified_name, template, language, enabled, sent_count, last_sent_at, last_error, last_error_at")
+        .eq("organization_id", orgId)
+        .maybeSingle(),
     ]);
-    const o = (org ?? {}) as { name?: string; currency?: string; platform_fee_percent?: number; platform_fee_fixed_cents?: number };
+    const o = (org ?? {}) as { name?: string; legal_name?: string | null; currency?: string; platform_fee_percent?: number; platform_fee_fixed_cents?: number };
+    const channels = ((settings as { reminder_channels?: ("app" | "whatsapp")[] } | null)?.reminder_channels ?? ["app"]);
     content = (
-      <CentraleSettingsForm
-        settings={settings as CentraleSettingsRow}
-        platformFee={{ percent: Number(o.platform_fee_percent ?? 0), fixed_cents: Number(o.platform_fee_fixed_cents ?? 0) }}
-        orgName={o.name ?? ctx.org.name}
-        currency={o.currency ?? "EUR"}
-        readOnly={!admin}
-      />
+      <div className="space-y-6">
+        <CentraleSettingsForm
+          settings={settings as CentraleSettingsRow}
+          platformFee={{ percent: Number(o.platform_fee_percent ?? 0), fixed_cents: Number(o.platform_fee_fixed_cents ?? 0) }}
+          orgName={o.name ?? ctx.org.name}
+          legalName={o.legal_name ?? null}
+          currency={o.currency ?? "EUR"}
+          readOnly={!admin}
+        />
+        {admin && (
+          <div className="xl:max-w-[calc(100%-364px)]">
+            <ReminderSettings channels={channels} whatsapp={(whatsapp ?? null) as WhatsAppRow | null} readOnly={!admin} />
+          </div>
+        )}
+      </div>
     );
   } else if (tab === "org") {
     const { data } = await ctx.supabase.from("organizations").select("name, legal_name, siret, email, phone, address, city, postal_code").eq("id", orgId).single();

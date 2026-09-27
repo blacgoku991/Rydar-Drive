@@ -2,7 +2,8 @@
 // Les règles qui comptent (répartition, blocages, bannissements) sont appliquées en base
 // (migration 20260924002600_centrale_mode) ; ce module ne fait que les présenter.
 import { z } from "zod";
-import { formatPrice } from "./format";
+import { formatPrice, isValidIban } from "./format";
+import { formatIban } from "./platform-fees";
 import { emailSchema, phoneSchema, vehicleSchema } from "./schemas";
 import type {
   BanCategory, DispatchModel, DriverBlocker, IdentityKind, SettlementDirection, SettlementMethod, SettlementStatus, TrustLevel,
@@ -48,7 +49,7 @@ export const SETTLEMENT_METHOD_META: Record<SettlementMethod | "other", { label:
   link: { label: "Lien de paiement", ionicon: "link-outline", lucide: "Link" },
   cash: { label: "Espèces", ionicon: "cash-outline", lucide: "Banknote" },
   transfer: { label: "Virement", ionicon: "swap-horizontal-outline", lucide: "ArrowLeftRight" },
-  other: { label: "Autre", ionicon: "ellipsis-horizontal", lucide: "Ellipsis" },
+  other: { label: "Autre moyen", ionicon: "ellipsis-horizontal", lucide: "Ellipsis" },
 };
 
 export const DRIVER_BLOCKER_META: Record<DriverBlocker, { label: string; message: string }> = {
@@ -125,6 +126,8 @@ export function settlementRequestMessage(opts: {
   link?: string | null;
   reference?: string | null;
   instructions?: string | null;
+  /** Virement accepté : coordonnées bancaires de la centrale */
+  bank?: { payeeName: string; iban: string; bic?: string | null } | null;
 }): string {
   const amount = formatPrice(opts.amountCents, opts.currency ?? "EUR");
   const rides = opts.rideNumbers.length === 1 ? `la course #${opts.rideNumbers[0]}` : `les courses ${opts.rideNumbers.map((n) => `#${n}`).join(", ")}`;
@@ -133,6 +136,9 @@ export function settlementRequestMessage(opts: {
     `Commission ${opts.organizationName} : ${amount}${opts.reference ? ` (réf. ${opts.reference})` : ""}.`,
   ];
   if (opts.link) lines.push(`Paiement : ${opts.link}`);
+  if (opts.bank?.iban) {
+    lines.push(`Virement : ${opts.bank.payeeName} — IBAN ${formatIban(opts.bank.iban)}${opts.bank.bic ? ` — BIC ${opts.bank.bic}` : ""}${opts.reference ? ` (libellé : ${opts.reference})` : ""}`);
+  }
   if (opts.instructions) lines.push(opts.instructions);
   lines.push("Vous pouvez aussi régler depuis l'application Rydar Drive, onglet Commissions.");
   return lines.join("\n");
@@ -172,14 +178,27 @@ export const centraleSettingsSchema = z
     newDriverMaxPriceCents: optionalCents(10_000_000),
     trustAfterRides: z.union([z.literal(""), z.null(), z.undefined(), z.coerce.number().int().min(1).max(1000)])
       .transform((v) => (v === "" || v == null ? null : v)),
-    methods: z.array(z.enum(["link", "cash", "transfer"])).min(1, "Choisissez au moins un moyen de paiement").max(3),
+    methods: z.array(z.enum(["link", "transfer", "cash", "other"])).min(1, "Choisissez au moins un moyen de paiement").max(4),
     link: z.union([z.literal(""), z.null(), z.undefined(), z.string().trim().max(500).regex(/^https:\/\/\S+$/, "Lien https:// requis")])
       .transform((v) => (v ? v : null)),
     instructions: z.string().trim().max(500).optional().transform((v) => (v ? v : null)),
+    // Virement : coordonnées bancaires (facultatives hors virement)
+    payeeName: z.string().nullish().transform((v) => v?.trim() || null)
+      .refine((v) => v == null || (v.length >= 2 && v.length <= 120), "Bénéficiaire : entre 2 et 120 caractères"),
+    iban: z.string().nullish().transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
+      .refine((v) => v == null || isValidIban(v), "IBAN invalide (vérifiez les chiffres)"),
+    bic: z.string().nullish().transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
+      .refine((v) => v == null || /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(v), "BIC invalide (8 ou 11 caractères)"),
   })
   .superRefine((v, ctx) => {
     if (v.methods.includes("link") && !v.link) {
       ctx.addIssue({ code: "custom", path: ["link"], message: "Ajoutez votre lien de paiement (ou retirez « Lien de paiement »)" });
+    }
+    if (v.methods.includes("transfer") && !v.iban) {
+      ctx.addIssue({ code: "custom", path: ["iban"], message: "Ajoutez votre IBAN (ou retirez « Virement »)" });
+    }
+    if (v.methods.includes("other") && !v.instructions) {
+      ctx.addIssue({ code: "custom", path: ["instructions"], message: "Décrivez l'autre moyen de paiement (ou retirez « Autre moyen »)" });
     }
   });
 export type CentraleSettingsInput = z.output<typeof centraleSettingsSchema>;

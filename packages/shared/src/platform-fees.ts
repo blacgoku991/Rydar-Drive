@@ -3,6 +3,7 @@
 // frais dus dès la fin de la course, registre immuable, baisses validées par le super admin,
 // solde = frais comptabilisés − paiements CONFIRMÉS par le super admin. Ce module les présente.
 import { z } from "zod";
+import { isValidIban } from "./format";
 import type { Iso, Uuid } from "./types";
 import type { OrgStatus, PaymentMethod } from "./domain";
 
@@ -326,7 +327,7 @@ export type PlatformTermsInput = z.output<typeof platformTermsSchema>;
 export const platformBillingSchema = z.object({
   payeeName: optionalText(120),
   iban: z.union([z.null(), z.undefined(), z.string()]).transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
-    .refine((v) => v == null || /^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$/.test(v), "IBAN invalide"),
+    .refine((v) => v == null || isValidIban(v), "IBAN invalide (vérifiez les chiffres)"),
   bic: z.union([z.null(), z.undefined(), z.string()]).transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
     .refine((v) => v == null || /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(v), "BIC invalide"),
   paymentLink: z.union([z.null(), z.undefined(), z.string()]).transform((v) => (v ?? "").trim() || null)

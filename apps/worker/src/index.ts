@@ -4,6 +4,7 @@ import { listen, pool } from "./db";
 import { selectFlightProvider, withCache } from "./flights";
 import { flightJob, type QueryFn } from "./flights/job";
 import { checkPushReceipts, processNotifications, stopNotifications } from "./notifications";
+import { processWhatsApp, stopWhatsApp } from "./whatsapp";
 
 const state = {
   lastTick: 0,
@@ -158,6 +159,7 @@ const settlementReminders = single("settlementReminders", async () => {
     if (r.reminders) {
       log("info", "settlement reminders", r);
       run(processNotifications);
+      run(processWhatsApp);
     }
   } catch (error) {
     state.errors++;
@@ -190,10 +192,12 @@ async function main() {
   const stop = await listen("rydar_notifications", () => {
     state.lastNotify = Date.now();
     run(processNotifications);
+    run(processWhatsApp);
   });
   const timers = [
     setInterval(() => run(dispatchTick), config.dispatchTickMs),
     setInterval(() => run(processNotifications), config.notificationPollMs),
+    setInterval(() => run(processWhatsApp), config.notificationPollMs),
     setInterval(() => run(checkPushReceipts), RECEIPT_POLL_MS),
     setInterval(() => run(housekeeping), config.housekeepingMs),
     setInterval(() => run(watchRides), config.watchRidesMs),
@@ -203,6 +207,7 @@ async function main() {
     ...(flights ? [setInterval(() => run(flightCheck), config.flights.pollMs)] : []),
   ];
   run(processNotifications);
+  run(processWhatsApp);
   run(documentReminders);
   run(settlementReminders);
   if (flights) run(flightCheck);
@@ -226,6 +231,7 @@ async function main() {
     log("info", "shutting down", { signal, inflight: inflight.size });
     timers.forEach(clearInterval);
     stopNotifications();
+    stopWhatsApp();
     flights?.stop();
     health.close();
     await within(stop(), 1_000);

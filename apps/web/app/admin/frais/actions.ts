@@ -2,12 +2,15 @@
 // Super admin : frais plateforme reversés par les centrales à Rydar.
 // Écritures par le service role APRÈS requireSuperAdmin() ; chaque fonction SQL (svc_platform_*) revérifie
 // que l'auteur est super admin et écrit elle-même audit_logs (ne pas doubler l'audit ici).
-import { describeError, fieldErrors, platformAdjustSchema, platformBillingSchema, platformTermsSchema, recordPlatformPaymentSchema } from "@rydar/shared";
+import {
+  describeError, fieldErrors, platformAdjustSchema, platformBillingSchema, platformTermsSchema, recordPlatformPaymentSchema, whatsappConfigSchema,
+} from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSuperAdmin } from "@/lib/auth";
 import { actionError } from "@/lib/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { removeWhatsApp, saveWhatsApp, testWhatsApp, type WhatsAppActionResult } from "@/lib/whatsapp";
 
 export type PlatformActionResult =
   | { ok: true; code: string; message: string }
@@ -113,10 +116,42 @@ export async function reviewPlatformReduction(entryId: string, approve: boolean,
   return svc("svc_platform_review_entry", { p_id: entryId, p_approve: approve, p_note: n });
 }
 
-/** Relance affichée dans le tableau de bord de la centrale (au plus une par heure). */
-export async function remindPlatformCentrale(orgId: string, note?: string | null): Promise<PlatformActionResult> {
+/** Relance affichée dans le tableau de bord de la centrale (au plus une par heure), et par WhatsApp au propriétaire si demandé. */
+export async function remindPlatformCentrale(orgId: string, note?: string | null, whatsapp = false): Promise<PlatformActionResult> {
   if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation introuvable." };
-  return svc("svc_platform_remind", { p_org: orgId, p_note: cleanNote(note, 300) }, orgId);
+  return svc("svc_platform_remind", { p_org: orgId, p_note: cleanNote(note, 300), p_whatsapp: whatsapp === true }, orgId);
+}
+
+export type PlatformWhatsAppTarget = { ready: boolean; to_display: string | null; source: "owner" | "organization" | null; name: string | null; reason: "NOT_CONFIGURED" | "NO_PHONE" | null };
+
+/** Relance WhatsApp possible pour cette centrale ? (numéro de Rydar relié, téléphone du propriétaire ou de la centrale) */
+export async function platformWhatsAppTarget(orgId: string): Promise<PlatformWhatsAppTarget | null> {
+  if (!uuid.safeParse(orgId).success) return null;
+  const session = await requireSuperAdmin();
+  const { data, error } = await session.supabase.rpc("admin_platform_whatsapp", { p_org: orgId });
+  if (error) return null;
+  return data as PlatformWhatsAppTarget;
+}
+
+export async function savePlatformWhatsApp(input: z.input<typeof whatsappConfigSchema>): Promise<WhatsAppActionResult> {
+  const session = await requireSuperAdmin();
+  const res = await saveWhatsApp(null, session.user.id, input);
+  if (res.ok) revalidatePath("/admin/frais");
+  return res;
+}
+
+export async function removePlatformWhatsApp(): Promise<WhatsAppActionResult> {
+  const session = await requireSuperAdmin();
+  const res = await removeWhatsApp(null, session.user.id);
+  if (res.ok) revalidatePath("/admin/frais");
+  return res;
+}
+
+export async function testPlatformWhatsApp(to: string): Promise<WhatsAppActionResult> {
+  await requireSuperAdmin();
+  const res = await testWhatsApp(null, "Centrale exemple", to);
+  revalidatePath("/admin/frais");
+  return res;
 }
 
 /** Conditions de la centrale : cycle, délai de paiement, blocage après N jours de retard (ou jamais). */

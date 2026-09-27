@@ -10,16 +10,18 @@ export const CENTRALE_FIELD_MESSAGES: Record<string, string> = {
   newDriverMaxPriceCents: "Plafond des nouveaux chauffeurs : entre 0 et 100 000 €",
   trustAfterRides: "Confirmation automatique : entre 1 et 1 000 courses",
   instructions: "Instructions : 500 caractères au maximum",
+  payeeName: "Bénéficiaire : entre 2 et 120 caractères",
 };
 
-/** Erreurs du schéma → { champ: message FR } (messages métier du schéma conservés : moyens, lien). */
+/** Erreurs du schéma → { champ: message FR } (messages métier du schéma conservés : moyens, lien, IBAN, BIC…). */
 export function centraleIssues(error: z.ZodError): Record<string, string> {
   const out: Record<string, string> = {};
   for (const issue of error.issues) {
     const key = String(issue.path[0] ?? "_");
     if (out[key]) continue;
     if (key === "link" && issue.code === "too_big") out[key] = "Lien : 500 caractères au maximum";
-    else out[key] = key === "methods" || key === "link" ? issue.message : (CENTRALE_FIELD_MESSAGES[key] ?? "Valeur invalide");
+    else if (["methods", "link", "iban", "bic"].includes(key) || issue.code === "custom") out[key] = issue.message;
+    else out[key] = CENTRALE_FIELD_MESSAGES[key] ?? "Valeur invalide";
   }
   return out;
 }

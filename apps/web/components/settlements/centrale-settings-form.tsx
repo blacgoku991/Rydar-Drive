@@ -3,10 +3,10 @@
 // délai de règlement, blocage des retardataires, plafonds, confirmation automatique, moyens et lien de paiement.
 // Les frais plateforme sont fixés par Rydar (super admin) : lecture seule.
 import {
-  SETTLEMENT_LINK_EXAMPLES, centraleSettingsSchema, formatNumber, formatPrice, settlementPaymentLink, settlementRequestMessage,
-  type SettlementMethod,
+  SETTLEMENT_LINK_EXAMPLES, centraleSettingsSchema, formatIban, formatNumber, formatPrice, isValidIban, settlementPaymentLink,
+  settlementRequestMessage, type SettlementMethod,
 } from "@rydar/shared";
-import { Check, ExternalLink, HandCoins, Lock, MessageCircle, Percent, ShieldCheck } from "lucide-react";
+import { Check, ExternalLink, HandCoins, Landmark, Lock, MessageCircle, Percent, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -31,6 +31,9 @@ export type CentraleSettingsRow = {
   settlement_methods: SettlementMethod[];
   settlement_link: string | null;
   settlement_instructions: string | null;
+  settlement_payee_name: string | null;
+  settlement_iban: string | null;
+  settlement_bic: string | null;
 };
 
 type FormState = {
@@ -44,9 +47,19 @@ type FormState = {
   methods: SettlementMethod[];
   link: string;
   instructions: string;
+  payeeName: string;
+  iban: string;
+  bic: string;
 };
 
-const METHODS: SettlementMethod[] = ["link", "cash", "transfer"];
+const METHODS: SettlementMethod[] = ["link", "transfer", "cash", "other"];
+/** Bouton affiché au chauffeur dans l'onglet Commissions */
+const DRIVER_BUTTON: Record<SettlementMethod, string> = {
+  link: "Payer par lien",
+  transfer: "J'ai payé par virement",
+  cash: "J'ai payé en espèces",
+  other: "J'ai payé (autre moyen)",
+};
 const SAMPLE_PRICE = 5900;
 const SAMPLE_AMOUNT = 1900;
 const SAMPLE_REF = "C1783";
@@ -62,6 +75,9 @@ const fromRow = (s: CentraleSettingsRow): FormState => ({
   methods: s.settlement_methods?.length ? s.settlement_methods : ["link", "cash"],
   link: s.settlement_link ?? "",
   instructions: s.settlement_instructions ?? "",
+  payeeName: s.settlement_payee_name ?? "",
+  iban: formatIban(s.settlement_iban),
+  bic: s.settlement_bic ?? "",
 });
 
 const num = (v: string) => (v.trim() === "" ? "" : Number(v.trim().replace(",", ".")));
@@ -84,12 +100,14 @@ export function CentraleSettingsForm({
   settings,
   platformFee,
   orgName,
+  legalName,
   currency = "EUR",
   readOnly,
 }: {
   settings: CentraleSettingsRow;
   platformFee: { percent: number; fixed_cents: number };
   orgName: string;
+  legalName?: string | null;
   currency?: string;
   readOnly: boolean;
 }) {
@@ -116,6 +134,16 @@ export function CentraleSettingsForm({
     methods: f.methods,
     link: f.link.trim(),
     instructions: f.instructions,
+    payeeName: f.payeeName.trim(),
+    iban: f.iban,
+    bic: f.bic,
+  };
+  // Moyen coché mais non renseigné : le chauffeur ne le verrait pas
+  const ready: Record<SettlementMethod, boolean> = {
+    link: /^https:\/\/\S+$/.test(f.link.trim()),
+    transfer: isValidIban(f.iban),
+    cash: true,
+    other: f.instructions.trim().length > 0,
   };
 
   // Exemple de répartition (même calcul que la base : frais plateforme puis commission, plafonnés au prix)
@@ -137,6 +165,9 @@ export function CentraleSettingsForm({
     link: f.methods.includes("link") ? linkPreview : null,
     reference: SAMPLE_REF,
     instructions: f.instructions.trim() || null,
+    bank: f.methods.includes("transfer") && isValidIban(f.iban)
+      ? { payeeName: f.payeeName.trim() || legalName || orgName, iban: f.iban, bic: f.bic.trim() || null }
+      : null,
   });
   const feeLabel = [
     platformFee.percent ? `${formatNumber(platformFee.percent, platformFee.percent % 1 ? 1 : 0)} %` : null,
@@ -214,7 +245,7 @@ export function CentraleSettingsForm({
 
             <div>
               <p className="mb-2 text-[12.5px] font-medium text-fg-muted">Moyens acceptés</p>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 {METHODS.map((m) => {
                   const Icon = METHOD_ICON[m];
                   const on = f.methods.includes(m);
@@ -240,72 +271,122 @@ export function CentraleSettingsForm({
               {errors.methods && <p className="mt-1.5 text-xs text-red">{errors.methods}</p>}
             </div>
 
-            <div className="space-y-2">
-              <Field
-                label="Lien de paiement"
-                optional={!f.methods.includes("link")}
-                error={errors.link}
-                hint={
-                  <>
-                    Variables : <code className="mono text-fg-muted">{"{montant}"}</code> (19.00), <code className="mono text-fg-muted">{"{montant_centimes}"}</code> (1900),{" "}
-                    <code className="mono text-fg-muted">{"{reference}"}</code> (C1783) — remplacées pour chaque règlement.
-                  </>
-                }
-              >
-                <Input
-                  value={f.link}
-                  disabled={readOnly}
-                  onChange={(e) => set("link", e.target.value)}
-                  placeholder="https://revolut.me/votre-identifiant/{montant}"
-                  aria-label="Lien de paiement"
-                  className="mono text-[13px]"
-                  aria-invalid={!!errors.link}
-                  spellCheck={false}
-                />
-              </Field>
-              {!readOnly && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[12px] text-fg-subtle">Exemples :</span>
-                  {SETTLEMENT_LINK_EXAMPLES.map((x) => (
-                    <button
-                      key={x.label}
-                      type="button"
-                      onClick={() => set("link", x.value)}
-                      title={x.value}
-                      className="rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
-                    >
-                      {x.label}
-                    </button>
-                  ))}
+            {f.methods.includes("link") && (
+              <div className="space-y-2">
+                <Field
+                  label="Lien de paiement"
+                  error={errors.link}
+                  hint={
+                    <>
+                      Variables : <code className="mono text-fg-muted">{"{montant}"}</code> (19.00), <code className="mono text-fg-muted">{"{montant_centimes}"}</code> (1900),{" "}
+                      <code className="mono text-fg-muted">{"{reference}"}</code> (C1783) — remplacées pour chaque règlement.
+                    </>
+                  }
+                >
+                  <Input
+                    value={f.link}
+                    disabled={readOnly}
+                    onChange={(e) => set("link", e.target.value)}
+                    placeholder="https://revolut.me/votre-identifiant/{montant}"
+                    aria-label="Lien de paiement"
+                    className="mono text-[13px]"
+                    aria-invalid={!!errors.link}
+                    spellCheck={false}
+                  />
+                </Field>
+                {!readOnly && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[12px] text-fg-subtle">Exemples :</span>
+                    {SETTLEMENT_LINK_EXAMPLES.map((x) => (
+                      <button
+                        key={x.label}
+                        type="button"
+                        onClick={() => set("link", x.value)}
+                        title={x.value}
+                        className="rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
+                      >
+                        {x.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="rounded-xl border border-line bg-white/[0.02] px-3.5 py-3">
+                  <p className="text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Aperçu pour {formatPrice(SAMPLE_AMOUNT, currency)} · réf. {SAMPLE_REF}</p>
+                  {linkPreview ? (
+                    <a href={linkPreview} target="_blank" rel="noopener noreferrer" className="mono mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-blue hover:underline">
+                      <span className="truncate">{linkPreview}</span>
+                      <ExternalLink className="size-3.5 shrink-0" />
+                    </a>
+                  ) : (
+                    <p className="mt-1 text-[12.5px] text-fg-subtle">{f.link.trim() ? "Lien invalide : il doit commencer par https://" : "Collez le lien de votre compte (Revolut, PayPal, Lydia, Stripe…)."}</p>
+                  )}
+                  {linkPreview && !/\{montant(_centimes)?\}/.test(f.link) && (
+                    <p className="mt-1.5 text-[12px] text-amber">Sans {"{montant}"}, le chauffeur devra saisir le montant lui-même.</p>
+                  )}
                 </div>
-              )}
-              <div className="rounded-xl border border-line bg-white/[0.02] px-3.5 py-3">
-                <p className="text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Aperçu pour {formatPrice(SAMPLE_AMOUNT, currency)} · réf. {SAMPLE_REF}</p>
-                {linkPreview ? (
-                  <a href={linkPreview} target="_blank" rel="noopener noreferrer" className="mono mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-blue hover:underline">
-                    <span className="truncate">{linkPreview}</span>
-                    <ExternalLink className="size-3.5 shrink-0" />
-                  </a>
-                ) : (
-                  <p className="mt-1 text-[12.5px] text-fg-subtle">{f.link.trim() ? "Lien invalide : il doit commencer par https://" : "Aucun lien : les chauffeurs règlent en espèces ou par virement."}</p>
-                )}
-                {linkPreview && !/\{montant(_centimes)?\}/.test(f.link) && (
-                  <p className="mt-1.5 text-[12px] text-amber">Sans {"{montant}"}, le chauffeur devra saisir le montant lui-même.</p>
-                )}
               </div>
-            </div>
+            )}
 
-            <Field label="Instructions au chauffeur" optional hint="Affichées avec le montant à régler (application et message WhatsApp)." error={errors.instructions}>
+            {f.methods.includes("transfer") && (
+              <div className="space-y-3 rounded-xl border border-line bg-white/[0.02] p-4">
+                <p className="flex items-center gap-2 text-[13px] font-medium">
+                  <Landmark className="size-4 text-fg-subtle" />
+                  Virement : vos coordonnées bancaires (RIB)
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Bénéficiaire" optional hint="Nom du titulaire du compte, affiché au chauffeur." error={errors.payeeName}>
+                    <Input value={f.payeeName} disabled={readOnly} maxLength={120} onChange={(e) => set("payeeName", e.target.value)} placeholder={legalName || orgName} aria-label="Bénéficiaire du virement" aria-invalid={!!errors.payeeName} />
+                  </Field>
+                  <Field label="BIC" optional error={errors.bic}>
+                    <Input value={f.bic} disabled={readOnly} maxLength={14} onChange={(e) => set("bic", e.target.value.toUpperCase())} placeholder="AGRIFRPP" aria-label="BIC" className="mono" aria-invalid={!!errors.bic} spellCheck={false} />
+                  </Field>
+                </div>
+                <Field label="IBAN" error={errors.iban}>
+                  <Input
+                    value={f.iban}
+                    disabled={readOnly}
+                    maxLength={42}
+                    onChange={(e) => set("iban", e.target.value.toUpperCase())}
+                    onBlur={() => set("iban", formatIban(f.iban))}
+                    placeholder="FR76 3000 6000 0112 3456 7890 189"
+                    aria-label="IBAN"
+                    className="mono"
+                    aria-invalid={!!errors.iban}
+                    spellCheck={false}
+                  />
+                </Field>
+                <p className="text-[12px] text-fg-subtle">Le chauffeur copie l&apos;IBAN et la référence depuis l&apos;application, puis signale « J&apos;ai payé par virement ».</p>
+              </div>
+            )}
+
+            <Field
+              label={f.methods.includes("other") ? "Autre moyen : comment payer" : "Instructions au chauffeur"}
+              optional={!f.methods.includes("other")}
+              hint={f.methods.includes("other") ? "Ex. Wero ou Lydia au 06 12 34 56 78, ou au bureau du lundi au vendredi." : "Affichées avec le montant à régler (application et message WhatsApp)."}
+              error={errors.instructions}
+            >
               <Textarea
                 value={f.instructions}
                 disabled={readOnly}
                 maxLength={500}
                 onChange={(e) => set("instructions", e.target.value)}
-                placeholder="Ex. indiquez la référence (C1783) dans le commentaire du paiement."
-                aria-label="Instructions au chauffeur"
+                placeholder={f.methods.includes("other") ? "Ex. Wero au 06 12 34 56 78 en indiquant la référence (C1783)." : "Ex. indiquez la référence (C1783) dans le commentaire du paiement."}
+                aria-label={f.methods.includes("other") ? "Autre moyen de paiement" : "Instructions au chauffeur"}
                 className="min-h-[72px]"
               />
             </Field>
+
+            <div className="rounded-xl bg-white/[0.03] px-4 py-3">
+              <p className="mb-2 text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Dans l&apos;application, le chauffeur voit</p>
+              <div className="flex flex-wrap gap-1.5">
+                {f.methods.map((m) => (
+                  <span key={m} className={cn("rounded-lg border px-2.5 py-1 text-[12.5px]", ready[m] ? "border-line-strong text-fg" : "border-amber/40 text-amber")}>
+                    {DRIVER_BUTTON[m]}
+                    {!ready[m] && " — à renseigner"}
+                  </span>
+                ))}
+              </div>
+            </div>
           </CardBody>
         </Card>
 

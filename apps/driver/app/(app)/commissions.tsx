@@ -4,7 +4,7 @@
 // par la centrale. Temps réel settlement.updated (driver:{id}) → relecture.
 import { Ionicons } from "@expo/vector-icons";
 import {
-  PAYMENT_METHOD_LABELS, SETTLEMENT_METHOD_META, SETTLEMENT_STATUS_META, formatPrice, formatRideDate,
+  PAYMENT_METHOD_LABELS, SETTLEMENT_METHOD_META, SETTLEMENT_STATUS_META, formatIban, formatPrice, formatRideDate,
   type DriverSettlementItem, type DriverSettlements, type SettlementMethod,
 } from "@rydar/shared";
 import { useFocusEffect } from "expo-router";
@@ -39,8 +39,16 @@ function pastWhen(iso: string | null | undefined, tz?: string) {
 
 const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? many : one}`;
 
-const METHOD_TITLE: Record<Exclude<SettlementMethod, "link">, string> = { cash: "Paiement en espèces", transfer: "Paiement par virement" };
-const METHOD_BUTTON: Record<Exclude<SettlementMethod, "link">, string> = { cash: "J'ai payé en espèces", transfer: "J'ai payé par virement" };
+const METHOD_TITLE: Record<Exclude<SettlementMethod, "link">, string> = {
+  transfer: "Paiement par virement",
+  cash: "Paiement en espèces",
+  other: "Autre moyen de paiement",
+};
+const METHOD_BUTTON: Record<Exclude<SettlementMethod, "link">, string> = {
+  transfer: "J'ai payé par virement",
+  cash: "J'ai payé en espèces",
+  other: "J'ai payé (autre moyen)",
+};
 
 export default function Commissions() {
   const { home, refresh } = useDriver();
@@ -85,6 +93,12 @@ export default function Commissions() {
     const res = await copyText(ref);
     if (res === "copied") flash.show(`Référence ${ref} copiée`);
     else if (res === "failed") flash.show(frTypo(`Copie impossible : notez la référence ${ref}.`), "error");
+  }
+
+  async function copyIban(iban: string) {
+    const res = await copyText(iban);
+    if (res === "copied") flash.show("IBAN copié");
+    else if (res === "failed") flash.show(frTypo(`Copie impossible : notez l'IBAN ${formatIban(iban)}.`), "error");
   }
 
   function snapshot(): PaySnapshot | null {
@@ -361,7 +375,9 @@ export default function Commissions() {
                   ? frTypo("Si le paiement est passé (Revolut, PayPal…), confirmez : la centrale le vérifiera.")
                   : sheet.method === "cash"
                     ? `Remettez ${price(sheet.amount)} en main propre à ${orgName}, puis confirmez.`
-                    : `Faites un virement de ${price(sheet.amount)} à ${orgName} avec la référence, puis confirmez.`}
+                    : sheet.method === "transfer"
+                      ? `Faites un virement de ${price(sheet.amount)} à ${data?.pay.bank?.payee_name ?? orgName} avec la référence, puis confirmez.`
+                      : `Payez ${price(sheet.amount)} à ${orgName} comme indiqué ci-dessous, puis confirmez.`}
               </Text>
             </View>
 
@@ -384,6 +400,35 @@ export default function Commissions() {
                   <Text style={styles.copyText}>Copier</Text>
                 </View>
               </Pressable>
+            ) : null}
+            {sheet.kind === "manual" && sheet.method === "transfer" && data?.pay.bank ? (
+              <View style={styles.bank} accessible={false}>
+                <View style={styles.bankRow}>
+                  <Text style={styles.refLabel}>Bénéficiaire</Text>
+                  <Text style={styles.bankValue} selectable>{data.pay.bank.payee_name}</Text>
+                </View>
+                <Pressable
+                  onPress={() => void copyIban(data.pay.bank!.iban)}
+                  style={({ pressed }) => [styles.bankIban, pressed && { backgroundColor: colors.surface3 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Copier l'IBAN ${formatIban(data.pay.bank.iban)}`}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.refLabel}>IBAN</Text>
+                    <Text style={styles.ibanValue} selectable>{formatIban(data.pay.bank.iban)}</Text>
+                  </View>
+                  <View style={styles.copyBtn}>
+                    <Ionicons name="copy-outline" size={18} color={colors.fg} />
+                    <Text style={styles.copyText}>Copier</Text>
+                  </View>
+                </Pressable>
+                {data.pay.bank.bic ? (
+                  <View style={styles.bankRow}>
+                    <Text style={styles.refLabel}>BIC</Text>
+                    <Text style={[styles.bankValue, mono]} selectable>{data.pay.bank.bic}</Text>
+                  </View>
+                ) : null}
+              </View>
             ) : null}
             {data?.pay.instructions ? (
               <View style={styles.instructions}>
@@ -564,6 +609,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong,
   },
   copyText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
+  bank: { gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong },
+  bankRow: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: space.md },
+  bankValue: { flexShrink: 1, color: colors.fg, fontSize: type.body, fontWeight: weight.semibold, textAlign: "right" },
+  bankIban: { flexDirection: "row", alignItems: "center", gap: space.md, paddingVertical: space.xs, borderRadius: radius.sm },
+  ibanValue: { color: colors.fg, fontSize: type.callout, fontWeight: weight.bold, marginTop: 2, ...mono },
   instructions: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surface2 },
   instructionsText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
   noteInput: {

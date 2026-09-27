@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import {
   confirmSettlements, disputeSettlement, remindDriverSettlements, reopenSettlement, waiveSettlement, type SettlementActionResult,
 } from "@/app/dashboard/settlements/actions";
-import { useCentrale } from "@/components/settlements/centrale-context";
+import { type SettlementBankInfo, useCentrale } from "@/components/settlements/centrale-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -196,7 +196,7 @@ export function useSettlementWhatsApp(req: WhatsAppRequest | null): string | nul
 
 export function buildSettlementWhatsApp(
   req: WhatsAppRequest,
-  org: { orgName: string; link: string | null; instructions: string | null; methods: SettlementMethod[] },
+  org: { orgName: string; link: string | null; instructions: string | null; methods: SettlementMethod[]; bank?: SettlementBankInfo | null },
 ): string | null {
   if (!(req.amountCents > 0)) return null;
   const link = org.methods.includes("link") ? settlementPaymentLink(org.link, req.amountCents, req.reference) : null;
@@ -209,6 +209,7 @@ export function buildSettlementWhatsApp(
     link,
     reference: req.reference,
     instructions: org.instructions,
+    bank: org.methods.includes("transfer") ? (org.bank ?? null) : null,
   });
   return whatsappLink(req.phone, text);
 }
@@ -250,7 +251,12 @@ export function useRemindDriver(onChanged?: () => void) {
   return {
     pending,
     remind: (driverId: string, firstName: string) =>
-      run(() => remindDriverSettlements(driverId), (r) => `Rappel envoyé à ${firstName}${r.amount_cents ? ` · ${formatPrice(r.amount_cents)}` : ""}`),
+      run(
+        () => remindDriverSettlements(driverId),
+        // « Rappel envoyé à Karim par WhatsApp et l'application · 19 € » (canal choisi dans les réglages)
+        (r) =>
+          `${(r.message || "Rappel envoyé.").replace(/^Rappel envoyé/, `Rappel envoyé à ${firstName}`).replace(/\.$/, "")}${r.amount_cents ? ` · ${formatPrice(r.amount_cents)}` : ""}`,
+      ),
   };
 }
 

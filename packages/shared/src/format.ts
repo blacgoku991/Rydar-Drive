@@ -109,6 +109,19 @@ export function normalizePhone(input: string | null | undefined, defaultCountry 
   return /^\+[1-9]\d{7,14}$/.test(v) ? v : null;
 }
 
+/** IBAN valide (format + clé de contrôle modulo 97). Espaces ignorés. */
+export function isValidIban(input: string | null | undefined): boolean {
+  const v = (input ?? "").replace(/\s+/g, "").toUpperCase();
+  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$/.test(v)) return false;
+  const moved = v.slice(4) + v.slice(0, 4);
+  let rest = 0;
+  for (const ch of moved) {
+    const n = ch >= "A" ? ch.charCodeAt(0) - 55 : Number(ch);
+    rest = Number(`${rest}${n}`) % 97;
+  }
+  return rest === 1;
+}
+
 /** +33612345678 → « +33 6 12 34 56 78 ». */
 export function formatPhone(e164: string | null | undefined): string {
   if (!e164) return "—";
