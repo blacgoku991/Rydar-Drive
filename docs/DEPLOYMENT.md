@@ -41,17 +41,16 @@ Architecture cible :
        <p>Code à saisir dans l'application Rydar Drive :</p>
        <p style="font-size:28px;font-weight:700;letter-spacing:6px">{{ .Token }}</p>
        <p>Vous pouvez aussi ouvrir ce lien pour choisir un nouveau mot de passe : <a href="{{ .ConfirmationURL }}">changer mon mot de passe</a>.</p>
-       <p>Le code et le lien expirent dans 15 minutes ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
+       <p>Le code et le lien expirent dans une heure ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
        ```
 
-   - **Codes envoyés par e-mail** (*Sign In / Providers → Email*) : *Email OTP Length* = **8** chiffres et *Email OTP
-     Expiration* = **900 s** (15 min). Les limites de Rydar (connexion, vérification du code) ne protègent que ses
+   - **Codes envoyés par e-mail** (*Sign In / Providers → Email*) : *Email OTP Length* = **8** chiffres, *Email OTP
+     Expiration* laissée à **3600 s** (1 h). Les limites de Rydar (connexion, vérification du code) ne protègent que ses
      propres routes : l'API Auth de Supabase reste appelable directement avec la clé publique, et elle ne compte pas
-     les essais par code (seulement une limite par IP). 8 chiffres valables 15 min mettent le devinage hors de portée,
-     même depuis de nombreuses adresses IP. Rien à reconstruire : l'app chauffeur et
-     `/api/auth/driver-password-reset/confirm` acceptent 6 à 10 chiffres. Ce délai vaut aussi pour les liens
-     d'invitation (même réglage) : un invité qui ouvre l'e-mail trop tard passe par « Mot de passe oublié ? » (app
-     chauffeur) ou `/forgot-password` (tableau de bord), qui lui envoie un nouveau code et un nouveau lien.
+     les essais par code (seulement une limite par IP). Avec 8 chiffres (100 millions de possibilités), le devinage
+     reste hors de portée même depuis de nombreuses adresses IP. Rien à reconstruire : l'app chauffeur et
+     `/api/auth/driver-password-reset/confirm` acceptent 6 à 10 chiffres. Ne raccourcissez pas le délai : il vaut
+     aussi pour les liens d'invitation des membres (même réglage).
    - *Rate Limits* : la limite des vérifications de code (*token verifications*, par IP) peut être abaissée ; ne
      baissez pas trop celles des connexions et du rafraîchissement des sessions, car les téléphones des chauffeurs
      partagent souvent l'adresse IP de leur opérateur.
@@ -346,7 +345,7 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
 ## 7. Checklist de mise en production
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
-- [ ] Auth : code e-mail à 8 chiffres valable 900 s (§ 1)
+- [ ] Auth : code e-mail à 8 chiffres, validité 3600 s (§ 1)
 - [ ] Pushs : `EXPO_ACCESS_TOKEN` renseigné, puis *Enhanced Security for Push Notifications* activée chez Expo (§ 3)
 - [ ] Realtime : *Allow public access* désactivé (canaux privés uniquement)
 - [ ] Premier Super Admin créé, offres Stripe reliées

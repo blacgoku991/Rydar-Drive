@@ -227,7 +227,7 @@ done
 
 # ------------------------------------------------------------------ Facultatif
 echo
-ask EXPO_ACCESS_TOKEN "Jeton Expo pour les notifications push (facultatif, Entrée pour passer)" secret
+ask EXPO_ACCESS_TOKEN "Jeton Expo pour les notifications push (recommandé en production, Entrée pour passer)" secret
 put EXPO_ACCESS_TOKEN "$answer"
 
 echo

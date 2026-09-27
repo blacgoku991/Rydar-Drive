@@ -53,7 +53,7 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
     <p>Vous pouvez aussi ouvrir ce lien pour choisir un nouveau mot de passe : <a href="{{ .ConfirmationURL }}">changer mon mot de passe</a>.</p>
     <p>Le code et le lien expirent dans une heure ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
     ```
-  - *Authentication → Sign In / Providers → Email* : laisser *Email OTP Length* à 6 chiffres (l'app accepte 6 à 10) et *Email OTP Expiration* à 3600 s.
+  - *Authentication → Sign In / Providers → Email* : régler *Email OTP Length* à **8** chiffres (l'app accepte 6 à 10) et laisser *Email OTP Expiration* à 3600 s.
 - *Realtime → Settings* : désactiver **Allow public access**. Rydar n'utilise que des canaux privés.
 - Il garde sous la main, sans te les envoyer : l'URL du projet, la clé **publishable**, la clé **secret** et la chaîne **Session pooler** (bouton *Connect*).
 
