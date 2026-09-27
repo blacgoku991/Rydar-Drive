@@ -2,7 +2,7 @@ import * as Battery from "expo-battery";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { AppState, Platform } from "react-native";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 import { supabase } from "./supabase";
 
 export const LOCATION_TASK = "rydar-location";
@@ -26,6 +26,8 @@ let trackingState: "unknown" | "on" | "off" = "unknown";
 let trackingSession = 0;
 /** Mode course (précision maximale) : conservé pour toute relance du suivi. */
 let rideMode = false;
+/** Mode réellement appliqué à la tâche (Android refuse de la réenregistrer depuis l'arrière-plan). */
+let appliedRideMode = false;
 
 /** Jamais de position ancienne : un point de plus de 2 min n'est pas envoyé (le serveur le croirait frais). */
 const MAX_POINT_AGE_MS = 120_000;
@@ -73,8 +75,14 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
     intervalS = Math.max(4, Math.min(120, res.next_interval_s ?? 10));
     // Passé hors ligne ailleurs (autre appareil, centrale) : le suivi s'arrête ici aussi
     if (res.presence === "offline" && session === trackingSession) void stopTracking();
-  } catch {
-    lastSent = 0; // réessai au prochain point
+  } catch (e) {
+    // Compte suspendu / banni, centrale suspendue : le serveur refuse toute position, le suivi s'arrête
+    if (e instanceof ApiError && e.code === "FORBIDDEN") {
+      if (session === trackingSession) void stopTracking();
+      return;
+    }
+    // Réseau : nouvel essai dans 5 s au plus tôt (pas à chaque point, jusqu'à un par seconde sur iPhone)
+    lastSent = Date.now() - Math.max(0, intervalS - 5) * 1000;
   }
 }
 
@@ -106,7 +114,7 @@ async function beat() {
     const fresh = await freshFix(Location.Accuracy.High, 12_000);
     if (fresh) return await pushLocation(fresh, true);
     // Pas de point GPS (sous-sol, parking) : l'app est ouverte, signe de vie pour rester en ligne (sans position)
-    const res = await api.heartbeat().catch(() => null);
+    const res = await api.heartbeat().catch((e: unknown) => (e instanceof ApiError && e.code === "FORBIDDEN" ? { presence: "offline" } : null));
     if (res?.presence === "offline") void stopTracking();
   } finally {
     beating = false;
@@ -258,6 +266,7 @@ export async function startTracking(): Promise<TrackingResult> {
   }
   try {
     await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(rideMode));
+    appliedRideMode = rideMode;
     foregroundWatch?.remove();
     foregroundWatch = null;
     startHeartbeat();
@@ -292,8 +301,9 @@ export async function stopTracking() {
 export async function ensureTracking() {
   if (isWeb || trackingState === "off") return;
   const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => true);
-  if (!started || Date.now() - lastSent > 90_000) {
-    await startTracking().catch(() => null);
+  // (Android : un changement de mode course pendant l'arrière-plan n'a pas pu être appliqué → maintenant)
+  if (!started || Date.now() - lastSent > 90_000 || appliedRideMode !== rideMode) {
+    await startTracking();
     return;
   }
   startHeartbeat();
@@ -306,6 +316,9 @@ export async function ensureTracking() {
 export async function setHighAccuracy(enabled: boolean) {
   rideMode = enabled;
   if (isWeb) return;
+  // Android : service de premier plan non modifiable depuis l'arrière-plan — appliqué au retour (ensureTracking)
+  if (Platform.OS === "android" && AppState.currentState !== "active") return;
   if (!(await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) return;
   await Location.startLocationUpdatesAsync(LOCATION_TASK, taskOptions(enabled));
+  appliedRideMode = enabled;
 }

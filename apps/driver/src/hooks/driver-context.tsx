@@ -203,16 +203,6 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, [userId, checkAccount]);
 
-  // Retour dans l'app EN LIGNE : suivi GPS relancé s'il a été arrêté ou ne livre plus rien (système, économie
-  // de batterie) — app ouverte, la position reste en direct
-  useEffect(() => {
-    if (!canDrive) return;
-    const sub = AppState.addEventListener("change", (s) => {
-      if (s === "active" && (homeRef.current?.driver.presence ?? "offline") !== "offline") void ensureTracking();
-    });
-    return () => sub.remove();
-  }, [canDrive]);
-
   // Chauffeur actif : le canal driver:{id} n'est plus lisible dès la suspension (RLS realtime.messages →
   // current_driver_id()), le dernier « driver.updated » n'arrive donc pas. Relecture légère de l'état du compte.
   useEffect(() => {
@@ -297,6 +287,30 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       void refreshChat();
     }, 250);
   }, [refreshChat]);
+
+  // Retour dans l'app EN LIGNE : suivi GPS relancé s'il a été arrêté ou ne livre plus rien (système, économie
+  // de batterie) — app ouverte, la position reste en direct. Localisation retirée entre-temps : hors ligne et
+  // prévenu (comme au lancement), jamais « en ligne » sans position.
+  useEffect(() => {
+    if (!canDrive) return;
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s !== "active" || (homeRef.current?.driver.presence ?? "offline") === "offline") return;
+      void (async () => {
+        const perm = await locationPermissionState();
+        if (perm === "ok") return void ensureTracking().catch(() => null);
+        const res = await api.setOnline(false).catch(() => null);
+        if (res && !res.ok) return; // en course : il reste en ligne jusqu'à la fin
+        void stopTracking().catch(() => null);
+        patchPresence("offline");
+        void refresh();
+        Alert.alert(
+          perm === "coarse" ? "Position exacte désactivée" : "Localisation désactivée",
+          perm === "coarse" ? `Vous êtes passé hors ligne. ${COARSE_MESSAGE}` : "Vous êtes passé hors ligne : autorisez la localisation pour recevoir des courses.",
+        );
+      })();
+    });
+    return () => sub.remove();
+  }, [canDrive, patchPresence, refresh]);
 
   // Initialisation après connexion (compte actif) : données d'abord, push en parallèle, puis temps réel.
   // Dépend de l'utilisateur et non de l'objet session : le renouvellement du jeton (≈ toutes les heures)
