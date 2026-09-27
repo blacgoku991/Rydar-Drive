@@ -7,7 +7,7 @@ import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, Vibration, View } from "react-native";
+import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, Vibration, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { blockerInfo, CollectNote, deductionCents, frTypo } from "@/components/centrale";
 import { RydarMap } from "@/components/map/rydar-map";
@@ -15,7 +15,7 @@ import { CountdownRing } from "@/components/radar";
 import { BigButton, Chip, RouteLine, Screen, Sheet } from "@/components/ui";
 import { URGENT_OFFER_S, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
-import { api } from "@/lib/api";
+import { api, refusalText } from "@/lib/api";
 import { offerSession } from "@/lib/offer-session";
 import { approachSeconds, colors, control, mono, overlay, radius, space, toneColor, type, weight } from "@/theme";
 
@@ -58,7 +58,7 @@ function OfferCountdown({ expiresAt, total }: { expiresAt: string | null; total:
 
 export default function OfferScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { offers, refresh, home } = useDriver();
+  const { offers, offersReadAt, forgetOffer, refresh, home } = useDriver();
   const me = useMyPosition();
   const snapshot = useRef<DriverOffer | null>(null);
   const live = offers.find((o) => o.offer_id === id) ?? null;
@@ -80,6 +80,10 @@ export default function OfferScreen() {
   const chimed = useRef(false);
   // Échéance au moment de la fermeture locale : seule une prolongation serveur rouvre l'offre
   const closedExpiry = useRef<string | null>(null);
+  // Rouverte par une prolongation du serveur : elle a déjà sonné, pas de nouvelle sonnerie
+  const reopened = useRef(false);
+  // Fermée localement faute de liste à jour (réseau) : elle pourra se rouvrir si le serveur la prolonge
+  const staleClose = useRef(false);
 
   // Anneau : fenêtre initiale (envoi → échéance), puis, à chaque prolongation serveur (élargissement
   // du rayon), fenêtre depuis l'échéance précédente — l'anneau repart plein au lieu de sauter.
@@ -120,16 +124,10 @@ export default function OfferScreen() {
     };
   }, [id]);
 
-  // Dernière lecture réussie de la liste (chaque rafraîchissement réussi remplace le tableau)
-  const listAt = useRef(Date.now());
-  useEffect(() => {
-    listAt.current = Date.now();
-  }, [offers]);
-
   // Sonnerie + vibration en boucle tant qu'une offre urgente est ouverte ; offre planifiée : un seul carillon.
   // Chauffeur bloqué (mode centrale) : pas de sonnerie, l'offre ne peut pas être acceptée.
   useEffect(() => {
-    if (state !== "open" || !loaded || blockedReason) return;
+    if (state !== "open" || !loaded || blockedReason || reopened.current) return;
     void setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: false, interruptionMode: "duckOthers" }).catch(() => null);
     if (!urgent) {
       if (chimed.current) return;
@@ -194,29 +192,51 @@ export default function OfferScreen() {
 
   // Échéance atteinte mais offre toujours listée : le serveur peut la prolonger (vague suivante) → on vérifie
   const overdue = urgent && state === "open" && live != null && remaining <= 0;
+  // Début de l'attente de la prolongation : la liste est jugée figée si AUCUNE lecture n'a réussi depuis
+  const overdueAt = useRef(0);
   useEffect(() => {
     if (!overdue) return;
+    overdueAt.current = Date.now();
     void refresh();
     const t = setInterval(() => void refresh(), 2000);
     return () => clearInterval(t);
   }, [overdue, refresh]);
 
-  // Filet de sécurité : liste figée (réseau) ou dispatch arrêté → fermeture locale
+  // Filet de sécurité : liste figée (réseau : aucune lecture réussie depuis 20 s, même sans changement) ou
+  // dispatch arrêté → fermeture locale
   useEffect(() => {
     if (!overdue) return;
-    if (now - listAt.current > STALE_LIST_S * 1000 || remaining <= -DEAD_OFFER_S) {
+    const stale = now - Math.max(offersReadAt(), overdueAt.current) > STALE_LIST_S * 1000;
+    if (stale || remaining <= -DEAD_OFFER_S) {
       closedExpiry.current = offer?.expires_at ?? null;
+      staleClose.current = stale && remaining > -DEAD_OFFER_S;
       setState("expired");
     }
-  }, [overdue, now, remaining, offer?.expires_at]);
+  }, [overdue, now, remaining, offer?.expires_at, offersReadAt]);
 
-  // Prolongée après une fermeture locale (expirée / refusée à l'acceptation) : l'offre est rouverte
+  // Prolongée après une fermeture locale (expirée / refusée à l'acceptation) : l'offre est rouverte, sans sonnerie
   useEffect(() => {
     if ((state === "expired" || state === "taken") && live?.expires_at && live.expires_at !== closedExpiry.current && remaining > 0) {
+      reopened.current = true;
+      staleClose.current = false;
       setMessage(null);
       setState("open");
     }
   }, [state, live?.expires_at, remaining]);
+
+  // Android : le retour système ne ferme pas une offre ouverte (comme l'iPhone, sans geste de retour) — « Refuser »,
+  // ou « Plus tard » pour une offre planifiée (le retour vaut alors « Plus tard »)
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== "android" || (state !== "open" && state !== "accepting")) return undefined;
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        if (state === "open" && !urgent) close();
+        return true;
+      });
+      return () => sub.remove();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [state, urgent]),
+  );
 
   // Fermeture automatique, uniquement si l'écran est au premier plan (sinon back() fermerait l'écran du dessus)
   const closed = state === "taken" || state === "expired" || state === "declined";
@@ -229,8 +249,10 @@ export default function OfferScreen() {
   );
 
   function close() {
+    // Fermée faute de réseau alors que le serveur la propose encore : rouverte s'il la prolonge
+    if (staleClose.current) forgetOffer(id);
     if (router.canGoBack()) router.back();
-    else router.replace("/home");
+    else router.dismissTo("/home");
   }
 
   async function accept() {
@@ -256,7 +278,8 @@ export default function OfferScreen() {
       } else {
         if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         closedExpiry.current = offer.expires_at;
-        setMessage(res.message ?? null);
+        // Motif du refus (déjà attribuée, course annulée, recherche terminée…) : libellé du code, sinon du serveur
+        setMessage(refusalText(res));
         setState(res.code === "OFFER_EXPIRED" ? "expired" : "taken");
         void refresh();
       }
@@ -286,8 +309,8 @@ export default function OfferScreen() {
       <Screen style={styles.center}>
         <Ionicons name="close-circle-outline" size={40} color={colors.muted} />
         <Text style={styles.closedTitle} accessibilityRole="header">Offre indisponible</Text>
-        <Text style={styles.loading}>Elle a expiré ou a été attribuée à un autre chauffeur.</Text>
-        <BigButton title="Retour" variant="secondary" height={control.md} onPress={() => router.replace("/home")} style={styles.back} />
+        <Text style={styles.loading}>Elle a expiré, a été annulée ou a été attribuée à un autre chauffeur.</Text>
+        <BigButton title="Retour" variant="secondary" height={control.md} onPress={() => router.dismissTo("/home")} style={styles.back} />
       </Screen>
     );
   }
@@ -410,7 +433,7 @@ export default function OfferScreen() {
               <View style={styles.closedBox} accessibilityRole="alert" accessibilityLiveRegion="polite">
                 <Ionicons name={success ? "checkmark-circle-outline" : "close-circle-outline"} size={24} color={success ? colors.green : colors.amber} />
                 <Text style={styles.closedText}>
-                  {state === "expired" ? "Offre expirée." : message ? frTypo(message) : state === "declined" ? "Offre refusée." : "Course déjà attribuée."}
+                  {state === "expired" ? "Offre expirée." : message ? frTypo(message) : state === "declined" ? "Offre refusée." : "Offre retirée."}
                 </Text>
               </View>
             ) : blocked && block ? (

@@ -4,13 +4,15 @@
 // documents complets, « J'accepte » en bas ; autres issues : « Se déconnecter » et « Supprimer mon compte », possible
 // sans accepter les conditions), SAUF :
 //  - jamais pendant une course ni une offre : il attend que le chauffeur n'ait plus de course active ;
+//  - chauffeur EN LIGNE sans course : passé hors ligne (aucune offre sans conditions acceptées), remis en ligne
+//    après « J'accepte » ;
 //  - jamais bloquant hors connexion : registre illisible → pas d'écran, nouvel essai plus tard ; « J'accepte » sans
 //    réseau → acceptation gardée sur le téléphone et envoyée dès que possible.
 import { Ionicons } from "@expo/vector-icons";
 import { LEGAL_VERSION, formatDate, type DriverPresence } from "@rydar/shared";
 import { router, usePathname } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, AppState, Keyboard, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Animated, AppState, Keyboard, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { announce, Notice, TextLink, TEXT_SCALE, TITLE_SCALE, useReduceMotion } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
@@ -28,6 +30,8 @@ const BUSY_PRESENCES = new Set<DriverPresence>(["offered", "en_route", "arrived"
 const RIDE_SCREEN = /^\/(offer|ride)(\/|$)/;
 /** Nouvel essai après un échec de lecture ou d'envoi (réseau) : 10 s, 30 s, 1 min, 2 min, puis toutes les 5 min. */
 const RETRY_MS = [10_000, 30_000, 60_000, 120_000, 300_000];
+/** Mise hors ligne en échec (réseau) : pas de nouvel essai avant ce délai. */
+const OFFLINE_RETRY_MS = 30_000;
 
 /**
  * unknown : pas encore lu, ou illisible (réseau) ; pending : à accepter ; syncing : accepté sur le téléphone, en
@@ -188,13 +192,38 @@ function useTermsStatus(userId: string | null, refreshChat: () => Promise<void>)
  * version en vigueur n'est pas acceptée, hors course et hors offre. Le contenu recouvert est masqué au lecteur d'écran.
  */
 export function TermsGate({ children }: { children: React.ReactNode }) {
-  const { session, home, refreshChat, signOut } = useDriver();
+  const { session, home, refreshChat, signOut, setOnline } = useDriver();
   const userId = session?.user.id ?? null;
   const pathname = usePathname();
   const terms = useTermsStatus(userId, refreshChat);
   // Accueil pas encore lu (course active inconnue), offre reçue, course en cours, écran d'offre ou de course : attente
   const busyDriver = !home || home.driver.current_ride_id != null || BUSY_PRESENCES.has(home.driver.presence);
   const visible = terms.state === "pending" && !busyDriver && !RIDE_SCREEN.test(pathname);
+
+  // Conditions à accepter : un chauffeur disponible sans course passe hors ligne (plus aucune offre tant qu'elles ne
+  // sont pas acceptées) ; il repasse en ligne après « J'accepte ». Offre ou course en cours : jamais interrompue.
+  const mustGoOffline = terms.state === "pending" && home?.driver.presence === "available" && home.driver.current_ride_id == null;
+  const wentOffline = useRef(false);
+  const offlineTriedAt = useRef(0);
+  useEffect(() => {
+    wentOffline.current = false;
+  }, [userId]);
+  useEffect(() => {
+    // Échec (réseau) : l'état revient à « disponible » — pas de nouvel essai en rafale
+    if (!mustGoOffline || Date.now() - offlineTriedAt.current < OFFLINE_RETRY_MS) return;
+    offlineTriedAt.current = Date.now();
+    void setOnline(false).then((res) => {
+      if (res.ok) wentOffline.current = true;
+    });
+  }, [mustGoOffline, setOnline]);
+  const accepted = terms.state === "accepted" || terms.state === "syncing";
+  useEffect(() => {
+    if (!accepted || !wentOffline.current) return;
+    wentOffline.current = false;
+    void setOnline(true).then((res) => {
+      if (!res.ok && res.code !== "cancelled") Alert.alert("Vous êtes hors ligne", frTypo(res.message ?? "Passez en ligne depuis l'accueil."));
+    });
+  }, [accepted, setOnline]);
 
   useEffect(() => {
     // Clavier d'un écran recouvert (messagerie) : refermé

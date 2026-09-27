@@ -11,7 +11,7 @@ import { supabase } from "./supabase";
 export const DRIVER_LEGAL_DOCUMENTS = ["cgu", "privacy"] as const;
 
 /**
- * accepted : version en vigueur (ou plus récente) acceptée pour chaque document ;
+ * accepted : version en vigueur acceptée pour chaque document ;
  * pending : acceptation à demander (updated : une version antérieure avait déjà été acceptée) ;
  * unsupported : serveur sans registre des acceptations (migration absente) : rien à demander.
  */
@@ -35,14 +35,13 @@ export async function fetchTermsStatus(userId: string): Promise<TermsStatus> {
     if (MISSING_TABLE.has(error.code)) return { state: "unsupported" };
     throw new ApiError("Connexion impossible. Réessayez.", null);
   }
-  // Dernière version acceptée par document (inscription par lien, application, fil « Chauffeurs »)
-  const latest = new Map<string, string>();
-  for (const row of (data ?? []) as { document: string; version: string }[]) {
-    const previous = latest.get(row.document);
-    if (!previous || row.version > previous) latest.set(row.document, row.version);
-  }
-  if (DRIVER_LEGAL_DOCUMENTS.every((doc) => legalVersionAccepted(latest.get(doc)))) return { state: "accepted" };
-  return { state: "pending", updated: [...latest.values()].some((v) => !legalVersionAccepted(v)) };
+  // Version EN VIGUEUR acceptée pour chaque document (inscription par lien, application, fil « Chauffeurs ») : égalité
+  // stricte, comme le web — une version « postérieure » du registre (texte libre) ne vaut pas acceptation
+  const rows = (data ?? []) as { document: string; version: string }[];
+  const acceptedDoc = (doc: string) => rows.some((row) => row.document === doc && legalVersionAccepted(row.version));
+  if (DRIVER_LEGAL_DOCUMENTS.every(acceptedDoc)) return { state: "accepted" };
+  // Une autre version déjà acceptée : « mises à jour »
+  return { state: "pending", updated: rows.some((row) => !legalVersionAccepted(row.version)) };
 }
 
 /**

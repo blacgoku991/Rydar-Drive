@@ -5,6 +5,7 @@ import * as aesjs from "aes-js";
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { AppState, Platform } from "react-native";
+import { authStorageKey, signOutDevice } from "./auth-session";
 import { appConfig } from "./config";
 
 /**
@@ -95,10 +96,31 @@ export const isConfigured = Boolean(appConfig.supabaseUrl && appConfig.supabaseA
 // Web (aperçu / démo) : stockage du navigateur ; mobile : trousseau chiffré.
 const storage = Platform.OS === "web" ? (typeof window !== "undefined" ? window.localStorage : undefined) : new LargeSecureStore();
 
-export const supabase = createClient(appConfig.supabaseUrl || "https://not-configured.supabase.co", appConfig.supabaseAnonKey || "missing", {
-  auth: { storage, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
+const SUPABASE_URL = appConfig.supabaseUrl || "https://not-configured.supabase.co";
+/** Clé de la session : celle que supabase-js prend par défaut (sessions existantes conservées), rendue explicite. */
+const AUTH_STORAGE_KEY = authStorageKey(SUPABASE_URL);
+
+export const supabase = createClient(SUPABASE_URL, appConfig.supabaseAnonKey || "missing", {
+  auth: { storage, storageKey: AUTH_STORAGE_KEY, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
   global: { fetch: fetchWithTimeout },
 });
+
+/**
+ * Déconnexion de CET appareil, même hors réseau avec un jeton expiré (voir signOutDevice) ; « local » : les autres
+ * sessions du compte (tableau de bord d'un gérant qui roule aussi) sont gardées. false : session encore présente.
+ */
+export function signOutThisDevice(scope: "global" | "local" = "global") {
+  return signOutDevice(supabase.auth, storage, AUTH_STORAGE_KEY, scope);
+}
+
+/** Session enregistrée sur l'appareil (lecture du stockage seule, sans renouvellement ni réseau). */
+export async function hasStoredSession() {
+  try {
+    return (await storage?.getItem(AUTH_STORAGE_KEY)) != null;
+  } catch {
+    return false;
+  }
+}
 
 // Rafraîchissement du jeton uniquement au premier plan (recommandation Supabase RN)
 AppState.addEventListener("change", (state) => {

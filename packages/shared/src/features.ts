@@ -275,9 +275,12 @@ export const FLEET_CHAT_RULES_POINTS = [
  */
 export const LEGAL_VERSION = "2026-09-27";
 
-/** Version acceptée (la plus récente, ex. driver_chat_overview.rules_version) égale ou postérieure à celle en vigueur. */
+/**
+ * Version acceptée ÉGALE à celle en vigueur (comme le web) : une version « postérieure » inscrite dans le registre
+ * (texte libre, ex. « 9999-12-31 ») ne vaut jamais acceptation des versions à venir.
+ */
 export function legalVersionAccepted(accepted: string | null | undefined, current: string = LEGAL_VERSION): boolean {
-  return !!accepted && accepted >= current;
+  return !!accepted && accepted === current;
 }
 
 /** Motif envoyé : motif choisi, précision libre, ou les deux (« Spam ou publicité — lien douteux »), borné à 200. */

@@ -476,10 +476,13 @@ describe("documents légaux : version acceptée (CGU, confidentialité, règles 
     expect(legalVersionAccepted("2026-09-26", "2026-09-27")).toBe(false);
     expect(legalVersionAccepted("2025-12-31", "2026-01-01")).toBe(false);
   });
-  it("acquis : version en vigueur (égale) ou postérieure", () => {
+  it("acquis : version en vigueur seulement (égalité, comme le web)", () => {
     expect(legalVersionAccepted("2026-09-27", "2026-09-27")).toBe(true);
-    expect(legalVersionAccepted("2026-09-28", "2026-09-27")).toBe(true);
-    expect(legalVersionAccepted("2027-01-01", "2026-12-31")).toBe(true);
+  });
+  it("à accepter : version « postérieure » ou texte libre du registre (audit sql-rpc-courses#5)", () => {
+    expect(legalVersionAccepted("2026-09-28", "2026-09-27")).toBe(false);
+    expect(legalVersionAccepted("9999-12-31", "2026-09-27")).toBe(false);
+    expect(legalVersionAccepted("n'importe quoi", "2026-09-27")).toBe(false);
   });
   it("par défaut, comparaison avec la version en vigueur (date ISO AAAA-MM-JJ)", () => {
     expect(LEGAL_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);

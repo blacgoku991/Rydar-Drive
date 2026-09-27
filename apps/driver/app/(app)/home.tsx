@@ -42,11 +42,13 @@ async function reachabilityHint() {
 }
 /** Écart entre les boutons posés sur la carte et le panneau du bas. */
 const GAP = space.md;
+/** Course en cours illisible (réseau) : nouvel essai après ce délai. */
+const CURRENT_RIDE_RETRY_MS = 5000;
 
 const openSettings = () => void Linking.openSettings().catch(() => null);
 
 export default function Home() {
-  const { home, offers, setOnline, busy, chat, refreshChat } = useDriver();
+  const { home, homeError, refresh, offers, setOnline, busy, chat, refreshChat } = useDriver();
   const params = useLocalSearchParams<{ report?: string }>();
   const insets = useSafeAreaInsets();
   const flash = useFlash(insets.top + 66);
@@ -75,11 +77,33 @@ export default function Home() {
   const blockedOffers = Boolean(settlement?.blocked);
   const isNew = centrale && home?.driver.trust_level === "new";
 
+  // Course en cours : relue à chaque changement de présence (en route, sur place, client à bord) ou de course ;
+  // lecture en échec (réseau) : nouvel essai, la carte « Course en cours » reste affichée en attendant
+  const currentRideId = home?.driver.current_ride_id ?? null;
+  const [rideTick, setRideTick] = useState(0);
+  useAppEvent("ride", (rideId) => {
+    if (!rideId || rideId === currentRideId) setRideTick((n) => n + 1);
+  });
   useEffect(() => {
-    const id = home?.driver.current_ride_id;
-    if (id) api.ride(id).then(setCurrent).catch(() => setCurrent(null));
-    else setCurrent(null);
-  }, [home?.driver.current_ride_id]);
+    if (!currentRideId) return setCurrent(null);
+    let alive = true;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    const load = () => {
+      api
+        .ride(currentRideId)
+        .then((r) => alive && setCurrent(r))
+        .catch(() => {
+          if (alive) retry = setTimeout(load, CURRENT_RIDE_RETRY_MS);
+        });
+    };
+    load();
+    return () => {
+      alive = false;
+      if (retry) clearTimeout(retry);
+    };
+  }, [currentRideId, presence, rideTick]);
+  // Course connue de l'accueil mais pas encore lue (réseau) : carte minimale, l'écran de course se charge lui-même
+  const currentShown = current != null && current.id === currentRideId ? current : null;
 
   // Signalements actifs de la flotte (masqués dès leur expiration, sans attendre le serveur)
   const activeReports = useMemo(
@@ -184,6 +208,17 @@ export default function Home() {
     }
   }
 
+  // Accueil illisible (réseau) : relecture à la demande (les nouveaux essais automatiques continuent)
+  const [retrying, setRetrying] = useState(false);
+  async function retry() {
+    setRetrying(true);
+    try {
+      await refresh();
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   // La bascule est immédiate (setOnline est optimiste) : seul l'appel au serveur reste en cours (busy)
   async function toggle() {
     if (!home) return;
@@ -222,9 +257,11 @@ export default function Home() {
   const todayRidesText = `${todayRides}${NBSP}course${todayRides > 1 ? "s" : ""}`;
   const todayLabel = centrale ? "Votre part aujourd'hui" : "Aujourd'hui";
 
-  const statusTitle = loading ? "Chargement…" : online ? "Vous êtes en ligne" : "Vous êtes hors ligne";
+  const statusTitle = loading ? (homeError ? "Connexion impossible" : "Chargement…") : online ? "Vous êtes en ligne" : "Vous êtes hors ligne";
   const statusText = loading
-    ? null
+    ? homeError
+      ? "Vérifiez votre connexion internet (4G ou Wi-Fi). Nouvel essai automatique."
+      : null
     : online
       ? blockedOffers
         ? "Aucune course ne vous est proposée tant que vos commissions ne sont pas réglées."
@@ -341,28 +378,37 @@ export default function Home() {
 
           <Sheet>
             <SafeAreaView edges={["bottom"]} style={styles.panel}>
-              {current ? (
+              {currentShown ? (
                 <>
                   <View style={styles.row}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.title} accessibilityRole="header">Course en cours</Text>
                       <Text style={styles.subtitle}>
-                        Course {current.number}
+                        Course {currentShown.number}
                         {" · "}
                         <Text style={mono}>
-                          {centrale && current.driver_payout_cents != null
-                            ? `vous gagnez ${formatPrice(current.driver_payout_cents)}`
-                            : formatPrice(current.price_cents)}
+                          {centrale && currentShown.driver_payout_cents != null
+                            ? `vous gagnez ${formatPrice(currentShown.driver_payout_cents)}`
+                            : formatPrice(currentShown.price_cents)}
                         </Text>
                       </Text>
                     </View>
-                    <Pill label={RIDE_STATUS_META[current.status as RideStatus].short} color={presenceColor[presence] ?? colors.cyan} />
+                    <Pill label={RIDE_STATUS_META[currentShown.status as RideStatus].short} color={presenceColor[presence] ?? colors.cyan} />
                   </View>
-                  <RouteLine from={shortAddress(current.pickup_address)} to={shortAddress(current.dropoff_address)} />
+                  <RouteLine from={shortAddress(currentShown.pickup_address)} to={shortAddress(currentShown.dropoff_address)} />
                   <BigButton
-                    title={DRIVER_FLOW[current.status as RideStatus]?.label ?? "Ouvrir la course"}
+                    title={DRIVER_FLOW[currentShown.status as RideStatus]?.label ?? "Ouvrir la course"}
                     icon="arrow-forward"
-                    onPress={() => router.push({ pathname: "/ride/[id]", params: { id: current.id } })}
+                    onPress={() => router.push({ pathname: "/ride/[id]", params: { id: currentShown.id } })}
+                  />
+                </>
+              ) : currentRideId ? (
+                <>
+                  <Text style={styles.title} accessibilityRole="header">Course en cours</Text>
+                  <BigButton
+                    title="Ouvrir la course"
+                    icon="arrow-forward"
+                    onPress={() => router.push({ pathname: "/ride/[id]", params: { id: currentRideId } })}
                   />
                 </>
               ) : (
@@ -419,7 +465,9 @@ export default function Home() {
                     </Pressable>
                   )}
 
-                  {loading ? (
+                  {loading && homeError ? (
+                    <BigButton title="Réessayer" icon="refresh-outline" variant="secondary" height={control.md} loading={retrying} onPress={retry} />
+                  ) : loading ? (
                     <BigButton title="Passer en ligne" icon="power" height={control.xl} onPress={() => undefined} disabled />
                   ) : online ? (
                     <BigButton title="Passer hors ligne" variant="secondary" icon="pause-circle-outline" height={control.md} onPress={toggle} />

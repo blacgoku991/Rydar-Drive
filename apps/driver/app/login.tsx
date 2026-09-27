@@ -16,7 +16,7 @@ import { frTypo } from "@/components/centrale";
 import { RydarMap } from "@/components/map/rydar-map";
 import { BigButton, hapticResult } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { confirmPasswordReset, legalUrl, parseJoinCode, requestPasswordReset, signIn, type ApiError } from "@/lib/api";
+import { confirmPasswordReset, LAST_EMAIL_KEY, legalUrl, parseJoinCode, requestPasswordReset, signIn, type ApiError } from "@/lib/api";
 import { canReadText, readText } from "@/lib/clipboard";
 import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
 
@@ -28,8 +28,6 @@ const CGU_URL = legalUrl("cgu");
 const PRIVACY_URL = legalUrl("confidentialite");
 /** Espace insécable avant « ? : ; ! » (typographie française). */
 const NB = " ";
-/** Dernière adresse utilisée (pré-remplie à la prochaine connexion). */
-const LAST_EMAIL_KEY = "rydar.driver.lastEmail";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 /** Délai avant de pouvoir redemander un code (Supabase n'envoie pas deux e-mails de suite plus vite). */
 const RESEND_SECONDS = 60;
@@ -79,7 +77,7 @@ function FailureNotice({ failure }: { failure: Failure }) {
 }
 
 export default function Login() {
-  const { session, ready, canDrive } = useDriver();
+  const { session, ready, canDrive, restoring } = useDriver();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
   const keyboard = useKeyboardVisible();
@@ -149,7 +147,9 @@ export default function Login() {
 
         <EnterView animate={animate} from={24} duration={320} style={styles.panelWrap}>
           <Animated.View style={[styles.panel, { paddingBottom: compact ? space.lg : Math.max(insets.bottom, space.lg) + space.sm }, panel.style]}>
-            {mode === "login" ? (
+            {restoring && !session ? (
+              <RestoringPanel animate={animate} />
+            ) : mode === "login" ? (
               <LoginPanel key="login" {...panelProps} email={email} setEmail={setEmail} onForgot={() => go("forgot")} onJoin={() => go("join")} />
             ) : mode === "forgot" ? (
               <ForgotPanel key="forgot" {...panelProps} email={email} setEmail={setEmail} onBack={() => go("login")} />
@@ -164,6 +164,24 @@ export default function Login() {
 }
 
 type PanelProps = { compact: boolean; animate: boolean; onFail: () => void };
+
+// --- Session gardée sur le téléphone, pas encore rétablie (lancement hors réseau, jeton à renouveler) ---------------
+
+function RestoringPanel({ animate }: { animate: boolean }) {
+  return (
+    <EnterView animate={animate} style={styles.panelBody}>
+      <Text style={styles.title} accessibilityRole="header" maxFontSizeMultiplier={TITLE_SCALE}>
+        Reconnexion
+      </Text>
+      <Notice
+        tone="warning"
+        title="Pas de connexion"
+        icon="cloud-offline-outline"
+        message={frTypo("Vous restez connecté : votre session sera rétablie dès le retour du réseau (4G ou Wi-Fi).")}
+      />
+    </EnterView>
+  );
+}
 
 // --- Connexion -----------------------------------------------------------------------------------
 

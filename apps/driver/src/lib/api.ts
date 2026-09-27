@@ -31,6 +31,14 @@ export function errorText(raw: string | null | undefined, fallback: string) {
   return fallback;
 }
 
+/**
+ * Refus métier d'une RPC ({ ok: false, code, message }) : libellé du code (ERROR_MESSAGES de @rydar/shared), sinon
+ * message du serveur, sinon repli neutre — jamais « déjà attribuée » par défaut (la course a pu être annulée).
+ */
+export function refusalText(res: { code?: string | null; message?: string | null }, fallback = "Offre retirée.") {
+  return humanizeError(res.code, "") || res.message || fallback;
+}
+
 /** Jeton refusé par l'API (expiré pendant la requête, horloge du téléphone en retard). */
 const jwtRejected = (e: { code?: string; message?: string }) =>
   e.code === "PGRST301" || e.code === "PGRST303" || /JWT expired/i.test(e.message ?? "");
@@ -64,6 +72,9 @@ export type LoginDeniedCode = "BANNED" | "REJECTED" | "INACTIVE" | "ORGANIZATION
 export type SignInResult = { state: DriverAccountStateKind | null };
 
 const BANNED_MESSAGE = "Accès refusé : ce compte a été banni par la centrale.";
+
+/** Dernière adresse de connexion (AsyncStorage), pré-remplie à la connexion suivante ; effacée à la suppression du compte. */
+export const LAST_EMAIL_KEY = "rydar.driver.lastEmail";
 
 /** Connexion via l'API web (anti brute force, contrôle du compte), repli direct Supabase. */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
@@ -304,22 +315,24 @@ export const api = {
   declarePayment: (ids: string[], method: SettlementMethod, note?: string | null) =>
     rpc<DeclarePaymentResult>("driver_declare_payment", { p_ids: ids, p_method: method, p_note: note?.trim() || null }),
   /**
-   * Fiche chauffeur du compte connecté (RLS drivers_select : user_id = auth.uid()). Sert au candidat en
-   * attente : driver_home lui est refusé et driver_account_state ne renvoie pas l'id de l'organisation,
-   * indispensable au chemin de stockage des justificatifs (<org>/<chauffeur>/…).
+   * Fiche chauffeur du compte connecté (RLS drivers_select : user_id = auth.uid()). Repli du candidat en attente
+   * (driver_home lui est refusé) quand driver_account_state ne renvoie pas l'id de l'organisation, indispensable
+   * au chemin de stockage des justificatifs (<org>/<chauffeur>/…).
    */
   myDriverRow: async (userId: string) => {
     const { data, error } = await supabase.from("drivers").select("id, organization_id").eq("user_id", userId).maybeSingle();
     if (error) throw new ApiError("Connexion impossible. Réessayez.", null);
     return data as { id: string; organization_id: string } | null;
   },
+  /** Courses attribuées à venir ou en cours. Erreur (ApiError) : réseau, serveur — jamais une liste vide trompeuse. */
   upcoming: async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("rides")
       .select("*")
       .in("status", ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"])
       .order("pickup_at", { ascending: true })
       .limit(50);
+    if (error) throw new ApiError("Connexion impossible. Réessayez.", null);
     return (data ?? []) as Ride[];
   },
 };

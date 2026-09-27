@@ -68,7 +68,8 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
   const phone = account.organization?.phone ?? null;
   const userId = session?.user.id;
 
-  // Dossier de stockage des justificatifs : <organisation>/<chauffeur>/ (fiche lisible par son titulaire)
+  // Dossier de stockage des justificatifs : <organisation>/<chauffeur>/ — organisation donnée par l'état du compte
+  // (relu toutes les 20 s) ; repli pour un serveur qui ne la renvoie pas : fiche lisible par son titulaire
   useEffect(() => {
     if (!userId) return;
     api.myDriverRow(userId).then((r) => setOrgId(r?.organization_id)).catch(() => null);
@@ -205,7 +206,7 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
       {flash.node}
       <UploadSheet
         entry={editing}
-        orgId={orgId}
+        orgId={account.organization?.id ?? orgId}
         driverId={account.driver?.id}
         onClose={() => setEditing(null)}
         onDone={(msg) => {

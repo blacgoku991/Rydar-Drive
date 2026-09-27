@@ -906,7 +906,7 @@ export interface DriverAccountState {
   state: DriverAccountStateKind;
   message?: string;
   driver?: { id: Uuid; number: number; first_name: string; last_name: string; applied_at: Iso | null; trust_level: TrustLevel };
-  organization?: { name: string; logo_url: string | null; phone: string | null; email: string | null; dispatch_model: DispatchModel };
+  organization?: { id: Uuid; name: string; logo_url: string | null; phone: string | null; email: string | null; dispatch_model: DispatchModel };
   reason?: string | null;
   can_submit_documents?: boolean;
 }

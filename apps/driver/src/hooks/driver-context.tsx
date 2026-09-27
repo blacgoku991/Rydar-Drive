@@ -1,20 +1,21 @@
 import {
-  DRIVER_BLOCKER_META, formatDistance, type DriverAccountState, type DriverChatOverview, type DriverHome, type DriverOffer, type SettlementEvent,
+  DRIVER_BLOCKER_META, formatDistance, type DriverAccountState, type DriverChatOverview, type DriverHome, type DriverOffer,
+  type DriverPresence, type SettlementEvent,
 } from "@rydar/shared";
-import type { RealtimeChannel, Session } from "@supabase/supabase-js";
+import { isAuthRetryableFetchError, type RealtimeChannel, type Session } from "@supabase/supabase-js";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Linking, Platform, Vibration } from "react-native";
 import { frTypo } from "@/components/centrale";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, refusalText } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
 import { ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking } from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
 import { settlementSession } from "@/lib/settlement-session";
-import { supabase } from "@/lib/supabase";
+import { hasStoredSession, signOutThisDevice, supabase } from "@/lib/supabase";
 
 /**
  * Résultat du passage en ligne. code : « coarse » (position approximative) et « blocked » (localisation refusée
@@ -26,8 +27,19 @@ type Ctx = {
   session: Session | null;
   /** Session lue et, si connecté, état du compte déterminé (le splash reste affiché jusque-là). */
   ready: boolean;
+  /**
+   * Session enregistrée sur le téléphone mais pas encore rétablie (jeton à renouveler, pas de réseau) : ni connecté,
+   * ni déconnecté — rétablie automatiquement au retour du réseau (TOKEN_REFRESHED), ou fermée (SIGNED_OUT).
+   */
+  restoring: boolean;
   home: DriverHome | null;
+  /** Accueil jamais lu et dernière lecture en échec (réseau, serveur) : « Connexion impossible » plutôt que « Chargement… ». */
+  homeError: boolean;
   offers: DriverOffer[];
+  /** Heure (ms) de la dernière lecture RÉUSSIE des offres, même identique à la précédente. */
+  offersReadAt: () => number;
+  /** Offre fermée localement sans réponse du chauffeur : elle pourra se rouvrir si le serveur la prolonge. */
+  forgetOffer: (offerId: string) => void;
   /** Relecture de l'accueil et des offres (une seule à la fois, les demandes simultanées sont regroupées). */
   refresh: () => Promise<DriverHome | null>;
   setOnline: (online: boolean) => Promise<OnlineResult>;
@@ -57,6 +69,15 @@ const isForbidden = (e: unknown) => e instanceof ApiError && (e.code ?? "").star
 
 /** Relecture périodique de l'état du compte (suspension, bannissement) quand l'app est au premier plan. */
 const ACCOUNT_CHECK_MS = 60_000;
+
+/** Splash au lancement : au-delà, une session enregistrée mais pas encore rétablie (hors réseau) est signalée. */
+const SPLASH_MAX_MS = 3000;
+
+/** Accueil illisible au démarrage (réseau, serveur) : nouveaux essais espacés, jusqu'à la première lecture réussie. */
+const INIT_RETRY_MS = [2000, 5000, 10_000, 20_000, 30_000];
+
+/** Présences de course : le suivi GPS tourne quoi qu'il arrive (jamais de course sans position). */
+const RIDE_PRESENCES = new Set<DriverPresence>(["en_route", "arrived", "on_trip"]);
 
 /** Fenêtre (s) en deçà de laquelle une offre est traitée comme urgente (sonnerie, compte à rebours). */
 export const URGENT_OFFER_S = 120;
@@ -151,10 +172,12 @@ const DriverContext = createContext<Ctx | null>(null);
 export function DriverProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [account, setAccount] = useState<DriverAccountState | null>(null);
   /** Utilisateur pour lequel l'état du compte a été déterminé (lu, ou lecture impossible). */
   const [accountFor, setAccountFor] = useState<string | null>(null);
   const [home, setHome] = useState<DriverHome | null>(null);
+  const [homeError, setHomeError] = useState(false);
   const [offers, setOffers] = useState<DriverOffer[]>([]);
   const [busy, setBusy] = useState(false);
   const [chat, setChat] = useState<DriverChatOverview | null>(null);
@@ -176,6 +199,10 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   /** Canal temps réel abonné : le sondage de repli ralentit */
   const liveRef = useRef(false);
   const onlinePending = useRef(false);
+  const offersReadAtRef = useRef(0);
+  /** Compte pour lequel l'appareil est enregistré (jeton push) dans ce processus ; enregistrement en cours. */
+  const pushReady = useRef<string | null>(null);
+  const pushRunning = useRef(false);
 
   const applyHome = useCallback((h: DriverHome | null) => {
     const json = h ? JSON.stringify(h) : "";
@@ -200,14 +227,35 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     setHome(next);
   }, []);
 
-  // Session
+  // Session. Jeton expiré sans réseau : supabase-js réessaie ~30 s avant de répondre « pas de session » (qu'il garde
+  // pour la rétablir au retour du réseau) → splash borné, puis « hors connexion » au lieu du formulaire de connexion.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    let alive = true;
+    let settled = false;
+    const timer = setTimeout(() => {
+      void hasStoredSession().then((stored) => {
+        if (!alive || settled) return;
+        if (stored) setRestoring(true);
+        setSessionReady(true);
+      });
+    }, SPLASH_MAX_MS);
+    supabase.auth.getSession().then(({ data, error }) => {
+      settled = true;
+      clearTimeout(timer);
+      if (!alive) return;
       setSession(data.session);
+      setRestoring(!data.session && isAuthRetryableFetchError(error));
       setSessionReady(true);
     });
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => data.subscription.unsubscribe();
+    const { data } = supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s);
+      if (s || event === "SIGNED_OUT") setRestoring(false);
+    });
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   // État du compte (actif, candidature, refus, bannissement…) — driver_account_state fonctionne même compte inactif
@@ -221,11 +269,19 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     return state ?? null;
   }, []);
 
+  // Changement de compte (connexion, déconnexion, session fermée par le serveur) : rien du compte précédent ne reste
+  // affiché (accueil, prochaine course, offres, messagerie) ; l'appareil sera enregistré pour le nouveau compte
   useEffect(() => {
     setAccount(null);
     setAccountFor(null);
+    applyHome(null);
+    applyOffers([]);
+    setChat(null);
+    setHomeError(false);
+    seenOffers.current.clear();
+    pushReady.current = null;
     if (userId) void checkAccount();
-  }, [userId, checkAccount]);
+  }, [userId, checkAccount, applyHome, applyOffers]);
 
   const accountChecked = userId != null && accountFor === userId;
   const ready = sessionReady && (!userId || accountChecked);
@@ -241,6 +297,24 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     applyOffers([]);
   }, [blockedAccount, applyHome, applyOffers]);
 
+  /**
+   * Enregistrement de l'appareil (jeton push) pour le compte connecté. Jeton Expo illisible hors réseau, serveur
+   * injoignable : nouvel essai au retour dans l'app (sinon aucune notification de toute la session).
+   */
+  const ensurePush = useCallback(async () => {
+    const uid = userIdRef.current;
+    if (!uid || pushReady.current === uid || pushRunning.current) return;
+    pushRunning.current = true;
+    try {
+      await registerForPush();
+      if (uid === userIdRef.current) pushReady.current = uid;
+    } catch {
+      /* réseau : nouvel essai au retour dans l'app */
+    } finally {
+      pushRunning.current = false;
+    }
+  }, []);
+
   // Candidat en attente : appareil enregistré dès maintenant (push « candidature acceptée », contrôle
   // serveur « appareil déjà utilisé par un chauffeur banni »), puis relecture de l'état du compte
   const pendingAccount = accountChecked && account?.state === "pending";
@@ -249,13 +323,20 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     (async () => {
       await setupNotificationChannels().catch(() => null);
-      await registerForPush().catch(() => null);
+      await ensurePush();
       if (!cancelled) void checkAccount();
     })();
     return () => {
       cancelled = true;
     };
-  }, [userId, pendingAccount, checkAccount]);
+  }, [userId, pendingAccount, checkAccount, ensurePush]);
+
+  // Enregistrement push en échec (réseau) : nouvel essai à chaque retour dans l'app
+  useEffect(() => {
+    if (!userId || !(canDrive || pendingAccount)) return;
+    const sub = AppState.addEventListener("change", (s) => s === "active" && void ensurePush());
+    return () => sub.remove();
+  }, [userId, canDrive, pendingAccount, ensurePush]);
 
   // Retour au premier plan : candidature validée, compte suspendu ou banni entre-temps
   useEffect(() => {
@@ -283,7 +364,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const fetchOnce = useCallback(async (): Promise<DriverHome | null> => {
-    if (!userIdRef.current) return null;
+    const uid = userIdRef.current;
+    if (!uid) return null;
     // Relevé des notifications lancé AVANT la lecture des offres (cf. dismissClosedOfferNotifications),
     // en parallèle des requêtes : il se termine bien avant elles
     const presentedP = presentedOfferNotifications();
@@ -296,6 +378,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       api.offers().catch(() => null),
     ]);
     const presented = await presentedP;
+    // Compte changé pendant la lecture (déconnexion, autre chauffeur) : réponses de l'ancien compte ignorées
+    if (uid !== userIdRef.current) return null;
     lastRefreshAt.current = Date.now();
     // Compte devenu inactif en cours d'usage (banni, suspendu, désactivé) : écran d'état du compte
     if (forbidden) {
@@ -303,7 +387,9 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
     if (h) applyHome(h);
+    setHomeError(!h && !homeRef.current);
     if (o) {
+      offersReadAtRef.current = Date.now();
       applyOffers(o);
       // Offre flotte à fenêtre courte : ouverte aussi, sauf en pleine course (la flotte entière la reçoit)
       const onRide = Boolean((h ?? homeRef.current)?.driver.current_ride_id);
@@ -337,9 +423,10 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
 
   // Messagerie : une lecture complète (30 derniers messages par fil + signalements actifs) par rafale d'événements
   const refreshChat = useCallback(async () => {
-    if (!userIdRef.current) return;
+    const uid = userIdRef.current;
+    if (!uid) return;
     const c = await api.chatOverview().catch(() => null);
-    if (c) setChat(c);
+    if (c && uid === userIdRef.current) setChat(c);
   }, []);
   const scheduleChat = useCallback(() => {
     if (chatTimer.current) return;
@@ -355,10 +442,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!canDrive) return;
     const sub = AppState.addEventListener("change", (s) => {
-      if (s !== "active" || (homeRef.current?.driver.presence ?? "offline") === "offline") return;
+      const presence = homeRef.current?.driver.presence ?? "offline";
+      if (s !== "active" || presence === "offline") return;
       void (async () => {
         const perm = await locationPermissionState();
-        if (perm === "ok") return void ensureTracking().catch(() => null);
+        if (perm === "ok") return void ensureTracking(RIDE_PRESENCES.has(presence)).catch(() => null);
         const res = await api.setOnline(false).catch(() => null);
         if (res && !res.ok) return; // en course : il reste en ligne jusqu'à la fin
         void stopTracking().catch(() => null);
@@ -370,18 +458,36 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, [canDrive, patchPresence, refresh]);
 
+  // Course en cours (en route, sur place, client à bord) : suivi GPS relancé même s'il a été arrêté plus tôt dans ce
+  // processus (passage hors ligne, puis course démarrée) — autorisation déjà accordée seulement, rien n'est demandé ici
+  const ridePresence = canDrive && home != null && RIDE_PRESENCES.has(home.driver.presence);
+  useEffect(() => {
+    if (!ridePresence) return;
+    void locationPermissionState()
+      .then((perm) => (perm === "ok" ? ensureTracking(true) : undefined))
+      .catch(() => null);
+  }, [ridePresence]);
+
   // Initialisation après connexion (compte actif) : données d'abord, push en parallèle, puis temps réel.
   // Dépend de l'utilisateur et non de l'objet session : le renouvellement du jeton (≈ toutes les heures)
   // ne relance ni l'enregistrement push, ni les canaux, ni le suivi GPS.
   useEffect(() => {
     if (!userId || !canDrive) return;
     let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | null = null;
     void setupNotificationChannels()
       .catch(() => null)
-      .then(() => registerForPush())
-      .catch(() => null);
+      .then(() => ensurePush());
     (async () => {
-      const h = await refresh();
+      let h = await refresh();
+      // Accueil illisible (réseau, serveur) : nouveaux essais espacés — sans lui, ni temps réel, ni reprise du suivi GPS
+      for (let i = 0; !h && !cancelled; i++) {
+        await new Promise<void>((resolve) => {
+          retry = setTimeout(resolve, INIT_RETRY_MS[Math.min(i, INIT_RETRY_MS.length - 1)]);
+        });
+        if (cancelled) return;
+        h = await refresh();
+      }
       if (cancelled || !h) return;
       if (h.driver.presence !== "offline") {
         // Déjà en ligne au redémarrage : la position exacte a pu être retirée entre-temps dans les réglages
@@ -442,13 +548,14 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     })();
     return () => {
       cancelled = true;
+      if (retry) clearTimeout(retry);
       liveRef.current = false;
       if (channelRef.current) void supabase.removeChannel(channelRef.current);
       if (fleetChannelRef.current) void supabase.removeChannel(fleetChannelRef.current);
       channelRef.current = null;
       fleetChannelRef.current = null;
     };
-  }, [userId, canDrive, refresh, refreshChat, scheduleChat, patchPresence]);
+  }, [userId, canDrive, refresh, refreshChat, scheduleChat, patchPresence, ensurePush]);
 
   // Messagerie : repli périodique (le temps réel peut manquer un message) et relecture au retour au premier plan
   useEffect(() => {
@@ -470,11 +577,12 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   }, [userId, canDrive, refreshChat]);
 
   // Repli : relecture périodique quand l'app est active et le chauffeur en ligne — toutes les 8 s si le temps
-  // réel est coupé, toutes les 30 s s'il fonctionne (il signale déjà offres, courses et présence)
+  // réel est coupé, toutes les 30 s s'il fonctionne (il signale déjà offres, courses et présence). Accueil jamais lu
+  // (réseau au lancement) : relu lui aussi, toutes les 8 s
   useEffect(() => {
     if (!userId || !canDrive) return;
     const id = setInterval(() => {
-      if (AppState.currentState !== "active" || (homeRef.current?.driver.presence ?? "offline") === "offline") return;
+      if (AppState.currentState !== "active" || homeRef.current?.driver.presence === "offline") return;
       if (Date.now() - lastRefreshAt.current >= (liveRef.current ? 30_000 : 8000)) void refresh();
     }, 8000);
     const sub = AppState.addEventListener("change", (s) => s === "active" && void refresh());
@@ -559,7 +667,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       await refresh();
       if (!res) router.push({ pathname: "/offer/[id]", params: { id: offerId } }); // réseau : réessai depuis l'offre
       else if (!res.ok && res.code === "DRIVER_BLOCKED") alertDriverBlocked(res);
-      else if (!res.ok) Alert.alert(res.code === "OFFER_EXPIRED" ? "Offre expirée" : "Course indisponible", res.message ?? "Course déjà attribuée.");
+      else if (!res.ok) Alert.alert(res.code === "OFFER_EXPIRED" ? "Offre expirée" : "Course indisponible", frTypo(refusalText(res)));
       else if (data.ride_type === "instant" && res.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(res.ride_id) } });
       else {
         // Course planifiée (offre flotte ou GPS à l'approche) : direction le planning
@@ -687,22 +795,50 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     }
   }, [refresh, checkAccount, patchPresence]);
 
+  /**
+   * Déconnexion : hors ligne, suivi arrêté, appareil retiré du compte (plus de notifications), puis session effacée
+   * de CET appareil, même hors réseau avec un jeton expiré. Les données du compte sont vidées au SIGNED_OUT (effet
+   * [userId]) ; l'état du compte n'est pas remis à zéro tant que la session existe (sinon écran de connexion figé).
+   */
   const signOut = useCallback(async () => {
     await api.setOnline(false).catch(() => null);
     await stopTracking().catch(() => null);
-    await unregisterPush();
-    await supabase.auth.signOut();
+    const pushRemoved = await unregisterPush();
+    if (!(await signOutThisDevice())) {
+      Alert.alert("Déconnexion impossible", "Réessayez dans un instant.");
+      return;
+    }
     applyHome(null);
     applyOffers([]);
     setChat(null);
-    setAccount(null);
-    setAccountFor(null);
     seenOffers.current.clear();
+    if (!pushRemoved) {
+      // Sans réseau, le serveur garde le jeton push de ce téléphone (messages de la centrale, offres planifiées)
+      Alert.alert(
+        "Notifications encore actives",
+        frTypo(
+          "Sans réseau, ce téléphone n'a pas pu être retiré de votre compte : il peut encore recevoir vos notifications. Pour les arrêter, désactivez les notifications de Rydar Drive dans les réglages.",
+        ),
+        [
+          { text: "OK", style: "cancel" },
+          { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
+        ],
+      );
+    }
   }, [applyHome, applyOffers]);
 
+  const offersReadAt = useCallback(() => offersReadAtRef.current, []);
+  const forgetOffer = useCallback((offerId: string) => void seenOffers.current.delete(offerId), []);
+
   const value = useMemo(
-    () => ({ session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat, account, canDrive, checkAccount }),
-    [session, ready, home, offers, refresh, setOnline, signOut, busy, chat, refreshChat, account, canDrive, checkAccount],
+    () => ({
+      session, ready, restoring, home, homeError, offers, offersReadAt, forgetOffer, refresh, setOnline, signOut, busy, chat, refreshChat,
+      account, canDrive, checkAccount,
+    }),
+    [
+      session, ready, restoring, home, homeError, offers, offersReadAt, forgetOffer, refresh, setOnline, signOut, busy, chat, refreshChat,
+      account, canDrive, checkAccount,
+    ],
   );
   return <DriverContext.Provider value={value}>{children}</DriverContext.Provider>;
 }
