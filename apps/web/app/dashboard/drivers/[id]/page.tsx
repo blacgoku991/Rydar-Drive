@@ -132,7 +132,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
 
   return (
     <>
-      <LiveRefresh events={["driver.updated"]} pollMs={15000} />
+      <LiveRefresh driverId={d.id} events={["driver.updated"]} pollMs={15000} />
       <div className="border-b border-line">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
           <div>

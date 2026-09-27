@@ -1,5 +1,4 @@
 "use client";
-import type { DriverDocumentEvent } from "@rydar/shared";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
@@ -11,6 +10,7 @@ import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, type CentraleCounts } from 
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { signOut } from "@/app/login/actions";
 import { switchOrganization } from "@/app/dashboard/actions";
+import { countPendingDocuments } from "@/lib/queries/pending-documents";
 import { getBrowserClient } from "@/lib/supabase/client";
 
 type ShellProps = {
@@ -80,13 +80,21 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
   const { unread, openReports } = useChatUnread();
   const isCentrale = centrale.model === "centrale";
   const counts = useCentraleCounts(org.id, isCentrale, centraleCounts);
-  // Documents à valider : valeur serveur, ajustée en temps réel (dépôt / validation / refus)
+  // Documents à valider : valeur serveur, relue après chaque dépôt / validation / refus (un incrément local compterait
+  // aussi les pièces des candidats, que la page Chauffeurs n'affiche pas) et quand une candidature est traitée
   const [pendingDocuments, setPendingDocuments] = useState(pendingInitial ?? 0);
   useEffect(() => setPendingDocuments(pendingInitial ?? 0), [pendingInitial]);
-  useRealtimeEvent("driver.document", (e: DriverDocumentEvent) => {
-    if (e?.action === "submitted") setPendingDocuments((n) => Math.max(0, n + 1 - (e.replaced_ids?.length ?? 0)));
-    else if (e?.action === "validated" || e?.action === "rejected") setPendingDocuments((n) => Math.max(0, n - 1));
-  });
+  const docsTimer = useRef<number | null>(null);
+  const reloadPendingDocuments = () => {
+    if (docsTimer.current) window.clearTimeout(docsTimer.current);
+    docsTimer.current = window.setTimeout(() => {
+      countPendingDocuments(getBrowserClient(), org.id)
+        .then((n) => n !== null && setPendingDocuments(n))
+        .catch(() => undefined);
+    }, 600);
+  };
+  useRealtimeEvent("driver.document", reloadPendingDocuments);
+  useRealtimeEvent("driver.application", reloadPendingDocuments);
   const toSettle = counts.declared + counts.overdue;
   const settlementsLabel = [
     counts.declared ? plural(counts.declared, "paiement à confirmer", "paiements à confirmer") : null,

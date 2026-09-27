@@ -45,15 +45,23 @@ const byId = <T extends { id: string }>(list: T[]) => Object.fromEntries(list.ma
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case "snapshot":
+    case "snapshot": {
+      // Une course reçue en temps réel pendant la requête est plus récente que l'instantané : on la garde
+      const rides = byId(action.snapshot.rides);
+      for (const [id, ride] of Object.entries(rides)) {
+        const cur = state.rides[id];
+        if (cur && Date.parse(cur.updated_at) > Date.parse(ride.updated_at)) rides[id] = cur;
+      }
       return {
         drivers: byId(action.snapshot.drivers),
-        rides: byId(action.snapshot.rides),
+        rides,
         offers: byId(action.snapshot.offers),
         alerts: byId(action.snapshot.alerts ?? []),
         reports: byId(action.snapshot.reports ?? []),
-        kpis: action.snapshot.kpis,
+        // Indicateurs indisponibles (lecture en échec) : on garde les derniers connus
+        kpis: action.snapshot.kpis ?? state.kpis,
       };
+    }
     case "kpis":
       return { ...state, kpis: action.kpis };
     case "location": {
@@ -223,18 +231,27 @@ export function CommandCenter({
   const now = useNow(1000) ?? Date.parse(initial.serverTime);
   const realtime = useRealtimeStatus();
 
+  // Échec (réseau, 503 si une lecture a échoué côté serveur) : l'état courant est conservé jusqu'au prochain essai
   const refresh = useCallback(async () => {
-    const res = await fetch("/api/dashboard/live", { cache: "no-store" });
-    if (res.ok) dispatch({ type: "snapshot", snapshot: (await res.json()) as LiveSnapshot });
+    try {
+      const res = await fetch("/api/dashboard/live", { cache: "no-store" });
+      if (res.ok) dispatch({ type: "snapshot", snapshot: (await res.json()) as LiveSnapshot });
+    } catch {
+      /* réseau indisponible : prochain sondage */
+    }
   }, []);
   const kpiTimer = useRef<number | null>(null);
   const refreshKpis = useCallback(() => {
     if (kpiTimer.current) window.clearTimeout(kpiTimer.current);
     kpiTimer.current = window.setTimeout(async () => {
-      const res = await fetch("/api/dashboard/live?kpis=1", { cache: "no-store" });
-      if (res.ok) {
-        const json = (await res.json()) as { kpis: OrgKpis };
-        if (json.kpis) dispatch({ type: "kpis", kpis: json.kpis });
+      try {
+        const res = await fetch("/api/dashboard/live?kpis=1", { cache: "no-store" });
+        if (res.ok) {
+          const json = (await res.json()) as { kpis: OrgKpis };
+          if (json.kpis) dispatch({ type: "kpis", kpis: json.kpis });
+        }
+      } catch {
+        /* réseau indisponible : prochaine mise à jour */
       }
     }, 1200);
   }, []);

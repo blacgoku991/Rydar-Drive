@@ -4,6 +4,7 @@ import Link from "next/link";
 import { StatsView } from "@/components/charts/stats-view";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { requireOrg } from "@/lib/auth";
+import { statsPeriodStart } from "@/lib/stats-period";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Statistiques" };
@@ -21,10 +22,8 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
   const { range } = await searchParams;
   const preset = PRESETS.find((p) => p.key === range) ?? PRESETS[1];
   const to = new Date();
-  const from =
-    preset.key === "mtd"
-      ? new Date(to.getFullYear(), to.getMonth(), 1)
-      : new Date(new Date(to.toDateString()).getTime() - (preset.days - 1) * 86_400_000);
+  // Bornes à minuit dans le fuseau de la centrale (le serveur tourne en UTC)
+  const from = statsPeriodStart(to, preset.key === "mtd" ? "mtd" : preset.days, ctx.org.timezone || "Europe/Paris");
   const { data: stats, error } = await ctx.supabase.rpc("org_stats", {
     p_org: ctx.org.id,
     p_from: from.toISOString(),

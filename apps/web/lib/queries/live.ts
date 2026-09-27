@@ -127,7 +127,52 @@ export async function getKpis(supabase: SupabaseClient, orgId: string): Promise<
   return (data as OrgKpis) ?? null;
 }
 
-/** Instantané pour le command center (RLS appliquée via la session utilisateur). */
+type Read<T> = { data: T | null; error: { message: string } | null };
+
+/**
+ * Lecture en échec (délai dépassé, 5xx, coupure : supabase-js renvoie { data: null, error }) → exception. Un instantané
+ * partiel vide REMPLACERAIT l'état du command center (liste et carte vidées) : l'appelant garde l'état courant.
+ */
+function must<T>(res: Read<T>, what: string): T | null {
+  if (res.error) throw new Error(`Instantané en direct : lecture « ${what} » impossible (${res.error.message}).`);
+  return res.data;
+}
+
+/** Taille de page = max_rows par défaut de PostgREST / Supabase (supabase/config.toml) : au-delà, troncature silencieuse. */
+const PAGE = 1000;
+
+/**
+ * Offres en attente des courses en recherche, SANS troncature : une course proposée à toute la flotte (mode « fleet »)
+ * porte une offre par chauffeur (150 chauffeurs × 7 planifiées > 1 000). Paquets de 100 courses (filtre `in` dans
+ * l'URL), pages de 1 000 dans un ordre stable.
+ */
+async function pendingOffers(supabase: SupabaseClient, rideIds: string[]): Promise<LiveOffer[]> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < rideIds.length; i += 100) chunks.push(rideIds.slice(i, i + 100));
+  const lists = await Promise.all(
+    chunks.map(async (ids) => {
+      const out: LiveOffer[] = [];
+      for (let from = 0; from < 50 * PAGE; from += PAGE) {
+        const rows = (must(
+          await supabase
+            .from("ride_offers")
+            .select("id, ride_id, driver_id, status, mode, wave, distance_m, expires_at")
+            .in("ride_id", ids)
+            .eq("status", "pending")
+            .order("id")
+            .range(from, from + PAGE - 1),
+          "offres",
+        ) ?? []) as LiveOffer[];
+        out.push(...rows);
+        if (rows.length < PAGE) break;
+      }
+      return out;
+    }),
+  );
+  return lists.flat();
+}
+
+/** Instantané pour le command center (RLS appliquée via la session utilisateur). Lève si une lecture échoue. */
 export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): Promise<LiveSnapshot> {
   const recent = new Date(Date.now() - 30 * 60_000).toISOString();
   const horizon = new Date(Date.now() + 7 * 86_400_000).toISOString();
@@ -175,26 +220,20 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
       .limit(200),
   ]);
 
-  const rideRows = [...((active.data ?? []) as LiveRide[]), ...((finished.data ?? []) as LiveRide[])];
+  const rideRows = [...((must(active, "courses actives") ?? []) as LiveRide[]), ...((must(finished, "courses terminées") ?? []) as LiveRide[])];
   const openIds = rideRows.filter((r) => ["SEARCHING_DRIVER", "OFFERED"].includes(r.status)).map((r) => r.id);
-  const offers = openIds.length
-    ? await supabase
-        .from("ride_offers")
-        .select("id, ride_id, driver_id, status, mode, wave, distance_m, expires_at")
-        .in("ride_id", openIds)
-        .eq("status", "pending")
-    : { data: [] };
+  const offers = openIds.length ? await pendingOffers(supabase, openIds) : [];
 
   return {
-    drivers: ((drivers.data ?? []) as any[]).map((d) => ({
+    drivers: ((must(drivers, "chauffeurs") ?? []) as any[]).map((d) => ({
       ...d,
       vehicle: Array.isArray(d.vehicle) ? (d.vehicle[0] ?? null) : d.vehicle,
       location: Array.isArray(d.location) ? (d.location[0] ?? null) : d.location,
     })) as LiveDriver[],
     rides: rideRows,
-    offers: (offers.data ?? []) as LiveOffer[],
-    alerts: (alerts.data ?? []) as LiveAlert[],
-    reports: ((reports.data ?? []) as LiveReport[]).filter((r) => r.lat != null && r.lng != null),
+    offers,
+    alerts: (must(alerts, "alertes") ?? []) as LiveAlert[],
+    reports: ((must(reports, "signalements") ?? []) as LiveReport[]).filter((r) => r.lat != null && r.lng != null),
     kpis,
     serverTime: new Date().toISOString(),
   };
