@@ -35,8 +35,28 @@ let starting: Promise<void> | null = null;
 /** Démarrage redemandé pendant qu'un autre était en cours (autorisation accordée entre-temps) */
 let restartWanted = false;
 
+// --- Chien de garde du flux GPS ------------------------------------------------------------------------
+// iOS met en PAUSE le suivi d'un téléphone immobile (pausesLocationUpdatesAutomatically, activé par défaut et non
+// réglable pour ce flux dans expo-location) et ne le reprend jamais seul ; une erreur (autorisation retirée…) clôt
+// aussi le flux. Sans relance, le point restait figé là où le téléphone s'était arrêté (la rue où la voiture est
+// garée), même une fois rentré. Le flux est donc relancé au retour dans l'app et quand il ne livre plus rien.
+/** Horloge du téléphone (ms) au dernier point reçu du système, avant tri */
+let lastFixAt = 0;
+/** Flux clos par une erreur (plus aucun point) : à relancer */
+let watchBroken = false;
+let watchdog: ReturnType<typeof setInterval> | null = null;
+/** Passage en arrière-plan depuis la dernière relance (un simple état « inactif » ne relance rien) */
+let wentBackground = false;
+/** Premier plan sans aucun point depuis ce délai : flux relancé (sans filtre de distance, iOS livre ~1 point/s). */
+export const WATCH_STALL_MS = 30_000;
+const WATCHDOG_TICK_MS = 10_000;
+/** Dernier point reçu et retenu (publié ou non) : repère des points en cache et des points aberrants qui suivent */
+let lastFix: { accuracy: number | null; at: number } | null = null;
+
 /** Au-delà de cette vitesse (m/s), le cap GPS est fiable ; en dessous : boussole, sinon dernier cap. */
 const HEADING_MIN_SPEED = 1.5;
+/** Précision (m) à partir de laquelle une dégradation sur place est publiée (cercle de précision agrandi). */
+const WORSE_MIN_ACCURACY = 25;
 
 // --- Boussole (iOS / Android) : sens du véhicule à l'arrêt ------------------------------------------
 // Même cycle de vie que le GPS (abonnée tant qu'un écran affiche la position, coupée en arrière-plan).
@@ -110,10 +130,16 @@ function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: n
 function accept(l: Location.LocationObject) {
   const c = l.coords;
   const accuracy = c.accuracy != null && c.accuracy > 0 ? c.accuracy : null;
+  const at = l.timestamp || Date.now();
   const point = { lat: c.latitude, lng: c.longitude };
   const prev = current;
-  // Point nettement moins précis juste après un bon point (Wi-Fi / antenne en ville) : ignoré
-  if (prev && accuracy != null && prev.accuracy != null && accuracy > Math.max(50, prev.accuracy * 2) && l.timestamp - prev.at < 15_000) return;
+  // Point en cache (daté) plus ancien que le dernier reçu, livré à la relance du flux : ignoré. Un point frais passe
+  // toujours, même si l'heure du téléphone a reculé.
+  const since = lastFix ? at - lastFix.at : Infinity;
+  if (since < 0 && Date.now() - at > 5_000) return;
+  // Point nettement moins précis juste après un point précis REÇU (Wi-Fi / antenne en ville) : ignoré
+  if (lastFix && accuracy != null && lastFix.accuracy != null && accuracy > Math.max(50, lastFix.accuracy * 2) && since >= 0 && since < 15_000) return;
+  lastFix = { accuracy, at };
   const moving = c.speed != null && c.speed >= HEADING_MIN_SPEED;
   const course = moving && c.heading != null && c.heading >= 0 ? c.heading : null;
   if (course != null) {
@@ -131,14 +157,17 @@ function accept(l: Location.LocationObject) {
     heading = compass;
     headingSource = "compass";
   }
-  // Rendu limité : déplacement ≥ 3 m, précision nettement meilleure, ou cap qui tourne
+  // Rendu limité : déplacement ≥ 3 m, précision nettement meilleure ou dégradée, ou cap qui tourne
   if (prev) {
     const moved = metersBetween(prev, point);
     const better = accuracy != null && prev.accuracy != null && accuracy < prev.accuracy * 0.7;
+    // Précision dégradée sur place (entrée dans un bâtiment : Wi-Fi au lieu du GPS) : le cercle de précision
+    // s'agrandit, au lieu d'un point qui paraît exact
+    const worse = accuracy != null && accuracy >= WORSE_MIN_ACCURACY && (prev.accuracy == null || accuracy > prev.accuracy * 1.5);
     const turned = heading != null && (prev.heading == null || angleDelta(heading, prev.heading) >= 10);
-    if (moved < 3 && !better && !turned) return;
+    if (moved < 3 && !better && !worse && !turned) return;
   }
-  publish({ ...point, heading, headingSource, speed: c.speed != null && c.speed >= 0 ? c.speed : null, accuracy, at: l.timestamp || Date.now() });
+  publish({ ...point, heading, headingSource, speed: c.speed != null && c.speed >= 0 ? c.speed : null, accuracy, at });
 }
 
 /** Publie le dernier cap boussole à part (au plus 4 fois par seconde, écart de 5° au moins, jamais pendant la marche). */
@@ -202,14 +231,39 @@ async function start() {
   const cached = await Location.getLastKnownPositionAsync({ maxAge: 60_000, requiredAccuracy: 100 }).catch(() => null);
   if (cached && !current) accept(cached);
   if (users === 0) return;
+  // Délai de grâce du chien de garde : le premier point arrive d'ordinaire en moins d'une seconde
+  lastFixAt = Date.now();
+  watchBroken = false;
   sub = await Location.watchPositionAsync(
-    { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 3, timeInterval: 1000 },
-    accept,
+    // Sans filtre de distance : le téléphone immobile reçoit aussi ses points (précision qui se dégrade à l'intérieur,
+    // flux vivant pour le chien de garde) ; accept() limite les rendus
+    { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 0, timeInterval: 1000 },
+    (l) => {
+      lastFixAt = Date.now();
+      accept(l);
+    },
+    () => {
+      // Flux clos par une erreur (autorisation retirée, services de localisation coupés…) : relancé par le chien de garde
+      watchBroken = true;
+    },
   ).catch(() => null);
   if (users === 0) {
     sub?.remove();
     sub = null;
   }
+}
+
+/** Nouveau flux GPS : fin d'une pause iOS ou d'un flux clos, premier point livré aussitôt (le point affiché reste). */
+function restartWatch() {
+  sub?.remove();
+  sub = null;
+  launch();
+}
+
+/** Chien de garde (premier plan seulement : iOS refuse de démarrer un flux « pendant l'utilisation » en arrière-plan). */
+function checkWatch() {
+  if (users === 0 || !sub || starting || AppState.currentState !== "active") return;
+  if (watchBroken || Date.now() - lastFixAt > WATCH_STALL_MS) restartWatch();
 }
 
 /** Démarre le suivi s'il est attendu et arrêté (un seul démarrage à la fois ; relancé s'il a été redemandé). */
@@ -233,17 +287,23 @@ onLocationPermissionGranted(launch);
 
 function acquire() {
   users += 1;
-  // Boussole coupée en arrière-plan (batterie), reprise au retour dans l'application. Au retour, le suivi
-  // repart aussi s'il attendait l'autorisation (accordée entre-temps dans les réglages du téléphone).
+  // Boussole coupée en arrière-plan (batterie), reprise au retour dans l'application. Au retour, le flux GPS est
+  // relancé (pause iOS pendant l'arrière-plan) ; il démarre aussi s'il attendait l'autorisation (accordée entre-temps
+  // dans les réglages du téléphone).
   if (Platform.OS !== "web" && !appStateSub) {
     appStateSub = AppState.addEventListener("change", (state) => {
-      if (state === "background") stopCompass();
-      else if (state === "active" && users > 0) {
-        if (sub) void startCompass();
-        else launch();
+      if (state === "background") {
+        wentBackground = true;
+        stopCompass();
+      } else if (state === "active" && users > 0) {
+        if (wentBackground || !sub) {
+          wentBackground = false;
+          restartWatch();
+        } else void startCompass();
       }
     });
   }
+  if (Platform.OS !== "web" && !watchdog) watchdog = setInterval(checkWatch, WATCHDOG_TICK_MS);
   if (sub) void startCompass();
   else launch();
 }
@@ -254,6 +314,8 @@ function release() {
     sub?.remove();
     sub = null;
     stopCompass();
+    if (watchdog) clearInterval(watchdog);
+    watchdog = null;
   }
 }
 

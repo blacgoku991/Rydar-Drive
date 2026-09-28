@@ -44,8 +44,10 @@ la centrale doit les frais plateforme à Rydar.
   `app/dashboard/settlements/rydar/export/route.ts`).
 - WhatsApp : API officielle Cloud de Meta + modèles approuvés (`WHATSAPP_TEMPLATES`) seulement, jamais d'outil non officiel.
 - App chauffeur : position UNIQUEMENT via `requestLocationPermissions()` (information préalable) ; jamais « Toujours »,
-  ACCESS_BACKGROUND_LOCATION ni exemption batterie ; iOS UIBackgroundModes = location. RPC via `rpc()` de `src/lib/api.ts`
-  (réessai JWT expiré) ; effets liés à `userId`, pas à l'objet session. Nouvelle `Stack` → `fullScreenGestureEnabled: false` ;
+  ACCESS_BACKGROUND_LOCATION ni exemption batterie ; iOS UIBackgroundModes = location. `watchPositionAsync` iOS = pause
+  automatique (non réglable) : un flux de premier plan doit être relancé (retour dans l'app, chien de garde :
+  `use-my-position`). RPC via `rpc()` de `src/lib/api.ts` (réessai JWT expiré) ; effets liés à `userId`, pas à l'objet
+  session. Nouvelle `Stack` → `fullScreenGestureEnabled: false` ;
   écran à glissière → `gestureEnabled: false` (iOS 26 : glisser à droite = retour).
 - EAS Update : runtimeVersion = version → tout changement natif (module, permission, plugin, icône) = nouvelle version + build
   stores, jamais `eas update` seul.

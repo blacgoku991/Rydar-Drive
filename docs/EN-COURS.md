@@ -24,10 +24,16 @@ visite médicale, 005300 jetons d'activation, 005400 contre-audit SQL, 005500 de
   toucher la poignée → résumé d'une ligne (état + action principale) et carte dégagée ; rouvert par glissé vers le haut,
   appui, ou automatiquement à l'arrivée d'une course. JS seul → mise à jour EAS (docs/STORES.md § 10). Vérifié au
   toucher (rendu web) : hors ligne, en ligne, course en cours ; à confirmer sur un vrai téléphone (Android surtout).
+- App chauffeur : point de position figé sur la carte (ex. dans la rue où la voiture est garée, une fois rentré). Le
+  flux de la carte (`use-my-position`) gardait la pause automatique iOS (réglage par défaut, non modifiable dans
+  expo-location pour ce flux) et n'était jamais relancé. Relancé désormais au retour dans l'app, après 30 s sans point
+  ou une erreur ; sans filtre de distance, la précision dégradée à l'intérieur agrandit le cercle ; vieux points en
+  cache ignorés. Test : `use-my-position.test.ts`. Le suivi envoyé à la centrale (tâche, jamais en pause) n'était pas
+  touché. JS seul → mise à jour EAS.
 
 ## À faire par l'utilisateur
-- Publier la mise à jour de l'app (panneau réductible) : depuis `apps/driver`,
-  `eas update --channel production --environment production --message "Panneau de l'accueil réductible"`.
+- Publier la mise à jour de l'app (panneau réductible, point de position figé) : depuis `apps/driver`,
+  `eas update --channel production --environment production --message "Panneau réductible, position à jour"`.
 - Mettre à jour le VPS : `cd /opt/rydar && bash deploy/update-production.sh` (migrations 003600 à 005600). Si la
   connexion à la base refuse le certificat (`verify-full`), relancer `sudo bash deploy/configure.sh` et accepter le repli
   proposé.
