@@ -56,15 +56,30 @@ la centrale doit les frais plateforme à Rydar.
 - Shell : jamais `pkill -f <motif>` si le motif est dans la commande (tue le shell). Sandbox : tuiles/géocodage/routage externes
   bloqués → `scripts/dev-geo/`.
 
+## Sécurité (audit 09/2026, `docs/AUDIT.md` — ne pas réintroduire)
+- `organizations` : lecture client par GRANT PAR COLONNE (004300) → une nouvelle colonne lue côté client doit y être ajoutée
+  (sinon `select('*')` échoue) ; `drivers.status/trust_level/suspended_reason` réservés owner/admin (trigger).
+- Compte EXISTANT nommé gérant (équipe, création de centrale, accès, create-admin.sh) : jamais rattaché directement → adhésion
+  `invited` + lien e-mail (`accept_member_invitations`) ; recherche d'e-mail par ÉGALITÉ (jamais `ilike`) ; contrôles d'adhésion
+  avec `private.jwt_issued_after` (jeton émis avant l'activation refusé).
+- Compte partagé (fiche chauffeur + gestion ou super admin, `svc_login_account_shared`) : la centrale du chauffeur ne touche jamais
+  au compte Auth (mot de passe, ban, sessions) ; suspendre une centrale ne bannit personne au niveau Auth.
+- Web : action serveur dans `startTransition`/onClick → `runAction` (`lib/run-action.ts`) ; heure saisie = fuseau de la centrale
+  (`components/booking/zoned-time.ts`) ; `next` de redirection via `lib/safe-next.ts` ; Host du proxy validé (`lib/hostname.ts`).
+- Worker et scripts : base en `verify-full` (`deploy/supabase-ca.crt`), repli `DATABASE_SSLMODE=no-verify` ; aucun secret en argv.
+
 ## Métier (l'essentiel)
 - Dispatch (PL/pgSQL) : instantané = vagues STRICTES (défaut 4→8→12→16 km `dispatch_radii_m`, une par délai
   `offer_timeout_seconds`), relance (défaut 4→8 km `dispatch_retry_radii_m`), puis
   NO_DRIVER_FOUND + explication ; position fraîche seulement ; planifiée = offre à toute la flotte puis géo à T-lead.
-  Accept atomique (`accept_ride_offer`, FOR UPDATE + index unique) → « Course déjà attribuée. »
+  Accept atomique (`accept_ride_offer`, verrou course + chauffeur, index unique) → « Course déjà attribuée. » ; course attribuée
+  pendant une autre = enchaînée à la fin (`private.release_driver_ride`).
 - Présence : app ouverte (même arrière-plan / verrouillé) = en ligne + GPS en direct ; app fermée → hors ligne après 3 min (15 si app < 1.1.0) sans
   position ni `driver_heartbeat` (`private.watch_driver_gps`, jamais en course), sans notification.
 - Centrale : `ride_settlements` (due→declared→paid|disputed|waived) ; moyens chauffeur = lien | virement (RIB) | espèces | autre,
   proposés seulement s'ils sont renseignés ; relances app / WhatsApp / les deux (`reminder_channels`), WhatsApp impossible → app.
+  Après « Pas reçu » (`disputed_at`), une redéclaration ne débloque plus ; un « déclaré » compte dans le plafond après 72 h.
+  Dette ouverte + suppression de compte → empreintes gardées (`private.debtor_identities`) : candidature jamais auto-validée.
 - Frais plateforme : dus dès la fin de course (même si le règlement chauffeur est annulé/contesté), registre immuable
   `platform_fee_entries` (changement = correction delta ; BAISSE `pending` jusqu'à validation super admin), paiements FIFO.
 - Temps réel : `realtime.send` topics `org:{id}` (lu par TOUT membre, dispatcher compris : rien qu'un dispatcher ne lirait pas via
@@ -74,6 +89,8 @@ la centrale doit les frais plateforme à Rydar.
 - Suppression de compte chauffeur : `svc_delete_driver_account` (mig 004000) + file `private.account_deletions` (worker 5 min,
   besoin de SUPABASE_URL/SERVICE_ROLE_KEY) ; fiche supprimée figée (DRIVER_DELETED) ; outil /admin/suppressions.
 - Messagerie flotte modérée (004100) ; registre des frais `on delete restrict` (004200) : une centrale avec frais s'archive.
+- Bannissement plateforme : les fiches d'AUTRES centrales partageant une identité ne sont bannies que si le super admin les coche
+  (`admin_fraud_report_matches`) ; justificatif « Visite médicale » plus déposable (aucune donnée de santé collectée).
 
 ## Design
 Sombre « radar », accent lime. Jamais de hex en dur : jetons `apps/web/app/globals.css` (@theme `--color-ink-*`, `fg`, `fg-muted`,
@@ -85,7 +102,8 @@ espace insécable avant ? : ; ! (`frTypo`).
 
 ## Commandes
 - PG local : `pg_ctlcluster 16 main start` ; Redis `redis-server --daemonize yes`.
-- Tests : `pnpm test` (unitaires) ; `pnpm test:db` (base `rydar_test`) — en parallèle d'un autre run : `TEST_DATABASE_NAME=autre_nom`.
+- Tests : `pnpm test` (unitaires, dont app chauffeur `apps/driver/src/**`) ; `pnpm test:db` (base `rydar_test`) — en parallèle
+  d'un autre run : `TEST_DATABASE_NAME=autre_nom` ; un code d'erreur SQL levé sans libellé ERROR_MESSAGES fait échouer `pnpm test`.
 - Typecheck : `pnpm typecheck` ; CI : typecheck, test, builds web/worker, test:db, migrations + seed sur base neuve (nombre de
   chauffeurs/orgs du seed vérifié dans ci.yml), images Docker.
 - Web : `pnpm dev` (le predev copie le worker MapLibre dans `public/vendor/`, non versionné : `npx next dev` seul = carte cassée) ;
