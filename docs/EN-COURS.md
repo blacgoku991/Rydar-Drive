@@ -47,12 +47,20 @@ la file si le serveur mail est injoignable, relance à son retour).
   serveur mail (joignable ou motif, conseil Postfix), les derniers e-mails de tout type (dont tests) et « Relancer
   maintenant ». Vérifié : 489 tests unitaires, 439 tests DB, build, bout en bout (mailer sans SMTP → pause visible,
   SMTP démarré → file vidée en 53 s, relance, service arrêté, mobile).
-- Le VPS a des commits LOCAUX absents de GitHub (commit déployé `7bae746` = 8110574 + modifications locales :
-  Supabase auto-hébergé sur `api.rydardrive.com`, base locale `DATABASE_SSLMODE=disable`, donc au moins
-  `configure.sh`, `pg-url.sh`/`migrate.sh` et `apps/worker/src/config.ts`). `update-production.sh` les rebase à chaque
-  mise à jour : un conflit bloquerait la mise à jour (retour à l'état précédent). À intégrer sur GitHub dès que le
-  Claude du VPS en a donné le résumé ; d'ici là, éviter de modifier ces fichiers (et `deploy/*`). À reprendre ensuite :
-  `deploy/CLAUDE-VPS.md` (Supabase auto-hébergé ; étape 5 : les e-mails attendent désormais sans limite de durée).
+- VPS (compte rendu du 28/09, Supabase auto-hébergé `api.rydardrive.com`, IP 146.59.153.211) : Postfix en écoute
+  locale seulement, port 25 sortant ouvert chez OVH, OpenDKIM (sélecteur `rydar`, 2048 bits), seuls 22/80/443 ouverts,
+  secrets de Supabase remplacés, sauvegarde nuit (base + fichiers, 14 jours, sur le VPS seulement). Reste : DNS chez OVH
+  (SPF `v=spf1 ip4:146.59.153.211 include:mx.ovh.com ~all`, TXT `rydar._domainkey`, `_dmarc` p=none, reverse
+  `rydardrive.com`), e-mail qui reçoit les demandes (`contact@rydardrive.com` proposé), modèles Supabase Auth en
+  français avec code à 8 chiffres (défaut : anglais, lien sans code → « Mot de passe oublié » de l'app inutilisable),
+  copie des sauvegardes hors du VPS, `/admin/legal`, centrale « Démo App Review ».
+- Commits LOCAUX du VPS absents de GitHub (rebasés par `update-production.sh` à chaque mise à jour ; un conflit
+  bloquerait la mise à jour) : `7bae746` `DATABASE_SSLMODE=disable` accepté pour une base Supabase LOCALE seulement
+  (refusé pour une base distante) — `apps/worker/src/config.ts`, `config.test.ts`, `deploy/pg-url.sh`,
+  `deploy/configure.sh`, `deploy/.env.example` ; `3e33625` `ascAppId` dans `apps/driver/eas.json` (envoi TestFlight
+  depuis le VPS). Demandé : les pousser sur GitHub (sinon hôte de DATABASE_URL + règle « locale » + ascAppId pour les
+  reprendre ici). D'ici là, NE PAS modifier ces fichiers. Ensuite : `deploy/CLAUDE-VPS.md` (Supabase auto-hébergé ;
+  étape 5 : les e-mails attendent sans limite de durée), ligne « verify-full » de CLAUDE.md.
 
 ## À faire par l'utilisateur
 - Mettre à jour le VPS : `cd /opt/rydar && bash deploy/update-production.sh` (migrations 003600 à 005700, nouveau
