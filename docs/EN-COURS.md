@@ -12,7 +12,7 @@ Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal 
 | Tests DB | 409 |
 | Builds de production web et worker | OK |
 | Export Android | OK |
-| Bout en bout (Chromium, pile locale complète) | 9 parcours OK : course de bout en bout, mini-site, API, équipe et invitations, règlements, super admin, pages publiques, isolation entre centrales (354 contrôles) ; 7 défauts d'ergonomie trouvés, tous corrigés |
+| Bout en bout (Chromium, pile locale complète) | 9 parcours OK : course de bout en bout, mini-site, API, équipe et invitations, règlements, super admin, pages publiques, isolation entre centrales (354 contrôles) ; 9 défauts d'ergonomie trouvés, tous corrigés ; test de fumée final OK |
 
 ## Migrations de ce lot
 `20260924004300` (droits) à `20260924005600` (offres chauffeur) : 004300 droits, 004400 argent, 004500 dispatch,
