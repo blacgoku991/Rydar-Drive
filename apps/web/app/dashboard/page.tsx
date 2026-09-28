@@ -4,7 +4,7 @@ import { CommandCenter } from "@/components/command/command-center";
 import { requireOrg } from "@/lib/auth";
 import { getLiveSnapshot } from "@/lib/queries/live";
 
-export const metadata: Metadata = { title: "Command center" };
+export const metadata: Metadata = { title: "En direct" };
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
@@ -19,14 +19,18 @@ export default async function DashboardPage() {
     ctx.supabase.from("organization_settings").select("offer_timeout_seconds, default_payment_method, location_max_age_seconds, dispatch_radii_m").eq("organization_id", ctx.org.id).maybeSingle(),
   ]);
   return (
-    <CommandCenter
-      initial={snapshot}
-      orgName={ctx.org.name}
-      pricing={(pricing.data ?? []) as PricingRule[]}
-      offerTimeout={settings.data?.offer_timeout_seconds ?? 30}
-      locationMaxAgeS={settings.data?.location_max_age_seconds ?? 180}
-      firstPassWaves={(settings.data?.dispatch_radii_m as number[] | null)?.length || 4}
-      defaultPayment={settings.data?.default_payment_method ?? "card"}
-    />
+    <>
+      {/* Titre de la page pour les lecteurs d'écran (la carte plein écran n'a pas de titre visible) */}
+      <h1 className="sr-only">En direct — {ctx.org.name}</h1>
+      <CommandCenter
+        initial={snapshot}
+        orgName={ctx.org.name}
+        pricing={(pricing.data ?? []) as PricingRule[]}
+        offerTimeout={settings.data?.offer_timeout_seconds ?? 30}
+        locationMaxAgeS={settings.data?.location_max_age_seconds ?? 180}
+        firstPassWaves={(settings.data?.dispatch_radii_m as number[] | null)?.length || 4}
+        defaultPayment={settings.data?.default_payment_method ?? "card"}
+      />
+    </>
   );
 }

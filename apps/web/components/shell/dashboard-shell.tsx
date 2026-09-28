@@ -177,6 +177,8 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
   ];
   return (
     <AlertsProvider key={org.id} scope={`${org.id}:${user.email}`}>
+      {/* Premier élément au clavier : saute la barre latérale */}
+      <SkipToContent />
       <Sidebar
         headerAction={<AlertsBell />}
         sections={sections}
@@ -195,7 +197,6 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
         notice={<CookieNotice href="/cookies" placement="sidebar" />}
       />
       <div className="lg:pl-[232px]">
-        <SkipToContent />
         <main id="contenu" tabIndex={-1} className="outline-none">
           {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}
           <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isCentrale && (org.role === "owner" || org.role === "admin")} />

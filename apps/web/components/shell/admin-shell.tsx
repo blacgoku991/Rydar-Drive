@@ -72,6 +72,8 @@ export function AdminShell({
   ];
   return (
     <>
+      {/* Premier élément au clavier : saute la barre latérale */}
+      <SkipToContent />
       <Sidebar
         sections={sections}
         subtitle="Super admin"
@@ -85,7 +87,6 @@ export function AdminShell({
         }
       />
       <div className="lg:pl-[232px]">
-        <SkipToContent />
         <main id="contenu" tabIndex={-1} className="outline-none">
           {children}
         </main>
