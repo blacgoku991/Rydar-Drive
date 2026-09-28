@@ -131,6 +131,13 @@ describe("Plafond « nouveau chauffeur » : course sans prix à l'acceptation (s
     );
     expect(b).toEqual({ offre: "new_driver", course_sans_prix: "new_driver", course_sous_plafond: null, course_au_dessus: "new_driver", hors_course: null });
     expect((await rpc(d.userId, "driver_home")).settlement).toMatchObject({ blocked: null });
+
+    // La liste des offres (driver_offers, 20260924005600) annonce le même blocage que l'acceptation
+    const list = (await rpc(d.userId, "driver_offers")) as unknown as Row[] | { offers: Row[] };
+    const offers = Array.isArray(list) ? list : list.offers;
+    const shown = offers.find((o) => (o.id ?? o.offer_id) === offer!.id);
+    expect(shown).toBeTruthy();
+    expect(shown!.blocked).toBe("new_driver");
   });
 });
 

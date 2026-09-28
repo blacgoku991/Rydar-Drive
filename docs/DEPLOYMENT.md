@@ -71,7 +71,7 @@ Architecture cible :
      journaux de l'hébergeur dans `/confidentialite`, `/dpa` et `/suppression-compte`.
 4. **Realtime** (*Realtime → Settings*) : désactivez *Allow public access*. Rydar n'utilise que des canaux privés ; la policy `rydar_realtime_receive` (migrations 0600 et 2300) gère les droits d'écoute des canaux `org:*`, `driver:*` et `fleet:*`.
 5. **Storage** : les buckets `org-assets`, `driver-photos` et `driver-documents` et leurs policies sont créés par la migration 0800.
-6. Créez le premier **Super Admin** : invitez l'utilisateur depuis le dashboard Supabase, puis exécutez `update public.users set is_super_admin = true where email = '…';` dans le SQL editor.
+6. Créez le premier **Super Admin** avec `sudo bash /opt/rydar/deploy/create-admin.sh` (e-mail, nom, mot de passe saisi sans affichage). C'est la seule voie : pour un compte déjà existant, le script remplace son mot de passe, ferme toutes ses sessions et date la promotion (`users.super_admin_since`), si bien qu'un jeton émis avant n'a pas les droits. Jamais `update public.users set is_super_admin = true` à la main.
 
 > Les migrations sont testées en CI sur PostgreSQL 16 + PostGIS, avec des stubs des schémas Supabase (`scripts/sql/local-supabase-stubs.sql`). Elles utilisent uniquement des API Supabase standard : `auth.uid()`, `auth.jwt()`, `realtime.send()` et `storage.buckets`.
 >
