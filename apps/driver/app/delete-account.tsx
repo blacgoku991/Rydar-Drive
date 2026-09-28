@@ -8,7 +8,9 @@ import { AuthField, FormScroll, Notice } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
 import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { api, ApiError, deleteAccount, LAST_EMAIL_KEY, legalUrl, type DeleteAccountResult } from "@/lib/api";
+import {
+  ApiError, deleteAccount, deletionDebt, LAST_EMAIL_KEY, legalUrl, previewAccountDeletion, type DeleteAccountResult,
+} from "@/lib/api";
 import { openDebt, openDebtNotice, type OpenDebt } from "@/lib/debt";
 import { forgetLocalAcceptance } from "@/lib/legal";
 import { stopTracking } from "@/lib/location";
@@ -26,13 +28,29 @@ const DELETED = [
 /** Réponses qui demandent le mot de passe : session révoquée (compte suspendu, banni…) ou absente. */
 const NEEDS_PASSWORD = new Set(["UNAUTHORIZED", "SESSION"]);
 
+/** Montant dû encore en cours de lecture au moment de confirmer : attendu au plus ce délai. */
+const DEBT_WAIT_MS = 4000;
+
 type Phase = "confirm" | "password" | "done";
+
+/** Montant dû lu avec la session : lecture en cours (`read`) ou terminée (`settled`, montant `value`). */
+type SessionDebtRead = { read: Promise<OpenDebt | null>; settled: boolean; value: OpenDebt | null };
+
+/** Résultat de `read`, ou `fallback` s'il n'est pas arrivé dans le délai. */
+function within<T>(read: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([read, late]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Suppression définitive du compte (App Store 5.1.1(v), Google Play) : ce qui est supprimé, ce qui est conservé
  * sans identité, double confirmation. Accessible depuis le profil et depuis l'écran des comptes en attente, refusés,
- * suspendus ou bannis. Session refusée par le serveur : confirmation par mot de passe. « Supprimé » n'est affiché
- * qu'une fois tout effacé ; sinon « suppression en cours » (terminée par le serveur).
+ * suspendus ou bannis. Session refusée par le serveur : confirmation par mot de passe. Commissions encore dues
+ * rappelées dans tous les cas, avant la confirmation. « Supprimé » n'est affiché qu'une fois tout effacé ; sinon
+ * « suppression en cours » (terminée par le serveur).
  */
 export default function DeleteAccount() {
   const { session } = useDriver();
@@ -45,27 +63,42 @@ export default function DeleteAccount() {
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DeleteAccountResult | null>(null);
-  // Déjà confirmé dans la boîte de dialogue : l'étape « mot de passe » ne redemande pas
-  const confirmed = useRef(false);
+  // Montant dû (centimes) présenté dans la confirmation acceptée ; null : pas encore confirmé. L'étape « mot de
+  // passe » ne redemande pas, sauf si le serveur fait alors connaître un autre montant
+  const confirmedCents = useRef<number | null>(null);
+  // Vérification ou suppression en cours (double appui avant l'affichage du chargement)
+  const working = useRef(false);
   const passwordRef = useRef<TextInput>(null);
   const policy = legalUrl("suppression-compte");
   const userId = session?.user.id;
 
-  // Commissions encore dues à la centrale (lisibles par un chauffeur actif) : montant rappelé avant la suppression,
-  // qui reste possible (la dette demeure ; empreintes gardées tant qu'elle est ouverte, private.debtor_identities)
-  const [debt, setDebt] = useState<OpenDebt | null>(null);
+  // Commissions encore dues à la centrale, quel que soit l'état du compte (actif, suspendu, banni, désactivé, centrale
+  // suspendue) : montant rappelé avant la suppression, qui reste possible (la dette demeure ; empreintes gardées tant
+  // qu'elle est ouverte, private.debtor_identities). Session ouverte : lu à l'ouverture ; sans session (écran de
+  // connexion) ou session refusée : aperçu de la suppression, vérifié par le mot de passe, avant la confirmation.
+  const [sessionDebt, setSessionDebt] = useState<OpenDebt | null>(null);
+  const [previewDebt, setPreviewDebt] = useState<OpenDebt | null | undefined>(undefined);
+  const sessionDebtRead = useRef<SessionDebtRead>({ read: Promise.resolve(null), settled: true, value: null });
   useEffect(() => {
-    setDebt(null);
-    if (!userId) return;
+    setSessionDebt(null);
+    if (!userId) {
+      sessionDebtRead.current = { read: Promise.resolve(null), settled: true, value: null };
+      return;
+    }
     let alive = true;
-    api
-      .settlements(1)
-      .then((s) => alive && setDebt(openDebt(s)))
-      .catch(() => null);
+    const current: SessionDebtRead = { read: deletionDebt().then(openDebt), settled: false, value: null };
+    sessionDebtRead.current = current;
+    void current.read.then((d) => {
+      current.settled = true;
+      current.value = d;
+      if (alive) setSessionDebt(d);
+    });
     return () => {
       alive = false;
     };
   }, [userId]);
+  // Aperçu du serveur (plus récent, compte vérifié) d'abord
+  const debt = previewDebt !== undefined ? previewDebt : sessionDebt;
   const debtNotice = debt ? openDebtNotice(debt) : null;
 
   function leave() {
@@ -87,14 +120,34 @@ export default function DeleteAccount() {
     setPhase("done");
   }
 
-  async function run() {
-    if (busy) return;
-    const withPassword = phase === "password";
-    if (withPassword && !password) {
-      setPasswordError("Saisissez votre mot de passe.");
+  function showError(e: unknown) {
+    const err = e instanceof ApiError ? e : new ApiError("Suppression impossible pour le moment. Réessayez.", null);
+    if (NEEDS_PASSWORD.has(err.code ?? "")) {
+      // Champ affiché puis mis au point (le formulaire défile jusqu'à lui)
+      setPhase("password");
+      setTimeout(() => passwordRef.current?.focus(), 250);
+    } else if (err.code === "INVALID_CREDENTIALS") {
+      setPasswordError(frTypo(err.message));
       passwordRef.current?.focus();
-      return;
+    } else {
+      // Course attribuée (message du serveur), trop de tentatives, serveur d'authentification injoignable
+      // (UNAVAILABLE : rien n'a été vérifié, le mot de passe saisi reste), réseau, e-mail manquant…
+      setFailure(frTypo(err.message));
     }
+  }
+
+  /** Mot de passe requis et absent : signalé, champ mis au point. */
+  function missingPassword() {
+    if (phase !== "password" || password) return false;
+    setPasswordError("Saisissez votre mot de passe.");
+    passwordRef.current?.focus();
+    return true;
+  }
+
+  async function run() {
+    if (working.current || missingPassword()) return;
+    const withPassword = phase === "password";
+    working.current = true;
     setBusy(true);
     setFailure(null);
     setPasswordError(null);
@@ -102,38 +155,60 @@ export default function DeleteAccount() {
       const res = await deleteAccount(withPassword ? password : undefined, withPassword ? email : undefined);
       await finish(res);
     } catch (e) {
-      const err = e instanceof ApiError ? e : new ApiError("Suppression impossible pour le moment. Réessayez.", null);
-      if (NEEDS_PASSWORD.has(err.code ?? "")) {
-        // Champ affiché puis mis au point (le formulaire défile jusqu'à lui)
-        setPhase("password");
-        setTimeout(() => passwordRef.current?.focus(), 250);
-      } else if (err.code === "INVALID_CREDENTIALS") {
-        setPasswordError(frTypo(err.message));
-        passwordRef.current?.focus();
-      } else {
-        // Course attribuée (message du serveur), trop de tentatives, serveur d'authentification injoignable
-        // (UNAVAILABLE : rien n'a été vérifié, le mot de passe saisi reste), réseau, e-mail manquant…
-        setFailure(frTypo(err.message));
-      }
+      showError(e);
     } finally {
+      working.current = false;
       setBusy(false);
     }
   }
 
-  function confirm() {
-    if (confirmed.current) return void run();
+  /**
+   * Montant dû à présenter dans la confirmation. Étape « mot de passe » (compte suspendu, banni, désactivé, centrale
+   * suspendue, écran de connexion) : aperçu du serveur, compte vérifié par le mot de passe — rien n'est supprimé.
+   * Session ouverte : lecture de l'ouverture, attendue si elle est encore en cours. undefined : erreur affichée.
+   */
+  async function debtToConfirm(): Promise<OpenDebt | null | undefined> {
+    const withPassword = phase === "password";
+    if (!withPassword && sessionDebtRead.current.settled) return sessionDebtRead.current.value;
+    working.current = true;
+    setBusy(true);
+    setFailure(null);
+    setPasswordError(null);
+    try {
+      if (!withPassword) return await within(sessionDebtRead.current.read, DEBT_WAIT_MS, null);
+      const preview = await previewAccountDeletion(password, email);
+      // Serveur sans aperçu (version antérieure) : montant lu avec la session, s'il y en a une
+      if (!preview) return debt;
+      const shown = openDebt(preview.debt);
+      setPreviewDebt(shown);
+      return shown;
+    } catch (e) {
+      showError(e);
+      return undefined;
+    } finally {
+      working.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function confirm() {
+    if (working.current || missingPassword()) return;
+    const shown = await debtToConfirm();
+    if (shown === undefined) return;
+    const cents = shown?.cents ?? 0;
+    // Déjà confirmé (avant la demande du mot de passe) avec ce montant, ou plus rien de dû : pas de seconde fois
+    if (confirmedCents.current != null && (cents === 0 || cents === confirmedCents.current)) return void run();
+    const notice = shown ? openDebtNotice(shown) : null;
     Alert.alert(
       frTypo("Supprimer définitivement ?"),
-      frTypo(
-        `Votre compte et vos données personnelles seront supprimés. Cette action est irréversible.${debtNotice ? ` ${debtNotice.confirm}` : ""}`,
-      ),
+      frTypo(`Votre compte et vos données personnelles seront supprimés. Cette action est irréversible.${notice ? ` ${notice.confirm}` : ""}`),
       [
         { text: "Annuler", style: "cancel" },
         {
           text: "Supprimer",
           style: "destructive",
           onPress: () => {
-            confirmed.current = true;
+            confirmedCents.current = cents;
             void run();
           },
         },
@@ -228,7 +303,7 @@ export default function DeleteAccount() {
                   autoComplete="current-password"
                   textContentType="password"
                   returnKeyType="done"
-                  onSubmitEditing={confirm}
+                  onSubmitEditing={() => void confirm()}
                 />
               </View>
             )}
@@ -243,7 +318,7 @@ export default function DeleteAccount() {
                 height={control.md}
                 loading={busy}
                 disabled={busy}
-                onPress={confirm}
+                onPress={() => void confirm()}
               />
               <BigButton title="Annuler" variant="ghost" height={control.md} disabled={busy} onPress={leave} />
             </View>

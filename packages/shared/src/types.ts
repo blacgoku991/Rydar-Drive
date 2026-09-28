@@ -677,6 +677,21 @@ export interface DriverSettlements {
   items: DriverSettlementItem[];
 }
 
+/**
+ * Commissions encore dues par le chauffeur, rappelées avant la suppression de son compte, quel que soit l'état du
+ * compte ou de la centrale : RPC driver_deletion_debt() (session) et aperçu de /api/driver/delete-account (réponse
+ * { ok, code: "PREVIEW", debt }). null : aucune fiche chauffeur pour ce compte.
+ */
+export interface DriverDeletionDebt {
+  /** À régler et contestées */
+  owed_cents: number;
+  /** Signalées payées, en attente de confirmation par la centrale */
+  declared_cents: number;
+  currency: string;
+  /** Nom de la centrale */
+  organization: string | null;
+}
+
 export type OrgSettlementFilter = "open" | "declared" | "overdue" | "disputed" | "to_pay" | "paid" | "waived" | "all";
 
 export interface OrgSettlementItem extends Settlement {

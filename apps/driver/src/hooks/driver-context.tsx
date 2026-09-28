@@ -20,8 +20,14 @@ import { hasStoredSession, signOutThisDevice, supabase } from "@/lib/supabase";
 /**
  * Résultat du passage en ligne. code : « coarse » (position approximative) et « blocked » (localisation refusée
  * définitivement) → proposer « Ouvrir les réglages » ; « cancelled » : information préalable refermée, rien à afficher.
+ * presence : présence confirmée par le serveur (absente : rien n'a été fait, ex. autre passage en cours).
  */
-export type OnlineResult = { ok: boolean; message?: string; code?: "coarse" | "blocked" | "denied" | "foreground-only" | "cancelled" };
+export type OnlineResult = {
+  ok: boolean;
+  message?: string;
+  code?: "coarse" | "blocked" | "denied" | "foreground-only" | "cancelled";
+  presence?: DriverPresence;
+};
 
 type Ctx = {
   session: Session | null;
@@ -772,7 +778,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
             void refresh();
             Alert.alert("Vous êtes hors ligne", (e as Error).message);
           });
-        return { ok: true, code: perm === "foreground-only" ? "foreground-only" : undefined };
+        return { ok: true, code: perm === "foreground-only" ? "foreground-only" : undefined, presence: res.presence as DriverPresence };
       }
       patchPresence("offline");
       setBusy(true);
@@ -784,7 +790,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       }
       // Suivi arrêté après la confirmation du serveur (sinon « disponible » sans position)
       void stopTracking().catch(() => null);
-      return { ok: true };
+      return { ok: true, presence: res.presence as DriverPresence };
     } catch (e) {
       patchPresence(previous);
       if (isForbidden(e)) void checkAccount();

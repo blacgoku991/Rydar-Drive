@@ -4,8 +4,8 @@
 // documents complets, « J'accepte » en bas ; autres issues : « Se déconnecter » et « Supprimer mon compte », possible
 // sans accepter les conditions), SAUF :
 //  - jamais pendant une course ni une offre : il attend que le chauffeur n'ait plus de course active ;
-//  - chauffeur EN LIGNE sans course : passé hors ligne (aucune offre sans conditions acceptées), remis en ligne
-//    après « J'accepte » ;
+//  - chauffeur EN LIGNE sans course : passé hors ligne (aucune offre sans conditions acceptées ; échec réseau :
+//    nouvel essai toutes les 30 s tant qu'il reste disponible), remis en ligne après « J'accepte » ;
 //  - jamais bloquant hors connexion : registre illisible → pas d'écran, nouvel essai plus tard ; « J'accepte » sans
 //    réseau → acceptation gardée sur le téléphone et envoyée dès que possible.
 import { Ionicons } from "@expo/vector-icons";
@@ -22,6 +22,7 @@ import { legalUrl } from "@/lib/api";
 import {
   acceptTerms, fetchTermsStatus, forgetLocalAcceptance, hasLocalAcceptance, isTransientError, markTermsAccepted, rememberLocalAcceptance,
 } from "@/lib/legal";
+import { offlineEnforcer, type OfflineEnforcer } from "@/lib/terms-offline";
 import { colors, control, space, type, weight } from "@/theme";
 
 /** Offre reçue ou course en cours : l'écran attend (jamais d'interruption). */
@@ -30,8 +31,6 @@ const BUSY_PRESENCES = new Set<DriverPresence>(["offered", "en_route", "arrived"
 const RIDE_SCREEN = /^\/(offer|ride)(\/|$)/;
 /** Nouvel essai après un échec de lecture ou d'envoi (réseau) : 10 s, 30 s, 1 min, 2 min, puis toutes les 5 min. */
 const RETRY_MS = [10_000, 30_000, 60_000, 120_000, 300_000];
-/** Mise hors ligne en échec (réseau) : pas de nouvel essai avant ce délai. */
-const OFFLINE_RETRY_MS = 30_000;
 
 /**
  * unknown : pas encore lu, ou illisible (réseau) ; pending : à accepter ; syncing : accepté sur le téléphone, en
@@ -202,24 +201,27 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
 
   // Conditions à accepter : un chauffeur disponible sans course passe hors ligne (plus aucune offre tant qu'elles ne
   // sont pas acceptées) ; il repasse en ligne après « J'accepte ». Offre ou course en cours : jamais interrompue.
+  // Échec (réseau instable) ou appel sans effet : nouvel essai toutes les 30 s tant qu'il reste disponible
+  // (lib/terms-offline.ts) — l'écran d'offre, jamais recouvert, ne doit pas s'ouvrir sans conditions acceptées.
   const mustGoOffline = terms.state === "pending" && home?.driver.presence === "available" && home.driver.current_ride_id == null;
-  const wentOffline = useRef(false);
-  const offlineTriedAt = useRef(0);
+  const setOnlineRef = useRef(setOnline);
+  setOnlineRef.current = setOnline;
+  const offline = useRef<OfflineEnforcer | null>(null);
   useEffect(() => {
-    wentOffline.current = false;
+    // Un compte à la fois : essais et « à remettre en ligne » du compte précédent oubliés
+    const enforcer = offlineEnforcer(() => setOnlineRef.current(false));
+    offline.current = enforcer;
+    return () => {
+      enforcer.dispose();
+      if (offline.current === enforcer) offline.current = null;
+    };
   }, [userId]);
   useEffect(() => {
-    // Échec (réseau) : l'état revient à « disponible » — pas de nouvel essai en rafale
-    if (!mustGoOffline || Date.now() - offlineTriedAt.current < OFFLINE_RETRY_MS) return;
-    offlineTriedAt.current = Date.now();
-    void setOnline(false).then((res) => {
-      if (res.ok) wentOffline.current = true;
-    });
-  }, [mustGoOffline, setOnline]);
+    offline.current?.set(mustGoOffline);
+  }, [mustGoOffline, userId]);
   const accepted = terms.state === "accepted" || terms.state === "syncing";
   useEffect(() => {
-    if (!accepted || !wentOffline.current) return;
-    wentOffline.current = false;
+    if (!accepted || !offline.current?.takeWentOffline()) return;
     void setOnline(true).then((res) => {
       if (!res.ok && res.code !== "cancelled") Alert.alert("Vous êtes hors ligne", frTypo(res.message ?? "Passez en ligne depuis l'accueil."));
     });

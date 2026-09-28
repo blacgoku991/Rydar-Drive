@@ -1,8 +1,11 @@
 // Suppression du compte avec des commissions dues (audit sql-rpc-argent#1) : le chauffeur est prévenu du montant.
 import { describe, expect, it } from "vitest";
-import { openDebt, openDebtNotice } from "./debt";
+import { debtFromSettlements, openDebt, openDebtNotice } from "./debt";
 
 const NBSP = " ";
+
+/** Réponse de driver_deletion_debt / de l'aperçu de la suppression. */
+const debt = (owed: number, declared: number) => ({ owed_cents: owed, declared_cents: declared, currency: "EUR", organization: "Taxi Bleu" });
 
 const settlements = (owed: number, declared: number) => ({
   currency: "EUR",
@@ -15,18 +18,24 @@ const settlements = (owed: number, declared: number) => ({
 
 describe("openDebt", () => {
   it("à régler + contesté + signalé payé non confirmé (périmètre de private.driver_open_debt)", () => {
-    expect(openDebt(settlements(2600, 1200))).toEqual({ cents: 3800, declaredCents: 1200, currency: "EUR", organization: "Taxi Bleu" });
+    expect(openDebt(debt(2600, 1200))).toEqual({ cents: 3800, declaredCents: 1200, currency: "EUR", organization: "Taxi Bleu" });
   });
 
   it("rien de dû, ou lecture impossible : aucun avertissement", () => {
-    expect(openDebt(settlements(0, 0))).toBeNull();
+    expect(openDebt(debt(0, 0))).toBeNull();
     expect(openDebt(null)).toBeNull();
+  });
+
+  it("serveur antérieur : mêmes montants tirés du relevé des commissions", () => {
+    expect(debtFromSettlements(settlements(2600, 1200))).toEqual(debt(2600, 1200));
+    expect(openDebt(debtFromSettlements(settlements(2600, 1200)))).toEqual(openDebt(debt(2600, 1200)));
+    expect(debtFromSettlements(null)).toBeNull();
   });
 });
 
 describe("openDebtNotice", () => {
   it("montant, dette maintenue et empreintes conservées", () => {
-    const n = openDebtNotice(openDebt(settlements(3800, 0))!);
+    const n = openDebtNotice(openDebt(debt(3800, 0))!);
     expect(n.title).toBe(`Commissions dues : 38${NBSP}€`);
     expect(n.message).toContain("elle reste due à Taxi Bleu");
     expect(n.message).toContain("empreintes");
@@ -35,7 +44,7 @@ describe("openDebtNotice", () => {
   });
 
   it("part signalée payée, en attente de confirmation", () => {
-    expect(openDebtNotice(openDebt(settlements(2600, 1200))!).message).toMatch(/^Dont 12 € signalés payés/);
-    expect(openDebtNotice(openDebt(settlements(0, 1200))!).message).toMatch(/^Paiement signalé/);
+    expect(openDebtNotice(openDebt(debt(2600, 1200))!).message).toMatch(/^Dont 12 € signalés payés/);
+    expect(openDebtNotice(openDebt(debt(0, 1200))!).message).toMatch(/^Paiement signalé/);
   });
 });
