@@ -254,17 +254,20 @@ echo
 echo "Formulaire de contact du site (facultatif, Entrée pour passer) : chaque demande arrive dans /admin/contacts et"
 echo "par e-mail, envoyé par le serveur mail de ce VPS (127.0.0.1:25). Détails : docs/DEPLOYMENT.md,"
 echo "« E-mails : formulaire de contact »."
+# Adresse simple, mêmes règles que la file d'e-mails (public.email_outbox) et le mailer : ni espace, ni séparateur ou
+# syntaxe d'en-tête (, ; : < > ( ) [ ] " \). Sinon chaque demande de contact serait refusée à l'enregistrement.
+mail_re='[^][@<>(),;:"\[:space:]]+@[^][@<>(),;:"\[:space:]]+\.[^][@<>(),;:"\[:space:]]+'
 while :; do
   ask CONTACT_NOTIFY_EMAIL "E-mail qui reçoit les demandes de contact (vide = e-mail des mentions légales)"
-  if [ -z "$answer" ] || printf '%s' "$answer" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'; then break; fi
+  if [ -z "$answer" ] || printf '%s' "$answer" | grep -Eq "^${mail_re}\$"; then break; fi
   echo "  ✗ Adresse e-mail invalide (forme attendue : nom@domaine.fr)"
 done
 put CONTACT_NOTIFY_EMAIL "$answer"
 while :; do
   ask MAIL_FROM "Adresse d'expédition des e-mails (vide = noreply@$(get DOMAIN))"
   if [ -z "$answer" ] \
-    || printf '%s' "$answer" | grep -Eq '^[^@<>[:space:]]+@[^@<>[:space:]]+\.[^@<>[:space:]]+$' \
-    || printf '%s' "$answer" | grep -Eq '^[^@<>"]+ <[^@<>[:space:]]+@[^@<>[:space:]]+\.[^@<>[:space:]]+>$'; then
+    || printf '%s' "$answer" | grep -Eq "^${mail_re}\$" \
+    || printf '%s' "$answer" | grep -Eq "^[^@<>\"\\[:cntrl:]]+ <${mail_re}>\$"; then
     break
   fi
   echo "  ✗ Adresse invalide (forme attendue : noreply@domaine.fr, ou « Rydar Drive <noreply@domaine.fr> »)"

@@ -213,26 +213,45 @@ const UNREACHABLE_CODES = new Set([
 ]);
 
 /**
- * Code SMTP 5xx → définitif ; 4xx, connexion refusée ou coupée, DNS, TLS, délai → réessai (délai croissant côté SQL).
+ * Étapes de la session SMTP avant tout message (commande en cause, `command` des erreurs de nodemailer) : un refus y
+ * vise le serveur ou son réglage (relais qui refuse la machine, STARTTLS impossible), jamais un destinataire.
+ */
+const SESSION_COMMANDS = new Set(["CONN", "EHLO", "HELO", "LHLO", "STARTTLS"]);
+
+/**
+ * Code SMTP 5xx sur l'expéditeur, un destinataire ou le message (MAIL FROM, RCPT TO, DATA) → définitif ; 4xx,
+ * connexion refusée ou coupée, DNS, TLS, délai → réessai (délai croissant côté SQL). Identifiants refusés (535…) ou
+ * refus pendant l'accueil, EHLO ou STARTTLS → réessai, serveur signalé indisponible : c'est un réglage du serveur à
+ * corriger, les e-mails attendent en file au lieu d'échouer tous d'un coup.
  * Message refusé par nodemailer avant tout échange (enveloppe ou message invalide) → définitif.
  */
 export function classifySmtpError(error: unknown): Classified {
-  const e = (typeof error === "object" && error !== null ? error : {}) as { code?: unknown; responseCode?: unknown; message?: unknown };
+  const e = (typeof error === "object" && error !== null ? error : {}) as {
+    code?: unknown;
+    responseCode?: unknown;
+    command?: unknown;
+    message?: unknown;
+  };
   const detail = oneLine(typeof e.message === "string" && e.message ? e.message : String(error)) || "erreur inconnue";
   const code = typeof e.code === "string" ? e.code : "";
   const status = typeof e.responseCode === "number" ? e.responseCode : 0;
-  const auth = code === "EAUTH" || code === "ENOAUTH";
+  const session = typeof e.command === "string" && SESSION_COMMANDS.has(e.command);
   if (error instanceof PermanentEmailError) return { permanent: true, smtpDown: false, message: cap(detail) };
+  if (code === "EAUTH" || code === "ENOAUTH") {
+    return { permanent: false, smtpDown: true, message: cap(`Identifiants SMTP refusés${status ? ` (${status})` : ""} : ${detail}`) };
+  }
+  if (session && status >= 400 && status <= 599) {
+    return { permanent: false, smtpDown: true, message: cap(`Serveur mail indisponible (${status}) : ${detail}`) };
+  }
   if (status >= 500 && status <= 599) {
-    return { permanent: true, smtpDown: auth, message: cap(`Refus définitif du serveur mail (${status}) : ${detail}`) };
+    return { permanent: true, smtpDown: false, message: cap(`Refus définitif du serveur mail (${status}) : ${detail}`) };
   }
   if (status >= 400 && status <= 499) {
-    return { permanent: false, smtpDown: auth, message: cap(`Refus temporaire du serveur mail (${status}) : ${detail}`) };
+    return { permanent: false, smtpDown: false, message: cap(`Refus temporaire du serveur mail (${status}) : ${detail}`) };
   }
   if (code === "EENVELOPE" || code === "EMESSAGE") {
     return { permanent: true, smtpDown: false, message: cap(`Message refusé avant l'envoi : ${detail}`) };
   }
-  if (auth) return { permanent: false, smtpDown: true, message: cap(`Identifiants SMTP refusés : ${detail}`) };
   if (code === "ETLS") return { permanent: false, smtpDown: true, message: cap(`Échec du chiffrement avec le serveur mail : ${detail}`) };
   if (code === "ETIMEDOUT" || code === "ESENDTIMEOUT") {
     return { permanent: false, smtpDown: true, message: cap(`Délai dépassé avec le serveur mail : ${detail}`) };

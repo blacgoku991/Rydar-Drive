@@ -15,8 +15,9 @@ import { classifySmtpError, createSmtpSender, smtpSettings } from "./email/smtp"
 
 const settings = smtpSettings(process.env);
 const sender = createSmtpSender(settings);
-// Une requête à la fois : deux connexions au plus (celle-ci + LISTEN), gardées ouvertes entre deux sondages
-const pool = createPool("rydar-mailer", { max: 2, idleTimeoutMillis: 5 * 60_000, connectionTimeoutMillis: 15_000 });
+// Une requête à la fois (un seul cycle, requêtes successives) : une connexion, plus celle du LISTEN, gardées ouvertes
+// entre deux sondages — le pooler en mode session de Supabase compte chaque connexion
+const pool = createPool("rydar-mailer", { max: 1, idleTimeoutMillis: 5 * 60_000, connectionTimeoutMillis: 15_000 });
 const { pollMs, healthPort } = config.mailer;
 
 /** Serveur SMTP indisponible : nouvelle vérification chaque minute, pour que « smtpReady » revienne sans attendre un envoi. */

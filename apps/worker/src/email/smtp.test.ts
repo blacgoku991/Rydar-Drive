@@ -170,11 +170,28 @@ describe("mailer — message construit depuis une ligne de la file", () => {
 describe("mailer — classement des erreurs SMTP", () => {
   const smtpError = (props: Record<string, unknown>, message = "Can't send mail") => Object.assign(new Error(message), props);
 
-  it("code 5xx : définitif", () => {
+  it("code 5xx sur l'expéditeur, un destinataire ou le message : définitif", () => {
     for (const responseCode of [500, 550, 552, 554]) {
-      const c = classifySmtpError(smtpError({ code: "EENVELOPE", responseCode, response: `${responseCode} 5.1.1 rejected` }));
-      expect(c).toMatchObject({ permanent: true, smtpDown: false });
-      expect(c.message).toContain(`Refus définitif du serveur mail (${responseCode})`);
+      for (const command of ["RCPT TO", "MAIL FROM", "DATA", undefined]) {
+        const c = classifySmtpError(smtpError({ code: command === "DATA" ? "EMESSAGE" : "EENVELOPE", responseCode, command, response: `${responseCode} 5.1.1 rejected` }));
+        expect(c).toMatchObject({ permanent: true, smtpDown: false });
+        expect(c.message).toContain(`Refus définitif du serveur mail (${responseCode})`);
+      }
+    }
+  });
+
+  it("refus pendant l'accueil, EHLO ou STARTTLS (réglage du serveur) : réessai, serveur signalé indisponible", () => {
+    const cases = [
+      { code: "EPROTOCOL", command: "CONN", responseCode: 554 },
+      { code: "ECONNECTION", command: "EHLO", responseCode: 421 },
+      { code: "ECONNECTION", command: "EHLO", responseCode: 502 },
+      { code: "ETLS", command: "STARTTLS", responseCode: 454 },
+      { code: "ETLS", command: "STARTTLS", responseCode: 530 },
+    ];
+    for (const props of cases) {
+      const c = classifySmtpError(smtpError(props, `refus ${props.responseCode}`));
+      expect(c).toMatchObject({ permanent: false, smtpDown: true });
+      expect(c.message).toBe(`Serveur mail indisponible (${props.responseCode}) : refus ${props.responseCode}`);
     }
   });
 
@@ -195,10 +212,13 @@ describe("mailer — classement des erreurs SMTP", () => {
     );
   });
 
-  it("identifiants refusés (535) : définitif (5xx) et serveur signalé indisponible", () => {
-    expect(classifySmtpError(smtpError({ code: "EAUTH", responseCode: 535 }, "Invalid login: 535 5.7.8 Authentication failed"))).toMatchObject({
-      permanent: true,
+  it("identifiants refusés (535, ou manquants) : réessai, serveur signalé indisponible — jamais tout en échec d'un coup", () => {
+    const c = classifySmtpError(smtpError({ code: "EAUTH", responseCode: 535, command: "AUTH PLAIN" }, "Invalid login: 535 5.7.8 Authentication failed"));
+    expect(c).toEqual({ permanent: false, smtpDown: true, message: "Identifiants SMTP refusés (535) : Invalid login: 535 5.7.8 Authentication failed" });
+    expect(classifySmtpError(smtpError({ code: "EAUTH", command: "API" }, 'Missing credentials for "PLAIN"'))).toMatchObject({
+      permanent: false,
       smtpDown: true,
+      message: 'Identifiants SMTP refusés : Missing credentials for "PLAIN"',
     });
   });
 
@@ -292,6 +312,16 @@ describe("mailer — envoi réel par nodemailer vers un faux serveur SMTP (127.0
     expect(c).toMatchObject({ permanent: false, smtpDown: true });
     expect(c.message).toMatch(/^Serveur mail injoignable : .*ECONNREFUSED/);
     await expect(sender.verify()).rejects.toThrow(/ECONNREFUSED/);
+  });
+
+  it("serveur qui refuse la machine dès l'accueil (554) : réessai, serveur signalé indisponible, aucun message", async () => {
+    const { server, sender } = await setup({ greeting: "554 5.7.1 fake.test: access denied" });
+    const error = await sender.send(email()).then(() => null, (e: unknown) => e);
+    expect(error).toMatchObject({ responseCode: 554, command: "CONN" });
+    expect(classifySmtpError(error)).toMatchObject({ permanent: false, smtpDown: true });
+    expect(classifySmtpError(error).message).toMatch(/^Serveur mail indisponible \(554\) : /);
+    await expect(sender.verify()).rejects.toMatchObject({ responseCode: 554 });
+    expect(server.messages()).toHaveLength(0);
   });
 
   it("vérification (verify) : EHLO puis QUIT, aucun message transmis", async () => {

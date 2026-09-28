@@ -263,10 +263,12 @@ n'écoute que sur `127.0.0.1`. Installation de Postfix, port 25 sortant, SPF, DK
 [`deploy/CLAUDE-VPS.md`](../deploy/CLAUDE-VPS.md), étape 5.
 
 **Réessais** : 1 min, 5 min, 15 min, 1 h, 3 h, 6 h puis 12 h (8 essais, une vingtaine d'heures) si le serveur est
-injoignable ou répond par un refus temporaire (4xx) ; un refus définitif (5xx, par exemple adresse inexistante) arrête
-aussitôt (« Échec » et motif dans `/admin/contacts`). Un e-mail réservé par un expéditeur arrêté en plein envoi repart
-après un bail de 5 min : il peut alors arriver deux fois, jamais se perdre. Plusieurs expéditeurs peuvent tourner
-ensemble (réservation `FOR UPDATE SKIP LOCKED`).
+injoignable, refuse la session (accueil, STARTTLS, identifiants SMTP : réglage à corriger, les e-mails attendent) ou
+répond par un refus temporaire (4xx) ; un refus définitif de l'expéditeur, du destinataire ou du message (5xx, par
+exemple adresse inexistante) arrête aussitôt (« Échec » et motif dans `/admin/contacts`). Un e-mail réservé par un
+expéditeur arrêté en plein envoi repart après un bail de 5 min : il peut alors arriver deux fois ; interrompu ainsi à
+son 8e essai, il passe en échec. Un e-mail en échec remis en file repart pour un nouvel essai. Plusieurs expéditeurs
+peuvent tourner ensemble (réservation `FOR UPDATE SKIP LOCKED`).
 
 Les e-mails d'authentification (invitations, mot de passe oublié, codes) ne passent pas par là : ils restent envoyés
 par Supabase, avec le SMTP réglé dans Supabase (§ 1).
@@ -297,7 +299,8 @@ sans serveur mail, les demandes restent visibles dans `/admin/contacts` et leurs
 
 - `cd /opt/rydar/deploy && sudo docker compose logs --tail 100 mailer` : `email sent`, `email not sent, retry scheduled`,
   `email failed, no more retries` (identifiant, type et domaine du destinataire : jamais l'adresse complète, l'objet ni
-  le texte) ; `smtp server unavailable` : rien n'écoute sur `127.0.0.1:25` (Postfix absent ou arrêté).
+  le texte) ; `smtp server unavailable` : rien n'écoute sur `127.0.0.1:25` (Postfix absent ou arrêté), ou le serveur
+  refuse la session (motif dans `error` : identifiants SMTP, accueil refusé, STARTTLS).
 - `sudo tail -n 100 /var/log/mail.log` (ou `sudo journalctl -u 'postfix*' -n 100 --no-pager`) : sort de chaque e-mail
   chez Postfix (`status=sent`, `deferred`, `bounced`). « Envoyé » dans `/admin/contacts` veut dire accepté par Postfix ;
   la remise au destinataire se lit ici.

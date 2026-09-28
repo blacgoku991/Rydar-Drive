@@ -113,14 +113,22 @@ describe("mailer — cycle de la file (claim → envoi → complete)", () => {
     expect(logs.lines).toEqual([expect.objectContaining({ level: "error", msg: "email failed, no more retries", id: "8", attempt: MAX_ATTEMPTS })]);
   });
 
-  it("bail expiré à répétition (plus de 8 essais) : abandon définitif sans nouvel envoi", async () => {
+  it("e-mail en échec remis en file par le super admin (plus de 8 essais) : envoyé, jamais abandonné d'office", async () => {
+    // L'envoi interrompu à répétition est réglé par private.claim_emails (échec au 8e essai, sans nouvelle prise) :
+    // une ligne réservée au-delà de 8 essais est une remise en file volontaire, elle doit partir
     captureLogs();
     const db = fakeDb([[row(9, { attempts: MAX_ATTEMPTS + 1 })]]);
     let sent = 0;
     const result = await runMailCycle({ query: db.query, send: async () => void sent++, classify: classifySmtpError });
-    expect(sent).toBe(0);
-    expect(db.completes).toEqual([["9", false, "Abandon : envoi interrompu à chaque essai", true]]);
-    expect(result.failed).toBe(1);
+    expect(sent).toBe(1);
+    expect(db.completes).toEqual([["9", true, null, false]]);
+    expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+
+    // Nouvel échec : compté en échec (private.complete_email la repasse en « failed »), motif réel conservé
+    const again = fakeDb([[row(10, { attempts: MAX_ATTEMPTS + 1 })]]);
+    const failed = await runMailCycle({ query: again.query, send: async () => Promise.reject(smtpError(451)), classify: classifySmtpError });
+    expect(again.completes).toEqual([["10", false, expect.stringContaining("Refus temporaire du serveur mail (451)"), false]]);
+    expect(failed).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1 });
   });
 
   it("lot complet : nouveau lot réservé ; lot incomplet : fin du cycle ; arrêt demandé : aucune réservation", async () => {

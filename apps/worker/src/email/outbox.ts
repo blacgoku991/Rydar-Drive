@@ -1,7 +1,10 @@
 // File des e-mails (public.email_outbox, migration 20260924005700) : private.claim_emails réserve un lot (SKIP LOCKED,
 // bail de 5 min repris si l'expéditeur tombe), chaque ligne part en SMTP, private.complete_email enregistre le
 // résultat. Réessais espacés côté SQL (1 min, 5 min, 15 min, 1 h, 3 h, 6 h, 12 h) ; échec définitif au 8e essai ou
-// sur un refus définitif du serveur (5xx), visible dans /admin/contacts.
+// sur un refus définitif de l'expéditeur, du destinataire ou du message (5xx), visible dans /admin/contacts.
+// Envoi interrompu à répétition (expéditeur arrêté pendant l'envoi) : réglé en SQL, private.claim_emails passe la ligne
+// en échec au lieu de la reprendre une 9e fois. Toute ligne réservée part donc ici, y compris un e-mail en échec remis
+// en file par le super admin (nouvel essai, son compteur peut dépasser 8).
 // Journal : identifiant, type et domaine du destinataire seulement — jamais l'objet, le corps ni l'adresse complète.
 import { log } from "../config";
 import type { Classified, OutboxEmail } from "./smtp";
@@ -10,7 +13,7 @@ export type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: any[]
 
 /** Lignes réservées par passage (private.claim_emails). */
 export const CLAIM_BATCH = 10;
-/** Même plafond que private.complete_email : au 8e essai en échec, la ligne passe en « failed ». */
+/** Même plafond que private.complete_email : à partir du 8e essai, un échec passe la ligne en « failed ». */
 export const MAX_ATTEMPTS = 8;
 
 export type Outcome =
@@ -43,17 +46,12 @@ export function redactAddresses(text: string): string {
 export async function deliverEmail(email: OutboxEmail, deps: CycleDeps): Promise<Outcome> {
   const attempt = Number(email.attempts) || 0;
   let outcome: Outcome;
-  if (attempt > MAX_ATTEMPTS) {
-    // Bail expiré à répétition (expéditeur arrêté pendant l'envoi) : abandon plutôt qu'une boucle sans fin
-    outcome = { ok: false, permanent: true, smtpDown: false, error: "Abandon : envoi interrompu à chaque essai", final: true };
-  } else {
-    try {
-      await deps.send(email);
-      outcome = { ok: true };
-    } catch (error) {
-      const c = deps.classify(error);
-      outcome = { ok: false, permanent: c.permanent, smtpDown: c.smtpDown, error: c.message.slice(0, 500), final: c.permanent || attempt >= MAX_ATTEMPTS };
-    }
+  try {
+    await deps.send(email);
+    outcome = { ok: true };
+  } catch (error) {
+    const c = deps.classify(error);
+    outcome = { ok: false, permanent: c.permanent, smtpDown: c.smtpDown, error: c.message.slice(0, 500), final: c.permanent || attempt >= MAX_ATTEMPTS };
   }
   await deps.query("select private.complete_email($1::bigint, $2::boolean, $3::text, $4::boolean)", [
     email.id,

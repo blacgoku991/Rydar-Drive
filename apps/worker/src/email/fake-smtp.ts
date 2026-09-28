@@ -15,9 +15,10 @@ export type SmtpSession = {
 
 /**
  * Démarre le faux serveur (port aléatoire, ou `port` pour le relancer au même endroit). `rcpt` impose la réponse à
- * RCPT TO pour un destinataire (ex. « 550 5.1.1 … ») ; null : destinataire accepté.
+ * RCPT TO pour un destinataire (ex. « 550 5.1.1 … ») ; null : destinataire accepté. `greeting` remplace l'accueil
+ * « 220 » (ex. « 554 5.7.1 … » : serveur qui refuse la machine).
  */
-export async function startFakeSmtp(opts: { port?: number; rcpt?: (address: string) => string | null } = {}) {
+export async function startFakeSmtp(opts: { port?: number; rcpt?: (address: string) => string | null; greeting?: string } = {}) {
   const sessions: SmtpSession[] = [];
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
@@ -30,7 +31,7 @@ export async function startFakeSmtp(opts: { port?: number; rcpt?: (address: stri
     let dataLines: string[] | null = null;
     // latin1 : un octet = un caractère, rien n'est réinterprété
     socket.setEncoding("latin1");
-    socket.write("220 fake.test ESMTP\r\n");
+    socket.write(`${opts.greeting || "220 fake.test ESMTP"}\r\n`);
     socket.on("data", (chunk: string) => {
       buffer += chunk;
       for (let i = buffer.indexOf("\r\n"); i >= 0; i = buffer.indexOf("\r\n")) {
