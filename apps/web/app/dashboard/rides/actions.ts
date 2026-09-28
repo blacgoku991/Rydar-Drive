@@ -47,10 +47,11 @@ export async function createRide(input: RideFormInput & { commissionCents?: numb
   let dropoff = { ...v.dropoff };
   let guessedDropoff = false;
   if ((dropoff.lat == null || dropoff.lng == null) && dropoff.address.trim()) {
-    const g = await geocodeOne(dropoff.address, { lat: v.pickup.lat, lng: v.pickup.lng }, { precise: false, minScore: 0.7 }).catch(() => null);
+    const g = await geocodeOne(dropoff.address, { lat: v.pickup.lat, lng: v.pickup.lng }, { precise: false, minScore: 0.7, consumer: { kind: "org", org: ctx.org.id } }).catch(() => null);
     if (g) (dropoff = { ...dropoff, lat: g.lat, lng: g.lng }), (guessedDropoff = true);
   }
-  const route = await rideRouteColumns({ lat: v.pickup.lat, lng: v.pickup.lng }, dropoff);
+  // Budget des fournisseurs géo payants : compté à la centrale (lib/geo/budget.ts)
+  const route = await rideRouteColumns({ lat: v.pickup.lat, lng: v.pickup.lng }, dropoff, { kind: "org", org: ctx.org.id });
   // Prix non saisi : grille de l'organisation (forfait reconnu, sinon compteur), comme l'API
   let priceCents = v.priceCents ?? null;
   if (priceCents == null) {

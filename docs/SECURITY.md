@@ -53,7 +53,7 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 ## Clés API
 
 - Format `rdk_live_{préfixe}_{secret}`. Seul un **HMAC-SHA-256** poivré (`API_KEY_PEPPER`) est stocké, dans `api_key_secrets`, une table inaccessible à tout rôle client. La comparaison se fait en temps constant.
-- Permissions par clé, date d'expiration, révocation immédiate, débit par minute (Redis) et 600 requêtes par minute par IP avant toute lecture en base. Une clé avec des origines autorisées (clé « navigateur », lisible par tout visiteur) ne sert qu'à créer une course, depuis une origine listée (`ORIGIN_NOT_ALLOWED`), avec le prix et le paiement fixés par la centrale ([API.md](API.md)).
+- Permissions par clé, date d'expiration, révocation immédiate, débit par minute propre à chaque clé (Redis) ; les requêtes non authentifiées (clé absente, inconnue ou invalide) sont limitées par IP (IPv6 regroupée par /64), et leurs échecs journalisés dans une limite fixe. Une clé d'idempotence rejouée par une autre clé renvoie 409 (`IDEMPOTENCY_KEY_CONFLICT`), jamais la course d'une autre intégration. Une clé avec des origines autorisées (clé « navigateur », lisible par tout visiteur) ne sert qu'à créer une course, depuis une origine listée (`ORIGIN_NOT_ALLOWED`), avec le prix et le paiement fixés par la centrale ([API.md](API.md)).
 - Chaque requête est journalisée (`api_logs`) : clé, statut, durée, code d'erreur, IP.
 
 ## Secrets et navigateur

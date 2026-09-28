@@ -59,7 +59,9 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
   ]);
   if (!byTarget.ok) return { ok: false, error: TOO_MANY };
 
-  const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500 });
+  // Budget des fournisseurs géo payants : compté au visiteur (IP /64) et au mini-site (lib/geo/budget.ts)
+  const consumer = { kind: "visitor" as const, ip, org: (org as any).id as string };
+  const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500, consumer });
   const { data: rule } = await admin
     .from("pricing_rules")
     .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end, fixed_fares")
@@ -72,7 +74,7 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
   if (price != null && !fixed) {
     // Prix au compteur calculé sur des coordonnées fournies par le navigateur : la destination affichée au
     // chauffeur doit correspondre au point tarifé, sinon le prix est laissé à la centrale (à confirmer)
-    const g = await geocodeOne(v.dropoff.address, v.pickup, { precise: false }).catch(() => null);
+    const g = await geocodeOne(v.dropoff.address, v.pickup, { precise: false, consumer }).catch(() => null);
     if (g && haversine(g, v.dropoff) > DROPOFF_MISMATCH_M) price = null;
   }
   const { data, error } = await admin

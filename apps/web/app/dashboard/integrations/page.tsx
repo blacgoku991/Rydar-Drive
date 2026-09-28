@@ -35,7 +35,7 @@ export default async function IntegrationsPage() {
   const curl = `curl -X POST ${base}/rides \\
   -H "Authorization: Bearer rdk_live_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \\
   -H "Content-Type: application/json" \\
-  -H "Idempotency-Key: resa-2026-0925-0630-dubois" \\
+  -H "Idempotency-Key: 5f0c8a2e-3b7d-4e61-9a4c-2d8e7b1f6c30" \\
   -d '{
     "pickup":  { "address": "72 Avenue Foch, 75116 Paris", "lat": 48.8718, "lng": 2.2830 },
     "dropoff": { "address": "Aéroport CDG, Terminal 2E" },
@@ -130,7 +130,7 @@ const { data } = await res.json(); // data.status : "SEARCHING_DRIVER" | "OFFERE
               <div className="mt-4 space-y-1.5 border-t border-line pt-4 text-[12px] text-fg-muted">
                 <p>• Authentification : <span className="num text-fg">Authorization: Bearer &lt;clé&gt;</span></p>
                 <p>• <span className="num text-fg">organization_id</span> est interdit dans le corps : la clé détermine le tenant (403 sinon).</p>
-                <p>• Idempotence : en-tête <span className="num text-fg">Idempotency-Key</span> (pas de doublon en cas de ré-essai).</p>
+                <p>• Idempotence : en-tête <span className="num text-fg">Idempotency-Key</span> (un UUID par réservation, unique et imprévisible : pas de doublon en cas de ré-essai).</p>
                 <p>• Limite par clé (429 + <span className="num text-fg">Retry-After</span>), journal de chaque requête.</p>
               </div>
             </CardBody>
