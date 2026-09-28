@@ -688,7 +688,7 @@ describe("Suppression du compte chauffeur — fiche, candidature, file", () => {
     expect((await sql(`select count(*)::int as n from public.drivers where user_id = $1`, [org.ownerId]))[0].n).toBe(0);
   });
 
-  it("ancien membre désactivé, ou d'une centrale archivée : pas de compte de gestion utile, compte de connexion supprimé", async () => {
+  it("ancien membre désactivé, simple invité, ou d'une centrale archivée : pas de compte de gestion utile, compte de connexion supprimé", async () => {
     const org = await createOrg("Suppression ancien membre");
     const disabled = await createMember(org, "dispatcher", "Ancien Régulateur");
     await sql(`update public.organization_users set status = 'disabled' where organization_id = $1 and user_id = $2`, [org.id, disabled]);
@@ -710,13 +710,14 @@ describe("Suppression du compte chauffeur — fiche, candidature, file", () => {
       expect(await svcDelete(userId)).toMatchObject({ ok: true, code: "DELETED", keep_auth: false, auth_done: false, user_id: userId });
       expect((await sql(`select full_name, phone from public.users where id = $1`, [userId]))[0]).toEqual({ full_name: null, phone: null });
     }
-    // Membre actif (ou invité) d'une centrale active : compte conservé
+    // Simple invitation en attente (aucun accès, 20260924004700) : compte non conservé (20260924005400 ; un membre
+    // actif garde le sien : test « membre de centrale »)
     const invited = await createMember(org, "dispatcher", "Nouveau Régulateur");
     await sql(`update public.organization_users set status = 'invited' where organization_id = $1 and user_id = $2`, [org.id, invited]);
     await sql(`insert into public.drivers (organization_id, user_id, first_name, last_name, phone, status, presence) values ($1, $2, 'Nouveau', 'Membre', $3, 'active', 'offline')`, [
       org.id, invited, uniquePhone(),
     ]);
-    expect(await svcDelete(invited)).toMatchObject({ ok: true, code: "DELETED", keep_auth: true, auth_done: true });
+    expect(await svcDelete(invited)).toMatchObject({ ok: true, code: "DELETED", keep_auth: false, auth_done: false, user_id: invited });
   });
 
   it("file : avancement, nouvel essai espacé, abandon après 10 essais, relance par le super admin", async () => {

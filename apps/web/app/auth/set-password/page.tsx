@@ -209,8 +209,14 @@ export default function SetPasswordPage() {
                   : "Mot de passe enregistré. Pour activer votre accès à la centrale, ouvrez le lien reçu par e-mail.",
               );
             }
-            // Accès activé : seul un jeton émis après l'activation l'ouvre (migration 005300) → session rafraîchie
-            if (res?.code === "ACTIVATED") await getBrowserClient().auth.refreshSession().catch(() => undefined);
+            // Accès activé : seul un jeton émis après l'activation l'ouvre (migration 005300) → session rafraîchie.
+            // La base exige un « iat » (secondes entières) STRICTEMENT postérieur à la seconde de l'activation
+            // (private.jwt_issued_after, migration 005400) : un jeton rafraîchi dans la même seconde serait refusé
+            // jusqu'au rafraîchissement suivant (1 h) → on attend le changement de seconde avant de rafraîchir.
+            if (res?.code === "ACTIVATED") {
+              await new Promise((resolve) => setTimeout(resolve, 1100));
+              await getBrowserClient().auth.refreshSession().catch(() => undefined);
+            }
             router.replace("/dashboard");
             router.refresh();
           }}

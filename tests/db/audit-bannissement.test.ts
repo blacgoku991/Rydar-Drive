@@ -112,6 +112,12 @@ describe("Téléphone : même numéro, autre écriture (sql-rpc-argent#2, flux-c
     const stored = `+330${digits.slice(1)}`; // écriture stockée par l'ancien normalizePhone pour « +33 (0)6… »
     const canonical = `+33${digits.slice(1)}`;
     const x = await driverIn(org, { phone: stored });
+    // Même numéro écrit autrement (« 06… », « +33 (0)6… ») sur des fiches de la centrale : l'ancienne empreinte ne les
+    // reconnaissait pas (enregistrées ici avant le bannissement : depuis 20260924005400, la recherche reconnaît aussi
+    // l'ancienne empreinte et refuserait ces fiches après lui)
+    const z = await driverIn(org, { phone: digits });
+    const w = await driverIn(org, { phone: withTrunk(digits) });
+    const other = await driverIn(org);
     const ban = await rpc(org.ownerId, "ban_driver", [x.id, "Faux paiements répétés", "fraud", true, false]);
     expect(ban.code).toBe("BANNED");
 
@@ -126,11 +132,8 @@ describe("Téléphone : même numéro, autre écriture (sql-rpc-argent#2, flux-c
          from jsonb_array_elements(identities) e) where id = $1`,
       [ban.report_id, oldHash],
     );
-    // Contournements possibles avant le correctif : « 06… » et « +33 (0)6… » passaient
-    expect(await banScope(org.id, "phone", digits)).toBeNull();
-    const z = await driverIn(org, { phone: digits });
-    const w = await driverIn(org, { phone: withTrunk(digits) });
-    const other = await driverIn(org);
+    // Ancienne empreinte reconnue par la recherche (20260924005400) même avant le rattrapage
+    expect(await banScope(org.id, "phone", digits)).toBe("org");
 
     const res = (await sql(`select private.rehash_phone_identities() as r`))[0].r;
     expect(res.bans).toBeGreaterThanOrEqual(1);

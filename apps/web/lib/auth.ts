@@ -59,9 +59,26 @@ export async function requireUser() {
   return session;
 }
 
+/**
+ * Jeton de la session courante reconnu Super Admin par la base (public.session_is_super_admin → private.is_super_admin) :
+ * rôle donné à un compte EXISTANT par deploy/create-admin.sh (users.super_admin_since) → seul un jeton émis APRÈS la
+ * promotion l'ouvre, jamais celui d'un tiers qui aurait créé le compte avec cette adresse (valable jusqu'à 1 h).
+ */
+const superAdminToken = cache(async () => {
+  const session = await getSession();
+  if (!session) return false;
+  const { data, error } = await session.supabase.rpc("session_is_super_admin");
+  if (error) throw new Error(`Contrôle du rôle Super Admin impossible : ${error.message}`);
+  return data === true;
+});
+
 export async function requireSuperAdmin() {
   const session = await requireUser();
   if (!session.profile.is_super_admin) redirect("/dashboard");
+  // Même règle que la base : jeton antérieur à la promotion → page sans espace (bouton « Se déconnecter », puis
+  // reconnexion). Pas /login ni /dashboard : le proxy renvoie une session valide de /login vers /dashboard, qui
+  // renvoie un Super Admin sans centrale vers /admin (boucle).
+  if (!(await superAdminToken())) redirect("/no-access");
   return session;
 }
 
