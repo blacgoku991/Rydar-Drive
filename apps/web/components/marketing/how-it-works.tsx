@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { RadarMark } from "@/components/brand/logo";
 import { cn } from "@/lib/utils";
 import styles from "./landing.module.css";
@@ -41,14 +42,15 @@ const SUMMARY = [
   { label: "Attribution", value: "1 seule" },
 ];
 
-export function HowItWorks() {
+/** « Comment ça marche » (ancre #fonctionnement de la page Services). */
+export function HowItWorks({ className, eyebrow = "Fonctionnement" }: { className?: string; eyebrow?: ReactNode }) {
   return (
-    <Section id="fonctionnement" labelledBy="fonctionnement-titre">
+    <Section id="fonctionnement" labelledBy="fonctionnement-titre" className={className}>
       <div className="grid gap-12 lg:grid-cols-[1.1fr_1fr] lg:gap-16">
         <div>
           <SectionHeading
             id="fonctionnement-titre"
-            eyebrow="Fonctionnement"
+            eyebrow={eyebrow}
             title={fr("De la réservation au règlement, en quatre temps.")}
           />
           <ol className="mt-10 space-y-2">

@@ -1,9 +1,9 @@
 import { formatPrice } from "@rydar/shared";
-import { Check } from "lucide-react";
-import type { ReactNode } from "react";
+import { Check, Database, FileText, Receipt, RefreshCw, type LucideIcon } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { mailto } from "./contact";
+import { contactHref, PRICING_HREF } from "./contact";
 import styles from "./landing.module.css";
 import { Section, SectionHeading } from "./section";
 import { fr } from "./typo";
@@ -18,47 +18,23 @@ export type PublicPlan = {
   highlighted: boolean;
 };
 
-/**
- * Section Tarifs : titre et mentions envoyés tout de suite ; les offres (`children`), lues en base, arrivent
- * ensuite en streaming sans retarder le reste de la page.
- */
-export function Pricing({ children }: { children: ReactNode }) {
-  return (
-    <Section id="tarifs" labelledBy="tarifs-titre">
-      <SectionHeading
-        id="tarifs-titre"
-        center
-        eyebrow="Tarifs"
-        title="Une offre pour chaque centrale"
-        intro={fr("Abonnement mensuel ou annuel, prix hors taxes. Vous arrêtez le renouvellement quand vous voulez, depuis le tableau de bord.")}
-      />
-      {children}
-      <p className="mx-auto mt-8 max-w-2xl text-center text-[13px] leading-relaxed text-fg-muted">
-        {fr(
-          "Mode centrale à commission : frais plateforme par course terminée, en plus ou à la place de l'abonnement selon les conditions convenues. Rydar n'encaisse pas le prix des courses.",
-        )}
-      </p>
-    </Section>
-  );
-}
-
 /** Offres publiques de la base (/admin/plans) ; aucune (ou base injoignable) : « Tarif sur mesure ». */
 export function PlanCards({ plans }: { plans: PublicPlan[] }) {
   if (plans.length === 0) {
     return (
-      <div className={cn("surface mx-auto mt-12 flex max-w-xl flex-col items-center rounded-2xl p-8 text-center", styles.reveal)}>
-        <p className="text-[18px] font-semibold">Tarif sur mesure</p>
+      <div className={cn("surface mx-auto flex max-w-xl flex-col items-center rounded-2xl p-8 text-center", styles.reveal)}>
+        <h2 className="text-[18px] font-semibold">Tarif sur mesure</h2>
         <p className="mt-2 text-[14px] leading-relaxed text-fg-muted">
           {fr("Selon la taille de votre flotte ou de votre réseau de chauffeurs : écrivez-nous, nous vous proposons une formule adaptée.")}
         </p>
         <Button asChild variant="primary" className="mt-6">
-          <a href={mailto("Tarifs Rydar Drive")}>Demander un tarif</a>
+          <Link href={PRICING_HREF}>Demander un tarif</Link>
         </Button>
       </div>
     );
   }
   return (
-    <div className={cn("mx-auto mt-12 grid gap-4", plans.length >= 3 ? "lg:grid-cols-3" : plans.length === 2 ? "max-w-4xl md:grid-cols-2" : "max-w-md")}>
+    <div className={cn("mx-auto grid gap-4", plans.length >= 3 ? "lg:grid-cols-3" : plans.length === 2 ? "max-w-4xl md:grid-cols-2" : "max-w-md")}>
       {plans.map((p) => (
         <article
           key={p.id}
@@ -71,7 +47,7 @@ export function PlanCards({ plans }: { plans: PublicPlan[] }) {
           {p.highlighted && (
             <span className="absolute -top-3 left-7 rounded-full bg-brand px-3 py-1 text-[11px] font-bold text-brand-fg">Recommandé</span>
           )}
-          <h3 className="text-[17px] font-semibold">{p.name}</h3>
+          <h2 className="text-[17px] font-semibold">{p.name}</h2>
           {p.description && <p className="mt-1 text-[13.5px] text-fg-muted">{fr(p.description)}</p>}
           <p className="mt-6">
             <span className="num text-[40px] font-semibold tracking-tight">{formatPrice(p.price_monthly_cents)}</span>
@@ -84,8 +60,13 @@ export function PlanCards({ plans }: { plans: PublicPlan[] }) {
               </li>
             ))}
           </ul>
-          <Button asChild variant={p.highlighted ? "primary" : "secondary"} className="mt-8 w-full">
-            <a href={mailto(`Offre ${p.name}`)}>Démarrer avec {p.name}</a>
+          {/* Formulaire de contact, sujet « Demande de tarif », offre préremplie */}
+          <Button
+            asChild
+            variant={p.highlighted ? "primary" : "secondary"}
+            className="mt-8 h-auto min-h-10 w-full whitespace-normal py-2 text-center"
+          >
+            <Link href={contactHref("tarif", p.code)}>Choisir l&apos;offre {p.name}</Link>
           </Button>
         </article>
       ))}
@@ -97,7 +78,7 @@ export function PlanCards({ plans }: { plans: PublicPlan[] }) {
 export function PlanCardsSkeleton() {
   const bar = "skeleton rounded-md motion-reduce:animate-none";
   return (
-    <div className="mx-auto mt-12 grid gap-4 lg:grid-cols-3">
+    <div className="mx-auto grid gap-4 lg:grid-cols-3">
       <p role="status" className="sr-only">
         Chargement des offres…
       </p>
@@ -115,5 +96,76 @@ export function PlanCardsSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** Mention sous les offres : frais plateforme du mode centrale (CGV, articles 3 et 5). */
+export function PlatformFeeNote({ className }: { className?: string }) {
+  return (
+    <p className={cn("mx-auto max-w-2xl text-center text-[13px] leading-relaxed text-fg-muted", className)}>
+      {fr(
+        "Mode centrale à commission : frais plateforme par course terminée, en plus ou à la place de l'abonnement selon les conditions convenues. Rydar n'encaisse pas le prix des courses.",
+      )}
+    </p>
+  );
+}
+
+const link = "text-fg underline decoration-white/25 underline-offset-4 transition-colors hover:decoration-brand";
+
+/** Conditions utiles avant de choisir (reprises des CGV). */
+const FACTS: { icon: LucideIcon; title: string; text: string }[] = [
+  {
+    icon: RefreshCw,
+    title: "Vous gardez la main",
+    text: "Changer d'offre ou arrêter le renouvellement se fait à tout moment depuis le tableau de bord ; l'arrêt prend effet à la fin de la période payée.",
+  },
+  {
+    icon: Receipt,
+    title: "Changements de prix annoncés",
+    text: "Prix hors taxes. Un changement de prix est annoncé au moins 30 jours à l'avance et ne s'applique qu'au renouvellement suivant.",
+  },
+  {
+    icon: FileText,
+    title: "Frais plateforme lisibles",
+    text: "En mode centrale : un pourcentage et/ou un montant fixe par course terminée, dans la limite du prix de la course, avec un relevé exportable en CSV.",
+  },
+  {
+    icon: Database,
+    title: "Vos données vous suivent",
+    text: "Avant la fin du contrat, vous pouvez demander l'export de vos courses, clients, chauffeurs, véhicules et règlements au format CSV.",
+  },
+];
+
+/** « Bon à savoir » de la page Tarifs. */
+export function PricingFacts() {
+  return (
+    <Section labelledBy="tarifs-conditions-titre" className="border-y border-line bg-ink-950/40" inner="py-16 sm:py-24">
+      <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
+        <SectionHeading
+          id="tarifs-conditions-titre"
+          eyebrow="Bon à savoir"
+          title="Des conditions simples, écrites noir sur blanc."
+          intro={
+            <>
+              {fr("Tout est détaillé dans les conditions générales de vente.")}{" "}
+              <Link href="/cgv" className={link}>
+                Lire les CGV
+              </Link>
+            </>
+          }
+        />
+        <ul className="grid gap-3 sm:grid-cols-2">
+          {FACTS.map(({ icon: Icon, title, text }) => (
+            <li key={title} className={cn("surface rounded-2xl p-5", styles.reveal)}>
+              <h3 className="flex items-center gap-2.5 text-[15.5px] font-semibold tracking-tight">
+                <Icon className="size-[18px] shrink-0 text-brand" aria-hidden />
+                {fr(title)}
+              </h3>
+              <p className="mt-2 text-[13.5px] leading-relaxed text-fg-muted">{fr(text)}</p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Section>
   );
 }

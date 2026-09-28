@@ -13,9 +13,9 @@ const OWNED: { icon: LucideIcon; title: string; text: string }[] = [
 ];
 
 /** Positionnement : Rydar Drive est un logiciel, la centrale reste maîtresse de son activité. */
-export function Ownership() {
+export function Ownership({ className }: { className?: string }) {
   return (
-    <Section labelledBy="positionnement-titre" className="border-y border-line bg-ink-950/40">
+    <Section labelledBy="positionnement-titre" className={className}>
       <div className="grid gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-16">
         <div>
           <SectionHeading
