@@ -158,6 +158,33 @@ export async function retryEmail(emailId: number, contactRequestId?: string): Pr
   return { ok: true };
 }
 
+/**
+ * E-mails en attente d'un nouvel essai (délai de 1 min à 12 h après un échec) : dus maintenant, pris par le mailer au
+ * plus tard 10 s après (s'il joint le serveur mail).
+ */
+export async function requeueEmails(): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  const session = await requireSuperAdmin();
+  const now = new Date().toISOString();
+  const { data, error } = await createAdminClient()
+    .from("email_outbox")
+    .update({ next_attempt_at: now })
+    .eq("status", "pending")
+    .gt("next_attempt_at", now)
+    .select("id");
+  if (error) return { ok: false, error: actionError(error, "Relance impossible.") };
+  const count = (data ?? []).length;
+  if (!count) return { ok: false, error: "Aucun e-mail n'attend de nouvel essai." };
+  await audit({
+    actorUserId: session.user.id,
+    actorType: "super_admin",
+    action: "email.requeue",
+    entityType: "email_outbox",
+    metadata: { count },
+  });
+  refresh();
+  return { ok: true, count };
+}
+
 /** E-mail de test : vérifie de bout en bout l'envoi par le serveur mail du VPS. */
 export async function sendTestEmail(to: string): Promise<Result> {
   const session = await requireSuperAdmin();

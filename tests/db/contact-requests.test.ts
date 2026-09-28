@@ -1,6 +1,7 @@
-// Formulaire de contact du site vitrine et file d'envoi des e-mails (migration 20260924005700_contact_requests) :
-// droits (super admin en lecture, écritures par le serveur), svc_contact_submit (accusé de réception dédoublonné,
-// garde-fou horaire), contraintes, mailer (claim_emails / complete_email), réveil pg_notify, durées de conservation.
+// Formulaire de contact du site vitrine et file d'envoi des e-mails (migrations 20260924005700_contact_requests et
+// 20260924005800_mailer_status) : droits (super admin en lecture, écritures par le serveur), svc_contact_submit
+// (accusé de réception dédoublonné, garde-fou horaire), contraintes, mailer (claim_emails / complete_email, état,
+// libération d'un lot, relance), réveil pg_notify, durées de conservation.
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -17,7 +18,7 @@ afterAll(async () => {
 // La file est globale (claim_emails prend toutes les lignes dues) et le garde-fou compte toutes les demandes de la
 // dernière heure : chaque test part de tables vides (aucun autre fichier de tests ne s'en sert).
 beforeEach(async () => {
-  await sql("truncate public.email_outbox, public.contact_requests");
+  await sql("truncate public.email_outbox, public.contact_requests, public.mailer_status");
 });
 
 // -----------------------------------------------------------------------------
@@ -243,6 +244,9 @@ describe("Demandes de contact et file d'e-mails : droits d'accès", () => {
         `select private.complete_email(${id}, false, 'x', true)`,
         "select private.purge_contact_data()",
         "select private.email_outbox_wake()",
+        `select private.report_mailer_status('{"smtp_host":"127.0.0.1","smtp_port":25,"smtp_tls":"loopback-plain"}')`,
+        `select private.release_emails(array[${id}]::bigint[])`,
+        "select private.requeue_waiting_emails()",
       ]) {
         const e = await expectPgError(as(who, (q) => q(call)));
         expect(e.code, `${JSON.stringify(who)} ${call}`).toBe("42501");
@@ -778,6 +782,137 @@ describe("Mailer : private.claim_emails / private.complete_email", () => {
     const pending = await queue();
     await complete(pending, false, "Erreur", true);
     expect(await emailRow(pending)).toMatchObject({ status: "pending", attempts: 0, last_error: null });
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Mailer : état, libération d'un lot, relance (20260924005800)
+// -----------------------------------------------------------------------------
+describe("Mailer : état (mailer_status), libération d'un lot, relance", () => {
+  const STATUS = {
+    started_at: "2026-09-28T18:00:00.000Z",
+    smtp_host: "127.0.0.1",
+    smtp_port: 25,
+    smtp_tls: "loopback-plain",
+    smtp_auth: false,
+    mail_from: "noreply@rydar.example",
+    smtp_ready: false,
+    smtp_checked_at: "2026-09-28T18:00:01.000Z",
+    smtp_error: "Serveur mail injoignable : connect ECONNREFUSED 127.0.0.1:25",
+    smtp_error_at: "2026-09-28T18:00:01.000Z",
+  };
+  const report = (status: unknown) => sql("select private.report_mailer_status($1::jsonb)", [status === null ? null : JSON.stringify(status)]);
+  const statusRows = () => sql("select * from public.mailer_status");
+
+  it("état : une seule ligne, remplacée à chaque compte rendu (signe de vie à l'heure de la base)", async () => {
+    const [{ now }] = await sql("select now() as now");
+    await report(STATUS);
+    let rows = await statusRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: true,
+      smtp_host: "127.0.0.1",
+      smtp_port: 25,
+      smtp_tls: "loopback-plain",
+      smtp_auth: false,
+      mail_from: "noreply@rydar.example",
+      smtp_ready: false,
+      smtp_error: STATUS.smtp_error,
+    });
+    expect((rows[0].started_at as Date).toISOString()).toBe(STATUS.started_at);
+    expect((rows[0].smtp_error_at as Date).toISOString()).toBe(STATUS.smtp_error_at);
+    expect((rows[0].seen_at as Date).getTime()).toBeGreaterThanOrEqual((now as Date).getTime());
+
+    // Serveur de nouveau joignable : erreur effacée par le compte rendu suivant (valeurs absentes → null)
+    await report({ ...STATUS, smtp_ready: true, smtp_error: null, smtp_error_at: undefined });
+    rows = await statusRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ smtp_ready: true, smtp_error: null, smtp_error_at: null });
+
+    // Textes bornés (erreur 500, hôte 255, expéditeur 254) ; valeurs vides → défauts ; état inconnu → null
+    await report({ smtp_host: "  ", smtp_tls: "", smtp_error: "x".repeat(800), mail_from: "  " });
+    rows = await statusRows();
+    expect(rows[0]).toMatchObject({ smtp_host: "?", smtp_port: 25, smtp_tls: "?", smtp_auth: false, mail_from: null, smtp_ready: null });
+    expect(rows[0].smtp_error).toHaveLength(500);
+    await report(null);
+    expect(await statusRows()).toHaveLength(1);
+  });
+
+  it("état : lu par le super admin seulement ; personne n'y écrit (ni client, ni super admin, ni service role)", async () => {
+    await report(STATUS);
+    const sa = await superAdmin();
+    expect(await as({ sub: sa }, (q) => q("select smtp_host, smtp_ready from public.mailer_status"))).toEqual([
+      { smtp_host: "127.0.0.1", smtp_ready: false },
+    ]);
+    const org = await createOrg("Contact état mailer");
+    const driver = await createDriver(org);
+    for (const sub of [org.ownerId, driver.userId]) {
+      expect(await as({ sub }, (q) => q("select * from public.mailer_status"))).toEqual([]);
+    }
+    for (const who of [{ role: "anon" as const }, { role: "service_role" as const }]) {
+      const e = await expectPgError(as(who, (q) => q("select * from public.mailer_status")));
+      expect(e.code, JSON.stringify(who)).toBe("42501");
+    }
+    const writes = [
+      "update public.mailer_status set smtp_ready = true",
+      "delete from public.mailer_status",
+      "insert into public.mailer_status (id, started_at, smtp_host, smtp_port, smtp_tls) values (true, now(), 'x', 25, 'x')",
+    ];
+    for (const who of [{ role: "anon" as const }, { sub: org.ownerId }, { sub: sa }, { role: "service_role" as const }]) {
+      for (const stmt of writes) {
+        const e = await expectPgError(as(who, (q) => q(stmt)));
+        expect(e.code, `${JSON.stringify(who)} ${stmt}`).toBe("42501");
+      }
+    }
+    expect(await statusRows()).toHaveLength(1);
+  });
+
+  it("libération : un e-mail réservé mais jamais tenté redevient dû, sans tentative comptée ; rien d'autre ne change", async () => {
+    const a = await queue();
+    const b = await queue({ attempts: 3, last_error: "Serveur mail injoignable" });
+    const sent = await queue({ status: "sent", sent_at: new Date(), attempts: 1 });
+    const failed = await queue({ status: "failed", attempts: 8 });
+    const waiting = await queue({ attempts: 2, next_attempt_at: new Date(Date.now() + 3_600_000) });
+    expect((await claim()).map((r) => [r.id, r.attempts])).toEqual([[a, 1], [b, 4]]);
+
+    const [{ n }] = await sql("select private.release_emails($1::bigint[]) as n", [[a, b, sent, failed, waiting]]);
+    expect(n).toBe(2);
+    expect(await emailRow(a)).toMatchObject({ status: "pending", attempts: 0, locked_until: null });
+    // Erreur de l'essai précédent gardée (affichée dans /admin/contacts)
+    expect(await emailRow(b)).toMatchObject({ status: "pending", attempts: 3, locked_until: null, last_error: "Serveur mail injoignable" });
+    expect(await emailRow(sent)).toMatchObject({ status: "sent", attempts: 1 });
+    expect(await emailRow(failed)).toMatchObject({ status: "failed", attempts: 8 });
+    expect(await emailRow(waiting)).toMatchObject({ status: "pending", attempts: 2 });
+    // Dus aussitôt : repris au prochain lot
+    expect((await claim()).map((r) => r.id)).toEqual([a, b]);
+    // Liste vide ou absente : rien
+    expect(await sql("select private.release_emails('{}'::bigint[]) as n")).toEqual([{ n: 0 }]);
+    expect(await sql("select private.release_emails(null) as n")).toEqual([{ n: 0 }]);
+  });
+
+  it("relance : les e-mails en attente d'un nouvel essai deviennent dus ; envois en cours, envoyés, en échec inchangés", async () => {
+    const later = await queue({ attempts: 5, next_attempt_at: new Date(Date.now() + 3 * 3_600_000), last_error: "Serveur mail injoignable" });
+    const due = await queue({ next_attempt_at: new Date(Date.now() - 60_000) });
+    const sending = await queue();
+    await claim(); // `later` n'est pas dû ; `due` et `sending` passent « en cours »
+    await sql("select private.complete_email($1, false, 'Refus temporaire', false)", [due]); // `due` : prochain essai dans 1 min
+    const sent = await queue({ status: "sent", sent_at: new Date(), next_attempt_at: new Date(Date.now() + 3_600_000) });
+    const failed = await queue({ status: "failed", attempts: 8, next_attempt_at: new Date(Date.now() + 3_600_000) });
+    const [dueBefore, sendingBefore, sentBefore, failedBefore] = await Promise.all([due, sending, sent, failed].map(emailRow));
+
+    const [{ n, tx_now }] = await inTransaction((q) => q("select private.requeue_waiting_emails() as n, now() as tx_now"));
+    expect(n).toBe(2);
+    const row = await emailRow(later);
+    expect(row).toMatchObject({ status: "pending", attempts: 5, last_error: "Serveur mail injoignable" });
+    expect((row.next_attempt_at as Date).getTime()).toBe((tx_now as Date).getTime());
+    expect((await emailRow(due)).next_attempt_at).toEqual(tx_now);
+    expect(await emailRow(sending)).toEqual(sendingBefore);
+    expect(await emailRow(sent)).toEqual(sentBefore);
+    expect(await emailRow(failed)).toEqual(failedBefore);
+    expect(dueBefore.status).toBe("pending");
+    expect((await claim()).map((r) => r.id)).toEqual([later, due]);
+    // Plus rien en attente : aucune écriture
+    expect(await sql("select private.requeue_waiting_emails() as n")).toEqual([{ n: 0 }]);
   });
 });
 

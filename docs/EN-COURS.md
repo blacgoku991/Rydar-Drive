@@ -18,7 +18,8 @@ Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal 
 `20260924004300` (droits) à `20260924005600` (offres chauffeur) : 004300 droits, 004400 argent, 004500 dispatch,
 004600 bannissement, 004700 comptes, 004800 RGPD, 004900 public, 005000 domaine, 005100 robustesse, 005200 rappels
 visite médicale, 005300 jetons d'activation, 005400 contre-audit SQL, 005500 dette avant suppression, 005600 offres.
-Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails).
+Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `20260924005800` état du mailer (pause de
+la file si le serveur mail est injoignable, relance à son retour).
 
 ## Depuis l'audit
 - App chauffeur : panneau de l'accueil réductible (`CollapsibleSheet`, `components/ui.tsx`) : glisser vers le bas ou
@@ -38,6 +39,20 @@ Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails).
   file (`email_outbox`) et envoyés par le nouveau service `mailer` au serveur mail du VPS (SMTP 127.0.0.1:25).
   Vérifié : 475 tests unitaires, 435 tests DB, build de production, bout en bout (formulaire → base → mailer → faux
   serveur SMTP → panneau admin : envoi, réponse, échec 550, nouvel essai, suppression, limites, piège à robots).
+
+- E-mails jamais reçus en production (« En attente », aucun envoi réussi) : le mailer tournait mais aucun serveur mail
+  n'écoutait sur 127.0.0.1:25 (Postfix pas installé). Désormais (mig `20260924005800`) : file en pause tant que le
+  serveur mail ne répond pas (aucun essai compté, plus d'échec au bout de 20 h), e-mails relancés dans la minute à son
+  retour et au démarrage du mailer ; `/admin/contacts` affiche le service d'envoi (actif, arrêté, jamais démarré), le
+  serveur mail (joignable ou motif, conseil Postfix), les derniers e-mails de tout type (dont tests) et « Relancer
+  maintenant ». Vérifié : 489 tests unitaires, 439 tests DB, build, bout en bout (mailer sans SMTP → pause visible,
+  SMTP démarré → file vidée en 53 s, relance, service arrêté, mobile).
+- Le VPS a des commits LOCAUX absents de GitHub (commit déployé `7bae746` = 8110574 + modifications locales :
+  Supabase auto-hébergé sur `api.rydardrive.com`, base locale `DATABASE_SSLMODE=disable`, donc au moins
+  `configure.sh`, `pg-url.sh`/`migrate.sh` et `apps/worker/src/config.ts`). `update-production.sh` les rebase à chaque
+  mise à jour : un conflit bloquerait la mise à jour (retour à l'état précédent). À intégrer sur GitHub dès que le
+  Claude du VPS en a donné le résumé ; d'ici là, éviter de modifier ces fichiers (et `deploy/*`). À reprendre ensuite :
+  `deploy/CLAUDE-VPS.md` (Supabase auto-hébergé ; étape 5 : les e-mails attendent désormais sans limite de durée).
 
 ## À faire par l'utilisateur
 - Mettre à jour le VPS : `cd /opt/rydar && bash deploy/update-production.sh` (migrations 003600 à 005700, nouveau

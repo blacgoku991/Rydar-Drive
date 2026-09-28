@@ -262,10 +262,16 @@ port n'est publié : Postfix n'écoute qu'en local, le pare-feu n'ouvre pas le p
 n'écoute que sur `127.0.0.1`. Installation de Postfix, port 25 sortant, SPF, DKIM, DMARC et DNS inverse :
 [`deploy/CLAUDE-VPS.md`](../deploy/CLAUDE-VPS.md), étape 5.
 
-**Réessais** : 1 min, 5 min, 15 min, 1 h, 3 h, 6 h puis 12 h (8 essais, une vingtaine d'heures) si le serveur est
-injoignable, refuse la session (accueil, STARTTLS, identifiants SMTP : réglage à corriger, les e-mails attendent) ou
-répond par un refus temporaire (4xx) ; un refus définitif de l'expéditeur, du destinataire ou du message (5xx, par
-exemple adresse inexistante) arrête aussitôt (« Échec » et motif dans `/admin/contacts`). Un e-mail réservé par un
+**Serveur mail injoignable** (Postfix absent ou arrêté, relais qui refuse la session : accueil, STARTTLS, identifiants
+SMTP) : la file est **en pause**. Le mailer vérifie le serveur au démarrage puis chaque minute ; tant qu'il ne répond
+pas, il ne prend aucun e-mail, aucun essai n'est compté et rien ne passe en échec, même après des jours. Dès qu'il
+répond (et à chaque démarrage du mailer), les e-mails en attente d'un nouvel essai sont relancés aussitôt
+(`private.requeue_waiting_emails`, migration 005800) : tout part dans la minute. Si le serveur tombe au milieu d'un lot,
+le reste du lot est rendu à la file sans essai compté (`private.release_emails`).
+
+**Réessais** (serveur joignable) : 1 min, 5 min, 15 min, 1 h, 3 h, 6 h puis 12 h (8 essais, une vingtaine d'heures) sur
+un refus temporaire (4xx) ou une coupure pendant l'envoi ; un refus définitif de l'expéditeur, du destinataire ou du
+message (5xx, par exemple adresse inexistante) arrête aussitôt (« Échec » et motif dans `/admin/contacts`). Un e-mail réservé par un
 expéditeur arrêté en plein envoi repart après un bail de 5 min : il peut alors arriver deux fois ; interrompu ainsi à
 son 8e essai, il passe en échec. Un e-mail en échec remis en file repart pour un nouvel essai. Plusieurs expéditeurs
 peuvent tourner ensemble (réservation `FOR UPDATE SKIP LOCKED`).
@@ -290,8 +296,12 @@ sans serveur mail, les demandes restent visibles dans `/admin/contacts` et leurs
 
 1. `sudo ss -ltnp | grep ':25 '` : Postfix écoute sur `127.0.0.1:25`, jamais sur `0.0.0.0`.
 2. Sur le VPS, `curl -s http://127.0.0.1:8081/` : `"healthy":true` (file lue dans la base) et `"smtpReady":true`
-   (serveur mail joignable) ; `smtp.lastSentAt` = dernier envoi réussi, `smtp.lastError` = dernière erreur (adresses
-   masquées), `counters` = envoyés, réessais et échecs depuis le démarrage.
+   (serveur mail joignable ; `"paused":true` = file en pause) ; `smtp.lastSentAt` = dernier envoi réussi,
+   `smtp.lastError` = dernière erreur (adresses masquées), `counters` = envoyés, réessais et échecs depuis le démarrage.
+   Le même état se lit sans terminal dans `/admin/contacts`, carte « Envoi des e-mails » : service d'envoi actif,
+   arrêté (plus de signe de vie depuis 3 min : conteneur arrêté ou base injoignable pour lui) ou jamais démarré,
+   serveur mail joignable ou injoignable (motif), derniers e-mails (essais, prochain essai, erreur), « Relancer
+   maintenant ». Le mailer écrit cet état en base toutes les 30 s (`public.mailer_status`, lue par le seul super admin).
 3. `/admin/contacts` → e-mail de test vers une boîte Gmail ou Outlook : reçu hors indésirables ; « Afficher l'original »
    indique SPF, DKIM et DMARC `PASS`.
 

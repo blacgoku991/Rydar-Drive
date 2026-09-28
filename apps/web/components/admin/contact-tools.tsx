@@ -1,6 +1,7 @@
 "use client";
 // Super admin : actions sur les demandes de contact (statut et note, réponse par e-mail, suppression, nouvel essai
-// d'un e-mail en échec, e-mail de test). Actions serveur : app/admin/contacts/actions.ts.
+// d'un e-mail en échec, relance des e-mails en attente, e-mail de test) et suivi de la file d'envoi. Actions serveur :
+// app/admin/contacts/actions.ts.
 import { CONTACT_LIMITS, CONTACT_STATUS_META, CONTACT_STATUSES, type ContactStatus } from "@rydar/shared";
 import { RotateCw, Save, Send, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 import {
   deleteContactRequest,
   replyToContactRequest,
+  requeueEmails,
   retryEmail,
   sendTestEmail,
   updateContactRequest,
@@ -159,6 +161,41 @@ export function RetryEmailButton({ emailId, contactRequestId }: { emailId: numbe
       <RotateCw aria-hidden /> Réessayer
     </Button>
   );
+}
+
+/** E-mails en attente d'un nouvel essai : relancés maintenant (après une correction du serveur mail, par exemple). */
+export function RequeueEmailsButton({ count }: { count: number }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const requeue = () =>
+    start(() =>
+      runAction(async () => {
+        const res = await requeueEmails();
+        if (!res.ok) return void toast.error(res.error);
+        toast.success(res.count > 1 ? `${res.count} e-mails relancés` : "E-mail relancé", {
+          description: "Envoi dans les secondes qui viennent, si le serveur mail répond.",
+        });
+        router.refresh();
+      }),
+    );
+  return (
+    <Button type="button" variant="outline" size="sm" loading={pending} onClick={requeue} className="w-full">
+      <RotateCw aria-hidden /> Relancer maintenant <span className="num">({count})</span>
+    </Button>
+  );
+}
+
+/** Page tenue à jour toutes les 10 s (onglet visible) tant que des e-mails attendent ou que l'envoi est en panne. */
+export function MailQueueRefresh({ active, everyMs = 10_000 }: { active: boolean; everyMs?: number }) {
+  const router = useRouter();
+  useEffect(() => {
+    if (!active) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") router.refresh();
+    }, everyMs);
+    return () => window.clearInterval(id);
+  }, [active, everyMs, router]);
+  return null;
 }
 
 /** E-mail de test (vérifie le serveur mail du VPS de bout en bout). */

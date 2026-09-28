@@ -17,7 +17,8 @@ la centrale doit les frais plateforme à Rydar.
   MapLibre 6, Supabase SSR ; `proxy.ts` (mini-sites, pages légales non réécrites).
 - `apps/driver` Expo 57 / RN 0.86 / expo-router ; entrée `index.ts` (tâche GPS avant expo-router) ; `src/lib/{location,api,supabase}.ts`.
 - `apps/worker` Node : dispatch_tick, file `notifications` → push (Expo/FCM/APNs) + WhatsApp (`src/whatsapp.ts`), rappels, vols.
-  Service `mailer` (même image, `dist/mailer.js`, réseau de l'hôte) : file `email_outbox` → SMTP 127.0.0.1:25 (Postfix du VPS).
+  Service `mailer` (même image, `dist/mailer.js`, réseau de l'hôte) : file `email_outbox` → SMTP 127.0.0.1:25 (Postfix du VPS) ;
+  SMTP injoignable = file en pause (aucun essai compté), relancée à son retour ; état en base `mailer_status` (/admin/contacts).
 - `packages/shared` (`@rydar/shared`) : types, schémas zod 4, libellés FR, navigation, centrale, platform-fees, whatsapp.
 - `supabase/migrations` = source de vérité (numéro suivant = dernier de `ls supabase/migrations` + 100) ; `tests/db` vitest sur PG réel.
   TypeScript épinglé 5.9.

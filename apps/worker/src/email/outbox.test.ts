@@ -17,10 +17,14 @@ const row = (id: number, over: Partial<OutboxEmail> = {}): OutboxEmail => ({
   ...over,
 });
 
-/** Base simulée : lots successifs pour private.claim_emails, appels à private.complete_email enregistrés. */
+/**
+ * Base simulée : lots successifs pour private.claim_emails, appels à private.complete_email et private.release_emails
+ * enregistrés.
+ */
 function fakeDb(batches: OutboxEmail[][], opts: { failComplete?: boolean } = {}) {
   const claims: unknown[][] = [];
   const completes: unknown[][] = [];
+  const releases: unknown[][] = [];
   const query: QueryFn = async (sql, params = []) => {
     if (sql === "select * from private.claim_emails($1::int)") {
       claims.push(params);
@@ -31,9 +35,13 @@ function fakeDb(batches: OutboxEmail[][], opts: { failComplete?: boolean } = {})
       completes.push(params);
       return { rows: [{}] };
     }
+    if (sql === "select private.release_emails($1::bigint[]) as n") {
+      releases.push(params);
+      return { rows: [{ n: (params[0] as unknown[]).length }] };
+    }
     throw new Error(`requête inattendue : ${sql}`);
   };
-  return { query, claims, completes };
+  return { query, claims, completes, releases };
 }
 
 /** Lignes JSON écrites par log() (info / warn → console.log, error → console.error). */
@@ -77,7 +85,7 @@ describe("mailer — cycle de la file (claim → envoi → complete)", () => {
       onOutcome: (_e, o) => outcomes.push(o),
     });
 
-    expect(result).toEqual({ claimed: 3, sent: 1, retried: 1, failed: 1 });
+    expect(result).toEqual({ claimed: 3, sent: 1, retried: 1, failed: 1, released: 0 });
     expect(db.claims).toEqual([[CLAIM_BATCH]]);
     expect(db.completes).toHaveLength(3);
     expect(db.completes[0]).toEqual(["1", true, null, false]);
@@ -109,7 +117,7 @@ describe("mailer — cycle de la file (claim → envoi → complete)", () => {
     const result = await runMailCycle({ query: db.query, send: async () => Promise.reject(smtpError(451)), classify: classifySmtpError });
     // Réessai demandé à la base (non définitif) : c'est private.complete_email qui passe la ligne en « failed »
     expect(db.completes[0]).toEqual(["8", false, expect.stringContaining("(451)"), false]);
-    expect(result).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1 });
+    expect(result).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1, released: 0 });
     expect(logs.lines).toEqual([expect.objectContaining({ level: "error", msg: "email failed, no more retries", id: "8", attempt: MAX_ATTEMPTS })]);
   });
 
@@ -122,13 +130,13 @@ describe("mailer — cycle de la file (claim → envoi → complete)", () => {
     const result = await runMailCycle({ query: db.query, send: async () => void sent++, classify: classifySmtpError });
     expect(sent).toBe(1);
     expect(db.completes).toEqual([["9", true, null, false]]);
-    expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+    expect(result).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0, released: 0 });
 
     // Nouvel échec : compté en échec (private.complete_email la repasse en « failed »), motif réel conservé
     const again = fakeDb([[row(10, { attempts: MAX_ATTEMPTS + 1 })]]);
     const failed = await runMailCycle({ query: again.query, send: async () => Promise.reject(smtpError(451)), classify: classifySmtpError });
     expect(again.completes).toEqual([["10", false, expect.stringContaining("Refus temporaire du serveur mail (451)"), false]]);
-    expect(failed).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1 });
+    expect(failed).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1, released: 0 });
   });
 
   it("lot complet : nouveau lot réservé ; lot incomplet : fin du cycle ; arrêt demandé : aucune réservation", async () => {
@@ -136,12 +144,51 @@ describe("mailer — cycle de la file (claim → envoi → complete)", () => {
     const full = Array.from({ length: CLAIM_BATCH }, (_, i) => row(100 + i));
     const db = fakeDb([full, [row(200), row(201)]]);
     const deps: CycleDeps = { query: db.query, send: async () => undefined, classify: classifySmtpError };
-    expect(await runMailCycle(deps)).toEqual({ claimed: CLAIM_BATCH + 2, sent: CLAIM_BATCH + 2, retried: 0, failed: 0 });
+    expect(await runMailCycle(deps)).toEqual({ claimed: CLAIM_BATCH + 2, sent: CLAIM_BATCH + 2, retried: 0, failed: 0, released: 0 });
     expect(db.claims).toHaveLength(2);
 
     const idle = fakeDb([[row(300)]]);
-    expect(await runMailCycle({ ...deps, query: idle.query, shouldStop: () => true })).toEqual({ claimed: 0, sent: 0, retried: 0, failed: 0 });
+    expect(await runMailCycle({ ...deps, query: idle.query, shouldStop: () => true })).toEqual({ claimed: 0, sent: 0, retried: 0, failed: 0, released: 0 });
     expect(idle.claims).toHaveLength(0);
+  });
+
+  it("serveur mail injoignable (canSend) : aucun lot pris, aucune tentative comptée", async () => {
+    captureLogs();
+    const db = fakeDb([[row(400), row(401)]]);
+    let sent = 0;
+    const result = await runMailCycle({ query: db.query, send: async () => void sent++, classify: classifySmtpError, canSend: () => false });
+    expect(result).toEqual({ claimed: 0, sent: 0, retried: 0, failed: 0, released: 0 });
+    expect(db.claims).toHaveLength(0);
+    expect(sent).toBe(0);
+  });
+
+  it("serveur mail tombé pendant le lot : le reste du lot est rendu à la file sans tentative, plus de nouveau lot", async () => {
+    const logs = captureLogs();
+    const full = Array.from({ length: CLAIM_BATCH }, (_, i) => row(500 + i));
+    const db = fakeDb([full, [row(600)]]);
+    const connRefused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:25"), { code: "ESOCKET" });
+    let ready = true;
+    let tried = 0;
+    const result = await runMailCycle({
+      query: db.query,
+      send: async () => {
+        tried++;
+        // Le 1er part, le 2e révèle la panne : le mailer passe « smtpReady » à false (onOutcome)
+        if (tried === 2) throw connRefused;
+      },
+      classify: classifySmtpError,
+      canSend: () => ready,
+      onOutcome: (_e, o) => {
+        if (!o.ok && o.smtpDown) ready = false;
+      },
+    });
+    expect(tried).toBe(2);
+    expect(result).toEqual({ claimed: CLAIM_BATCH, sent: 1, retried: 1, failed: 0, released: CLAIM_BATCH - 2 });
+    expect(db.completes.map((c) => c.slice(0, 2))).toEqual([["500", true], ["501", false]]);
+    expect(db.releases).toEqual([[full.slice(2).map((e) => String(e.id))]]);
+    // Lot complet, mais serveur injoignable : pas de lot suivant
+    expect(db.claims).toHaveLength(1);
+    expect(logs.lines.at(-1)).toMatchObject({ level: "info", msg: expect.stringContaining("without an attempt"), count: CLAIM_BATCH - 2 });
   });
 
   it("journal : identifiant, type et domaine du destinataire — jamais l'objet, le corps ni l'adresse complète", async () => {

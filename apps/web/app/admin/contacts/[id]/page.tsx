@@ -19,6 +19,7 @@ import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
+import { emailProgress } from "@/lib/email-status";
 
 export const metadata: Metadata = { title: "Demande de contact" };
 export const dynamic = "force-dynamic";
@@ -170,15 +171,7 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
                           <p className="text-fg">
                             {EMAIL_KIND_META[e.kind]?.label ?? e.kind} <span className="text-fg-muted">→ {e.to_email}</span>
                           </p>
-                          <p className="num mt-0.5 text-[12px] text-fg-muted">
-                            {e.status === "sent"
-                              ? `Envoyé le ${dateTime(e.sent_at)}`
-                              : e.status === "failed"
-                                ? `Échec après ${e.attempts} essai${e.attempts > 1 ? "s" : ""}`
-                                : e.attempts > 0
-                                  ? `${e.attempts} essai${e.attempts > 1 ? "s" : ""} · prochain le ${dateTime(e.next_attempt_at)}`
-                                  : `Créé le ${dateTime(e.created_at)}`}
-                          </p>
+                          <p className="num mt-0.5 text-[12px] text-fg-muted">{emailProgress(e)}</p>
                           {e.last_error && e.status !== "sent" && <p className="mt-1 break-words text-[12px] text-red">{e.last_error}</p>}
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
