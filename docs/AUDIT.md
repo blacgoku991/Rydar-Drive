@@ -11,7 +11,7 @@ un test qui échoue sans lui et passe avec lui.
 | 1. Audit | 21 auditeurs, un par domaine (auth web, API chauffeur, API publique, actions du tableau de bord et du super admin, webhooks, RLS, fonctions SQL courses et argent, temps réel et stockage, front, app, worker et déploiement, flux course / argent / comptes / annexes, code inutile, robustesse web et app, textes) | 170 constats, chacun avec scénario et preuve |
 | 2. Contre-expertise | 16 vérificateurs chargés de RÉFUTER chaque constat (exécution SQL réelle comme l'utilisateur concerné, vrai serveur d'authentification GoTrue, navigateur Chromium, scripts) | 0 réfuté ; doublons fusionnés et gravités corrigées → **129 défauts distincts : 7 hauts, 31 moyens, 91 bas** |
 | 3. Correction | 11 correcteurs en copies isolées du dépôt, fonctions SQL et fichiers attribués sans chevauchement, puis deux vagues de finition | Migrations `20260924004300` à `005300`, un test par correctif |
-| 4. Contre-audit | 6 relecteurs indépendants sur l'ensemble des corrections | 32 points résiduels (4 moyens, 28 bas), corrigés au tour 2 (migrations `005400`+) |
+| 4. Contre-audit | 6 relecteurs indépendants sur l'ensemble des corrections | 32 points résiduels (4 moyens, 28 bas) : 3 déjà corrigés par les finitions, 29 corrigés au tour 2 (migrations `005400` à `005600`), chacun reproduit d'abord |
 | 5. Bout en bout | Pile complète locale (PostgreSQL, GoTrue, PostgREST, temps réel, web de production, worker) + Chromium | Voir `docs/EN-COURS.md` |
 
 La base ne laissait lire directement aucune donnée d'une autre centrale (RLS sur toutes les tables, vérifiée table par
@@ -58,6 +58,28 @@ domaine personnalisé, signalement plateforme) : ils sont corrigés ci-dessous.
 
 Les 91 défauts bas (libellés, cas limites, code inutile, documentation…) sont corrigés, sauf ceux listés ci-dessous.
 
+## Tour 2 (contre-audit) : ce qui a changé en plus
+
+- **Jetons antérieurs** : un jeton émis avant l'activation d'une invitation (même dans la même seconde) ou avant une
+  promotion Super Admin par `create-admin.sh` n'a pas les droits (`private.jwt_issued_after`, `users.super_admin_since`,
+  RPC `session_is_super_admin` pour `requireSuperAdmin`).
+- **Comptes** : une adhésion seulement « invitée » ne protège plus un compte (suppression, bannissement plateforme) ;
+  suspendre une centrale ne ferme que les sessions de ses membres actifs ; « J'ai payé » et le relevé visent la centrale
+  affichée ; seul le propriétaire annule l'invitation d'un propriétaire ; outil super admin « Débloquer la connexion ».
+- **Limites** : connexion web et chauffeur, code « mot de passe oublié » et suppression de compte comptent par couple
+  (adresse, IP /64) avec un plafond global plus haut : un tiers ne bloque plus le titulaire d'une adresse.
+- **API et mini-site** : clé d'idempotence rejouée par une autre clé → 409, jamais la course d'une autre intégration ;
+  limite par IP réservée aux requêtes non authentifiées ; budget géo payant partagé en sous-plafonds (IP, mini-site,
+  centrale, utilisateur) ; domaine personnalisé soumis au droit de l'offre ; un ancien abonnement Stripe ne rétrograde
+  plus un abonnement en cours ; un sous-domaine réservé déjà pris n'empêche plus d'enregistrer les autres réglages.
+- **Courses** : verrou d'acceptation sans interblocage avec le dispatch ; une course sans prix n'est ni acceptée ni
+  annoncée acceptable pour un nouveau chauffeur sous plafond ; le suivi des vols ne relance plus une course d'une
+  centrale bloquée (frais en retard, quota).
+- **Bannissements** : les empreintes de téléphone calculées avec l'ancienne écriture restent effectives.
+- **App chauffeur** : planning d'un gérant qui roule, montant dû affiché avant la suppression même compte suspendu,
+  mise hors ligne retentée tant que les CGU ne sont pas acceptées.
+- **Web** : page 404 en français, bandeau cookies qui ne masque plus « Se déconnecter ».
+
 ## Non corrigés dans le code (décision ou réglage)
 
 - **Existence d'un compte révélée par l'inscription par lien** (« adresse déjà liée à un compte ») : la supprimer demande
@@ -76,5 +98,6 @@ Les 91 défauts bas (libellés, cas limites, code inutile, documentation…) son
 3. Purge du journal Auth : la réponse du ménage contient `auth_audit_purged` (0 en permanence alors que la table a des
    lignes de plus d'un an = droit manquant, voir DEPLOYMENT.md).
 4. Données héritées : sous-domaines réservés déjà pris, domaine personnalisé sous le domaine racine, fiches suspendues
-   « vérification requise » par le recalcul des empreintes de téléphone (requêtes dans DEPLOYMENT.md).
+   « vérification requise » par le recalcul des empreintes de téléphone (requêtes dans DEPLOYMENT.md, section « Après la
+   mise à jour de l'audit »).
 5. `EXPO_ACCESS_TOKEN` renseigné (sécurité des notifications push).

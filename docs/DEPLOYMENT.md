@@ -112,6 +112,23 @@ Si des lignes sortent : prévenez la centrale, puis libérez le nom avec
 `update public.booking_sites set subdomain = null where organization_id = '…';` (le mini-site reste joignable par
 `/book/{slug}` et son domaine personnalisé ; la centrale choisit un autre sous-domaine).
 
+### Après la mise à jour de l'audit (migrations 004300 à 005600) : deux contrôles
+
+- **Domaine personnalisé sous votre domaine** (migration 005000) : un tel domaine ne répond plus (le sous-domaine Rydar
+  est prioritaire). Remplacez `exemple.fr` par votre `DOMAIN` :
+  ```sql
+  select organization_id, custom_domain from public.booking_sites where custom_domain like '%.exemple.fr';
+  ```
+  Si des lignes sortent : la centrale choisit un vrai sous-domaine Rydar ou un domaine qui lui appartient.
+- **Fiches suspendues par le recalcul des empreintes de téléphone** (004600, 005400) : une fiche active dont le numéro
+  (écrit autrement, par ex. « +33 (0)6… ») correspondait à celui d'un compte banni est suspendue avec le motif
+  « Téléphone déjà utilisé par un compte banni — vérification requise » :
+  ```sql
+  select d.organization_id, d.id, d.first_name, d.last_name from public.drivers d
+  where d.status = 'suspended' and d.suspended_reason like '%vérification requise';
+  ```
+  La centrale vérifie (téléphone partagé, erreur de saisie…) et réactive la fiche si besoin.
+
 ### Cartographie, adresses et itinéraires
 
 | Variable | Défaut | Production conseillée |
