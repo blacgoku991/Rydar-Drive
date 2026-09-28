@@ -402,7 +402,7 @@ export function ReminderVisual() {
         </li>
       </ul>
       <p className="rounded-2xl rounded-tl-md border border-line bg-ink-950/70 p-3 text-[12.5px] leading-relaxed text-fg-muted">
-        <span className="sr-only">Exemple de relance : </span>
+        <span className="sr-only">{fr("Exemple de relance : ")}</span>
         {fr(message)}
       </p>
     </div>
@@ -470,7 +470,7 @@ export function AlertsVisual() {
             <p className="num text-[11.5px] text-fg-muted">{fr("Course #1928 · il y a 6 min")}</p>
           </div>
         </div>
-        <p className="sr-only">Décisions possibles : relancer la recherche, réattribuer la course ou garder le chauffeur.</p>
+        <p className="sr-only">{fr("Décisions possibles : relancer la recherche, réattribuer la course ou garder le chauffeur.")}</p>
         <div aria-hidden className="mt-3 flex flex-wrap gap-1.5">
           <span className={cn(action, "bg-brand font-semibold text-brand-fg")}>
             <RotateCw className="size-3.5" /> Relancer
@@ -498,17 +498,20 @@ export function AlertsVisual() {
   );
 }
 
-/** Règles de la centrale vues par le chauffeur : message de blocage (commission en retard) et niveaux de confiance. */
+/**
+ * Règles de la centrale vues par le chauffeur : carte « Courses bloquées » de l'écran Commissions de l'app (cadenas
+ * et titre rouges, message du blocage « commission en retard »), puis niveaux de confiance.
+ */
 export function TrustVisual() {
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-amber/30 bg-amber/[0.06] p-3.5">
-        <p className="flex items-center gap-2 text-[12.5px] font-semibold text-amber">
-          <CirclePause aria-hidden className="size-4 shrink-0" />
-          {DRIVER_BLOCKER_META.unpaid.label}
+      <div className="rounded-xl border border-line bg-ink-950/60 p-3.5">
+        <p className="flex items-center gap-2 text-[12.5px] font-semibold text-red">
+          <Lock aria-hidden className="size-4 shrink-0" />
+          Courses bloquées
         </p>
         <p className="mt-1.5 text-[12px] leading-relaxed text-fg-muted">
-          <span className="sr-only">Message affiché au chauffeur : </span>
+          <span className="sr-only">{fr("Message affiché au chauffeur : ")}</span>
           {fr(DRIVER_BLOCKER_META.unpaid.message)}
         </p>
       </div>

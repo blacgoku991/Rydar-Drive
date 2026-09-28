@@ -31,7 +31,7 @@ export function SiteFooter() {
             {fr("Logiciel de dispatch VTC pour centrales et flottes. Les courses, les clients et les prix appartiennent à votre centrale.")}
           </p>
         </div>
-        <nav aria-label="Pied de page : produit">
+        <nav aria-label={fr("Pied de page : produit")}>
           <p className={heading}>Produit</p>
           <ul className="mt-4 space-y-2.5">
             {PRODUCT_LINKS.map((l) => (
@@ -43,7 +43,7 @@ export function SiteFooter() {
             ))}
           </ul>
         </nav>
-        <nav aria-label="Pied de page : contact">
+        <nav aria-label={fr("Pied de page : contact")}>
           <p className={heading}>Contact</p>
           <ul className="mt-4 space-y-2.5">
             {CONTACT_LINKS.map((l) => (
@@ -55,7 +55,7 @@ export function SiteFooter() {
             ))}
           </ul>
         </nav>
-        <nav aria-label="Pied de page : accès">
+        <nav aria-label={fr("Pied de page : accès")}>
           <p className={heading}>Accès</p>
           <ul className="mt-4 space-y-2.5">
             <li>
