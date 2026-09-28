@@ -21,7 +21,7 @@ const csp = (frameAncestors: string) =>
     `connect-src 'self' ${supabaseOrigin} ${supabaseWs} https://*.supabase.co wss://*.supabase.co ${mapOrigins.join(" ")}`,
     "worker-src 'self' blob:",
     "child-src blob:",
-    "frame-src https://checkout.stripe.com https://billing.stripe.com",
+    "frame-src 'self' https://checkout.stripe.com https://billing.stripe.com",
     `frame-ancestors ${frameAncestors}`,
     "base-uri 'self'",
     "form-action 'self' https://checkout.stripe.com",

@@ -33,7 +33,7 @@ Architecture cible :
      « Mot de passe oublié » demande le code reçu par e-mail puis le nouveau mot de passe (`POST /api/auth/driver-password-reset/confirm`) ;
      le lien sert aux centrales sur le web et de secours au chauffeur (page `/auth/set-password?app=driver`). Exemple :
 
-     - sujet : `Rydar Drive : votre code pour changer de mot de passe`
+     - sujet : `Rydar Drive : votre code, ou l'activation de votre accès`
      - corps (HTML) :
 
        ```html
@@ -41,7 +41,8 @@ Architecture cible :
        <p>Code à saisir dans l'application Rydar Drive :</p>
        <p style="font-size:28px;font-weight:700;letter-spacing:6px">{{ .Token }}</p>
        <p>Vous pouvez aussi ouvrir ce lien pour choisir un nouveau mot de passe : <a href="{{ .ConfirmationURL }}">changer mon mot de passe</a>.</p>
-       <p>Le code et le lien expirent dans une heure ; le premier utilisé annule l'autre. Vous n'êtes pas à l'origine de la demande ? Ignorez ce message.</p>
+       <p>Ce message fait suite à l'invitation d'une centrale sur Rydar Drive ? Ouvrez ce même lien et choisissez votre mot de passe : votre accès est activé aussitôt.</p>
+       <p>Le code et le lien expirent dans une heure ; le premier utilisé annule l'autre. Vous n'avez rien demandé et n'attendez aucune invitation ? Ignorez ce message.</p>
        ```
 
    - **Codes envoyés par e-mail** (*Sign In / Providers → Email*) : *Email OTP Length* = **8** chiffres, *Email OTP

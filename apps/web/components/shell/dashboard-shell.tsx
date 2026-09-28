@@ -10,6 +10,7 @@ import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realti
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, type CentraleCounts } from "@/components/settlements/counts";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
+import { SkipToContent } from "@/components/shell/skip-to-content";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
 import { switchOrganization } from "@/app/dashboard/actions";
@@ -194,10 +195,13 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
         notice={<CookieNotice href="/cookies" placement="sidebar" />}
       />
       <div className="lg:pl-[232px]">
-        {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}
-        <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isCentrale && (org.role === "owner" || org.role === "admin")} />
-        {topBanner}
-        {children}
+        <SkipToContent />
+        <main id="contenu" tabIndex={-1} className="outline-none">
+          {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}
+          <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isCentrale && (org.role === "owner" || org.role === "admin")} />
+          {topBanner}
+          {children}
+        </main>
       </div>
       {switchedTo && (
         <OrgSwitchedDialog

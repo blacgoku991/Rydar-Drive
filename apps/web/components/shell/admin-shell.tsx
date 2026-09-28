@@ -2,6 +2,7 @@
 import { useTransition } from "react";
 import { CookieNotice } from "@/components/legal/cookie-notice";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
+import { SkipToContent } from "@/components/shell/skip-to-content";
 import { signOut } from "@/app/login/actions";
 import { runAction } from "@/lib/run-action";
 
@@ -83,7 +84,12 @@ export function AdminShell({
           </div>
         }
       />
-      <div className="lg:pl-[232px]">{children}</div>
+      <div className="lg:pl-[232px]">
+        <SkipToContent />
+        <main id="contenu" tabIndex={-1} className="outline-none">
+          {children}
+        </main>
+      </div>
     </>
   );
 }

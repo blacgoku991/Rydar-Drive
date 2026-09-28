@@ -207,6 +207,15 @@ describe("submitBooking : prix et zone", () => {
   });
 });
 
+describe("submitBooking : date de prise en charge", () => {
+  it("plus de 400 jours à l'avance : message précis sur le champ, aucune course créée", async () => {
+    const pickupAt = new Date(Date.now() + 450 * 86_400_000);
+    const res = await submitBooking("centrale-b", booking({ when: "scheduled", pickupAt }));
+    expect(res).toMatchObject({ ok: false, error: "Date de prise en charge trop lointaine.", fieldErrors: { pickupAt: "400 jours maximum" } });
+    expect(h.inserts).toHaveLength(0);
+  });
+});
+
 describe("devis du mini-site", () => {
   const call = (body: unknown) =>
     quote(new Request("https://b.test/api/book/centrale-b/quote", { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve({ slug: "centrale-b" }) });

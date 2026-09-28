@@ -7,6 +7,8 @@ const h = vi.hoisted(() => ({
   profile: null as Record<string, unknown> | null,
   rpc: { data: true, error: null } as { data: unknown; error: unknown },
   rpcCalls: [] as string[],
+  /** Erreur renvoyée par la lecture des adhésions (organization_users) : base ou API injoignable */
+  listError: null as { message: string } | null,
 }));
 
 vi.mock("server-only", () => ({}));
@@ -24,7 +26,8 @@ vi.mock("@/lib/supabase/server", () => ({
         select: () => b,
         eq: () => b,
         maybeSingle: async () => ({ data: table === "users" ? h.profile : null, error: null }),
-        then: (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(ok, ko),
+        then: (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) =>
+          Promise.resolve(h.listError ? { data: null, error: h.listError } : { data: [], error: null }).then(ok, ko),
       };
       return b;
     },
@@ -35,12 +38,13 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-const { requireSuperAdmin } = await import("./auth");
+const { getSession, requireSuperAdmin } = await import("./auth");
 
 beforeEach(() => {
   h.profile = { id: "u1", email: "sa@rydar.test", full_name: "Super Admin", avatar_url: null, is_super_admin: true, last_active_org_id: null };
   h.rpc = { data: true, error: null };
   h.rpcCalls.length = 0;
+  h.listError = null;
 });
 
 describe("requireSuperAdmin", () => {
@@ -64,5 +68,17 @@ describe("requireSuperAdmin", () => {
   it("contrôle impossible : erreur, jamais d'accès", async () => {
     h.rpc = { data: null, error: { message: "délai dépassé" } };
     await expect(requireSuperAdmin()).rejects.toThrow(/Contrôle du rôle Super Admin impossible/);
+  });
+});
+
+describe("Session : base injoignable", () => {
+  it("lecture des adhésions en échec : erreur (page « Réessayer »), jamais « Aucun espace associé »", async () => {
+    h.listError = { message: "connexion refusée" };
+    await expect(getSession()).rejects.toThrow(/Session illisible/);
+  });
+
+  it("lecture réussie et vide : session sans centrale (page sans espace, comportement normal)", async () => {
+    const session = await getSession();
+    expect(session?.memberships).toEqual([]);
   });
 });

@@ -28,7 +28,7 @@ async function loadSession() {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [{ data: profile }, { data: memberships }, { data: driver }] = await Promise.all([
+  const [{ data: profile, error: profileError }, { data: memberships, error: membershipsError }, { data: driver }] = await Promise.all([
     supabase.from("users").select("id, email, full_name, avatar_url, is_super_admin, last_active_org_id").eq("id", user.id).maybeSingle(),
     supabase
       .from("organization_users")
@@ -37,6 +37,10 @@ async function loadSession() {
       .eq("status", "active"),
     supabase.from("drivers").select("id, first_name").eq("user_id", user.id).maybeSingle(),
   ]);
+  // Base ou API injoignable : page d'erreur (« Réessayer »), jamais « Aucun espace associé » ni perte du rôle super admin
+  if (profileError || membershipsError) {
+    throw new Error(`Session illisible : ${(profileError ?? membershipsError)!.message}`);
+  }
 
   const orgs = (memberships ?? [])
     .map((m) => ({ role: m.role as OrgRole, org: m.organization as unknown as OrgSummary }))

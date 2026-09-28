@@ -13,6 +13,8 @@ type Result = { ok: true; number: number } | { ok: false; error: string; fieldEr
 const TOO_MANY = "Trop de demandes. Réessayez dans quelques minutes ou appelez-nous.";
 /** Destination géocodée à plus de cette distance des coordonnées reçues : prix laissé à la centrale. */
 const DROPOFF_MISMATCH_M = 2_000;
+/** Réservation au plus 400 jours à l'avance (trigger rides_before_insert : PICKUP_TOO_FAR). */
+const MAX_ADVANCE_MS = 400 * 86_400_000;
 
 /** Réservation publique (aucun compte client) → course source « booking_site » → dispatch. */
 export async function submitBooking(slug: string, input: z.input<typeof bookingRequestSchema>): Promise<Result> {
@@ -41,6 +43,10 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
 
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt;
   if (!pickupAt || pickupAt.getTime() < Date.now() - 5 * 60_000) return { ok: false, error: "Date de prise en charge invalide.", fieldErrors: { pickupAt: "Date passée" } };
+  // Même borne que la base (PICKUP_TOO_FAR, 400 jours) : message précis plutôt que l'échec générique de l'insertion
+  if (pickupAt.getTime() > Date.now() + MAX_ADVANCE_MS) {
+    return { ok: false, error: "Date de prise en charge trop lointaine.", fieldErrors: { pickupAt: "400 jours maximum" } };
+  }
 
   // Zone desservie : mêmes règles que l'API v1 (départ près de l'activité de la centrale, trajet ≤ 1 500 km)
   const anchor = await orgAnchor((org as any).id).catch(() => null);
