@@ -3,6 +3,7 @@ import { loginSchema } from "@rydar/shared";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ORG_COOKIE } from "@/lib/auth";
+import { LOGIN_WINDOW, loginEmailKey, loginLimits, loginPairKey } from "@/lib/login-limits";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
 import { safeNext } from "@/lib/safe-next";
@@ -10,19 +11,14 @@ import { createClient } from "@/lib/supabase/server";
 
 export type LoginState = { error?: string; email?: string };
 
-const WINDOW = 15 * 60;
-
 export async function signIn(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const parsed = loginSchema.safeParse({ email: formData.get("email"), password: formData.get("password") });
   const email = String(formData.get("email") ?? "");
   if (!parsed.success) return { error: "Adresse e-mail ou mot de passe invalide.", email };
 
-  // Protection brute force : par IP et par compte
+  // Protection brute force : IP, couple (adresse, IP), puis plafond global de l'adresse (lib/login-limits.ts)
   const ip = await clientIp();
-  const limit = await rateLimitAll([
-    { key: `login:ip:${ip}`, limit: 30, windowSec: WINDOW },
-    { key: `login:email:${parsed.data.email}`, limit: 6, windowSec: WINDOW },
-  ]);
+  const limit = await rateLimitAll(loginLimits(parsed.data.email, ip));
   if (!limit.ok) {
     const minutes = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 60_000));
     return { error: `Trop de tentatives. Réessayez dans ${minutes} min.`, email };
@@ -33,7 +29,8 @@ export async function signIn(_prev: LoginState, formData: FormData): Promise<Log
   if (error) {
     return { error: "Identifiants incorrects.", email };
   }
-  await resetRateLimit(`login:email:${parsed.data.email}`, WINDOW);
+  await resetRateLimit(loginPairKey(parsed.data.email, ip), LOGIN_WINDOW);
+  await resetRateLimit(loginEmailKey(parsed.data.email), LOGIN_WINDOW);
 
   redirect(safeNext(formData.get("next")));
 }
