@@ -659,7 +659,8 @@ describe("Mailer : private.claim_emails / private.complete_email", () => {
     expect(again).toMatchObject({ id, status: "sending", attempts: 2 });
     // Verrou encore valable : pas repris
     expect(await claim()).toEqual([]);
-    // 8e tentative interrompue à son tour : échec définitif, dernière erreur gardée
+    // 8e tentative interrompue à son tour (les précédentes ont pu échouer normalement) : échec définitif, erreur
+    // précédente citée
     await sql(
       "update public.email_outbox set attempts = 8, last_error = 'Délai dépassé', locked_until = now() - interval '1 second' where id = $1",
       [id],
@@ -667,7 +668,13 @@ describe("Mailer : private.claim_emails / private.complete_email", () => {
     expect(await claim()).toEqual([]);
     const row = await emailRow(id);
     expect(row).toMatchObject({ status: "failed", attempts: 8, locked_until: null });
-    expect(row.last_error).toBe("Envoi interrompu à chaque tentative (expéditeur arrêté pendant l'envoi) — dernière erreur : Délai dépassé");
+    expect(row.last_error).toBe("Envoi interrompu à la dernière tentative (expéditeur arrêté pendant l'envoi) — erreur précédente : Délai dépassé");
+    // Sans erreur précédente : le motif seul
+    const silent = await queue({ status: "sending", attempts: 8, locked_until: new Date(Date.now() - 1000) });
+    expect(await claim()).toEqual([]);
+    expect(await emailRow(silent)).toMatchObject({
+      status: "failed", last_error: "Envoi interrompu à la dernière tentative (expéditeur arrêté pendant l'envoi)",
+    });
   });
 
   it("deux expéditeurs en parallèle ne prennent jamais le même e-mail (skip locked, sans attente)", async () => {

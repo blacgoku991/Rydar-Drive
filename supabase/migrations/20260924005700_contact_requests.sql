@@ -237,7 +237,8 @@ $$;
 -- Prise d'un lot (connexion directe du mailer, rôle propriétaire) : e-mails en attente arrivés à échéance, et envois
 -- restés « en cours » après l'arrêt de l'expéditeur (verrou expiré), par ordre d'arrivée. Chaque ligne prise est
 -- verrouillée 5 min (for update skip locked : deux expéditeurs ne prennent jamais la même) et compte une tentative.
--- Envoi interrompu à la 8e tentative (l'expéditeur s'arrête à chaque fois) : échec définitif au lieu d'une boucle.
+-- Envoi resté « en cours » à la 8e tentative (expéditeur arrêté pendant l'envoi, par exemple par un e-mail qui le fait
+-- tomber à chaque fois) : échec définitif au lieu d'une boucle ; l'erreur d'une tentative précédente reste citée.
 create or replace function private.claim_emails(p_limit integer default 10)
 returns setof public.email_outbox
 language plpgsql
@@ -246,8 +247,8 @@ as $$
 begin
   update public.email_outbox o
      set status = 'failed', locked_until = null,
-         last_error = left('Envoi interrompu à chaque tentative (expéditeur arrêté pendant l''envoi)'
-                           || coalesce(' — dernière erreur : ' || o.last_error, ''), 500)
+         last_error = left('Envoi interrompu à la dernière tentative (expéditeur arrêté pendant l''envoi)'
+                           || coalesce(' — erreur précédente : ' || o.last_error, ''), 500)
    where o.id in (select x.id from public.email_outbox x
                   where x.status = 'sending' and (x.locked_until is null or x.locked_until < now()) and x.attempts >= 8
                   for update skip locked);
