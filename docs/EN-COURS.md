@@ -19,7 +19,15 @@ Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal 
 004600 bannissement, 004700 comptes, 004800 RGPD, 004900 public, 005000 domaine, 005100 robustesse, 005200 rappels
 visite médicale, 005300 jetons d'activation, 005400 contre-audit SQL, 005500 dette avant suppression, 005600 offres.
 
+## Depuis l'audit
+- App chauffeur : panneau de l'accueil réductible (`CollapsibleSheet`, `components/ui.tsx`) : glisser vers le bas ou
+  toucher la poignée → résumé d'une ligne (état + action principale) et carte dégagée ; rouvert par glissé vers le haut,
+  appui, ou automatiquement à l'arrivée d'une course. JS seul → mise à jour EAS (docs/STORES.md § 10). Vérifié au
+  toucher (rendu web) : hors ligne, en ligne, course en cours ; à confirmer sur un vrai téléphone (Android surtout).
+
 ## À faire par l'utilisateur
+- Publier la mise à jour de l'app (panneau réductible) : depuis `apps/driver`,
+  `eas update --channel production --environment production --message "Panneau de l'accueil réductible"`.
 - Mettre à jour le VPS : `cd /opt/rydar && bash deploy/update-production.sh` (migrations 003600 à 005600). Si la
   connexion à la base refuse le certificat (`verify-full`), relancer `sudo bash deploy/configure.sh` et accepter le repli
   proposé.

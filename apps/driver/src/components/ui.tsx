@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Animated, KeyboardAvoidingView, PanResponder, Platform, Pressable, StyleSheet, Text, View,
-  type LayoutChangeEvent, type PressableProps, type StyleProp, type TextStyle, type ViewStyle,
+  ActivityIndicator, Animated, KeyboardAvoidingView, LayoutAnimation, PanResponder, Platform, Pressable, StyleSheet, Text, View,
+  type GestureResponderHandlers, type LayoutChangeEvent, type PanResponderGestureState, type PressableProps, type StyleProp,
+  type TextStyle, type ViewProps, type ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { alpha, colors, control, radius, type, weight } from "@/theme";
@@ -37,6 +38,113 @@ export function Sheet({ children, style }: { children: React.ReactNode; style?: 
       <View style={styles.handle} />
       {children}
     </View>
+  );
+}
+
+/** Seuils du panneau réductible : distance (px) ou vitesse (px/ms) du geste. */
+const SHEET_COLLAPSE_DY = 60;
+const SHEET_EXPAND_DY = 30;
+const SHEET_FLING = 0.8;
+
+/**
+ * Surface de geste du panneau réductible (poignée, résumé du panneau réduit) : un appui ou un glissé ; props à étaler
+ * sur une View (jamais un Pressable, qui garderait le geste pour lui). Lecteur d'écran : bouton « activer ».
+ */
+export type SheetSurfaceProps = Pick<ViewProps, "accessible" | "accessibilityRole" | "accessibilityActions" | "onAccessibilityAction"> &
+  GestureResponderHandlers;
+
+/**
+ * Panneau inférieur réductible (accueil) : glisser vers le bas — ou toucher la poignée — le réduit à un résumé
+ * (`peek`) pour dégager la carte ; glisser vers le haut, toucher la poignée ou le résumé le rouvre.
+ * - Poignée et résumé : surfaces de geste (appui ou glissé, sur iOS, Android et web).
+ * - Contenu du panneau ouvert : un geste nettement vertical est pris en phase de capture, même parti d'un bouton
+ *   (qui reçoit alors une annulation) ; un appui reste un appui.
+ * Animated + PanResponder, sans module natif (compatible avec une mise à jour EAS).
+ */
+export function CollapsibleSheet({
+  collapsed, onCollapsedChange, peek, children, style,
+}: {
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
+  /** Résumé du panneau réduit : `surface` à étaler sur la zone qui rouvre le panneau (appui ou glissé vers le haut). */
+  peek: (surface: SheetSurfaceProps) => React.ReactNode;
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const drag = useRef(new Animated.Value(0)).current;
+  const latest = useRef({ collapsed, onCollapsedChange });
+  latest.current = { collapsed, onCollapsedChange };
+
+  const responders = useMemo(() => {
+    const settle = () => Animated.spring(drag, { toValue: 0, useNativeDriver: true, bounciness: 0, speed: 20 }).start();
+    const setCollapsed = (next: boolean) => {
+      if (next === latest.current.collapsed) return;
+      LayoutAnimation.configureNext(LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+      haptic(Haptics.ImpactFeedbackStyle.Light);
+      latest.current.onCollapsedChange(next);
+    };
+    // Ouvert : le panneau suit le doigt vers le bas ; réduit : léger suivi vers le haut
+    const follow = (g: PanResponderGestureState) =>
+      drag.setValue(latest.current.collapsed ? Math.min(0, g.dy) * 0.3 : Math.max(0, g.dy));
+    const release = (g: PanResponderGestureState, onTap?: () => void) => {
+      settle();
+      if (Math.abs(g.dx) < 8 && Math.abs(g.dy) < 8) return onTap?.();
+      if (!latest.current.collapsed && (g.dy > SHEET_COLLAPSE_DY || g.vy > SHEET_FLING)) setCollapsed(true);
+      else if (latest.current.collapsed && (g.dy < -SHEET_EXPAND_DY || g.vy < -SHEET_FLING)) setCollapsed(false);
+    };
+    const surface = (onTap: () => void) =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onPanResponderMove: (_e, g) => follow(g),
+        onPanResponderRelease: (_e, g) => release(g, onTap),
+        onPanResponderTerminate: settle,
+        // Geste commencé sur la poignée ou le résumé : il leur reste (le contenu ne le reprend pas)
+        onPanResponderTerminationRequest: () => false,
+      });
+    const toggle = () => setCollapsed(!latest.current.collapsed);
+    const expand = () => setCollapsed(false);
+    return {
+      content: PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_e, g) => Math.abs(g.dy) > 10 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
+        onPanResponderMove: (_e, g) => follow(g),
+        onPanResponderRelease: (_e, g) => release(g),
+        onPanResponderTerminate: settle,
+      }),
+      handle: surface(toggle),
+      peek: surface(expand),
+      toggle,
+      expand,
+    };
+  }, [drag]);
+
+  const peekSurface: SheetSurfaceProps = {
+    ...responders.peek.panHandlers,
+    accessible: true,
+    accessibilityRole: "button",
+    accessibilityActions: [{ name: "activate" }],
+    onAccessibilityAction: (e) => e.nativeEvent.actionName === "activate" && responders.expand(),
+  };
+
+  return (
+    <Animated.View
+      style={[styles.sheet, styles.sheetCollapsible, style, { transform: [{ translateY: drag }] }]}
+      {...responders.content.panHandlers}
+    >
+      <View
+        {...responders.handle.panHandlers}
+        hitSlop={{ top: 12, bottom: 8 }}
+        style={styles.handleZone}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={collapsed ? "Afficher le panneau" : "Réduire le panneau pour voir la carte"}
+        accessibilityState={{ expanded: !collapsed }}
+        accessibilityActions={[{ name: "activate" }]}
+        onAccessibilityAction={(e) => e.nativeEvent.actionName === "activate" && responders.toggle()}
+      >
+        <View style={[styles.handle, styles.handleInZone]} />
+      </View>
+      {collapsed ? peek(peekSurface) : children}
+    </Animated.View>
   );
 }
 
@@ -343,6 +451,11 @@ const styles = StyleSheet.create({
   label: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, paddingHorizontal: 20, paddingTop: 10, borderTopWidth: 1, borderColor: colors.line },
   handle: { alignSelf: "center", width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.16)", marginBottom: 14 },
+  // Panneau réductible : même rendu que `sheet` + `handle`, mais toute la bande du haut (marge comprise, pleine
+  // largeur) est la poignée ; hitSlop la porte à 48 px de haut
+  sheetCollapsible: { paddingTop: 0 },
+  handleZone: { alignSelf: "stretch", alignItems: "center", paddingTop: 10, paddingBottom: 14 },
+  handleInZone: { marginBottom: 0 },
   button: { borderRadius: radius.md, alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
   buttonSecondary: { borderWidth: 1, borderColor: colors.lineStrong },
   buttonText: { letterSpacing: 0.1 },

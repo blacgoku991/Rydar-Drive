@@ -10,7 +10,7 @@ import { frTypo, SettlementBanner } from "@/components/centrale";
 import { ReportCard, ReportSheet } from "@/components/fleet-report";
 import { RydarMap } from "@/components/map/rydar-map";
 import type { LatLng, MapReport } from "@/components/map/types";
-import { BigButton, CountBadge, Pill, RouteLine, Screen, Sheet, useFlash } from "@/components/ui";
+import { BigButton, CollapsibleSheet, CountBadge, Pill, RouteLine, Screen, useFlash, type SheetSurfaceProps } from "@/components/ui";
 import { LOCATION_BLOCKED_MESSAGE, prepareFleetReport, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { useNow } from "@/hooks/use-now";
@@ -61,6 +61,8 @@ export default function Home() {
   // Localisation refusée définitivement : « Ouvrir les réglages » remplace « Passer en ligne » (l'information
   // préalable ne se répète pas, aucune fenêtre du système ne s'ouvrirait plus)
   const [locationBlocked, setLocationBlocked] = useState(false);
+  // Panneau réduit par le chauffeur (glisser vers le bas) pour dégager la carte ; rouvert à chaque nouvelle course
+  const [collapsed, setCollapsed] = useState(false);
   // « Signaler » publie dans le fil « Chauffeurs » : règles (CGU) acceptées avant la première publication
   const rules = useFleetRules(chat, refreshChat);
   const openingReport = useRef(false);
@@ -104,6 +106,10 @@ export default function Home() {
   }, [currentRideId, presence, rideTick]);
   // Course connue de l'accueil mais pas encore lue (réseau) : carte minimale, l'écran de course se charge lui-même
   const currentShown = current != null && current.id === currentRideId ? current : null;
+  // Nouvelle course en cours : panneau rouvert (le chauffeur voit la course sans avoir à le tirer)
+  useEffect(() => {
+    if (currentRideId) setCollapsed(false);
+  }, [currentRideId]);
 
   // Signalements actifs de la flotte (masqués dès leur expiration, sans attendre le serveur)
   const activeReports = useMemo(
@@ -269,6 +275,50 @@ export default function Home() {
         : "Passez en ligne pour recevoir des courses.";
   const dotColor = online ? (blockedOffers ? colors.red : colors.brand) : colors.subtle;
 
+  // Panneau réduit : une ligne d'état et l'action principale (même logique que le panneau ouvert). Titre court :
+  // il partage la ligne avec le bouton (point rouge + « Courses bloquées » = en ligne, commissions à régler).
+  const peekTitle = currentRideId
+    ? currentShown
+      ? `Course ${currentShown.number} · ${RIDE_STATUS_META[currentShown.status as RideStatus].short}`
+      : "Course en cours"
+    : loading
+      ? statusTitle
+      : online
+        ? blockedOffers ? "Courses bloquées" : "En ligne"
+        : "Hors ligne";
+  const peekDot = currentRideId ? presenceColor[presence] ?? colors.cyan : dotColor;
+  const renderPeek = (surface: SheetSurfaceProps) => (
+    <SafeAreaView edges={["bottom"]} style={styles.peek}>
+      {/* Appui ou glissé vers le haut sur la ligne d'état : panneau rouvert */}
+      <View {...surface} style={styles.peekInfo} accessibilityLabel={`${peekTitle}. Afficher le panneau`}>
+        {!loading && <View style={[styles.dot, { backgroundColor: peekDot }]} />}
+        <Text style={styles.peekTitle} numberOfLines={1}>{peekTitle}</Text>
+      </View>
+      {currentRideId ? (
+        <BigButton
+          title="Ouvrir"
+          icon="arrow-forward"
+          height={control.md}
+          onPress={() => router.push({ pathname: "/ride/[id]", params: { id: currentRideId } })}
+        />
+      ) : loading ? (
+        homeError ? <BigButton title="Réessayer" icon="refresh-outline" variant="secondary" height={control.md} loading={retrying} onPress={retry} /> : null
+      ) : online ? (
+        <BigButton title="Passer hors ligne" variant="secondary" icon="pause-circle-outline" height={control.md} onPress={toggle} />
+      ) : locationBlocked ? (
+        <BigButton
+          title="Réglages"
+          icon="settings-outline"
+          height={control.md}
+          onPress={openSettings}
+          accessibilityHint="Autorisez la localisation de Rydar Drive pour passer en ligne"
+        />
+      ) : (
+        <BigButton title="Passer en ligne" icon="power" height={control.md} onPress={toggle} />
+      )}
+    </SafeAreaView>
+  );
+
   const next = home?.next_scheduled ?? null;
   const nextWhen = next ? formatRideDate(next.pickup_at, home?.organization.timezone) : "";
   const nextPrice = next ? formatPrice(centrale && next.driver_payout_cents != null ? next.driver_payout_cents : next.price_cents) : "";
@@ -277,7 +327,7 @@ export default function Home() {
     <Screen>
       <RydarMap
         me={me}
-        dim={!online && !selected}
+        dim={!online && !selected && !collapsed}
         padding={mapPadding}
         reports={mapReports}
         selectedReportId={selectedId}
@@ -374,7 +424,7 @@ export default function Home() {
             </Pressable>
           </View>
 
-          <Sheet>
+          <CollapsibleSheet collapsed={collapsed} onCollapsedChange={setCollapsed} peek={renderPeek}>
             <SafeAreaView edges={["bottom"]} style={styles.panel}>
               {currentShown ? (
                 <>
@@ -483,7 +533,7 @@ export default function Home() {
                 </>
               )}
             </SafeAreaView>
-          </Sheet>
+          </CollapsibleSheet>
         </View>
       )}
 
@@ -531,6 +581,9 @@ const styles = StyleSheet.create({
   subtitle: { color: colors.muted, fontSize: type.body, lineHeight: 21, marginTop: 2 },
   note: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   noteText: { flex: 1, color: colors.muted, fontSize: type.subhead, lineHeight: 20 },
+  peek: { flexDirection: "row", alignItems: "center", gap: space.md, paddingBottom: space.md },
+  peekInfo: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, minHeight: control.md },
+  peekTitle: { flex: 1, color: colors.fg, fontSize: type.headline, fontWeight: weight.bold },
   next: {
     flexDirection: "row", alignItems: "center", gap: space.md, minHeight: control.lg, paddingHorizontal: space.lg, paddingVertical: space.md,
     borderRadius: radius.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
