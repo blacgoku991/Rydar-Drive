@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { updateRidePricing } from "@/app/dashboard/rides/actions";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { canManageSettlements, useCentrale } from "@/components/settlements/centrale-context";
+import { withFlags, type SettlementRow } from "@/components/settlements/settlement-flags";
 import {
   DeclarationLine, SettlementActions, SettlementBadge, SplitBar, dueInfo, parseDriverLabel,
 } from "@/components/settlements/settlement-ui";
@@ -24,6 +25,7 @@ import { toneText } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
 import { useNow } from "@/hooks/use-now";
+import { runAction } from "@/lib/run-action";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -41,15 +43,10 @@ export type RideMoneyRide = {
   driver_id: string | null;
 };
 
-/** Ligne ride_settlements (lecture directe) → règlement avec les indicateurs calculés comme settlement_json. */
-export type SettlementRow = Omit<Settlement, "overdue" | "blocking"> & { overdue?: boolean; blocking?: boolean };
-export function withFlags(row: SettlementRow, now = Date.now()): Settlement {
-  const late = row.direction === "driver_owes" && row.status === "due" && Date.parse(row.due_at) <= now;
-  return { ...row, overdue: late, blocking: row.direction === "driver_owes" && (row.status === "disputed" || late) };
-}
+export type { SettlementRow } from "@/components/settlements/settlement-flags";
 
 const SETTLEMENT_COLUMNS =
-  "id, ride_id, driver_id, driver_label, direction, amount_cents, price_cents, commission_cents, platform_fee_cents, driver_payout_cents, currency, payment_method, reference, status, due_at, declared_at, declared_method, declared_note, settled_at, settled_method, note, reminders_sent, last_reminded_at, created_at, updated_at";
+  "id, ride_id, driver_id, driver_label, direction, amount_cents, price_cents, commission_cents, platform_fee_cents, driver_payout_cents, currency, payment_method, reference, status, due_at, declared_at, declared_method, declared_note, disputed_at, settled_at, settled_method, note, reminders_sent, last_reminded_at, created_at, updated_at";
 const RIDE_MONEY_COLUMNS = "id, number, status, price_cents, commission_cents, platform_fee_cents, driver_payout_cents, commission_manual, payment_method, currency, driver_id";
 
 // ---------------------------------------------------------------------------- lecture (panneau du command center)
@@ -193,7 +190,7 @@ export function EditPricingDialog({
     else if (split.data?.error === "COMMISSION_TOO_HIGH") e.commissionCents = "Commission + frais plateforme > prix";
     setErrors(e);
     if (Object.keys(e).length) return;
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await updateRidePricing(ride.id, { priceCents, commissionCents, paymentMethod: payment as PaymentMethod });
       if (!res.ok) {
         setErrors(res.fieldErrors ?? {});
@@ -206,7 +203,7 @@ export function EditPricingDialog({
       onOpenChange(false);
       onSaved?.();
       router.refresh();
-    });
+    }));
   };
 
   return (

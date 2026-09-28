@@ -7,13 +7,14 @@ import { useTransition } from "react";
 import { toast } from "sonner";
 import { approveApplication } from "@/app/dashboard/network/actions";
 import { Button } from "@/components/ui/button";
+import { runAction } from "@/lib/run-action";
 
 export function ReconsiderButton({ driverId, name }: { driverId: string; name: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const reconsider = () => {
     if (!window.confirm(`Reconsidérer la candidature de ${name} ? Le chauffeur est validé au niveau « Nouveau » (courses plafonnées).`)) return;
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await approveApplication(driverId, "new");
       if (!res.ok) {
         toast.error(res.error);
@@ -21,7 +22,7 @@ export function ReconsiderButton({ driverId, name }: { driverId: string; name: s
       }
       toast.success(`${name} est validé.`);
       router.refresh();
-    });
+    }));
   };
   return (
     <Button variant="ghost" size="xs" loading={pending} onClick={reconsider} aria-label={`Reconsidérer la candidature de ${name}`}>

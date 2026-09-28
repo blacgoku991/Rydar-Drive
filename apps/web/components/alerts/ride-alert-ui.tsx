@@ -7,6 +7,7 @@ import { CirclePause, ClockAlert, Eye, Phone, RotateCw, SatelliteDish, TimerOff,
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { acknowledgeRideAlert, relaunchRide } from "@/app/dashboard/rides/actions";
+import { runAction } from "@/lib/run-action";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -107,8 +108,8 @@ export function AlertActionBar({
     if (timer.current) window.clearTimeout(timer.current);
     setConfirm(false);
     setBusy("relaunch");
-    const res = await relaunchRide(alert.ride_id, alert.driver_id, "Alerte de suivi");
-    setBusy(null);
+    const res = await runAction(() => relaunchRide(alert.ride_id, alert.driver_id, "Alerte de suivi")).finally(() => setBusy(null));
+    if (!res) return;
     if (res.ok && res.code === "RELAUNCHED") {
       toast.success(`Course ${label} retirée à ${who}`.replace("  ", " "), { description: "Nouvelle recherche lancée — il ne sera plus sollicité pour cette course." });
       onDone?.();
@@ -127,8 +128,8 @@ export function AlertActionBar({
 
   const keep = async () => {
     setBusy("keep");
-    const res = await acknowledgeRideAlert(alert.id);
-    setBusy(null);
+    const res = await runAction(() => acknowledgeRideAlert(alert.id)).finally(() => setBusy(null));
+    if (!res) return;
     if (res.ok) {
       toast.success(`On garde ${who}`, { description: "Alerte en sourdine 15 min." });
       onDone?.();

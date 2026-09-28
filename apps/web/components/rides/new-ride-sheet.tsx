@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, WorkspaceContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { FAVORITE_PLACES } from "@/lib/places";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 const empty: PlaceValue = { address: "", lat: null, lng: null };
@@ -207,7 +208,7 @@ export function NewRideSheet({
         return;
       }
     }
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await createRide({
         pickup: { address: pickup.address, lat: pickupPt.lat, lng: pickupPt.lng },
         dropoff: { address: dropoff.address, lat: dropoff.lat, lng: dropoff.lng },
@@ -234,7 +235,7 @@ export function NewRideSheet({
       reset();
       onOpenChange(false);
       onCreated?.({ id: res.id, number: res.number });
-    });
+    }));
   }
 
   return (

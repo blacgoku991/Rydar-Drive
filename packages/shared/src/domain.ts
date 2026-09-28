@@ -226,6 +226,15 @@ export const ERROR_MESSAGES: Record<string, string> = {
   PLATFORM_LEDGER_IMMUTABLE: "Les frais plateforme enregistrés ne se modifient pas.",
   // Visite médicale (donnée de santé) retirée des justificatifs déposés (20260924004300)
   TYPE_NOT_ALLOWED: "Ce type de document ne se dépose plus dans l'application.",
+  // Codes levés par les migrations 20260924004300 à 20260924005300
+  DRIVER_NOT_FOUND: "Chauffeur introuvable.",
+  INVALID_INSTALLATION_ID: "Appareil non reconnu : relancez l'application.",
+  SETTLEMENTS_OPEN: "Des règlements chauffeur sont encore ouverts : soldez-les ou annulez-les avant le retour au mode flotte.",
+  SUBDOMAIN_RESERVED: "Ce sous-domaine est réservé à la plateforme : choisissez-en un autre.",
+  SUBDOMAIN_CHANGE_LIMIT: "Sous-domaine déjà modifié 5 fois ces 7 derniers jours : réessayez plus tard ou contactez l'équipe Rydar.",
+  MESSAGE_NOT_FOUND: "Message introuvable : il a peut-être été supprimé.",
+  INVALID_MESSAGE: "Message introuvable.",
+  NOT_REMOVABLE: "Seuls les messages du fil de la flotte peuvent être supprimés.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */

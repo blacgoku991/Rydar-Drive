@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { driverAppCors } from "@/lib/driver-app-cors";
 import { deleteDriverAccount } from "@/lib/driver-deletion";
-import { DRIVER_LOGIN_WINDOW, driverLoginEmailKey } from "@/lib/driver-session";
+import { DRIVER_LOGIN_WINDOW, driverLoginEmailKey, driverLoginPairKey } from "@/lib/driver-session";
 import { env } from "@/lib/env";
 import { rateLimit, rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
 import { ipFromHeaders } from "@/lib/request";
@@ -28,8 +28,9 @@ export function OPTIONS(req: Request) {
  *  - jeton refusé (expiré, session révoquée : compte suspendu, banni, centrale suspendue…) : e-mail + mot de passe,
  *    vérifiés par un client anonyme sans cookie ni persistance ; refus de Supabase Auth pour une autre raison que
  *    de mauvais identifiants (compte Auth banni…) : empreinte vérifiée par la base (svc_driver_password_check).
- * Anti brute force : IP, puis adresse avec le MÊME compteur que la connexion (/api/auth/driver-login : pas de second
- * budget de mots de passe), puis compte (1 h).
+ * Anti brute force : IP, puis MÊMES compteurs que la connexion (/api/auth/driver-login : pas de second budget de mots
+ * de passe) — couple (adresse, IP) strict et plafond global plus haut de l'adresse (un tiers qui connaît l'adresse ne
+ * bloque pas le chauffeur depuis une autre IP) —, puis compte (1 h).
  * Réponses :
  *  - 200 { code: "DELETED" } : tout est supprimé (données, fichiers, compte de connexion) ;
  *  - 200 { code: "DRIVER_PROFILE_DELETED", pending } : profil chauffeur supprimé, compte de gestion conservé ;
@@ -74,7 +75,12 @@ async function handle(req: Request): Promise<NextResponse> {
 
   const limit = await rateLimitAll([
     { key: `ddelete:ip:${ip}`, limit: 20, windowSec: WINDOW },
-    ...(credentials.success ? [{ key: driverLoginEmailKey(credentials.data.email), limit: 6, windowSec: DRIVER_LOGIN_WINDOW }] : []),
+    ...(credentials.success
+      ? [
+          { key: driverLoginPairKey(credentials.data.email, ip), limit: 6, windowSec: DRIVER_LOGIN_WINDOW },
+          { key: driverLoginEmailKey(credentials.data.email), limit: 50, windowSec: DRIVER_LOGIN_WINDOW },
+        ]
+      : []),
   ]);
   if (!limit.ok) {
     return NextResponse.json(
@@ -109,7 +115,8 @@ async function handle(req: Request): Promise<NextResponse> {
     if (check.status === "unavailable") return unavailable();
     if (check.status === "invalid") return reply(401, { ok: false, code: "INVALID_CREDENTIALS", error: "E-mail ou mot de passe incorrect." });
     userId = check.userId;
-    // Mot de passe juste : compteur de l'adresse remis à zéro, comme après une connexion réussie
+    // Mot de passe juste : compteurs de l'adresse remis à zéro, comme après une connexion réussie
+    await resetRateLimit(driverLoginPairKey(credentials.data.email, ip), DRIVER_LOGIN_WINDOW);
     await resetRateLimit(driverLoginEmailKey(credentials.data.email), DRIVER_LOGIN_WINDOW);
   }
 

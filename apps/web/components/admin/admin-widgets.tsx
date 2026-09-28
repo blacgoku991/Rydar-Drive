@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { submitWith } from "@/lib/utils";
 
 const dayLabel = (v: string) => {
@@ -48,7 +49,7 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
       <SheetContent title="Nouveau rattacheur" description="Espace totalement isolé : données, chauffeurs, API et mini-site dédiés.">
         <form
           onSubmit={submitWith((f) =>
-            start(async () => {
+            start(() => runAction(async () => {
               const g = (k: string) => String(f.get(k) ?? "");
               const fees = model === "centrale" ? readFees(feePercent, feeFixed) : readFees("0", "0");
               if (!fees.valid) return void setFeeErrors(fees.errors);
@@ -80,7 +81,7 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
               } else toast.success("Rattacheur créé");
               setOpen(false);
               router.push(`/admin/organizations/${res.id}`);
-            }),
+            })),
           )}
           className="space-y-6 px-6 py-6"
         >
@@ -135,14 +136,14 @@ export function OrganizationStatusActions({ orgId, status }: { orgId: string; st
   const [archiving, setArchiving] = useState(false);
   const [reason, setReason] = useState("");
   const run = (s: "active" | "suspended" | "archived") =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await setOrganizationStatus(orgId, s, reason);
       if (!res.ok) return void toast.error(res.error);
       toast.success(s === "active" ? "Rattacheur réactivé" : s === "suspended" ? "Rattacheur suspendu — accès coupés" : "Rattacheur archivé");
       setOpen(false);
       setArchiving(false);
       router.refresh();
-    });
+    }));
   return (
     <>
       {status !== "active" && <Button variant="primary" loading={pending} onClick={() => run("active")}>Réactiver</Button>}
@@ -224,7 +225,7 @@ export function OrganizationPlanForm({ orgId, plans, planId, override }: { orgId
         <Button
           variant="primary"
           loading={pending}
-          onClick={() => start(async () => { const r = await updateOrganizationPlan(orgId, plan || null, o); if (r.ok) { toast.success("Offre mise à jour"); router.refresh(); } else toast.error(r.error); })}
+          onClick={() => start(() => runAction(async () => { const r = await updateOrganizationPlan(orgId, plan || null, o); if (r.ok) { toast.success("Offre mise à jour"); router.refresh(); } else toast.error(r.error); }))}
         >
           Enregistrer
         </Button>
@@ -244,7 +245,7 @@ export function PlanEditor({ plan }: { plan: any | null }) {
       <DialogContent title={plan ? `Offre ${plan.name}` : "Nouvelle offre"} size="lg">
         <form
           onSubmit={submitWith((f) =>
-            start(async () => {
+            start(() => runAction(async () => {
               const num = (k: string) => (String(f.get(k) ?? "") === "" ? null : Number(f.get(k)));
               const res = await savePlan(plan?.id ?? null, {
                 code: String(f.get("code")), name: String(f.get("name")), description: String(f.get("description") ?? ""),
@@ -261,7 +262,7 @@ export function PlanEditor({ plan }: { plan: any | null }) {
               toast.success("Offre enregistrée");
               setOpen(false);
               router.refresh();
-            }),
+            })),
           )}
           className="grid gap-4 sm:grid-cols-2"
         >

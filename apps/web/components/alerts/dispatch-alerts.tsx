@@ -31,6 +31,7 @@ import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useCentrale, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { buildSettlementWhatsApp, methodLabel, parseDriverLabel, rideNumberOf, useDriverContact } from "@/components/settlements/settlement-ui";
+import { runAction } from "@/lib/run-action";
 import { playSound, unlockAudio, type SoundKind } from "@/lib/sounds";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -895,8 +896,8 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                const res = await redispatchRide(item.rideId!);
-                setBusy(false);
+                const res = await runAction(() => redispatchRide(item.rideId!)).finally(() => setBusy(false));
+                if (!res) return;
                 if (res.ok) {
                   toast.success("Recherche relancée");
                   onClose();
@@ -965,8 +966,8 @@ function SettlementToastActions({ item, api, onClose, btn }: { item: AlertItem; 
   const [busy, setBusy] = useState(false);
   const received = async () => {
     setBusy(true);
-    const res = await confirmSettlements([s.id], null);
-    setBusy(false);
+    const res = await runAction(() => confirmSettlements([s.id], null)).finally(() => setBusy(false));
+    if (!res) return;
     if (res.ok) {
       toast.success(`${formatPrice(s.amountCents, s.currency)} reçus de ${s.firstName}`, { description: `Règlement ${s.reference} soldé.` });
       onClose();

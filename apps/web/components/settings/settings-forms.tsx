@@ -16,20 +16,21 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
 import { Avatar, Switch } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 function useSave() {
   const router = useRouter();
   const [pending, start] = useTransition();
   const save = (fn: () => Promise<{ ok: boolean; error?: string }>, msg = "Enregistré") =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await fn();
       if (!res.ok) toast.error(res.error ?? "Erreur");
       else {
         toast.success(msg);
         router.refresh();
       }
-    });
+    }));
   return { pending, save };
 }
 
@@ -204,13 +205,13 @@ export function DispatchSettingsForm({
   const sample = 5000;
 
   const save = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await updateDispatchSettings(s);
       if (!res.ok) return void toast.error(res.error ?? "Erreur");
       toast.success("Réglages enregistrés");
       setBaseline(s);
       router.refresh();
-    });
+    }));
   const reset = () => {
     setS(baseline);
     setCommission(baseline.driver_commission_percent == null ? "" : String(baseline.driver_commission_percent).replace(".", ","));
@@ -560,7 +561,7 @@ export function TeamPanel({ members, isOwner, canInvite }: { members: any[]; isO
         >
           <form
             onSubmit={submitWith((f) =>
-              startAdding(async () => {
+              startAdding(() => runAction(async () => {
                 const res = await inviteMember({ fullName: String(f.get("name")), email: String(f.get("email")), role, password: String(f.get("password") ?? "") });
                 if (!res.ok) return void toast.error(res.error);
                 setOpen(false);
@@ -575,7 +576,7 @@ export function TeamPanel({ members, isOwner, canInvite }: { members: any[]; isO
                   });
                 } else toast.success(res.invited ? "Invitation envoyée par e-mail" : "Membre ajouté");
                 router.refresh();
-              }),
+              })),
             )}
             className="space-y-4"
           >

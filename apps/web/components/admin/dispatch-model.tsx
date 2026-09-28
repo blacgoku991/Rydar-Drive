@@ -11,6 +11,7 @@ import { centsToInput, eurosToCents, parsePercent, percentToInput, platformFee, 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 const ICON: Record<DispatchModel, typeof Truck> = { fleet: Truck, centrale: Network };
@@ -127,7 +128,7 @@ export function DispatchModelForm({
   const toFleet = model === "centrale" && value === "fleet";
 
   const save = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       if (!fees.valid) return void setErrors(fees.errors);
       setErrors({});
       const res = await updateDispatchModel(orgId, { dispatchModel: value, platformFeePercent: fees.percent, platformFeeFixedCents: fees.fixedCents });
@@ -137,7 +138,7 @@ export function DispatchModelForm({
         description: res.joinDisabled ? "Le lien d'inscription des chauffeurs a été coupé." : undefined,
       });
       router.refresh();
-    });
+    }));
 
   return (
     <div className="space-y-5">

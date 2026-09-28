@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 type Person = { full_name: string | null; email: string } | null;
@@ -81,7 +82,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
     pending?.kind === "ban" && (!preview || preview.reportId !== pending.report.id || (!preview.data && !preview.error));
 
   const run = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       if (!pending) return;
       const { report, kind } = pending;
       const s = (n: number) => (n > 1 ? "s" : "");
@@ -107,7 +108,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
       }
       setPending(null);
       router.refresh();
-    });
+    }));
 
   if (!reports.length) {
     return <EmptyState icon={<ShieldCheck />} title="Aucun signalement" description="Les centrales signalent ici les chauffeurs bannis pour fraude : vous décidez d'un bannissement sur toute la plateforme." />;

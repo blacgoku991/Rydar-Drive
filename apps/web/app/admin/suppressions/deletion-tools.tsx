@@ -12,6 +12,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 import { deleteDriverOnRequest, findDriversForDeletion, retryDriverDeletion } from "./actions";
 import type { DeletionItem, DeletionQueue, DriverMatch } from "./types";
@@ -37,7 +38,7 @@ export function DriverDeletionSearch() {
   const [confirm, setConfirm] = useState("");
 
   const search = (value: string) =>
-    startSearch(async () => {
+    startSearch(() => runAction(async () => {
       setError(null);
       const res = await findDriversForDeletion(value);
       if (!res.ok) {
@@ -46,10 +47,10 @@ export function DriverDeletionSearch() {
         return;
       }
       setResults(res.drivers);
-    });
+    }));
 
   const remove = () =>
-    startDelete(async () => {
+    startDelete(() => runAction(async () => {
       if (!target) return;
       const res = await deleteDriverOnRequest(target.id, confirm);
       if (!res.ok) return void toast.error(res.error);
@@ -58,7 +59,7 @@ export function DriverDeletionSearch() {
       setResults((list) => list?.filter((d) => d.id !== target.id) ?? null);
       setTarget(null);
       router.refresh();
-    });
+    }));
 
   return (
     <Card>
@@ -223,7 +224,7 @@ export function DeletionQueueList({ queue }: { queue: DeletionQueue }) {
   const [running, setRunning] = useState<string | null>(null);
 
   const retry = (item: DeletionItem) =>
-    start(async () => {
+    start(() => runAction(async () => {
       setRunning(item.deletion_id);
       const res = await retryDriverDeletion(item.deletion_id);
       setRunning(null);
@@ -231,7 +232,7 @@ export function DeletionQueueList({ queue }: { queue: DeletionQueue }) {
       if (res.pending) toast.warning(res.message);
       else toast.success(res.message);
       router.refresh();
-    });
+    }));
 
   const s = (n: number) => (n > 1 ? "s" : "");
   return (

@@ -12,6 +12,7 @@ import {
 } from "@/app/dashboard/messages/actions";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { Button } from "@/components/ui/button";
+import { actionFailureMessage } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 import { FLEET_THREAD, driverThread, isUuid, sortDriverThreads, threadHref, type DriverThreadSummary } from "./chat-utils";
 import { RemoveMessageDialog, type ModerationBusy } from "./moderation";
@@ -192,7 +193,7 @@ export function MessagesView({
 
   const load = useCallback(async (thread: ChatThreadKey, before?: string) => {
     setThreads((t) => ({ ...t, [thread]: { ...(t[thread] ?? EMPTY), loading: true, error: undefined } }));
-    const res = await fetchThreadMessages(thread, before ?? null).catch(() => ({ ok: false as const, error: "Connexion perdue. Réessayez." }));
+    const res = await fetchThreadMessages(thread, before ?? null).catch((e: unknown) => ({ ok: false as const, error: actionFailureMessage(e) }));
     setThreads((t) => {
       const cur = t[thread] ?? EMPTY;
       if (!res.ok) return { ...t, [thread]: { ...cur, loading: false, error: res.error } };
@@ -363,7 +364,7 @@ export function MessagesView({
     if (!thread || sending) return;
     setSending(true);
     setErrors((e) => ({ ...e, [thread]: null }));
-    const res = await sendChatMessage(thread, text).catch(() => ({ ok: false as const, error: "Connexion perdue. Réessayez." }));
+    const res = await sendChatMessage(thread, text).catch((e: unknown) => ({ ok: false as const, error: actionFailureMessage(e) }));
     setSending(false);
     if (!res.ok) {
       setErrors((e) => ({ ...e, [thread]: res.error }));
@@ -375,7 +376,7 @@ export function MessagesView({
 
   const confirmRemove = async (m: ChatMessage) => {
     setModerationBusy({ id: m.id, action: "remove" });
-    const res = await removeChatMessage(m.id).catch(() => ({ ok: false as const, error: "Connexion perdue. Réessayez.", gone: false }));
+    const res = await removeChatMessage(m.id).catch((e: unknown) => ({ ok: false as const, error: actionFailureMessage(e), gone: false }));
     setModerationBusy(null);
     if (!res.ok) {
       refreshModeration();
@@ -412,7 +413,7 @@ export function MessagesView({
     const reportId = item.reports[0]?.id;
     if (!reportId) return;
     setModerationBusy({ id, action: "dismiss" });
-    const res = await dismissChatReport(reportId).catch(() => ({ ok: false as const, error: "Connexion perdue. Réessayez.", code: null }));
+    const res = await dismissChatReport(reportId).catch((e: unknown) => ({ ok: false as const, error: actionFailureMessage(e), code: null }));
     setModerationBusy(null);
     if (!res.ok) {
       if (res.code === "MESSAGE_NOT_FOUND") {

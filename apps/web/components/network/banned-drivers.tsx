@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Avatar, EmptyState } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 
 export type BannedIdentityChip = { id: string; kind: IdentityKind; hint: string | null };
 export type BannedDriverRow = {
@@ -37,7 +38,7 @@ export function BannedDriversCard({ drivers, canManage, timeZone }: { drivers: B
   const [unblock, setUnblock] = useState<(BannedIdentityChip & { driver: string }) | null>(null);
 
   const doUnblock = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       if (!unblock) return;
       const res = await liftIdentityBan(unblock.id);
       if (!res.ok) return void toast.error(res.error);
@@ -45,7 +46,7 @@ export function BannedDriversCard({ drivers, canManage, timeZone }: { drivers: B
       toast.success(`${IDENTITY_KIND_LABELS[unblock.kind]} débloqué${feminine ? "e" : ""}`, { description: res.message });
       setUnblock(null);
       router.refresh();
-    });
+    }));
 
   return (
     <Card className="overflow-hidden">
@@ -56,7 +57,7 @@ export function BannedDriversCard({ drivers, canManage, timeZone }: { drivers: B
         action={drivers.length ? <Badge tone="red" dot={false}>{drivers.length}</Badge> : undefined}
       />
       {!drivers.length ? (
-        <EmptyState icon={<ShieldCheck />} title="Aucun chauffeur banni" description="Bannissez un fraudeur depuis sa fiche (« Bannir définitivement ») : il ne pourra plus revenir, même avec un nouveau compte." />
+        <EmptyState icon={<ShieldCheck />} title="Aucun chauffeur banni" description="Bannissez un fraudeur depuis sa fiche (« Bannir définitivement ») : ses identifiants connus (téléphone, e-mail, carte VTC, appareils) sont refusés à toute nouvelle inscription dans votre centrale." />
       ) : (
         <ul className="divide-y divide-line">
           {drivers.map((d) => {

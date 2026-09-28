@@ -11,6 +11,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit, planAllows, customDomainAllowed }: { site: any; slug: string; rootDomain: string; appUrl: string; token: string; canEdit: boolean; planAllows: boolean; customDomainAllowed: boolean }) {
@@ -23,7 +24,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
   const previewUrl = `${appUrl}/book/${slug}?preview=1`;
 
   const save = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await updateBookingSite({
         enabled: s.enabled, subdomain: s.subdomain || null, custom_domain: s.custom_domain || null, title: s.title ?? "", tagline: s.tagline ?? "",
         description: s.description ?? "", logo_url: s.logo_url ?? "", hero_image_url: s.hero_image_url ?? "", primary_color: s.primary_color,
@@ -34,7 +35,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
       toast.success("Mini-site enregistré");
       setFrameKey((k) => k + 1);
       router.refresh();
-    });
+    }));
 
   return (
     <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -62,7 +63,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
                 <p className="font-medium text-fg">Configuration DNS</p>
                 <p>1. <span className="num text-fg">CNAME {site.custom_domain} → cname.{rootDomain}</span></p>
                 <p>2. <span className="num text-fg">TXT _rydar.{site.custom_domain} = {token}</span></p>
-                <Button size="sm" variant="secondary" loading={pending} onClick={() => start(async () => { const r = await verifyCustomDomain(); if (r.ok) { toast.success("Domaine vérifié"); router.refresh(); } else toast.error(r.error); })}>
+                <Button size="sm" variant="secondary" loading={pending} onClick={() => start(() => runAction(async () => { const r = await verifyCustomDomain(); if (r.ok) { toast.success("Domaine vérifié"); router.refresh(); } else toast.error(r.error); }))}>
                   <ShieldCheck /> Vérifier maintenant
                 </Button>
               </div>

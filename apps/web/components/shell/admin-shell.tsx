@@ -2,6 +2,7 @@
 import { useTransition } from "react";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { signOut } from "@/app/login/actions";
+import { runAction } from "@/lib/run-action";
 
 export function AdminShell({
   children,
@@ -73,7 +74,7 @@ export function AdminShell({
         sections={sections}
         subtitle="Super admin"
         user={user}
-        signOut={() => start(() => signOut())}
+        signOut={() => start(() => runAction(() => signOut()))}
         footer={
           <div className="rounded-xl border border-brand/20 bg-brand/[0.05] px-3 py-2.5 text-[12px] text-fg-muted">
             <span className="font-semibold text-brand">Mode plateforme</span> — accès en lecture à tous les tenants, écritures journalisées.

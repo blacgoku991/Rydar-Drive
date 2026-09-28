@@ -11,6 +11,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { acceptOrgTerms, acceptUserTerms } from "@/app/dashboard/actions";
 import { Button } from "@/components/ui/button";
+import { runAction } from "@/lib/run-action";
 
 const link = "text-fg underline underline-offset-2";
 
@@ -22,13 +23,13 @@ function AcceptBanner({ accept, children }: { accept: () => Promise<{ ok: true }
   const [hidden, setHidden] = useState(false);
   if (hidden) return null;
   const submit = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await accept();
       if (!res.ok) return void toast.error(res.error);
       toast.success("Conditions acceptées");
       setHidden(true);
       router.refresh();
-    });
+    }));
   return (
     <div role="region" aria-label="Conditions à accepter" className="border-b border-line bg-blue/[0.06] px-4 py-3 sm:px-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">

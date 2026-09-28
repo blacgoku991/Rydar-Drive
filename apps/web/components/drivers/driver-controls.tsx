@@ -8,6 +8,7 @@ import { addDriverDocument, resetDriverPassword, revokeDriverSessions, setDriver
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { submitWith } from "@/lib/utils";
 
 type DriverData = {
@@ -34,7 +35,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
   const expiryRequired = ["vtc_card", "driving_license", "insurance", "identity"].includes(docType);
 
   const run = (fn: () => Promise<{ ok: boolean; error?: string; message?: string; fieldErrors?: Record<string, string> }>, msg: string) =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await fn();
       if (!res.ok) {
         setErrors(res.fieldErrors ?? {});
@@ -45,7 +46,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
       toast.success(res.message ?? msg);
       setDialog(null);
       router.refresh();
-    });
+    }));
 
   return (
     <>

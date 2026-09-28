@@ -9,6 +9,7 @@ import { type LegalInfoInput, updateLegalInfo } from "@/app/admin/legal/actions"
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
+import { runAction } from "@/lib/run-action";
 import { submitWith } from "@/lib/utils";
 
 type Values = Record<keyof LegalInfoInput, string>;
@@ -42,7 +43,7 @@ export function LegalInfoForm({ initial }: { initial: Values }) {
     setErrors(({ [k]: _drop, ...rest }) => rest);
   };
   const save = () =>
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await updateLegalInfo(v);
       if (!res.ok) {
         setErrors(res.fieldErrors ?? {});
@@ -50,7 +51,7 @@ export function LegalInfoForm({ initial }: { initial: Values }) {
       }
       toast.success("Informations légales enregistrées");
       router.refresh();
-    });
+    }));
 
   const fields = (list: typeof EDITOR) => (
     <div className="grid gap-4 sm:grid-cols-2">

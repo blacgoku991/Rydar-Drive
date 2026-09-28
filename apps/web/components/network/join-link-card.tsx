@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/misc";
+import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
 /** Copie dans le presse-papiers (repli execCommand hors contexte sécurisé). */
@@ -70,7 +71,7 @@ export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string;
 
   const save = (key: NonNullable<typeof busy>, input: Parameters<typeof updateJoinLink>[0], success: string) => {
     setBusy(key);
-    start(async () => {
+    start(() => runAction(async () => {
       const res = await updateJoinLink(input);
       setBusy(null);
       if (!res.ok) return void toast.error(res.error);
@@ -78,7 +79,7 @@ export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string;
       setConfirm(false);
       toast.success(success);
       router.refresh();
-    });
+    }));
   };
 
   return (
