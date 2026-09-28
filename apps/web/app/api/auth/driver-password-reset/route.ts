@@ -4,7 +4,7 @@ import { after, NextResponse } from "next/server";
 import { driverAppCors } from "@/lib/driver-app-cors";
 import { env } from "@/lib/env";
 import { rateLimitAll } from "@/lib/rate-limit";
-import { clientIp } from "@/lib/request";
+import { clientIp, ipBucket } from "@/lib/request";
 
 export const dynamic = "force-dynamic";
 
@@ -38,14 +38,15 @@ async function requestReset(req: Request): Promise<NextResponse> {
   }
   const { email } = parsed.data;
 
-  // IP d'abord : une requête refusée pour son IP ne consomme pas le quota de l'adresse visée. Puis 3 demandes / h par
-  // couple (adresse, IP) — un tiers n'épuise plus les demandes du chauffeur depuis une autre IP — et 6 / h par adresse
-  // au total (pas de bombardement de la boîte mail).
-  const ip = await clientIp();
+  // IP regroupée (IPv6 : préfixe /64). IP d'abord : une requête refusée pour son IP ne consomme pas le quota de
+  // l'adresse visée. Puis 3 demandes / h par couple (adresse, IP) et 20 / h par adresse au total : une source use au
+  // plus 3 demandes du plafond global, un tiers doit disposer de 7 sources pour bloquer celles du chauffeur ; la boîte
+  // mail reçoit au plus 20 messages par heure (Supabase Auth espace en plus les envois à une même adresse).
+  const ip = ipBucket(await clientIp());
   const limit = await rateLimitAll([
     { key: `dreset:ip:${ip}`, limit: 10, windowSec: HOUR },
     { key: `dresetip:${ip}:${email}`, limit: 3, windowSec: HOUR },
-    { key: `dreset:email:${email}`, limit: 6, windowSec: HOUR },
+    { key: `dreset:email:${email}`, limit: 20, windowSec: HOUR },
   ]);
   if (!limit.ok) {
     const minutes = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 60_000));

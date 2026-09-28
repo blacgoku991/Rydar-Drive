@@ -7,7 +7,7 @@ import {
 } from "@/lib/driver-session";
 import { env } from "@/lib/env";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
-import { ipFromHeaders } from "@/lib/request";
+import { ipBucket, ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -36,13 +36,16 @@ export async function POST(req: Request) {
 }
 
 async function login(req: Request): Promise<NextResponse> {
-  const ip = ipFromHeaders(req.headers) ?? "0.0.0.0";
+  // IP regroupée (IPv6 : préfixe /64) : changer d'adresse dans son bloc ne remet aucun compteur à zéro
+  const ip = ipBucket(ipFromHeaders(req.headers));
   const parsed = loginSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ code: "INVALID_INPUT", error: "Identifiants invalides." }, { status: 400 });
   const { email, password } = parsed.data;
 
-  // IP, puis couple (adresse, IP) strict, puis plafond global de l'adresse (remis à zéro par une connexion réussie) :
-  // un tiers qui connaît l'adresse ne bloque plus le chauffeur depuis une autre IP en 6 essais
+  // IP, puis couple (adresse, IP) strict, puis plafond global de l'adresse (remis à zéro par une connexion réussie).
+  // Les refus d'une limite ne comptent pas dans les suivantes : une source (IP, /64) use au plus 6 essais du plafond
+  // global ; un tiers qui connaît l'adresse doit disposer de 9 sources pour bloquer le chauffeur 15 min. MÊMES compteurs
+  // que la suppression de compte (/api/driver/delete-account) et que la réinitialisation par code (remise à zéro).
   const limit = await rateLimitAll([
     { key: `dlogin:ip:${ip}`, limit: 30, windowSec: WINDOW },
     { key: driverLoginPairKey(email, ip), limit: 6, windowSec: WINDOW },

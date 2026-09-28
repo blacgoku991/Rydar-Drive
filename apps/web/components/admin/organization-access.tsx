@@ -1,11 +1,11 @@
 "use client";
 // Super admin : accès au tableau de bord d'un compte (propriétaires, administrateurs, dispatchers).
 import { ORG_ROLE_LABELS, formatDate, type OrgRole } from "@rydar/shared";
-import { KeyRound, Mail, UserPlus, UserX, Undo2 } from "lucide-react";
+import { KeyRound, LockOpen, Mail, UserPlus, UserX, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { grantOrganizationAccess, resendOrganizationInvitation, setOrganizationMemberStatus } from "@/app/admin/actions";
+import { grantOrganizationAccess, resendOrganizationInvitation, setOrganizationMemberStatus, unlockMemberLogin } from "@/app/admin/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -21,7 +21,16 @@ export type AccessMember = {
   status: "active" | "invited" | "disabled";
   created_at: string;
   user: { full_name: string | null; email: string } | null;
+  /** Compte Auth verrouillé (connexion impossible partout) */
+  loginLocked?: boolean;
+  /** Fiche chauffeur du compte bannie (par sa centrale ou de la plateforme) : le verrou ne se lève pas d'ici */
+  driverBan?: "org" | "platform" | null;
 };
+
+const DRIVER_BAN_TEXT = {
+  org: "Fiche chauffeur bannie par sa centrale : seule cette centrale peut lever le bannissement.",
+  platform: "Banni de la plateforme (signalement de fraude) : levée depuis « Centrales ».",
+} as const;
 
 const ROLE_HELP: Record<OrgRole, string> = {
   owner: "Tout, y compris facturation et équipe",
@@ -75,6 +84,18 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
     }));
   };
 
+  // Ancien bannissement hérité (suspension de centrale, fiche chauffeur désactivée avant le correctif) : levée du verrou
+  const unlock = (m: AccessMember) => {
+    setBusy(m.id);
+    start(() => runAction(async () => {
+      const res = await unlockMemberLogin(orgId, m.id);
+      setBusy(null);
+      if (!res.ok) return void toast.error(res.error);
+      toast.success(res.message);
+      router.refresh();
+    }));
+  };
+
   return (
     <Card className="flex flex-col overflow-hidden">
       <CardHeader
@@ -104,10 +125,23 @@ export function OrganizationAccessCard({ orgId, orgName, members }: { orgId: str
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13.5px] font-medium">{name}</p>
                 <p className="truncate text-[12px] text-fg-subtle" title={`${invited ? "Invitation du" : "Accès depuis le"} ${formatDate(m.created_at)}`}>{m.user?.email}</p>
+                {m.loginLocked && (
+                  <p className="mt-1 text-[12px] leading-snug text-fg-muted">
+                    {m.driverBan
+                      ? DRIVER_BAN_TEXT[m.driverBan]
+                      : "Connexion bloquée sans bannissement en cours (ancien blocage : suspension de centrale, fiche chauffeur désactivée)."}
+                  </p>
+                )}
               </div>
               <div className="flex w-full flex-wrap items-center gap-2 pl-[44px] sm:w-auto sm:pl-0">
                 <Badge tone={ROLE_TONE[m.role]} dot={false}>{ORG_ROLE_LABELS[m.role]}</Badge>
                 {disabled && <Badge tone="red">Accès retiré</Badge>}
+                {m.loginLocked && <Badge tone="red">Connexion bloquée</Badge>}
+                {m.loginLocked && !m.driverBan && (
+                  <Button variant="ghost" size="xs" loading={pending && busy === m.id} disabled={pending} onClick={() => unlock(m)}>
+                    <LockOpen /> Débloquer la connexion
+                  </Button>
+                )}
                 {invited ? (
                   <>
                     <Badge tone="amber">Invitation envoyée</Badge>

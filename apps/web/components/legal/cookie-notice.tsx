@@ -1,22 +1,45 @@
 "use client";
 // Bandeau d'information cookies. Le site n'utilise que des cookies et un stockage local strictement nécessaires
 // (session, centrale sélectionnée, préférences) : exemptés de consentement (CNIL, art. 82 loi Informatique et
-// Libertés). Simple information, fermée une fois pour toutes (stockage local, jamais bloquant).
+// Libertés). Simple information, fermée une fois pour toutes (stockage local, jamais bloquant), qui ne masque jamais
+// un contrôle :
+//  - espaces connectés (tableau de bord, super admin) : dans la barre latérale, au-dessus du menu du compte
+//    (placement « sidebar », rendu par les shells ; aussi dans le menu mobile) ;
+//  - pages publiques (accueil, connexion, mini-site…) : flottant en bas, SOUS les dialogues et menus (z-40), avec une
+//    réserve de même hauteur en fin de page pour que le bas de page puisse toujours défiler au-dessus du bandeau.
 import { Cookie, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 
 const KEY = "rd_cookie_notice";
+/** Fermeture annoncée aux autres exemplaires de la page (barre latérale ET menu mobile). */
+const CLOSED_EVENT = "rd:cookie-notice-closed";
+/** Pages rendues dans un shell (barre latérale) : le bandeau y est placé par le shell, jamais flottant. */
+const SHELL_PATHS = /^\/(dashboard|admin)(\/|$)/;
 
-export function CookieNotice({ href }: { href: string }) {
+function useNotice() {
   const [show, setShow] = useState(false);
   useEffect(() => {
-    try {
-      setShow(window.localStorage.getItem(KEY) !== "1");
-    } catch {
-      setShow(false);
-    }
+    const read = () => {
+      try {
+        setShow(window.localStorage.getItem(KEY) !== "1");
+      } catch {
+        setShow(false);
+      }
+    };
+    read();
+    const onClosed = () => setShow(false);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === KEY) read();
+    };
+    window.addEventListener(CLOSED_EVENT, onClosed);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(CLOSED_EVENT, onClosed);
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
-  if (!show) return null;
   const close = () => {
     setShow(false);
     try {
@@ -24,24 +47,95 @@ export function CookieNotice({ href }: { href: string }) {
     } catch {
       // stockage indisponible : le bandeau reviendra, sans gêne
     }
+    window.dispatchEvent(new Event(CLOSED_EVENT));
   };
+  return [show, close] as const;
+}
+
+/** Emplacement effectif : null = rien ici (page d'un shell : le bandeau est dans sa barre latérale). */
+export function cookieNoticeSlot(placement: "floating" | "sidebar", pathname: string): "floating" | "sidebar" | null {
+  if (placement === "sidebar") return "sidebar";
+  return SHELL_PATHS.test(pathname) ? null : "floating";
+}
+
+export function CookieNotice({ href, placement = "floating" }: { href: string; placement?: "floating" | "sidebar" }) {
+  const [show, close] = useNotice();
+  const slot = cookieNoticeSlot(placement, usePathname() ?? "");
+  if (!show || !slot) return null;
+  return slot === "sidebar" ? <SidebarNotice href={href} onClose={close} /> : <FloatingNotice href={href} onClose={close} />;
+}
+
+function CloseButton({ onClose, className }: { onClose: () => void; className: string }) {
   return (
-    <div
-      role="region"
-      aria-label="Information sur les cookies"
-      className="fixed inset-x-3 bottom-3 z-[60] mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] p-3.5 text-[12.5px] leading-relaxed text-fg-muted shadow-float backdrop-blur-xl sm:inset-x-auto sm:left-4 sm:mx-0"
+    <button
+      type="button"
+      onClick={onClose}
+      className={cn("grid size-7 shrink-0 place-items-center rounded-md text-fg-subtle hover:bg-white/[0.06] hover:text-fg", className)}
+      aria-label="Fermer l'information sur les cookies"
     >
-      <Cookie className="mt-0.5 size-4 shrink-0 text-fg-subtle" />
-      <p className="flex-1">
-        Ce site n&apos;utilise que des cookies nécessaires à son fonctionnement (connexion, préférences). Aucun cookie publicitaire ni de mesure
-        d&apos;audience.{" "}
-        <a href={href} className="text-fg underline underline-offset-2">
-          En savoir plus
-        </a>
-      </p>
-      <button type="button" onClick={close} className="-m-1 rounded-lg p-1 text-fg-subtle hover:bg-white/[0.06] hover:text-fg" aria-label="Fermer l'information sur les cookies">
-        <X className="size-4" />
-      </button>
+      <X className="size-4" />
+    </button>
+  );
+}
+
+/** Barre latérale des espaces connectés : dans le flux, au-dessus du menu du compte (ne recouvre rien). */
+export function SidebarNotice({ href, onClose }: { href: string; onClose: () => void }) {
+  return (
+    <div className="px-3 pb-3">
+      <div
+        role="region"
+        aria-label="Information sur les cookies"
+        className="flex items-start gap-1 rounded-xl border border-line bg-white/[0.02] py-2 pl-3 pr-1 text-[12px] leading-relaxed text-fg-muted"
+      >
+        <p className="min-w-0 flex-1 py-0.5">
+          Cookies nécessaires uniquement (connexion, préférences) : aucune publicité ni mesure d&apos;audience.{" "}
+          <a href={href} className="text-fg underline underline-offset-2">
+            En savoir plus
+          </a>
+        </p>
+        <CloseButton onClose={onClose} className="-mt-0.5" />
+      </div>
     </div>
+  );
+}
+
+/** Pages publiques : flottant en bas, sous les dialogues et menus, avec une réserve de même hauteur en fin de page. */
+export function FloatingNotice({ href, onClose }: { href: string; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setHeight(el.offsetHeight);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  return (
+    <>
+      {/* Réserve en fin de page (bandeau + marges) : le dernier contrôle de la page défile au-dessus du bandeau */}
+      <div aria-hidden="true" style={{ height: height ? height + 24 : 0 }} />
+      <div
+        ref={ref}
+        role="region"
+        aria-label="Information sur les cookies"
+        className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] p-3.5 text-[12.5px] leading-relaxed text-fg-muted shadow-float backdrop-blur-xl sm:inset-x-auto sm:left-4 sm:mx-0"
+      >
+        <Cookie className="mt-0.5 size-4 shrink-0 text-fg-subtle" />
+        <p className="flex-1">
+          Ce site n&apos;utilise que des cookies nécessaires à son fonctionnement (connexion, préférences). Aucun cookie publicitaire ni de mesure
+          d&apos;audience.{" "}
+          <a href={href} className="text-fg underline underline-offset-2">
+            En savoir plus
+          </a>
+        </p>
+        <CloseButton onClose={onClose} className="-m-1.5" />
+      </div>
+    </>
   );
 }

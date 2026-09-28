@@ -397,6 +397,20 @@ describe("suppression du compte chauffeur — route /api/driver/delete-account",
     expect(anon.signIn).toHaveLength(1);
   });
 
+  it("IPv6 : compteurs IP et (adresse, IP) par préfixe /64 — changer d'adresse dans son bloc ne donne pas d'essais en plus", async () => {
+    h.counts = new Map();
+    fakeAdmin({});
+    fakeAnon({});
+    const v6 = (n: number) => `2001:db8:66:1:${n.toString(16)}::9`;
+    const bucket = "2001:0db8:0066:0001::/64";
+    const statuses: number[] = [];
+    for (let i = 1; i <= 10; i++) statuses.push((await post(withPassword("mauvais"), undefined, v6(i))).status);
+    expect(statuses).toEqual([...Array(6).fill(401), ...Array(4).fill(429)]);
+    expect(new Set(keys().filter((k) => !k.startsWith("dlogin:email:")))).toEqual(new Set([`ddelete:ip:${bucket}`, `dloginip:${bucket}:${EMAIL}`]));
+    // Plafond global de l'adresse : 6 essais comptés seulement, le chauffeur n'est pas bloqué
+    expect(h.counts.get(`dlogin:email:${EMAIL}`)).toBe(6);
+  });
+
   it("compte Auth banni : empreinte vérifiée par la base (svc_driver_password_check)", async () => {
     const banned = () => ({ user: null, error: new AuthApiError("User is banned", 400, "user_banned") });
     fakeAnon({ signIn: banned });

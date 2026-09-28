@@ -5,7 +5,7 @@ import { driverAppCors } from "@/lib/driver-app-cors";
 import { checkDriverAccount, DRIVER_LOGIN_WINDOW, driverLoginEmailKey, driverLoginPairKey, isAuthBanned } from "@/lib/driver-session";
 import { env } from "@/lib/env";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
-import { clientIp } from "@/lib/request";
+import { clientIp, ipBucket } from "@/lib/request";
 
 export const dynamic = "force-dynamic";
 
@@ -51,15 +51,16 @@ async function confirm(req: Request): Promise<NextResponse> {
   }
   const { email, code, password } = parsed.data;
 
-  // IP d'abord : une requête refusée pour son IP ne consomme pas le quota de l'adresse visée. Puis 8 essais / 15 min
-  // par couple (adresse, IP) — un tiers ne bloque plus le chauffeur depuis une autre IP — et 30 par adresse au total
-  // (remis à zéro par un code valide). Les essais directs sur Supabase Auth ne passent pas par ici : ils sont bornés
-  // par les réglages du projet Supabase (code à 8 chiffres, validité de 15 min au plus).
-  const ip = await clientIp();
+  // IP regroupée (IPv6 : préfixe /64). IP d'abord : une requête refusée pour son IP ne consomme pas le quota de
+  // l'adresse visée. Puis 8 essais / 15 min par couple (adresse, IP) et 60 par adresse au total (remis à zéro par un code
+  // valide) : une source use au plus 8 essais du plafond global, un tiers doit disposer de 8 sources pour bloquer la
+  // saisie du chauffeur (le lien du même e-mail reste utilisable). Les essais directs sur Supabase Auth ne passent pas
+  // par ici : ils sont bornés par les réglages du projet Supabase (code à 8 chiffres, validité de 15 min au plus).
+  const ip = ipBucket(await clientIp());
   const limit = await rateLimitAll([
     { key: `dresetc:ip:${ip}`, limit: 20, windowSec: WINDOW },
     { key: `dresetcip:${ip}:${email}`, limit: 8, windowSec: WINDOW },
-    { key: `dresetc:email:${email}`, limit: 30, windowSec: WINDOW },
+    { key: `dresetc:email:${email}`, limit: 60, windowSec: WINDOW },
   ]);
   if (!limit.ok) {
     const minutes = Math.max(1, Math.ceil((limit.resetAt - Date.now()) / 60_000));

@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
   ctx: null as any,
   session: null as any,
   createUserError: null as unknown,
+  /** banned_until du compte Auth lu par auth.admin.getUserById (null = connexion possible) */
+  bannedUntil: null as string | null,
 }));
 
 function fakeDb(name: string) {
@@ -51,6 +53,7 @@ function fakeDb(name: string) {
         inviteUserByEmail: async (e: string) => (h.auth.push(["inviteUserByEmail", e]), { data: { user: { id: NEW_USER } }, error: null }),
         deleteUser: async (id: string) => (h.auth.push(["deleteUser", id]), { error: null }),
         updateUserById: async (id: string, a: unknown) => (h.auth.push(["updateUserById", id, a]), { data: {}, error: null }),
+        getUserById: async (id: string) => ({ data: { user: { id, banned_until: h.bannedUntil } }, error: null }),
       },
     },
   };
@@ -105,6 +108,7 @@ beforeEach(() => {
   h.audits.length = 0;
   h.handle = () => undefined;
   h.createUserError = null;
+  h.bannedUntil = null;
   h.ctx = { org: { id: ORG, timezone: "Europe/Paris", name: "Centrale A" }, role: "owner", user: { id: OWNER }, supabase: rls };
   h.session = { user: { id: OWNER } };
 });
@@ -151,6 +155,35 @@ describe("Équipe : ajout d'un membre", () => {
     expect(await settings.updateMember(MEMBER_ROW, { role: "admin" })).toEqual({ ok: true });
     expect(writes("organization_users")).toEqual([expect.objectContaining({ action: "update", values: { role: "admin" } })]);
   });
+
+  it("invitation en attente du PROPRIÉTAIRE : un administrateur la renvoie mais ne l'annule pas ; le propriétaire, si", async () => {
+    const invitation = (role: string) => (op: Op): Reply =>
+      op.table === "organization_users" && op.action === "select"
+        ? { data: { id: MEMBER_ROW, user_id: EXISTING, role, status: "invited", user: { email: "proprietaire@exemple.fr" } } }
+        : undefined;
+    h.ctx.role = "admin";
+    h.handle = invitation("owner");
+    expect(await settings.cancelMemberInvitation(MEMBER_ROW)).toEqual({
+      ok: false,
+      error: "Seul un propriétaire peut annuler l'invitation d'un propriétaire.",
+    });
+    expect(writes("organization_users")).toEqual([]);
+    expect(h.audits).toEqual([]);
+    expect(await settings.resendMemberInvitation(MEMBER_ROW)).toEqual({ ok: true });
+    expect(h.emails.map((e) => e.email)).toEqual(["proprietaire@exemple.fr"]);
+
+    // Invitation d'un administrateur ou d'un dispatcher : l'administrateur l'annule
+    h.handle = invitation("dispatcher");
+    expect(await settings.cancelMemberInvitation(MEMBER_ROW)).toEqual({ ok: true });
+    expect(writes("organization_users")).toEqual([expect.objectContaining({ action: "delete" })]);
+
+    // Le propriétaire annule l'invitation d'un autre propriétaire
+    h.ops.length = 0;
+    h.ctx.role = "owner";
+    h.handle = invitation("owner");
+    expect(await settings.cancelMemberInvitation(MEMBER_ROW)).toEqual({ ok: true });
+    expect(writes("organization_users")).toEqual([expect.objectContaining({ action: "delete", filters: expect.objectContaining({ status: "invited" }) })]);
+  });
 });
 
 describe("Super admin : propriétaire et accès", () => {
@@ -195,15 +228,26 @@ describe("Super admin : propriétaire et accès", () => {
     expect(writes("organization_users")[0]).toMatchObject({ action: "update", values: { role: "admin", status: "active" } });
   });
 
-  it("suspension d'une centrale : aucun bannissement Auth ; réactivation : levée seulement pour membres et chauffeurs autorisés", async () => {
+  it("suspension d'une centrale : aucun bannissement Auth ; réactivation : levée pour les membres (fiche chauffeur inactive ou suspendue comprise) et les chauffeurs autorisés, jamais pour une fiche bannie", async () => {
     expect(await adminActions.setOrganizationStatus(ORG, "suspended", "Impayé")).toEqual({ ok: true });
     expect(authCalls("updateUserById")).toEqual([]);
     expect(await adminActions.setOrganizationStatus("x", "suspended")).toEqual({ ok: false, error: "Demande invalide." });
 
     const M = "99999999-9999-4999-8999-999999999999";
+    // Membres : M (aucune fiche), EXISTING (fiche suspendue dans une autre centrale : compte de gestion, ancien
+    // bannissement hérité levé), « bm » (fiche bannie par sa centrale) et « bp » (banni de la plateforme) : vrais
+    // bannissements, jamais levés ici
     h.handle = (op) => {
-      if (op.table === "organization_users") return { data: [{ user_id: M }, { user_id: EXISTING }] };
-      if (op.table === "drivers" && op.filters["user_id[]"]) return { data: [{ user_id: EXISTING, status: "suspended", application_status: null, banned_at: null, deleted_at: null }] };
+      if (op.table === "organization_users") return { data: [{ user_id: M }, { user_id: EXISTING }, { user_id: "bm" }, { user_id: "bp" }] };
+      if (op.table === "drivers" && op.filters["user_id[]"]) {
+        return {
+          data: [
+            { user_id: EXISTING, status: "suspended", application_status: null, banned_at: null, deleted_at: null },
+            { user_id: "bm", status: "suspended", application_status: null, banned_at: "2026-01-01", deleted_at: null },
+            { user_id: "bp", status: "inactive", application_status: null, banned_at: "2026-02-01", deleted_at: null },
+          ],
+        };
+      }
       if (op.table === "drivers") {
         return {
           data: [
@@ -217,8 +261,62 @@ describe("Super admin : propriétaire et accès", () => {
       return undefined;
     };
     expect(await adminActions.setOrganizationStatus(ORG, "active")).toEqual({ ok: true });
-    expect(authCalls("updateUserById").map((c) => c[1]).sort()).toEqual([DRIVER_USER, M, "p1"].sort());
+    expect(authCalls("updateUserById").map((c) => c[1]).sort()).toEqual([DRIVER_USER, M, EXISTING, "p1"].sort());
     expect(authCalls("updateUserById").every((c) => (c[2] as { ban_duration: string }).ban_duration === "none")).toBe(true);
+    expect(h.audits.at(-1)).toMatchObject({ action: "organization.active", metadata: { auth_unbanned: 4 } });
+  });
+
+  it("« Débloquer la connexion » d'un membre : verrou Auth levé et journalisé ; jamais pour une fiche bannie ni hors de la centrale", async () => {
+    const member = (over: Record<string, unknown> = {}) => ({ user_id: EXISTING, role: "admin", status: "active", user: { email: "gerant@exemple.fr" }, ...over });
+    const card = (over: Record<string, unknown> = {}) => ({ id: DRIVER, status: "inactive", banned_at: null, ban_scope: null, organization_id: OTHER_ORG, ...over });
+    const setup = (m: unknown, c: unknown) => {
+      h.handle = (op) => (op.table === "organization_users" ? { data: m } : op.table === "drivers" ? { data: c } : undefined);
+    };
+    const reset = () => {
+      h.ops.length = 0;
+      h.auth.length = 0;
+      h.audits.length = 0;
+    };
+
+    // Gérant de la centrale, fiche chauffeur désactivée par une autre centrale avant le correctif (ancien ban Auth)
+    h.bannedUntil = "2126-01-01T00:00:00Z";
+    setup(member(), card());
+    expect(await adminActions.unlockMemberLogin(ORG, MEMBER_ROW)).toEqual({ ok: true, message: "Connexion débloquée : gerant@exemple.fr peut de nouveau se connecter." });
+    expect(authCalls("updateUserById")).toEqual([["updateUserById", EXISTING, { ban_duration: "none" }]]);
+    expect(h.ops.find((o) => o.table === "organization_users")?.filters).toEqual({ id: MEMBER_ROW, organization_id: ORG });
+    expect(h.audits).toEqual([
+      expect.objectContaining({
+        organizationId: ORG, actorUserId: OWNER, actorType: "super_admin", action: "member.login_unlocked", entityType: "organization_users",
+        entityId: EXISTING, severity: "warning",
+        metadata: expect.objectContaining({ email: "gerant@exemple.fr", role: "admin", driver_status: "inactive" }),
+      }),
+    ]);
+
+    // Fiche bannie par une centrale, ou bannissement plateforme : le verrou reste
+    for (const [scope, text] of [["org", "sa centrale"], ["platform", "plateforme"]] as const) {
+      reset();
+      setup(member(), card({ banned_at: "2026-01-01T00:00:00Z", ban_scope: scope, status: "suspended" }));
+      const res = await adminActions.unlockMemberLogin(ORG, MEMBER_ROW);
+      expect(res).toMatchObject({ ok: false, error: expect.stringContaining(text) });
+      expect(h.auth).toEqual([]);
+      expect(h.audits).toEqual([]);
+    }
+
+    // Compte qui n'est pas (ou plus) bloqué : rien à écrire
+    reset();
+    h.bannedUntil = null;
+    setup(member(), null);
+    expect(await adminActions.unlockMemberLogin(ORG, MEMBER_ROW)).toEqual({ ok: true, message: "Ce compte n'est pas bloqué : aucune action nécessaire." });
+    expect(h.auth).toEqual([]);
+    expect(h.audits).toEqual([]);
+
+    // Membre d'une autre centrale (ou identifiant inconnu) : introuvable ; identifiants invalides : refus sans lecture
+    reset();
+    h.bannedUntil = "2126-01-01T00:00:00Z";
+    setup(null, null);
+    expect(await adminActions.unlockMemberLogin(ORG, MEMBER_ROW)).toEqual({ ok: false, error: "Membre introuvable." });
+    expect(await adminActions.unlockMemberLogin("x", MEMBER_ROW)).toEqual({ ok: false, error: "Demande invalide." });
+    expect(h.auth).toEqual([]);
   });
 });
 
