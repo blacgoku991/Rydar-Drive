@@ -1,10 +1,11 @@
 import type {
-  ChatThreadKey, DocumentType, DriverAccountState, DriverAccountStateKind, DriverBlocker, DriverChatOverview, DriverDocumentItem,
-  DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverSettlements, FleetReportType, FleetReportVoteResult, LatLng, MarkChatReadResult,
-  NavStep, Ride, RideStatus, RpcResult, SendChatMessageResult, SettlementMethod,
+  ChatThreadKey, DocumentType, DriverAccountState, DriverAccountStateKind, DriverBlocker, DriverChatOverview, DriverDeletionDebt,
+  DriverDocumentItem, DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverSettlements, FleetReportType, FleetReportVoteResult,
+  LatLng, MarkChatReadResult, NavStep, Ride, RideStatus, RpcResult, SendChatMessageResult, SettlementMethod,
 } from "@rydar/shared";
 import { extractErrorCode, humanizeError } from "@rydar/shared";
 import { appConfig } from "./config";
+import { debtFromSettlements } from "./debt";
 import { supabase } from "./supabase";
 
 /** Erreur d'appel serveur : message FR prêt à afficher + code métier (ex. RATE_LIMITED). */
@@ -140,14 +141,10 @@ export type DeleteAccountResult = {
 const DELETE_CODES = new Set<DeleteAccountResult["code"]>(["DELETED", "DRIVER_PROFILE_DELETED", "DELETION_PENDING"]);
 
 /**
- * Suppression définitive du compte chauffeur (route web /api/driver/delete-account, confirmation « SUPPRIMER »).
- * Jeton de la session ; session refusée (compte suspendu, banni, centrale suspendue…) : mot de passe du compte
- * (`password`), avec l'e-mail de la session ou `email`.
- * Codes d'erreur : UNAUTHORIZED (demander le mot de passe), INVALID_CREDENTIALS, EMAIL_REQUIRED, RIDES_ASSIGNED
- * (course attribuée, message à afficher), NOT_DRIVER, RATE_LIMITED (essais de mot de passe comptés avec la
- * connexion), UNAVAILABLE (serveur d'authentification injoignable : rien n'a été vérifié, réessayer), NETWORK…
+ * Appel de la route de suppression : jeton de la session ; avec `password`, e-mail + mot de passe en plus (session
+ * refusée par le serveur, ou absente : écran de connexion), avec l'e-mail de la session ou `email`.
  */
-export async function deleteAccount(password?: string, email?: string): Promise<DeleteAccountResult> {
+async function deletionRoute(body: { confirm: "SUPPRIMER" } | { preview: true }, password?: string, email?: string) {
   if (!appConfig.apiUrl) throw new ApiError("Suppression indisponible : contactez votre centrale.", "CONFIG");
   const session = (await supabase.auth.getSession()).data.session;
   const token = session?.access_token;
@@ -157,14 +154,54 @@ export async function deleteAccount(password?: string, email?: string): Promise<
   const res = await fetch(`${appConfig.apiUrl}/api/driver/delete-account`, {
     method: "POST",
     headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(password ? { confirm: "SUPPRIMER", email: login, password } : { confirm: "SUPPRIMER" }),
+    body: JSON.stringify(password ? { ...body, email: login, password } : body),
   }).catch(() => null);
   if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
-  const json = (await res.json().catch(() => ({}))) as { code?: string; error?: string; message?: string; pending?: boolean };
+  const json = (await res.json().catch(() => ({}))) as {
+    code?: string; error?: string; message?: string; pending?: boolean; debt?: DriverDeletionDebt | null;
+  };
+  return { res, json };
+}
+
+/**
+ * Suppression définitive du compte chauffeur (route web /api/driver/delete-account, confirmation « SUPPRIMER »).
+ * Jeton de la session ; session refusée (compte suspendu, banni, centrale suspendue…) : mot de passe du compte
+ * (`password`), avec l'e-mail de la session ou `email`.
+ * Codes d'erreur : UNAUTHORIZED (demander le mot de passe), INVALID_CREDENTIALS, EMAIL_REQUIRED, RIDES_ASSIGNED
+ * (course attribuée, message à afficher), NOT_DRIVER, RATE_LIMITED (essais de mot de passe comptés avec la
+ * connexion), UNAVAILABLE (serveur d'authentification injoignable : rien n'a été vérifié, réessayer), NETWORK…
+ */
+export async function deleteAccount(password?: string, email?: string): Promise<DeleteAccountResult> {
+  const { res, json } = await deletionRoute({ confirm: "SUPPRIMER" }, password, email);
   if (res.ok && json.code && DELETE_CODES.has(json.code as DeleteAccountResult["code"])) {
     return { code: json.code as DeleteAccountResult["code"], pending: !!json.pending, message: json.message ?? "" };
   }
   throw new ApiError(json.error ?? "Suppression impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
+}
+
+/**
+ * Aperçu de la suppression (même route, { preview: true } — jamais la confirmation : RIEN n'est supprimé) : compte
+ * vérifié comme pour la suppression (jeton, ou e-mail + mot de passe), puis commissions encore dues à la centrale,
+ * lisibles ainsi même compte suspendu, banni, désactivé, centrale suspendue ou sans session (écran de connexion).
+ * null : serveur antérieur, sans aperçu (il réclame la confirmation sans rien vérifier) — la suppression reste possible.
+ * Erreurs : celles de deleteAccount (INVALID_CREDENTIALS, EMAIL_REQUIRED, UNAUTHORIZED, RATE_LIMITED, UNAVAILABLE…).
+ */
+export async function previewAccountDeletion(password?: string, email?: string): Promise<{ debt: DriverDeletionDebt | null } | null> {
+  const { res, json } = await deletionRoute({ preview: true }, password, email);
+  if (res.ok && json.code === "PREVIEW") return { debt: json.debt ?? null };
+  if (res.status === 422 && json.code === "CONFIRMATION_REQUIRED") return null;
+  throw new ApiError(json.error ?? "Vérification impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
+}
+
+/**
+ * Commissions encore dues à la centrale, compte connecté, quel que soit son état (actif, suspendu, banni, désactivé,
+ * centrale suspendue) : rappelées avant la suppression du compte. Serveur antérieur sans driver_deletion_debt :
+ * relevé des commissions (chauffeur actif seulement). null : rien de lisible (réseau, aucune fiche chauffeur).
+ */
+export async function deletionDebt(): Promise<DriverDeletionDebt | null> {
+  return rpc<DriverDeletionDebt | null>("driver_deletion_debt")
+    .catch(() => api.settlements(1).then(debtFromSettlements))
+    .catch(() => null);
 }
 
 /**
@@ -321,11 +358,16 @@ export const api = {
     if (error) throw new ApiError("Connexion impossible. Réessayez.", null);
     return data as { id: string; organization_id: string } | null;
   },
-  /** Courses attribuées à venir ou en cours. Erreur (ApiError) : réseau, serveur — jamais une liste vide trompeuse. */
-  upcoming: async () => {
+  /**
+   * Courses attribuées au chauffeur, à venir ou en cours. Filtre sur sa fiche DANS la requête, avant la limite : un
+   * gérant qui roule aussi lit toutes les courses actives de sa centrale (RLS rides_select), les siennes pouvaient
+   * rester au-delà des 50 premières. Erreur (ApiError) : réseau, serveur — jamais une liste vide trompeuse.
+   */
+  upcoming: async (driverId: string) => {
     const { data, error } = await supabase
       .from("rides")
       .select("*")
+      .eq("driver_id", driverId)
       .in("status", ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"])
       .order("pickup_at", { ascending: true })
       .limit(50);

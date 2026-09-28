@@ -1,19 +1,31 @@
 // Commissions encore dues à la centrale, rappelées avant la suppression du compte. Module sans dépendance native
 // (debt.test.ts).
-import { formatPrice, type DriverSettlements } from "@rydar/shared";
+import { formatPrice, type DriverDeletionDebt, type DriverSettlements } from "@rydar/shared";
 
 export type OpenDebt = { cents: number; declaredCents: number; currency: string; organization: string | null };
 
 /**
  * Montant qui reste dû à la centrale après la suppression du compte : commissions à régler, contestées, ou signalées
  * payées mais pas encore confirmées — même périmètre que private.driver_open_debt (migration 20260924004800), tant
- * qu'il en reste les empreintes du chauffeur sont gardées (private.debtor_identities). null : rien de dû.
+ * qu'il en reste les empreintes du chauffeur sont gardées (private.debtor_identities). Montants lus par
+ * driver_deletion_debt ou l'aperçu de la suppression (tout état du compte). null : rien de dû.
  */
-export function openDebt(s: Pick<DriverSettlements, "currency" | "organization" | "summary"> | null | undefined): OpenDebt | null {
-  const owed = Math.max(0, s?.summary?.owed_cents ?? 0);
-  const declared = Math.max(0, s?.summary?.declared_cents ?? 0);
-  if (!s || owed + declared <= 0) return null;
-  return { cents: owed + declared, declaredCents: declared, currency: s.currency || "EUR", organization: s.organization?.name || null };
+export function openDebt(d: DriverDeletionDebt | null | undefined): OpenDebt | null {
+  const owed = Math.max(0, Number(d?.owed_cents) || 0);
+  const declared = Math.max(0, Number(d?.declared_cents) || 0);
+  if (!d || owed + declared <= 0) return null;
+  return { cents: owed + declared, declaredCents: declared, currency: d.currency || "EUR", organization: d.organization || null };
+}
+
+/** Mêmes montants tirés du relevé des commissions (serveur antérieur à driver_deletion_debt : chauffeur actif seulement). */
+export function debtFromSettlements(s: Pick<DriverSettlements, "currency" | "organization" | "summary"> | null | undefined): DriverDeletionDebt | null {
+  if (!s) return null;
+  return {
+    owed_cents: s.summary?.owed_cents ?? 0,
+    declared_cents: s.summary?.declared_cents ?? 0,
+    currency: s.currency,
+    organization: s.organization?.name ?? null,
+  };
 }
 
 /** Avertissement avant la suppression (il ne l'empêche pas) : titre, texte de l'écran, ajout à la confirmation. */

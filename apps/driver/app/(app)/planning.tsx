@@ -34,11 +34,15 @@ export default function Planning() {
   const available = offers.filter((o) => o.mode === "fleet");
   const mine = useMemo(() => (upcoming && driverId ? myRides(upcoming, driverId) : null), [upcoming, driverId]);
 
+  // « Mes courses » lues par la fiche du chauffeur (filtre côté serveur) : en même temps que l'accueil si elle est
+  // connue, sinon après lui (accueil illisible : erreur affichée, jamais « Aucune course »)
   const load = useCallback(async () => {
-    const [, list] = await Promise.all([refresh(), api.upcoming().catch(() => null)]);
+    const read = (id: string | undefined) => (id ? api.upcoming(id).catch(() => null) : Promise.resolve(null));
+    const [h, known] = await Promise.all([refresh(), driverId ? read(driverId) : undefined]);
+    const list = known !== undefined ? known : await read(h?.driver.id);
     setLoadError(list == null);
     if (list) setUpcoming(list);
-  }, [refresh]);
+  }, [refresh, driverId]);
   useFocusEffect(useCallback(() => void load(), [load]));
 
   const pull = useCallback(async () => {

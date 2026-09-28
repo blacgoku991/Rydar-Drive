@@ -1,4 +1,4 @@
-import { loginSchema } from "@rydar/shared";
+import { loginSchema, type DriverDeletionDebt } from "@rydar/shared";
 import { createClient, isAuthRetryableFetchError, type AuthError } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -16,6 +16,8 @@ const NO_STORE = { "Cache-Control": "no-store" };
 /** Fenêtre de l'anti brute force par IP (15 min, comme la connexion chauffeur). */
 const WINDOW = 15 * 60;
 const confirmSchema = z.object({ confirm: z.literal("SUPPRIMER") });
+/** Aperçu : jamais de suppression, même accompagné de la confirmation. */
+const previewSchema = z.object({ preview: z.literal(true) });
 
 export function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: driverAppCors(req) });
@@ -31,6 +33,10 @@ export function OPTIONS(req: Request) {
  * Anti brute force : IP, puis MÊMES compteurs que la connexion (/api/auth/driver-login : pas de second budget de mots
  * de passe) — couple (adresse, IP) strict et plafond global plus haut de l'adresse (un tiers qui connaît l'adresse ne
  * bloque pas le chauffeur depuis une autre IP) —, puis compte (1 h).
+ * Aperçu { preview: true, email?, password? } (écran « Supprimer mon compte », avant la confirmation) : même
+ * authentification et mêmes compteurs, RIEN n'est supprimé (même avec « confirm ») ; 200 { code: "PREVIEW", debt } :
+ * commissions encore dues à la centrale (svc_driver_deletion_debt), lisibles même compte suspendu, banni, désactivé,
+ * centrale suspendue ou sans session ; debt null sans fiche chauffeur.
  * Réponses :
  *  - 200 { code: "DELETED" } : tout est supprimé (données, fichiers, compte de connexion) ;
  *  - 200 { code: "DRIVER_PROFILE_DELETED", pending } : profil chauffeur supprimé, compte de gestion conservé ;
@@ -88,7 +94,8 @@ async function handle(req: Request): Promise<NextResponse> {
       { status: 429, headers: { ...NO_STORE, "Retry-After": String(WINDOW) } },
     );
   }
-  if (!confirmSchema.safeParse(body).success) {
+  const preview = previewSchema.safeParse(body).success;
+  if (!preview && !confirmSchema.safeParse(body).success) {
     return reply(422, { ok: false, code: "CONFIRMATION_REQUIRED", error: "Confirmez la suppression." });
   }
 
@@ -118,6 +125,16 @@ async function handle(req: Request): Promise<NextResponse> {
     // Mot de passe juste : compteurs de l'adresse remis à zéro, comme après une connexion réussie
     await resetRateLimit(driverLoginPairKey(credentials.data.email, ip), DRIVER_LOGIN_WINDOW);
     await resetRateLimit(driverLoginEmailKey(credentials.data.email), DRIVER_LOGIN_WINDOW);
+  }
+
+  if (preview) {
+    // Compte vérifié ci-dessus ; lecture seule (le budget de suppressions du compte n'est pas entamé)
+    const { data, error } = await createAdminClient().rpc("svc_driver_deletion_debt", { p_user_id: userId });
+    if (error) {
+      console.error("[delete-account] commissions dues illisibles", error.message);
+      return reply(500, { ok: false, code: "SERVER_ERROR", error: "Vérification impossible pour le moment. Réessayez." });
+    }
+    return reply(200, { ok: true, code: "PREVIEW", debt: (data as DriverDeletionDebt | null) ?? null });
   }
 
   const perAccount = await rateLimit(`ddelete:user:${userId}`, 5, 3600);
