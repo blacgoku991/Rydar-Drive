@@ -1,5 +1,7 @@
 # Worker Rydar Drive — tick du dispatch, notifications push, ménage, suivi des vols,
 # surveillance des courses, rappels d'échéance des documents.
+# Même image pour l'expéditeur d'e-mails du formulaire de contact : commande « node dist/mailer.js »
+# (service « mailer » de deploy/docker-compose.yml, réseau de l'hôte, HEALTH_PORT = MAILER_HEALTH_PORT).
 #   docker build -f apps/worker/Dockerfile -t rydar-worker .
 #   docker run -e DATABASE_URL=... -e EXPO_ACCESS_TOKEN=... rydar-worker
 FROM node:22-alpine AS build

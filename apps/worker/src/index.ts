@@ -4,7 +4,7 @@ import { config, dbTlsHint, log } from "./config";
 import { listen, pool } from "./db";
 import { selectFlightProvider, withCache } from "./flights";
 import { flightJob, type QueryFn } from "./flights/job";
-import { runHousekeeping } from "./housekeeping";
+import { createContactPurge, runHousekeeping, type QueryFn as HousekeepingQuery } from "./housekeeping";
 import { checkPushReceipts, processNotifications, stopNotifications } from "./notifications";
 import { processWhatsApp, stopWhatsApp } from "./whatsapp";
 
@@ -75,14 +75,20 @@ const watchDriverGps = single("watchDriverGps", async () => {
   }
 });
 
-/** Toutes les 5 min : durées de conservation ; purge longue en échec (« errors ») → niveau warn (housekeeping.ts). */
+/**
+ * Toutes les 5 min : durées de conservation ; purge longue en échec (« errors ») → niveau warn (housekeeping.ts).
+ * Puis formulaire de contact (demandes, e-mails) : appel séparé, jamais bloquant, toléré avant sa migration.
+ */
+const purgeContactData = createContactPurge();
 const housekeeping = single("housekeeping", async () => {
+  const query: HousekeepingQuery = (sql, params) => pool.query(sql, params);
   try {
-    await runHousekeeping((sql, params) => pool.query(sql, params));
+    await runHousekeeping(query);
   } catch (error) {
     state.errors++;
     log("error", "housekeeping failed", { error: (error as Error).message });
   }
+  await purgeContactData(query);
 });
 
 // ----------------------------------------------------------------- vols

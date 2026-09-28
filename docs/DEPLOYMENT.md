@@ -97,6 +97,7 @@ Architecture cible :
 | `REDIS_URL` | Rate limiting et anti brute force partagés (Upstash, Redis Cloud…) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Abonnements. Webhook : `https://app…/api/stripe/webhook` |
 | `DRIVER_APP_ORIGINS` | (optionnel) origines autorisées à appeler les routes de l'app chauffeur (`/api/auth/driver-login`, `/api/auth/driver-password-reset…`) depuis un navigateur |
+| `CONTACT_NOTIFY_EMAIL` | (optionnel) destinataire des demandes du formulaire de contact ; vide = e-mail de `/admin/legal`, puis `LEGAL_EMAIL`. Le site met les e-mails en file, le service `mailer` les envoie (§ 3, « E-mails : formulaire de contact ») |
 
 ### Mini-sites : sous-domaines réservés
 
@@ -196,6 +197,7 @@ Tâches périodiques :
 | `private.dispatch_tick()` | 2 s (`DISPATCH_TICK_MS`) | vagues, délais des offres, bascule des planifiées |
 | notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s ; relances WhatsApp (`private.claim_whatsapp`, [WHATSAPP.md](WHATSAPP.md)) |
 | `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | durées de conservation (§ 6) : positions, messages, notifications, journaux (celui de Supabase Auth une fois par heure), adresses IP, courses, bannissements (`private.purge_expired_bans`) ; un échec de la purge des courses, des bannissements ou du journal Auth est renvoyé dans `errors` (journal `housekeeping incomplete`, niveau warn) sans bloquer le reste ; ne met jamais un chauffeur hors ligne |
+| `private.purge_contact_data()` | 5 min (juste après la précédente) | formulaire de contact : demandes de plus de 3 ans, demandes indésirables de plus de 30 jours, e-mails sans demande (e-mails de test) de plus d'un an, une fois envoyés ou en échec (journal `contact data purged`). Appel séparé : son échec (warn) ne touche pas au ménage ; avant sa migration (005700), un seul avertissement, sans erreur |
 | `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |
 | `private.watch_driver_gps()` | 30 s (`WATCH_DRIVER_GPS_MS`) | application fermée (ni position ni signe de vie depuis 3 min) : chauffeur hors ligne, sans notification (jamais en course) |
 | `private.document_reminders()` | au démarrage puis 6 h (`DOCUMENT_REMINDERS_MS`) | documents échus, rappels d'échéance (30 j, 7 j, jour J), jamais avant 9 h locale |
@@ -239,6 +241,75 @@ jamais dans une ligne de commande (`PGPASSWORD`, `deploy/pg-url.sh`).
   mais le certificat n'est plus vérifié (ancien mode). Retour : `DATABASE_SSLMODE=verify-full`.
 
 Hors kit VPS : `docker run -e DATABASE_SSLMODE=verify-full -e DATABASE_CA_FILE=/etc/rydar/supabase-ca.crt -v "$PWD/deploy/supabase-ca.crt:/etc/rydar/supabase-ca.crt:ro" …`.
+
+### E-mails : formulaire de contact
+
+**Ce qui part** (file `public.email_outbox`, migration 005700 ; état de chaque e-mail dans `/admin/contacts`) :
+
+| E-mail (`kind`) | Destinataire | Quand |
+| --- | --- | --- |
+| Notification (`contact_notify`) | le Super Admin : `CONTACT_NOTIFY_EMAIL`, à défaut l'e-mail de `/admin/legal`, puis `LEGAL_EMAIL`. « Répondre » écrit au demandeur (Reply-To) | à chaque demande |
+| Accusé de réception (`contact_ack`) | le demandeur. Texte fixe, sans rien de ce qu'il a saisi (anti-abus : le formulaire ne peut pas servir à écrire à un tiers) ; un seul par adresse et par 24 h | à chaque demande |
+| Réponse (`contact_reply`) | le demandeur | réponse du Super Admin depuis `/admin/contacts` |
+| E-mail de test (`test`) | l'adresse choisie | bouton de `/admin/contacts` |
+
+**Par où** : le site n'envoie rien lui-même, il écrit dans la file. Le service `mailer` (même image que le worker,
+`node dist/mailer.js`) la lit, réveillé par `LISTEN rydar_emails` (déclencheur après insertion) avec un sondage de
+secours toutes les 10 s, et envoie en SMTP au **serveur mail du VPS** (`127.0.0.1:25`, Postfix), qui remet les e-mails
+aux destinataires. Le service tourne sur le réseau de l'hôte (`network_mode: host`) : c'est ce qui fait de
+« 127.0.0.1 » le VPS lui-même, dont Postfix relaie sans identifiant ce qui vient de la machine (`mynetworks`). Aucun
+port n'est publié : Postfix n'écoute qu'en local, le pare-feu n'ouvre pas le port 25, et le point de santé du mailer
+n'écoute que sur `127.0.0.1`. Installation de Postfix, port 25 sortant, SPF, DKIM, DMARC et DNS inverse :
+[`deploy/CLAUDE-VPS.md`](../deploy/CLAUDE-VPS.md), étape 5.
+
+**Réessais** : 1 min, 5 min, 15 min, 1 h, 3 h, 6 h puis 12 h (8 essais, une vingtaine d'heures) si le serveur est
+injoignable ou répond par un refus temporaire (4xx) ; un refus définitif (5xx, par exemple adresse inexistante) arrête
+aussitôt (« Échec » et motif dans `/admin/contacts`). Un e-mail réservé par un expéditeur arrêté en plein envoi repart
+après un bail de 5 min : il peut alors arriver deux fois, jamais se perdre. Plusieurs expéditeurs peuvent tourner
+ensemble (réservation `FOR UPDATE SKIP LOCKED`).
+
+Les e-mails d'authentification (invitations, mot de passe oublié, codes) ne passent pas par là : ils restent envoyés
+par Supabase, avec le SMTP réglé dans Supabase (§ 1).
+
+| Variable | Service | Défaut | Rôle |
+| --- | --- | --- | --- |
+| `CONTACT_NOTIFY_EMAIL` | web | vide | Destinataire des demandes ; vide = e-mail de `/admin/legal`, puis `LEGAL_EMAIL` |
+| `MAIL_FROM` | mailer | `Rydar Drive <noreply@DOMAIN>` | Expéditeur : adresse seule (nom affiché « Rydar Drive ») ou `Nom <adresse>`. Garder le domaine du site (SPF, DMARC) |
+| `SMTP_HOST`, `SMTP_PORT` | mailer | `127.0.0.1`, `25` | Serveur SMTP. En boucle locale sans identifiant : ni STARTTLS ni identifiant (Postfix local, certificat souvent auto-signé) |
+| `SMTP_USER`, `SMTP_PASS` | mailer | vides | Relais externe (avancé, par exemple port 25 sortant bloqué) : STARTTLS obligatoire (port 587, ou dès qu'il y a un identifiant) ou TLS (465), certificat toujours vérifié. Saisis par l'exploitant (`sudo nano deploy/.env`), `SMTP_PASS` entre apostrophes s'il contient un `$`. Non demandés par `configure.sh` |
+| `MAILER_HEALTH_PORT` | mailer | `8081` | Point de santé, sur `127.0.0.1` seulement (repris en `HEALTH_PORT` pour le `HEALTHCHECK` de l'image) |
+| `MAIL_POLL_MS` | mailer | `10000` | Sondage de secours (hors kit VPS) |
+
+`deploy/configure.sh` demande `CONTACT_NOTIFY_EMAIL` et `MAIL_FROM` (facultatifs) et signale si rien n'écoute sur le
+port 25 ; `deploy/install.sh` affiche l'état du serveur mail après le démarrage. Ce ne sont que des avertissements :
+sans serveur mail, les demandes restent visibles dans `/admin/contacts` et leurs e-mails attendent en file.
+
+**Vérification** :
+
+1. `sudo ss -ltnp | grep ':25 '` : Postfix écoute sur `127.0.0.1:25`, jamais sur `0.0.0.0`.
+2. Sur le VPS, `curl -s http://127.0.0.1:8081/` : `"healthy":true` (file lue dans la base) et `"smtpReady":true`
+   (serveur mail joignable) ; `smtp.lastSentAt` = dernier envoi réussi, `smtp.lastError` = dernière erreur (adresses
+   masquées), `counters` = envoyés, réessais et échecs depuis le démarrage.
+3. `/admin/contacts` → e-mail de test vers une boîte Gmail ou Outlook : reçu hors indésirables ; « Afficher l'original »
+   indique SPF, DKIM et DMARC `PASS`.
+
+**Dépannage** :
+
+- `cd /opt/rydar/deploy && sudo docker compose logs --tail 100 mailer` : `email sent`, `email not sent, retry scheduled`,
+  `email failed, no more retries` (identifiant, type et domaine du destinataire : jamais l'adresse complète, l'objet ni
+  le texte) ; `smtp server unavailable` : rien n'écoute sur `127.0.0.1:25` (Postfix absent ou arrêté).
+- `sudo tail -n 100 /var/log/mail.log` (ou `sudo journalctl -u 'postfix*' -n 100 --no-pager`) : sort de chaque e-mail
+  chez Postfix (`status=sent`, `deferred`, `bounced`). « Envoyé » dans `/admin/contacts` veut dire accepté par Postfix ;
+  la remise au destinataire se lit ici.
+- `sudo postqueue -p` : e-mails retenus chez Postfix. `connect to …:25: Connection timed out` : port 25 sortant bloqué
+  par l'hébergeur (déblocage, ou relais externe) ; après correction, `sudo postqueue -f`.
+- Refus « 550 … SPF / DMARC / PTR » ou arrivée en indésirables : enregistrements SPF, DKIM, DMARC et DNS inverse
+  (`deploy/CLAUDE-VPS.md`, étape 5).
+- Refus « User unknown in local recipient table » pour une adresse du domaine du site : `mydestination` de Postfix
+  contient ce domaine (il doit valoir `localhost`).
+- Développement : `pnpm --filter @rydar/worker dev:mailer` (mêmes variables, `apps/worker/.env`) ; sans Postfix, un faux
+  serveur SMTP local, par exemple Mailpit (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`, `SMTP_PORT=1025`,
+  e-mails lisibles sur `http://localhost:8025`).
 
 ### Suivi des vols
 
@@ -344,6 +415,9 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
     d'audit 1 an ; journal d'audit de Supabase Auth 1 an (§ 1) ; courses 10 ans après la fin de l'année de la prise
     en charge, quel que soit leur statut ; bannissements 3 ans (`private.purge_expired_bans`) ; empreintes d'un
     chauffeur supprimé qui devait des commissions, dès que plus rien n'est dû ;
+  - formulaire de contact (`private.purge_contact_data`, worker, toutes les 5 min ; migration 005700) : demandes et
+    leurs e-mails 3 ans, demandes indésirables 30 jours, e-mails sans demande (e-mails de test) 1 an, une fois envoyés
+    ou en échec ;
   - suppression d'un compte chauffeur (`private.delete_driver_account`, migration 004000) : données effacées ou
     anonymisées aussitôt, adresse IP et navigateur de son inscription retirés du journal d'audit, indices en clair
     des empreintes effacés ; bannissements des comptes supprimés depuis 3 ans : `private.purge_deleted_driver_bans`
@@ -391,6 +465,9 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
       sur `/admin/suppressions`
 - [ ] Contact « données personnelles » renseigné dans `/admin/legal` ; demandes de suppression reçues par e-mail
       traitées dans `/admin/suppressions` sous 30 jours ([STORES.md](STORES.md) § 11)
+- [ ] E-mails du formulaire de contact : Postfix en écoute locale, `"smtpReady":true` sur `http://127.0.0.1:8081/`,
+      SPF, DKIM, DMARC et DNS inverse en place, e-mail de test de `/admin/contacts` reçu hors indésirables (§ 3,
+      « E-mails : formulaire de contact »)
 - [ ] Domaine wildcard pour les mini-sites, domaines personnalisés ajoutés
 - [ ] Builds EAS signés, pushs testés sur un vrai téléphone Android et un vrai iPhone
 - [ ] `/admin/legal` rempli (aucun « à compléter par l'éditeur » sur `/mentions-legales`), textes légaux relus par un juriste

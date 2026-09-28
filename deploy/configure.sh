@@ -251,6 +251,47 @@ if [ -z "$(get LEGAL_NAME)" ] || [ -z "$(get LEGAL_EMAIL)" ]; then
 fi
 
 echo
+echo "Formulaire de contact du site (facultatif, Entrée pour passer) : chaque demande arrive dans /admin/contacts et"
+echo "par e-mail, envoyé par le serveur mail de ce VPS (127.0.0.1:25). Détails : docs/DEPLOYMENT.md,"
+echo "« E-mails : formulaire de contact »."
+while :; do
+  ask CONTACT_NOTIFY_EMAIL "E-mail qui reçoit les demandes de contact (vide = e-mail des mentions légales)"
+  if [ -z "$answer" ] || printf '%s' "$answer" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'; then break; fi
+  echo "  ✗ Adresse e-mail invalide (forme attendue : nom@domaine.fr)"
+done
+put CONTACT_NOTIFY_EMAIL "$answer"
+while :; do
+  ask MAIL_FROM "Adresse d'expédition des e-mails (vide = noreply@$(get DOMAIN))"
+  if [ -z "$answer" ] \
+    || printf '%s' "$answer" | grep -Eq '^[^@<>[:space:]]+@[^@<>[:space:]]+\.[^@<>[:space:]]+$' \
+    || printf '%s' "$answer" | grep -Eq '^[^@<>"]+ <[^@<>[:space:]]+@[^@<>[:space:]]+\.[^@<>[:space:]]+>$'; then
+    break
+  fi
+  echo "  ✗ Adresse invalide (forme attendue : noreply@domaine.fr, ou « Rydar Drive <noreply@domaine.fr> »)"
+done
+put MAIL_FROM "$answer"
+
+# Serveur mail local (SMTP_HOST vide ou boucle locale) : contrôle non bloquant, les e-mails attendent en file sinon
+smtp_host="$(get SMTP_HOST)"
+smtp_port="$(get SMTP_PORT)"
+smtp_port="${smtp_port:-25}"
+case "${smtp_host:-127.0.0.1}" in
+  127.0.0.1 | localhost | ::1)
+    if ! command -v ss >/dev/null; then
+      echo "  (ss introuvable : écoute du serveur mail sur le port $smtp_port non vérifiée)"
+    elif ss -ltnH 2>/dev/null | awk '{print $4}' \
+      | grep -Eq "^(127\.0\.0\.1|0\.0\.0\.0|\*|\[::\]|\[::ffff:127\.0\.0\.1\]):$smtp_port\$"; then
+      echo "  ✓ un serveur mail écoute sur 127.0.0.1:$smtp_port"
+    else
+      echo "  ⚠ aucun serveur mail n'écoute sur 127.0.0.1:$smtp_port : les e-mails du formulaire de contact resteront"
+      echo "    en file (les demandes s'affichent quand même dans /admin/contacts). Installez Postfix, en écoute locale"
+      echo "    seulement : deploy/CLAUDE-VPS.md, étape 5 « E-mails du formulaire de contact »."
+    fi
+    ;;
+  *) echo "  Relais SMTP externe configuré (SMTP_HOST=$smtp_host, réglage avancé) : pas de contrôle local." ;;
+esac
+
+echo
 echo "Application chauffeur publiée (facultatif, Entrée pour passer)"
 ask IOS_APP_URL "Lien App Store"
 put IOS_APP_URL "$answer"
