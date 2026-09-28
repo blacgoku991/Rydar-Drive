@@ -6,7 +6,9 @@ Serveur conseillé : Ubuntu **24.04 ou 26.04 LTS**, 2 vCPU ou plus, **4 à 8 Go 
 
 ```
 Internet ──► Caddy (HTTPS auto) ──► web (Next.js)  ──► Supabase (Postgres, Auth, Realtime, Storage)
-                                    worker (dispatch toutes les 2 s, notifications push) ──┘
+                                    worker (dispatch toutes les 2 s, notifications push) ──┤
+                                    mailer (e-mails du formulaire de contact) ─────────────┘
+                                      └─► Postfix du VPS (127.0.0.1:25) ──► boîtes des destinataires
                                     redis (anti brute force)
 ```
 
@@ -107,6 +109,7 @@ Ne chargez **jamais** `supabase/seed.sql` en production : ce sont les comptes de
 - **Stripe** (abonnements) : clés dans `deploy/.env` ; webhook `https://votre-domaine/api/stripe/webhook`.
 - **Notifications push** : `EXPO_ACCESS_TOKEN` (expo.dev → Access tokens), ou FCM / APNs en direct.
 - **App chauffeur** : builds EAS avec `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` et `EXPO_PUBLIC_API_URL=https://votre-domaine` (voir `docs/DEPLOYMENT.md`, section 5).
+- **E-mails du formulaire de contact** (notification des demandes, accusé de réception, réponses depuis `/admin/contacts`) : envoyés par le service `mailer` au serveur mail du VPS, Postfix en écoute locale seulement (`127.0.0.1:25`, port jamais ouvert dans le pare-feu). Installation, port 25 sortant, SPF, DKIM, DMARC et DNS inverse : `deploy/CLAUDE-VPS.md`, étape 5 ; variables (`CONTACT_NOTIFY_EMAIL`, `MAIL_FROM`, relais SMTP externe) et dépannage : `docs/DEPLOYMENT.md`, « E-mails : formulaire de contact ». Les e-mails de connexion (invitations, mot de passe oublié) restent envoyés par Supabase (étape 2).
 
 ## 6. Au quotidien
 
@@ -114,7 +117,8 @@ Ne chargez **jamais** `supabase/seed.sql` en production : ce sont les comptes de
 cd /opt/rydar
 git pull && sudo bash deploy/install.sh                 # mise à jour (migrations comprises)
 cd deploy && docker compose ps                          # état des services
-docker compose logs -f --tail 100 web worker            # journaux
+docker compose logs -f --tail 100 web worker mailer     # journaux
+curl -s http://127.0.0.1:8081/                          # expéditeur d'e-mails : "smtpReady":true attendu
 docker compose restart worker                           # redémarrer un service
 sudo bash /opt/rydar/deploy/configure.sh                # changer une clé, puis relancer install.sh
 ```

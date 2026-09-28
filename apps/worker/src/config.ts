@@ -80,6 +80,16 @@ export const config = {
     apiVersion: process.env.WHATSAPP_API_VERSION || undefined,
   },
   healthPort: num("HEALTH_PORT", 8080),
+  /**
+   * Expéditeur d'e-mails (dist/mailer.js, service « mailer » du kit VPS) : file public.email_outbox → SMTP
+   * (réglages SMTP_* et MAIL_FROM : email/smtp.ts). Réveil par LISTEN rydar_emails, sondage de secours toutes les
+   * MAIL_POLL_MS. Point de santé sur 127.0.0.1 seulement : MAILER_HEALTH_PORT, à défaut HEALTH_PORT (celui que lit le
+   * HEALTHCHECK de l'image), sinon 8081.
+   */
+  mailer: {
+    pollMs: num("MAIL_POLL_MS", 10_000),
+    healthPort: num("MAILER_HEALTH_PORT", num("HEALTH_PORT", 8081)),
+  },
   expoAccessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
   fcmServiceAccount: process.env.FCM_SERVICE_ACCOUNT_B64
     ? (JSON.parse(Buffer.from(process.env.FCM_SERVICE_ACCOUNT_B64, "base64").toString("utf8")) as { project_id: string; client_email: string; private_key: string })

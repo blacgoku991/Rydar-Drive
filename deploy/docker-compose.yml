@@ -1,8 +1,9 @@
-# Rydar Drive sur un VPS : site (Next.js), worker (dispatch + notifications), Redis, Caddy (HTTPS
-# automatique). La base de données, l'authentification, le temps réel et le stockage des documents
-# sont chez Supabase (projet cloud, région Europe) : le VPS ne garde aucune donnée métier.
+# Rydar Drive sur un VPS : site (Next.js), worker (dispatch + notifications), expéditeur d'e-mails (formulaire de
+# contact, via le serveur mail du VPS), Redis, Caddy (HTTPS automatique). La base de données, l'authentification,
+# le temps réel et le stockage des documents sont chez Supabase (projet cloud, région Europe) : le VPS ne garde
+# aucune donnée métier.
 #   sudo bash deploy/install.sh        (installation, migrations, construction, démarrage)
-#   cd deploy && docker compose logs -f web worker
+#   cd deploy && docker compose logs -f web worker mailer
 name: rydar
 
 x-service: &service
@@ -57,6 +58,9 @@ services:
       LEGAL_NAME: ${LEGAL_NAME:-}
       LEGAL_EMAIL: ${LEGAL_EMAIL:-}
       LEGAL_ADDRESS: ${LEGAL_ADDRESS:-}
+      # Destinataire des demandes du formulaire de contact ; vide = e-mail de /admin/legal, puis LEGAL_EMAIL.
+      # Le site n'envoie rien lui-même : il met les e-mails en file (public.email_outbox), le service mailer les envoie
+      CONTACT_NOTIFY_EMAIL: ${CONTACT_NOTIFY_EMAIL:-}
       WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-}
     depends_on:
       - redis
@@ -99,6 +103,39 @@ services:
       AVIATIONSTACK_TIMES: ${AVIATIONSTACK_TIMES:-}
       FLIGHTAWARE_KEY: ${FLIGHTAWARE_KEY:-}
       FLIGHTAWARE_URL: ${FLIGHTAWARE_URL:-}
+    volumes:
+      - ./supabase-ca.crt:/etc/rydar/supabase-ca.crt:ro
+
+  # Expéditeur d'e-mails du formulaire de contact (notification au super admin, accusé de réception, réponses,
+  # e-mail de test) : lit la file public.email_outbox et envoie en SMTP. Même image que le worker (construite par
+  # le service worker, jamais téléchargée), autre commande.
+  # Réseau de l'hôte : « 127.0.0.1:25 » y désigne le serveur mail du VPS lui-même (Postfix, écoute locale
+  # seulement), qui relaie sans identifiant ce qui vient de la machine. Aucun port publié ; le point de santé
+  # n'écoute que sur 127.0.0.1 (MAILER_HEALTH_PORT, 8081). docs/DEPLOYMENT.md, « E-mails : formulaire de contact ».
+  mailer:
+    <<: *service
+    image: rydar-worker
+    pull_policy: never
+    command: ["node", "dist/mailer.js"]
+    network_mode: host
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?}
+      # Même chiffrement vérifié que le worker (deploy/supabase-ca.crt, monté ci-dessous)
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-verify-full}
+      DATABASE_CA_FILE: /etc/rydar/supabase-ca.crt
+      # Expéditeur par défaut : Rydar Drive <noreply@DOMAIN> ; MAIL_FROM : « adresse » ou « Nom <adresse> »
+      DOMAIN: ${DOMAIN:?}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # Serveur mail du VPS par défaut ; relais externe (avancé) : SMTP_HOST, SMTP_PORT (587 ou 465), SMTP_USER,
+      # SMTP_PASS dans deploy/.env (valeur entre apostrophes si elle contient un $)
+      SMTP_HOST: ${SMTP_HOST:-127.0.0.1}
+      SMTP_PORT: ${SMTP_PORT:-25}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAILER_HEALTH_PORT: ${MAILER_HEALTH_PORT:-8081}
+      # Port lu par le HEALTHCHECK de l'image (apps/worker/Dockerfile) : le même
+      HEALTH_PORT: ${MAILER_HEALTH_PORT:-8081}
     volumes:
       - ./supabase-ca.crt:/etc/rydar/supabase-ca.crt:ro
 

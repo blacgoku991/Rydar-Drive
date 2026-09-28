@@ -109,6 +109,25 @@ if [ "$worker_ok" = 0 ]; then
     echo "  « Connexion chiffrée à la base »."
   fi
 fi
+# Expéditeur d'e-mails (formulaire de contact) : avertissement seulement, jamais d'échec de l'installation.
+# « smtpReady » : serveur mail joignable (true), injoignable (false), pas encore vérifié (null).
+mailer_health=""
+for _ in $(seq 1 15); do
+  mailer_health="$(docker compose exec -T mailer sh -c 'wget -qO- "http://127.0.0.1:${MAILER_HEALTH_PORT:-8081}"' 2>/dev/null || true)"
+  case "$mailer_health" in *'"smtpReady":true'* | *'"smtpReady":false'*) break ;; esac
+  sleep 2
+done
+case "$mailer_health" in
+  *'"smtpReady":true'*) echo "✓ e-mails du formulaire de contact : serveur mail joignable" ;;
+  *'"smtpReady":false'*)
+    echo "⚠ e-mails du formulaire de contact : serveur mail injoignable, les e-mails attendent en file (les demandes"
+    echo "  restent visibles dans /admin/contacts). Postfix : deploy/CLAUDE-VPS.md, étape 5 « E-mails du formulaire de contact »."
+    ;;
+  *)
+    echo "⚠ l'expéditeur d'e-mails (formulaire de contact) ne répond pas ou n'atteint pas la base :"
+    echo "  cd $ROOT/deploy && docker compose logs --tail 50 mailer"
+    ;;
+esac
 for _ in $(seq 1 30); do
   if docker compose exec -T web wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
     echo "✓ Rydar Drive tourne : https://$DOMAIN  (santé : https://$DOMAIN/api/health)"
