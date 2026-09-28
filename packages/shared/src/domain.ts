@@ -235,6 +235,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   MESSAGE_NOT_FOUND: "Message introuvable : il a peut-être été supprimé.",
   INVALID_MESSAGE: "Message introuvable.",
   NOT_REMOVABLE: "Seuls les messages du fil de la flotte peuvent être supprimés.",
+  // Formulaire de contact du site vitrine (20260924005700)
+  CONTACT_BUSY: "Trop de demandes de contact en ce moment : réessayez un peu plus tard.",
+  CONTACT_INVALID: "Demande de contact invalide : vérifiez les champs du formulaire.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */
