@@ -147,14 +147,16 @@ describe("requêtes anonymes : limitées par IP, journal borné", () => {
     expect(logs().every((l) => l.organization_id === null)).toBe(true);
   });
 
-  it("débit par IP vérifié avant toute requête SQL, IPv6 groupée par /64", async () => {
-    h.counts.set("api:ip:2001:0db8:0000:0001::/64", 600);
-    const res = await ping(req("/ping", { ip: "2001:db8:0:1::abcd" }));
+  it("échecs limités par IP groupée en /64 ; sans clé bien formée, aucune requête SQL ; une clé valide n'est pas concernée", async () => {
+    h.counts.set("api:fail:2001:0db8:0000:0001::/64", 20);
+    const res = await ping(req("/ping", { key: null, ip: "2001:db8:0:1::abcd" }));
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBeTruthy();
     expect(h.calls.filter((c) => c.table === "api_keys" || c.table === "api_logs")).toHaveLength(0);
     // Autre /64 : non concerné
-    expect((await ping(req("/ping", { ip: "2001:db8:0:2::abcd" }))).status).toBe(200);
+    expect((await ping(req("/ping", { key: null, ip: "2001:db8:0:2::abcd" }))).status).toBe(401);
+    // Clé valide depuis le /64 en échec : seulement la limite de la clé (contre-audit web_public#5)
+    expect((await ping(req("/ping", { ip: "2001:db8:0:1::beef" }))).status).toBe(200);
   });
 });
 

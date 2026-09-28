@@ -55,10 +55,18 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
             <Field label="Domaine personnalisé" optional hint={customDomainAllowed ? "ex. reservation.ma-centrale.fr" : "Offre Business"}>
               <div className="flex gap-2">
                 <Input value={s.custom_domain} onChange={(e) => set("custom_domain", e.target.value.toLowerCase())} disabled={!canEdit || !customDomainAllowed} />
-                {site.custom_domain && (site.custom_domain_verified_at ? <Badge tone="green" className="h-10 rounded-lg">Vérifié</Badge> : <Badge tone="amber" className="h-10 rounded-lg">À vérifier</Badge>)}
+                {site.custom_domain &&
+                  (site.custom_domain_verified_at ? (
+                    <Badge tone="green" className="h-10 rounded-lg">Vérifié</Badge>
+                  ) : customDomainAllowed ? (
+                    <Badge tone="amber" className="h-10 rounded-lg">À vérifier</Badge>
+                  ) : (
+                    <Badge tone="neutral" className="h-10 rounded-lg">Hors offre</Badge>
+                  ))}
               </div>
             </Field>
-            {site.custom_domain && !site.custom_domain_verified_at && (
+            {/* Domaine retiré par l'offre : plus de vérification possible (l'action la refuse aussi) */}
+            {site.custom_domain && !site.custom_domain_verified_at && customDomainAllowed && (
               <div className="space-y-2 rounded-xl border border-line bg-white/[0.02] p-4 text-[12.5px] text-fg-muted sm:col-span-2">
                 <p className="font-medium text-fg">Configuration DNS</p>
                 <p>1. <span className="num text-fg">CNAME {site.custom_domain} → cname.{rootDomain}</span></p>

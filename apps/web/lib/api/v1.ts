@@ -30,10 +30,16 @@ export class ApiError extends Error {
   }
 }
 
-/** Débit par IP (IPv6 groupée par /64), vérifié AVANT toute requête SQL : borne les appels anonymes. */
-const IP_LIMIT_PER_MINUTE = 600;
-/** Échecs d'authentification journalisés par IP et par minute (au-delà : 429, rien n'est écrit). */
+/**
+ * Limite par IP (IPv6 groupée par /64) des requêtes NON authentifiées (clé absente, inconnue ou invalide) : au-delà de
+ * 20 par minute, 429 et plus rien n'est journalisé. Une clé valide n'a que SA limite (rate_limit_per_minute), jamais
+ * celle de l'IP : un serveur réglé à 1 000/min ou un intégrateur qui sert plusieurs centrales depuis une même adresse
+ * n'est pas plafonné. Une requête sans clé bien formée est refusée sans aucune requête SQL.
+ */
 const AUTH_FAILURES_PER_MINUTE = 20;
+/** Refus d'une clé identifiée (origine non listée, clé révoquée ou expirée, débit de la clé…) journalisés par clé et par
+ *  minute : au-delà, même réponse mais plus d'écriture (la clé « navigateur » est publique, le journal reste lisible). */
+const KEY_FAILURES_LOGGED_PER_MINUTE = 20;
 
 /** Centrale sans offre (plan_id null) : tout est autorisé — même règle que private.org_limits (migration 002800). */
 const NO_PLAN_LIMITS = { api_access: true, booking_site: true, custom_domain: true, advanced_stats: true };
@@ -59,8 +65,6 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
   const requestId = randomUUID();
   const startedAt = Date.now();
   const origin = req.headers.get("origin");
-  const pre = await rateLimit(`api:ip:${ipBucket(clientIpOf(req))}`, IP_LIMIT_PER_MINUTE, 60);
-  if (!pre.ok) throw new ApiError(429, "RATE_LIMITED", "Trop de requêtes depuis cette adresse.", undefined, retryAfter(pre.resetAt));
   const parsed = parseApiKey(extractApiKey(req.headers));
   if (!parsed) throw new ApiError(401, "INVALID_API_KEY", "Clé API absente ou mal formée (Authorization: Bearer rdk_live_…).");
 
@@ -180,12 +184,15 @@ export async function handle(
     const c = ctx ?? { ...fallback, ...(e.ctx ?? {}) };
     let log = true;
     if (!ctx && !e.ctx) {
-      // Requête non identifiée (sans clé, clé inconnue, débit par IP) : journal borné par IP, au-delà 429 sans écriture
+      // Requête non authentifiée (sans clé, clé inconnue ou invalide) : limite par IP, au-delà 429 sans écriture
       const failures = await rateLimit(`api:fail:${ipBucket(clientIpOf(req))}`, AUTH_FAILURES_PER_MINUTE, 60);
-      log = failures.ok && e.code !== "RATE_LIMITED";
-      if (!failures.ok && e.code !== "RATE_LIMITED") {
+      log = failures.ok;
+      if (!failures.ok) {
         e = new ApiError(429, "RATE_LIMITED", "Trop d'échecs d'authentification. Réessayez dans une minute.", undefined, retryAfter(failures.resetAt));
       }
+    } else if (!ctx && e.ctx) {
+      // Clé identifiée mais refusée : réponse inchangée, journal borné par clé
+      log = (await rateLimit(`api:fail:key:${e.ctx.keyId}`, KEY_FAILURES_LOGGED_PER_MINUTE, 60)).ok;
     }
     if (log) await logRequest(req, c, e.status, e.code, undefined, !!ctx);
     return NextResponse.json(

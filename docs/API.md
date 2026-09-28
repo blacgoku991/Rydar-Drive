@@ -20,11 +20,11 @@ Envoyez-la dans l'en-tête `Authorization: Bearer rdk_live_…`, ou `X-API-Key`.
 - La clé est une donnée **serveur**. Appelez l'API depuis le back-end de votre site (PHP, WordPress, Node…), jamais depuis du JavaScript exécuté dans le navigateur du client. Pour un site sans back-end, utilisez le mini-site de réservation (voir plus bas).
 - **Clé « navigateur »** (seule exception) : une clé qui a des **origines autorisées** (champ « Origines autorisées (CORS) » du dashboard) est lisible par tout visiteur du site, elle est donc restreinte, y compris si elle a été créée avant cette règle :
   - **création de course seulement** : elle ne peut avoir que la permission `rides:create` ; toute autre route (`GET /ping`, lecture, annulation) répond **403 `INSUFFICIENT_SCOPE`** ;
-  - **origine listée obligatoire** : en-tête `Origin` absent ou absent de la liste → **403 `ORIGIN_NOT_ALLOWED`** (un appel depuis un serveur ou `curl` est donc refusé). Seules les origines listées reçoivent les en-têtes CORS ;
+  - **origine listée obligatoire** : en-tête `Origin` absent ou absent de la liste → **403 `ORIGIN_NOT_ALLOWED`**. Seules les origines listées reçoivent les en-têtes CORS. Attention : hors d'un navigateur (`curl`, serveur), l'en-tête `Origin` se forge ; la vraie protection d'une clé « navigateur » est sa portée (création de course seulement, prix et paiement ignorés, rejeu réduit), pas l'origine ;
   - **prix et paiement ignorés** : `price_cents` et `payment_method` de la requête ne sont pas pris en compte ; le prix est calculé avec la grille de l'organisation et le moyen de paiement est `card` (valeur par défaut).
 - Côté Rydar, seul un hash **HMAC-SHA-256** (poivré) de la clé est stocké, dans une table inaccessible aux clients. La comparaison se fait en temps constant.
 - Chaque clé a des **permissions** : `rides:create`, `rides:read`, `rides:cancel`. Elle a aussi un **débit** (60 requêtes/min par défaut) et peut recevoir une date d'expiration. Elle se révoque instantanément depuis le dashboard.
-- **Limites par adresse IP**, vérifiées avant la clé : 600 requêtes par minute (IPv6 regroupée par /64) ; au-delà de 20 échecs d'authentification par minute (clé absente, inconnue ou invalide), les suivants reçoivent 429 et ne sont plus journalisés.
+- **Limite par adresse IP** (IPv6 regroupée par /64) pour les requêtes non authentifiées : au-delà de 20 échecs d'authentification par minute (clé absente, inconnue ou invalide), les suivants reçoivent 429 et ne sont plus journalisés. Une clé valide n'a que **son propre débit**, quelle que soit l'adresse (un serveur ou un intégrateur qui sert plusieurs organisations depuis une même IP n'est pas plafonné). Les refus d'une clé reconnue (révoquée, expirée, origine non autorisée, débit dépassé…) gardent leur réponse, mais sont journalisés au plus 20 fois par minute et par clé.
 
 Test rapide :
 
@@ -41,7 +41,7 @@ Permission `rides:create`.
 curl https://app.rydar.app/api/v1/rides \
   -H "Authorization: Bearer $RYDAR_API_KEY" \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: resa-2026-0412-8842" \
+  -H "Idempotency-Key: 5f0c2b8e-9d4a-4c61-8f2e-7a3b1c9d0e64" \
   -d '{
     "pickup":  { "address": "Hôtel Plaza Athénée, 25 Avenue Montaigne, 75008 Paris", "lat": 48.8663, "lng": 2.3040 },
     "dropoff": { "address": "Aéroport Paris-Charles de Gaulle, Terminal 2E" },
@@ -96,7 +96,7 @@ Réponse **201** :
 
 L'itinéraire routier (`route`) est calculé par Rydar à la création : distance, durée et tracé encodé en *polyline* (précision 5, format Google/OSRM).
 
-**Idempotence** : avec un en-tête `Idempotency-Key`, un renvoi de la même requête (après un timeout réseau, par exemple) renvoie **200** et `"idempotent_replay": true` au lieu de créer un doublon.
+**Idempotence** : avec un en-tête `Idempotency-Key` (une valeur unique et imprévisible par réservation, un UUID par exemple ; 100 caractères au plus), un renvoi de la même requête **par la même clé API** (après un timeout réseau, par exemple) renvoie **200** et `"idempotent_replay": true` au lieu de créer un doublon. La valeur est unique pour toute l'organisation : déjà utilisée par une autre clé → **409 `IDEMPOTENCY_KEY_CONFLICT`**, sans jamais renvoyer la course existante. Avec une clé « navigateur », le rejeu ne renvoie que `{ "id", "number", "status" }`.
 
 ## Suivre une course
 
@@ -126,12 +126,12 @@ Format commun :
 | 402 | `PLATFORM_FEES_OVERDUE` (mode centrale : frais plateforme en retard, création de courses suspendue par Rydar) |
 | 403 | `FORBIDDEN_TENANT_FIELD`, `FORBIDDEN_TENANT`, `INSUFFICIENT_SCOPE`, `ORIGIN_NOT_ALLOWED` (clé « navigateur »), `ORGANIZATION_INACTIVE`, `PLAN_FEATURE_API` |
 | 404 | `RIDE_NOT_FOUND` |
-| 409 | codes métier d'annulation (ex. course déjà terminée) |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` (valeur déjà utilisée par une autre clé), codes métier d'annulation (ex. course déjà terminée) |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 422 | `VALIDATION_ERROR`, `PICKUP_NOT_GEOCODED`, `INVALID_COORDINATES`, `PICKUP_IN_PAST`, `PICKUP_TOO_FAR` |
-| 429 | `RATE_LIMITED` (débit de la clé, 600 requêtes/min par IP ou trop d'échecs d'authentification), avec l'en-tête `Retry-After` |
+| 429 | `RATE_LIMITED` (débit de la clé, ou trop d'échecs d'authentification depuis une même adresse), avec l'en-tête `Retry-After` |
 
-Chaque réponse porte `X-Request-Id` et `X-RateLimit-Limit` / `-Remaining` / `-Reset`. Les requêtes sont journalisées (`api_logs`, 90 jours), sauf celles refusées par les limites par IP, et visibles dans **Intégrations**.
+Chaque réponse porte `X-Request-Id` et `X-RateLimit-Limit` / `-Remaining` / `-Reset`. Les requêtes sont journalisées (`api_logs`, 90 jours) et visibles dans **Intégrations**, sauf les échecs d'authentification au-delà de 20 par minute et par IP, et les refus d'une clé reconnue au-delà de 20 par minute et par clé.
 
 ## Mini-site de réservation (sans code)
 

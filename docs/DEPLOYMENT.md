@@ -97,6 +97,21 @@ Architecture cible :
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Abonnements. Webhook : `https://app…/api/stripe/webhook` |
 | `DRIVER_APP_ORIGINS` | (optionnel) origines autorisées à appeler les routes de l'app chauffeur (`/api/auth/driver-login`, `/api/auth/driver-password-reset…`) depuis un navigateur |
 
+### Mini-sites : sous-domaines réservés
+
+Depuis la migration 004900, les noms de la plateforme (`admin`, `support`, `api`, `www`…, tout nom commençant par
+`rydar`) ne peuvent plus être choisis comme sous-domaine de mini-site. Un nom pris avant reste en place et servi : la
+centrale enregistre ses autres réglages, seul un changement vers un autre nom réservé est refusé. Contrôle à faire une
+fois en production (SQL editor) :
+
+```sql
+select organization_id, subdomain, enabled from public.booking_sites where private.is_reserved_subdomain(subdomain);
+```
+
+Si des lignes sortent : prévenez la centrale, puis libérez le nom avec
+`update public.booking_sites set subdomain = null where organization_id = '…';` (le mini-site reste joignable par
+`/book/{slug}` et son domaine personnalisé ; la centrale choisit un autre sous-domaine).
+
 ### Cartographie, adresses et itinéraires
 
 | Variable | Défaut | Production conseillée |
@@ -109,7 +124,7 @@ Architecture cible :
 | `ROUTING_PROVIDER` | `osrm` | `osrm` auto-hébergé, ou `mapbox` / `google` (trafic en temps réel) |
 | `OSRM_URL` | serveur de démo OSRM | **à remplacer** : le serveur public de démo est limité. Voir ci-dessous |
 | `MAPBOX_TOKEN`, `GOOGLE_MAPS_API_KEY` | | selon le fournisseur choisi |
-| `GEO_DAILY_BUDGET` | `20000` | Budget quotidien global d'un fournisseur payant (Google, Mapbox), compté à part pour les adresses et pour les itinéraires, toutes requêtes confondues (mini-site compris ; guidage des chauffeurs non compté). Au-delà : Géoplateforme / BAN pour les adresses, estimation à vol d'oiseau pour les itinéraires. Compteur dans Redis |
+| `GEO_DAILY_BUDGET` | `20000` | Budget quotidien global d'un fournisseur payant (Google, Mapbox), compté à part pour les adresses et pour les itinéraires (mini-site compris ; guidage des chauffeurs non compté). Sous-plafonds pour qu'un seul consommateur ne l'épuise pas pour tous : visiteur anonyme (mini-site, clé API « navigateur ») 2 % par IP (/64), 10 % par mini-site, 30 % pour tous les anonymes ; 30 % par centrale (tableau de bord, clé API serveur) ; 30 % par utilisateur connecté (adresses). Au-delà : Géoplateforme / BAN pour les adresses ; pour les itinéraires, l'OSRM de l'exploitant si `OSRM_URL` en désigne un (jamais le serveur public de démo), sinon estimation à vol d'oiseau. Une grosse centrale seule sur la plateforme est donc limitée à 30 % : relevez le budget. Compteurs dans Redis |
 
 **OSRM auto-hébergé** (recommandé, sans coût par requête) :
 

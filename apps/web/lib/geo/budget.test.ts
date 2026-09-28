@@ -56,6 +56,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({ auth: { getClaims: async () => ({ data: h.sub ? { claims: { sub: h.sub } } : null, error: null }) } }),
 }));
 vi.mock("@/lib/geocode", async () => await import("../geocode"));
+vi.mock("@/lib/geo/budget", async () => await import("./budget"));
 
 const { searchPlaces, reverseGeocode } = await import("../geocode");
 const { computeRoute } = await import("./routing");
