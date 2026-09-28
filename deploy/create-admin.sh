@@ -3,7 +3,9 @@
 #   sudo bash deploy/create-admin.sh
 # Le mot de passe se tape ici, sans affichage. Passe par l'API Supabase avec la clé secrète de deploy/.env.
 # Compte DÉJÀ existant (il a pu être créé par un tiers avec cette adresse, par ex. via un lien d'inscription chauffeur) :
-# après confirmation, le mot de passe saisi ici le remplace et TOUTES ses sessions sont fermées AVANT de donner le rôle.
+# après confirmation, le mot de passe saisi ici le remplace et TOUTES ses sessions sont fermées AVANT de donner le rôle ;
+# un jeton d'accès émis avant la promotion n'en a pas les droits (users.super_admin_since). Seule voie pour donner ce
+# rôle : jamais « update public.users set is_super_admin = true » à la main.
 set -euo pipefail
 umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -117,10 +119,18 @@ if [ -n "$EXISTING" ]; then
   echo "→ fermeture de toutes ses sessions"
   DATABASE_URL="$(value DATABASE_URL)"
   [ -n "$DATABASE_URL" ] || { echo "✗ DATABASE_URL manquant dans $ENV_FILE : rôle non attribué (sudo bash deploy/configure.sh)"; exit 1; }
-  PGURL="${DATABASE_URL/sslmode=no-verify/sslmode=require}"
+  # Connexion comme deploy/migrate.sh (deploy/pg-url.sh) : certificat du serveur vérifié (DATABASE_SSLMODE, verify-full
+  # par défaut) ; mot de passe de la base par l'environnement (PGPASSWORD), jamais dans la ligne de commande de docker
+  # (visible par « ps »)
+  SSLMODE="$(value DATABASE_SSLMODE)"
+  SSLMODE="${SSLMODE//[[:space:]\"\']/}"
+  SSLMODE="${SSLMODE:-verify-full}"
+  # shellcheck source=pg-url.sh
+  . "$ROOT/deploy/pg-url.sh"
+  pg_prepare "$DATABASE_URL" "$SSLMODE" || { echo "✗ rôle non attribué"; exit 1; }
   # Client psql dans un conteneur (comme deploy/migrate.sh) ; identifiant vérifié ci-dessus (UUID)
-  if ! LEFT="$(docker run --rm -i --network host -e PGURL="$PGURL" postgres:17-alpine \
-      sh -c 'psql "$PGURL" -X -v ON_ERROR_STOP=1 -qtA' <<SQL
+  if ! LEFT="$(docker run --rm -i --network host -e PGURL -e PGPASSWORD "${PG_MOUNT[@]}" postgres:17-alpine \
+      sh -c 'psql "$PGURL" -X -v ON_ERROR_STOP=1 -qtA' 2>"$TMP/pg.err" <<SQL
 begin;
 delete from auth.refresh_tokens where user_id::text = '$USER_ID';
 delete from auth.sessions where user_id::text = '$USER_ID';
@@ -128,16 +138,26 @@ commit;
 select count(*) from auth.sessions where user_id::text = '$USER_ID';
 SQL
   )" || [ "$(printf '%s' "$LEFT" | tr -d '[:space:]')" != 0 ]; then
-    echo "✗ sessions non fermées : rôle non attribué (vérifiez DATABASE_URL et Docker)"
+    if [ "$SSLMODE" = verify-full ] && pg_tls_error "$TMP/pg.err"; then
+      echo "✗ certificat du serveur de la base NON vérifié avec deploy/supabase-ca.crt : sessions non fermées, rôle non attribué."
+      echo "  Contrôle : docs/DEPLOYMENT.md, « Connexion chiffrée à la base » (repli : DATABASE_SSLMODE=no-verify, sudo bash deploy/configure.sh)."
+    else
+      echo "✗ sessions non fermées : rôle non attribué (vérifiez DATABASE_URL et Docker)"
+      [ ! -s "$TMP/pg.err" ] || tail -3 "$TMP/pg.err"
+    fi
     exit 1
   fi
+  unset PGPASSWORD PGURL
   echo "  ✓ sessions fermées"
 fi
 
+# super_admin_since : seuls les jetons émis APRÈS la promotion ont les droits Super Admin (private.is_super_admin) —
+# jamais un jeton d'accès encore valable d'un tiers qui aurait créé le compte avec cette adresse. « now » = heure de la
+# base au moment de la mise à jour.
 echo "→ rôle Super Admin"
-printf '{"is_super_admin":true}' > "$TMP/flag.json"
+printf '{"is_super_admin":true,"super_admin_since":"now"}' > "$TMP/flag.json"
 code="$(api PATCH "/rest/v1/users?email=eq.$(urlencode "$EMAIL")" "$TMP/flag.json" "Prefer: return=representation")"
-if [ "$code" != 200 ] || ! grep -q '"is_super_admin" *: *true' "$TMP/out"; then
+if [ "$code" != 200 ] || ! grep -q '"is_super_admin" *: *true' "$TMP/out" || ! grep -q '"super_admin_since" *: *"' "$TMP/out"; then
   echo "✗ rôle non attribué (réponse $code) : $(cat "$TMP/out")"
   echo "  Les migrations sont-elles appliquées ? sudo bash deploy/install.sh"
   exit 1

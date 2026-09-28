@@ -94,7 +94,10 @@ Le pare-feu n'ouvre que SSH (y compris un port SSH personnalisé), HTTP et HTTPS
 ## 4. Premier compte Super Admin
 
 1. Dans le terminal du VPS : `sudo bash /opt/rydar/deploy/create-admin.sh` (e-mail, nom, mot de passe saisi sans affichage).
-2. Ou, à la main : Supabase → *Authentication → Users → Add user* (*Auto confirm*), puis dans le *SQL Editor* : `update public.users set is_super_admin = true where email = 'vous@exemple.fr';`
+2. Toujours par ce script, jamais à la main (`update public.users set is_super_admin = true …` dans le *SQL Editor*) : si
+   l'adresse a déjà un compte (il a pu être créé par un tiers, par exemple via un lien d'inscription chauffeur), le
+   script en reprend d'abord le contrôle (mot de passe remplacé, toutes ses sessions fermées) et seuls les jetons émis
+   après la promotion ont les droits Super Admin ; à la main, le tiers garderait son mot de passe et ses sessions.
 3. Connectez-vous sur `https://votre-domaine/login` : menu Super Admin → créez vos centrales (option 1 Flotte ou option 2 Centrale à commission) et donnez les accès.
 
 Ne chargez **jamais** `supabase/seed.sql` en production : ce sont les comptes de démonstration.
