@@ -8,10 +8,11 @@ Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal 
 | Constats d'audit | 170 bruts, 0 réfuté → 129 défauts distincts (7 hauts, 31 moyens, 91 bas), tous corrigés sauf 4 décisions listées dans AUDIT.md |
 | Contre-audit | 32 points résiduels → 3 déjà corrigés, 29 corrigés (tour 2) |
 | typecheck (web, app, worker, shared) | OK |
-| Tests unitaires | 388 |
+| Tests unitaires | 391 |
 | Tests DB | 409 |
 | Builds de production web et worker | OK |
 | Export Android | OK |
+| Bout en bout (Chromium, pile locale complète) | 9 parcours OK : course de bout en bout, mini-site, API, équipe et invitations, règlements, super admin, pages publiques, isolation entre centrales (354 contrôles) ; 7 défauts d'ergonomie trouvés, tous corrigés |
 
 ## Migrations de ce lot
 `20260924004300` (droits) à `20260924005600` (offres chauffeur) : 004300 droits, 004400 argent, 004500 dispatch,

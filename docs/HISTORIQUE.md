@@ -207,6 +207,12 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   espace insécable avant ? : ; ! ; cibles ≥ 48 px (56 en conduite) ; texte d'information en `muted`, jamais `subtle`.
 - **Session Claude sur le VPS de production (`/opt/rydar`) : suivre `deploy/CLAUDE-VPS.md`** (secrets jamais dans le chat, pas de seed,
   pas de code modifié sur le serveur).
+- [x] **Audit de sécurité maximal (09/2026, `docs/AUDIT.md`)** : 21 auditeurs → 170 constats → contre-expertise (0 réfuté) →
+  129 défauts distincts (7 hauts, 31 moyens, 91 bas) corrigés en copies isolées (migrations 004300–005300), contre-audit
+  (32 points, tour 2 : 005400–005600), bout en bout Chromium (9 parcours, isolation 354 contrôles). Nouveaux garde-fous :
+  GRANT par colonne d'`organizations`, invitations prouvées par e-mail (`accept_member_invitations`, `jwt_issued_after`,
+  `users.super_admin_since`), comptes partagés intouchables, `runAction`, `safe-next`, `hostname`, `zoned-time`,
+  `login-limits`, budget géo par consommateur (`lib/geo/budget.ts`), `verify-full` pour la base.
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
