@@ -14,6 +14,8 @@ const STATUS: Record<string, string> = {
 
 /** Statuts Stripe où l'abonnement ne donne plus droit à son offre (résilié, impayé, suspendu) ; past_due = délai de grâce. */
 const ENDED_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired", "paused"]);
+/** Statuts où un abonnement porte son offre (past_due = délai de grâce). */
+const LIVE_STATUSES = ["active", "trialing", "past_due"];
 
 /** Un événement Stripe fait quelques Ko : au-delà, refus AVANT de lire le corps en entier (signature non encore vérifiée). */
 const MAX_BODY_BYTES = 512 * 1024;
@@ -91,15 +93,58 @@ async function handleEvent(stripe: Stripe, event: Stripe.Event) {
     return (data as any)?.id ?? null;
   }
 
+  /** Offre reliée à un prix Stripe (mensuel ou annuel), null si aucune. */
+  async function planOfPrice(priceId: string | null | undefined): Promise<string | null> {
+    if (!priceId) return null;
+    const { data } = must(
+      await admin.from("plans").select("id").or(`stripe_price_monthly_id.eq.${priceId},stripe_price_yearly_id.eq.${priceId}`).limit(1).maybeSingle(),
+      "offre",
+    );
+    return (data as any)?.id ?? null;
+  }
+
+  /**
+   * Autre abonnement vivant de la centrale, relié à une offre : en base (son webhook est déjà traité) ou chez Stripe
+   * (son webhook peut arriver après celui-ci). C'est lui qui fixe l'offre : un événement tardif, en double ou réessayé
+   * d'un ANCIEN abonnement n'y touche pas.
+   */
+  async function otherLiveSubscription(orgId: string, ended: Stripe.Subscription): Promise<boolean> {
+    const { data: rows } = must(
+      await admin
+        .from("subscriptions")
+        .select("id")
+        .eq("organization_id", orgId)
+        // « <> » exclut aussi les lignes sans abonnement Stripe (essai posé par le super admin)
+        .neq("stripe_subscription_id", ended.id)
+        .not("plan_id", "is", null)
+        .in("status", LIVE_STATUSES)
+        .limit(1),
+      "abonnements de la centrale",
+    );
+    if ((rows as unknown[] | null)?.length) return true;
+    const customer = customerId(ended.customer);
+    if (!customer) return false;
+    // Sans statut : tous les abonnements non résiliés du client
+    const { data: current } = await stripe.subscriptions.list({ customer, limit: 100 });
+    for (const s of current) {
+      if (s.id === ended.id || !LIVE_STATUSES.includes(s.status)) continue;
+      if (await planOfPrice(s.items.data[0]?.price.id)) return true;
+    }
+    return false;
+  }
+
   /**
    * Abonnement terminé (résilié, impayé, suspendu) : la centrale perd l'offre payée. Repli = l'offre qu'elle avait avant
    * le paiement (previous_plan_id, posé par /api/billing/checkout), jamais « sans offre » (= aucune limite) ; à défaut,
-   * l'offre est conservée et le super admin est alerté (journal d'audit, filtre « Sécurité »).
+   * l'offre est conservée et le super admin est alerté (journal d'audit, filtre « Sécurité »). Jamais quand un autre
+   * abonnement vivant, relié à une offre, a pris le relais.
    */
   async function endPlan(orgId: string, planId: string, sub: Stripe.Subscription) {
     const { data: org } = must(await admin.from("organizations").select("plan_id").eq("id", orgId).maybeSingle(), "centrale");
     // Offre déjà changée (super admin, autre abonnement, événement déjà traité) : rien à faire
     if ((org as any)?.plan_id !== planId) return;
+    // Un autre abonnement (même offre) a pris le relais : ne jamais rétrograder la centrale qui le paie
+    if (await otherLiveSubscription(orgId, sub)) return;
     const previous = sub.metadata?.previous_plan_id;
     let fallback: string | null = null;
     if (previous && UUID_RE.test(previous) && previous !== planId) {
@@ -125,19 +170,7 @@ async function handleEvent(stripe: Stripe, event: Stripe.Event) {
       const orgId = await orgFromCustomer(customer, sub.metadata);
       if (!orgId) break;
       const item = sub.items.data[0];
-      const priceId = item?.price.id;
-      const { data: plan } = priceId
-        ? must(
-            await admin
-              .from("plans")
-              .select("id")
-              .or(`stripe_price_monthly_id.eq.${priceId},stripe_price_yearly_id.eq.${priceId}`)
-              .limit(1)
-              .maybeSingle(),
-            "offre",
-          )
-        : { data: null };
-      const planId: string | null = (plan as any)?.id ?? null;
+      const planId = await planOfPrice(item?.price.id);
       const periodStart = (item as any)?.current_period_start ?? (sub as any).current_period_start;
       const periodEnd = (item as any)?.current_period_end ?? (sub as any).current_period_end;
       must(

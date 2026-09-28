@@ -16,7 +16,8 @@ export async function POST(request: Request) {
   if (!limit.ok) return NextResponse.json({ error: "Trop de requêtes." }, { status: 429 });
   const parsed = z.object({ from: point, to: point }).safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Requête invalide." }, { status: 422 });
-  const r = await computeRoute(parsed.data.from, parsed.data.to);
+  // Budget des fournisseurs payants : part de la centrale (un utilisateur ne peut pas l'épuiser pour les autres)
+  const r = await computeRoute(parsed.data.from, parsed.data.to, { consumer: { kind: "org", org: ctx.org.id } });
   return NextResponse.json(
     { distanceM: r.distanceM, durationS: r.durationS, polyline: r.polyline, approximate: r.approximate },
     { headers: { "cache-control": "no-store" } },

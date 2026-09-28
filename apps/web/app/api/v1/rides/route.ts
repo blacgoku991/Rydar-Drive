@@ -3,7 +3,9 @@ import { ApiError, PUBLIC_RIDE_SELECT, handle, preflight, publicRide, readJson }
 import { env } from "@/lib/env";
 import { geocodeOne } from "@/lib/geocode";
 import { coordinateProblem, orgAnchor } from "@/lib/geo/anchor";
+import type { GeoConsumer } from "@/lib/geo/budget";
 import { rideRouteColumns } from "@/lib/geo/routing";
+import { ipBucket } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -26,11 +28,14 @@ export async function POST(req: Request) {
     if (!parsed.success) throw new ApiError(422, "VALIDATION_ERROR", "Données de réservation invalides.", fieldErrors(parsed.error));
     const v = parsed.data;
 
+    // Budget des fournisseurs géo payants : part de la centrale ; clé « navigateur » (appelée par les visiteurs du
+    // site) : part du visiteur (IP /64), du site de la centrale et de l'ensemble des anonymes
+    const consumer: GeoConsumer = ctx.browser ? { kind: "visitor", ip: ipBucket(ctx.ip), org: ctx.orgId } : { kind: "org", org: ctx.orgId };
     // Coordonnées fournies : contrôlées ; absentes : géocodage (biais vers la zone de l'organisation)
     const anchor = await orgAnchor(ctx.orgId).catch(() => null);
     let pickup = { address: v.pickup.address, lat: v.pickup.lat, lng: v.pickup.lng };
     if (pickup.lat == null || pickup.lng == null) {
-      const g = await geocodeOne(pickup.address, anchor ?? undefined).catch(() => null);
+      const g = await geocodeOne(pickup.address, anchor ?? undefined, { consumer }).catch(() => null);
       if (!g) throw new ApiError(422, "PICKUP_NOT_GEOCODED", "Adresse de départ introuvable ou imprécise : précisez le numéro et la ville, ou fournissez pickup.lat et pickup.lng.");
       pickup = { address: pickup.address, lat: g.lat, lng: g.lng };
     } else {
@@ -39,7 +44,7 @@ export async function POST(req: Request) {
     }
     let dropoff = { address: v.dropoff.address, lat: v.dropoff.lat ?? null, lng: v.dropoff.lng ?? null };
     if (dropoff.lat == null || dropoff.lng == null) {
-      const g = await geocodeOne(dropoff.address, { lat: pickup.lat!, lng: pickup.lng! }, { precise: false }).catch(() => null);
+      const g = await geocodeOne(dropoff.address, { lat: pickup.lat!, lng: pickup.lng! }, { precise: false, consumer }).catch(() => null);
       if (g) dropoff = { address: dropoff.address, lat: g.lat, lng: g.lng };
     } else {
       const problem = coordinateProblem({ lat: dropoff.lat, lng: dropoff.lng }, { lat: pickup.lat!, lng: pickup.lng! }, 1_500_000);
@@ -47,7 +52,7 @@ export async function POST(req: Request) {
     }
 
     const pickupAt = v.pickup_at ? new Date(v.pickup_at) : v.date && v.time ? zonedTimeToUtc(v.date, v.time, ctx.orgTimezone) : new Date();
-    const route = await rideRouteColumns({ lat: pickup.lat!, lng: pickup.lng! }, dropoff);
+    const route = await rideRouteColumns({ lat: pickup.lat!, lng: pickup.lng! }, dropoff, consumer);
     const idempotencyKey = req.headers.get("idempotency-key")?.slice(0, 100) || null;
 
     const admin = createAdminClient();
@@ -98,9 +103,24 @@ export async function POST(req: Request) {
       .single();
 
     if (error) {
-      if (error.code === "23505" && idempotencyKey) {
-        const { data: existing } = await admin.from("rides").select(PUBLIC_RIDE_SELECT).eq("organization_id", ctx.orgId).eq("idempotency_key", idempotencyKey).single();
-        return { status: 200, body: { data: publicRide(existing, env.appUrl), idempotent_replay: true }, rideId: (existing as any)?.id };
+      if (error.code === "23505" && idempotencyKey && /idempotency/i.test(error.message)) {
+        // Rejeu : seulement la course créée par CETTE clé (l'unicité porte sur l'organisation : une autre clé, le
+        // dashboard ou un visiteur qui devine la valeur ne lisent jamais une autre course). Clé « navigateur » (lisible
+        // par tout visiteur du site) : identifiant, numéro et statut seulement.
+        const { data: existing, error: replayError } = await admin
+          .from("rides")
+          .select(ctx.browser ? "id, number, status" : PUBLIC_RIDE_SELECT)
+          .eq("organization_id", ctx.orgId)
+          .eq("idempotency_key", idempotencyKey)
+          .eq("api_key_id", ctx.keyId)
+          .maybeSingle();
+        if (replayError) throw new ApiError(500, "RIDE_CREATION_FAILED", "Impossible de créer la course.");
+        if (!existing) {
+          throw new ApiError(409, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key déjà utilisée pour une autre réservation : envoyez une valeur unique et imprévisible (UUID) par réservation.");
+        }
+        const e = existing as any;
+        const data = ctx.browser ? { id: e.id, number: e.number, status: e.status } : publicRide(e, env.appUrl);
+        return { status: 200, body: { data, idempotent_replay: true }, rideId: e.id };
       }
       const code = /([A-Z_]{5,}):/.exec(error.message)?.[1];
       if (code?.startsWith("PLAN_LIMIT")) throw new ApiError(402, code, "Limite de l'offre atteinte.");

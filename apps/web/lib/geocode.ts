@@ -1,8 +1,9 @@
 import "server-only";
 import { serverEnv } from "@/lib/env";
+import { paidGeoAllowed, type GeoConsumer } from "@/lib/geo/budget";
 import { lruCache, fetchJson } from "@/lib/geo/cache";
 import { exactFavorite, matchFavorites, type Place } from "@/lib/places";
-import { rateLimit, rateLimitAll } from "@/lib/rate-limit";
+import { rateLimitAll } from "@/lib/rate-limit";
 import { clientIp, ipBucket } from "@/lib/request";
 import { createClient } from "@/lib/supabase/server";
 
@@ -92,40 +93,36 @@ async function mapbox(q: string, near: Near, token: string): Promise<Place[]> {
 const searchCache = lruCache<Place[]>(800, 30 * 60_000);
 
 /**
- * Budget quotidien GLOBAL d'un fournisseur payant (Google, Mapbox), toutes requêtes confondues
- * (GEO_DAILY_BUDGET, défaut 20 000 / jour) : au-delà, repli sur la Géoplateforme / BAN (gratuites).
- */
-async function paidGeocodeAllowed(provider: "google" | "mapbox"): Promise<boolean> {
-  const budget = Number(process.env.GEO_DAILY_BUDGET) || 20_000;
-  return (await rateLimit(`geobudget:geocode:${provider}`, budget, 86_400)).ok;
-}
-
-/**
  * Limite des routes anonymes /api/geocode et /api/geocode/reverse (autocomplétion du mini-site et du
  * tableau de bord) : par utilisateur connecté, sinon par IP (IPv6 groupée par /64), à la minute et au jour.
+ * Renvoie aussi le consommateur du budget des fournisseurs payants (lib/geo/budget.ts).
  */
-export async function geocodeRequestAllowed(): Promise<boolean> {
+export async function geocodeRequest(): Promise<{ ok: boolean; consumer: GeoConsumer }> {
   let sub: string | null = null;
   try {
     sub = (await (await createClient()).auth.getClaims()).data?.claims?.sub ?? null;
   } catch {
     sub = null; // session illisible : traité comme anonyme
   }
-  const who = sub ? `u:${sub}` : ipBucket(await clientIp());
+  const ip = ipBucket(await clientIp());
+  const who = sub ? `u:${sub}` : ip;
   const res = await rateLimitAll(
     sub
       ? [{ key: `geocode:${who}`, limit: 90, windowSec: 60 }, { key: `geocode:day:${who}`, limit: 5000, windowSec: 86_400 }]
       : [{ key: `geocode:${who}`, limit: 60, windowSec: 60 }, { key: `geocode:day:${who}`, limit: 1500, windowSec: 86_400 }],
   );
-  return res.ok;
+  return { ok: res.ok, consumer: sub ? { kind: "user", user: sub } : { kind: "visitor", ip } };
 }
 
-/** Fournisseur configuré (repli BAN publique en cas d'erreur ou de budget quotidien épuisé). */
-async function remoteSearch(query: string, near: Near, autocomplete: boolean): Promise<Place[]> {
+/**
+ * Fournisseur configuré (repli BAN publique en cas d'erreur ou de budget quotidien épuisé, global ou part du
+ * consommateur : lib/geo/budget.ts).
+ */
+async function remoteSearch(query: string, near: Near, autocomplete: boolean, consumer?: GeoConsumer | null): Promise<Place[]> {
   const env = serverEnv();
   try {
-    if (env.geocoder === "google" && env.googleMapsKey && (await paidGeocodeAllowed("google"))) return await google(query, env.googleMapsKey);
-    if (env.geocoder === "mapbox" && env.mapboxToken && (await paidGeocodeAllowed("mapbox"))) return await mapbox(query, near, env.mapboxToken);
+    if (env.geocoder === "google" && env.googleMapsKey && (await paidGeoAllowed("geocode", "google", consumer))) return await google(query, env.googleMapsKey);
+    if (env.geocoder === "mapbox" && env.mapboxToken && (await paidGeoAllowed("geocode", "mapbox", consumer))) return await mapbox(query, near, env.mapboxToken);
     if (env.geocoder === "ban") return await ban(query, near, env.geocoderUrl || "https://api-adresse.data.gouv.fr", autocomplete);
     return await geopf(query, near, env.geocoderUrl || "https://data.geopf.fr/geocodage", autocomplete);
   } catch {
@@ -134,7 +131,7 @@ async function remoteSearch(query: string, near: Near, autocomplete: boolean): P
 }
 
 /** Autocomplétion : lieux favoris proches (instantané) + fournisseur configuré (avec repli BAN). */
-export async function searchPlaces(q: string, near?: Near): Promise<Place[]> {
+export async function searchPlaces(q: string, near?: Near, consumer?: GeoConsumer | null): Promise<Place[]> {
   const query = q.trim().replace(/\s+/g, " ").slice(0, 120);
   if (query.length < 2) return [];
   const key = `${query.toLowerCase()}|${near ? `${near.lat.toFixed(2)},${near.lng.toFixed(2)}` : ""}`;
@@ -142,7 +139,7 @@ export async function searchPlaces(q: string, near?: Near): Promise<Place[]> {
   if (cached) return cached;
 
   const favorites = matchFavorites(query, 4, near);
-  const remote = await remoteSearch(query, near, true);
+  const remote = await remoteSearch(query, near, true, consumer);
   const seen = new Set(favorites.map((f) => f.address.toLowerCase()));
   const results = [...favorites, ...remote.filter((r) => !seen.has(r.address.toLowerCase()))].slice(0, 8);
   if (remote.length) searchCache.set(key, results);
@@ -185,7 +182,11 @@ function confident(p: Place | undefined, input: string, precise: boolean, minSco
  * et second essai sans le nom du lieu (« Hôtel X, 25 avenue … » → « 25 avenue … »).
  * Renvoie null si l'adresse est introuvable ou ambiguë : l'appelant répond 422.
  */
-export async function geocodeOne(address: string, near?: Near, opts: { precise?: boolean; minScore?: number } = {}): Promise<Place | null> {
+export async function geocodeOne(
+  address: string,
+  near?: Near,
+  opts: { precise?: boolean; minScore?: number; consumer?: GeoConsumer | null } = {},
+): Promise<Place | null> {
   const input = address.trim().replace(/\s+/g, " ").slice(0, 250);
   if (input.length < 3) return null;
   const precise = opts.precise ?? true;
@@ -193,7 +194,7 @@ export async function geocodeOne(address: string, near?: Near, opts: { precise?:
   const parts = input.split(",").map((s) => s.trim()).filter(Boolean);
   if (parts.length > 1 && !/\d/.test(parts[0]!)) attempts.push(parts.slice(1).join(", "));
   for (const q of attempts) {
-    const best = (await remoteSearch(q, near, false))[0];
+    const best = (await remoteSearch(q, near, false, opts.consumer))[0];
     if (confident(best, input, precise, opts.minScore)) return best;
   }
   return exactFavorite(input);
@@ -202,18 +203,18 @@ export async function geocodeOne(address: string, near?: Near, opts: { precise?:
 const reverseCache = lruCache<Place | null>(500, 60 * 60_000);
 
 /** Adresse la plus proche d'un point (clic sur la carte, position GPS). */
-export async function reverseGeocode(lat: number, lng: number): Promise<Place | null> {
+export async function reverseGeocode(lat: number, lng: number, consumer?: GeoConsumer | null): Promise<Place | null> {
   const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
   const cached = reverseCache.get(key);
   if (cached !== undefined) return cached;
   const env = serverEnv();
   let place: Place | null = null;
   try {
-    if (env.geocoder === "google" && env.googleMapsKey && (await paidGeocodeAllowed("google"))) {
+    if (env.geocoder === "google" && env.googleMapsKey && (await paidGeoAllowed("geocode", "google", consumer))) {
       const data = await fetchJson(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=fr&key=${env.googleMapsKey}`);
       const r = data?.results?.[0];
       if (r) place = { label: r.formatted_address, address: r.formatted_address, lat, lng, kind: "address" };
-    } else if (env.geocoder === "mapbox" && env.mapboxToken && (await paidGeocodeAllowed("mapbox"))) {
+    } else if (env.geocoder === "mapbox" && env.mapboxToken && (await paidGeoAllowed("geocode", "mapbox", consumer))) {
       const data = await fetchJson(`https://api.mapbox.com/search/geocode/v6/reverse?longitude=${lng}&latitude=${lat}&language=fr&limit=1&access_token=${env.mapboxToken}`);
       const f = data?.features?.[0];
       if (f) place = { label: f.properties.full_address, address: f.properties.full_address, lat, lng, kind: "address" };

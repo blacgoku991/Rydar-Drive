@@ -88,7 +88,13 @@ beforeEach(() => {
     { organization_id: ORG, subdomain: "centrale-a", custom_domain: "mon-a.fr", custom_domain_verified_at: null },
     { organization_id: OTHER, subdomain: "elite", custom_domain: null, custom_domain_verified_at: null },
   ];
-  h.ctx = { org: { id: ORG }, role: "owner", user: { id: "u1" }, supabase: { from: () => bookingSites("user") } };
+  h.ctx = {
+    org: { id: ORG },
+    role: "owner",
+    user: { id: "u1" },
+    // org_usage : droit custom_domain de l'offre relu par verifyCustomDomain (contre-audit sql3#0)
+    supabase: { from: () => bookingSites("user"), rpc: async () => ({ data: { limits: { custom_domain: true } }, error: null }) },
+  };
   h.userUpdateError = null;
   h.userUpdates = 0;
   h.audits = [];

@@ -55,7 +55,7 @@ export async function quoteRide(
   },
 ): Promise<Quote> {
   const [route, rules, settings, fleet] = await Promise.all([
-    input.dropoff ? computeRoute(input.pickup, input.dropoff) : Promise.resolve(null),
+    input.dropoff ? computeRoute(input.pickup, input.dropoff, { consumer: { kind: "org", org: orgId } }) : Promise.resolve(null),
     db.from("pricing_rules").select("*").eq("organization_id", orgId).eq("is_active", true),
     db.from("organization_settings").select("allow_category_upgrade, location_max_age_seconds, dispatch_radii_m").eq("organization_id", orgId).maybeSingle(),
     db

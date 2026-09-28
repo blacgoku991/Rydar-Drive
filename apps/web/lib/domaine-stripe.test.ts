@@ -39,6 +39,10 @@ vi.mock("@/lib/stripe", () => {
         if (!s) throw missing("subscription");
         return structuredClone(s);
       },
+      // Sans statut : abonnements non résiliés du client (fin d'abonnement : autre abonnement vivant ?)
+      list: async (params: { customer: string }) => ({
+        data: [...h.subs.values()].filter((s) => s.customer === params.customer && s.status !== "canceled").map((s) => structuredClone(s)),
+      }),
     },
     invoices: {
       retrieve: async (id: string) => {
@@ -88,6 +92,7 @@ function from(table: string) {
   const q: Row = {
     select: () => q,
     eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), q),
+    neq: (c: string, v: unknown) => (filters.push((r) => r[c] != null && r[c] !== v), q),
     not: (c: string) => (filters.push((r) => r[c] != null), q),
     in: (c: string, list: unknown[]) => (filters.push((r) => list.includes(r[c])), q),
     or: (expr: string) => {

@@ -44,7 +44,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     return NextResponse.json({ error: "Trajet hors de la zone desservie" }, { status: 422 });
   }
 
-  const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500 });
+  // Budget des fournisseurs payants : part du visiteur (IP /64), du mini-site et de l'ensemble des anonymes
+  const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500, consumer: { kind: "visitor", ip, org: (org as any).id } });
   let priceCents: number | null = null;
   let fixedFare: string | null = null;
   if (site.show_price_estimate && site.vehicle_categories.includes(v.category)) {

@@ -1,5 +1,5 @@
 "use server";
-import { bookingSiteSchema, describeError, extractErrorCode, humanizeError } from "@rydar/shared";
+import { bookingSiteSchema, bookingSiteSchemaFor, describeError, extractErrorCode, humanizeError } from "@rydar/shared";
 import { createHash } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { revalidatePath } from "next/cache";
@@ -36,7 +36,15 @@ export async function domainToken(orgId: string) {
 export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>): Promise<Result> {
   const ctx = await getOrgContext();
   if (!ctx || !isAdminRole(ctx.role)) return { ok: false, error: "Réservé aux administrateurs." };
-  const parsed = bookingSiteSchema.safeParse(input);
+  // Nom réservé refusé seulement s'il CHANGE (comme le trigger SQL) : un sous-domaine réservé pris avant la règle
+  // n'empêche pas d'enregistrer les autres réglages
+  const { data: current, error: readError } = await ctx.supabase
+    .from("booking_sites")
+    .select("subdomain")
+    .eq("organization_id", ctx.org.id)
+    .single();
+  if (readError) return { ok: false, error: humanizeError(readError.message, actionError(readError)) };
+  const parsed = bookingSiteSchemaFor((current as { subdomain: string | null } | null)?.subdomain).safeParse(input);
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS) };
   const v = parsed.data;
   if (v.custom_domain && isPlatformDomain(v.custom_domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
@@ -66,6 +74,13 @@ export async function verifyCustomDomain(): Promise<Result> {
   if (isPlatformDomain(domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
   const token = await domainToken(ctx.org.id);
   const records = await resolveTxt(`_rydar.${domain}`).catch(() => [] as string[][]);
+  // Droit de l'offre, relu juste avant l'écriture (même source que la page : private.org_limits, centrale sans offre =
+  // autorisé) : un domaine retiré par l'offre (rétrogradation, surcharge) n'est jamais revérifié d'un clic
+  const { data: usage, error: usageError } = await ctx.supabase.rpc("org_usage", { p_org: ctx.org.id });
+  if (usageError) return { ok: false, error: "Vérification impossible pour le moment : réessayez." };
+  if (!(usage as { limits?: { custom_domain?: boolean } } | null)?.limits?.custom_domain) {
+    return { ok: false, error: humanizeError("PLAN_FEATURE_CUSTOM_DOMAIN") };
+  }
   if (!records.some((r) => r.join("") === token)) return { ok: false, error: `Enregistrement TXT introuvable sur _rydar.${domain}.` };
   // Atomique : on ne marque vérifié QUE le domaine dont le TXT vient d'être lu (il a pu changer pendant la résolution DNS)
   const { data: verified, error } = await createAdminClient()

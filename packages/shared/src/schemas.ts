@@ -265,12 +265,14 @@ export function isReservedSubdomain(value: string): boolean {
   return v.startsWith("rydar") || (RESERVED_SUBDOMAINS as readonly string[]).includes(v);
 }
 
-export const slugSchema = z
+/** Format d'un identifiant / sous-domaine, sans le contrôle des noms réservés. */
+const subdomainFormatSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/, "Lettres minuscules, chiffres et tirets uniquement")
-  .refine((s) => !isReservedSubdomain(s), "Nom réservé à la plateforme");
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/, "Lettres minuscules, chiffres et tirets uniquement");
+
+export const slugSchema = subdomainFormatSchema.refine((s) => !isReservedSubdomain(s), "Nom réservé à la plateforme");
 
 export const organizationCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -338,9 +340,9 @@ export type OrgSettings = z.output<typeof orgSettingsSchema>;
 
 const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Couleur hexadécimale (#RRGGBB)");
 
-export const bookingSiteSchema = z.object({
+const bookingSiteObjectSchema = z.object({
   enabled: z.boolean(),
-  subdomain: slugSchema.nullish(),
+  subdomain: subdomainFormatSchema.nullish(),
   custom_domain: z
     .string()
     .trim()
@@ -361,6 +363,23 @@ export const bookingSiteSchema = z.object({
   vehicle_categories: z.array(vehicleCategorySchema).min(1),
   show_price_estimate: z.boolean(),
 });
+
+/**
+ * Réglages du mini-site. `currentSubdomain` = sous-domaine enregistré : un nom réservé n'est refusé que s'il CHANGE
+ * (comme le trigger SQL booking_sites_reserved_subdomain, migration 004900) ; une centrale dont le sous-domaine
+ * existant est réservé (pris avant la règle) enregistre ses autres réglages sans devoir le renommer.
+ */
+export function bookingSiteSchemaFor(currentSubdomain: string | null | undefined) {
+  const current = currentSubdomain?.trim().toLowerCase() || null;
+  return bookingSiteObjectSchema.superRefine((v, ctx) => {
+    if (v.subdomain && v.subdomain !== current && isReservedSubdomain(v.subdomain)) {
+      ctx.addIssue({ code: "custom", path: ["subdomain"], message: "Nom réservé à la plateforme" });
+    }
+  });
+}
+
+/** Sans sous-domaine enregistré : tout nom réservé est refusé. */
+export const bookingSiteSchema = bookingSiteSchemaFor(null);
 
 export const API_SCOPES = ["rides:create", "rides:read", "rides:cancel"] as const;
 /** Seule portée permise à une clé « navigateur » (origines autorisées) : la clé est lisible par tout visiteur du site. */

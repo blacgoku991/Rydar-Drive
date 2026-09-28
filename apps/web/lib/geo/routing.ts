@@ -1,8 +1,8 @@
 import "server-only";
 import { decodePolyline, encodePolyline, estimateRoute, haversine, navInstruction, simplifyLine, type Coord, type LatLng, type NavStep } from "@rydar/shared";
 import { serverEnv } from "@/lib/env";
+import { paidGeoAllowed, type GeoConsumer } from "@/lib/geo/budget";
 import { fetchJson, lruCache } from "@/lib/geo/cache";
-import { rateLimit } from "@/lib/rate-limit";
 
 // -----------------------------------------------------------------------------
 // Itinéraires — fournisseurs interchangeables (ROUTING_PROVIDER) :
@@ -181,18 +181,37 @@ export async function computeNavRoute(from: LatLng, to: LatLng, opts: { timeoutM
   }
 }
 
+/** Serveur public de démonstration OSRM : limité, interdit en production, jamais utilisé comme repli. */
+const OSRM_DEMO_HOST = "router.project-osrm.org";
+
 /**
- * Budget quotidien GLOBAL des itinéraires facturés (Google Routes, Mapbox Directions), devis anonymes du
- * mini-site compris (GEO_DAILY_BUDGET, défaut 20 000 / jour) : au-delà, estimation à vol d'oiseau.
- * Le guidage des chauffeurs (computeNavRoute, authentifié) n'est pas compté.
+ * Budget payant atteint (lib/geo/budget.ts) : OSRM de l'exploitant s'il est configuré (OSRM_URL, auto-hébergé :
+ * vrai itinéraire routier, gratuit), sinon estimation à vol d'oiseau (approximate: true). Jamais mis en cache :
+ * le prochain appel dans le budget reçoit l'itinéraire du fournisseur payant.
  */
-async function paidRouteAllowed(provider: string): Promise<boolean> {
-  const budget = Number(process.env.GEO_DAILY_BUDGET) || 20_000;
-  return (await rateLimit(`geobudget:route:${provider}`, budget, 86_400)).ok;
+async function budgetFallback(from: LatLng, to: LatLng, osrmUrl: string, timeoutMs: number): Promise<Route> {
+  let host = "";
+  try {
+    host = new URL(osrmUrl).hostname.toLowerCase();
+  } catch {
+    host = "";
+  }
+  if (host && host !== OSRM_DEMO_HOST) {
+    try {
+      return await osrm(from, to, osrmUrl, timeoutMs);
+    } catch (error) {
+      console.warn("[routing] budget atteint, OSRM indisponible : repli estimation :", (error as Error).message);
+    }
+  }
+  return estimate(from, to);
 }
 
-/** Itinéraire routier entre deux points (avec cache et repli). */
-export async function computeRoute(from: LatLng, to: LatLng, opts: { timeoutMs?: number } = {}): Promise<Route> {
+/**
+ * Itinéraire routier entre deux points (avec cache et repli). `consumer` : qui consomme le budget des fournisseurs
+ * payants (visiteur anonyme d'un mini-site, centrale) ; absent = budget global seul. Le guidage des chauffeurs
+ * (computeNavRoute, authentifié) n'est pas compté.
+ */
+export async function computeRoute(from: LatLng, to: LatLng, opts: { timeoutMs?: number; consumer?: GeoConsumer | null } = {}): Promise<Route> {
   const timeoutMs = opts.timeoutMs ?? 3000;
   if (haversine(from, to) < 30) return estimate(from, to);
   const k = `${key(from)}>${key(to)}`;
@@ -200,7 +219,7 @@ export async function computeRoute(from: LatLng, to: LatLng, opts: { timeoutMs?:
   if (cached) return cached;
   const env = serverEnv();
   const paid = (env.routing === "mapbox" && !!env.mapboxToken) || (env.routing === "google" && !!env.googleMapsKey);
-  if (paid && !(await paidRouteAllowed(env.routing))) return estimate(from, to);
+  if (paid && !(await paidGeoAllowed("route", env.routing, opts.consumer))) return budgetFallback(from, to, env.osrmUrl, timeoutMs);
   try {
     let route: Route;
     if (env.routing === "mapbox" && env.mapboxToken) route = await mapbox(from, to, env.mapboxToken, timeoutMs);
@@ -249,10 +268,10 @@ export async function approachTimes(sources: LatLng[], to: LatLng, opts: { timeo
 }
 
 /** Colonnes d'itinéraire à enregistrer sur une course (null si pas de destination géolocalisée). */
-export async function rideRouteColumns(pickup: LatLng, dropoff: { lat?: number | null; lng?: number | null } | null) {
+export async function rideRouteColumns(pickup: LatLng, dropoff: { lat?: number | null; lng?: number | null } | null, consumer?: GeoConsumer | null) {
   if (!dropoff || dropoff.lat == null || dropoff.lng == null) {
     return { estimated_distance_m: null, estimated_duration_s: null, route_polyline: null, route_provider: null };
   }
-  const r = await computeRoute(pickup, { lat: dropoff.lat, lng: dropoff.lng }, { timeoutMs: 2500 });
+  const r = await computeRoute(pickup, { lat: dropoff.lat, lng: dropoff.lng }, { timeoutMs: 2500, consumer });
   return { estimated_distance_m: r.distanceM, estimated_duration_s: r.durationS, route_polyline: r.polyline, route_provider: r.provider };
 }
