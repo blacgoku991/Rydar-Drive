@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { PRICING_HREF } from "./contact";
 import { HeroVisual } from "./hero-visual";
 import styles from "./landing.module.css";
 import { fr } from "./typo";
@@ -73,7 +74,7 @@ function SearchCard() {
   );
 }
 
-export function Hero({ demoHref }: { demoHref: string }) {
+export function Hero() {
   return (
     <section aria-labelledby="hero-titre" className="relative z-10">
       <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-10 sm:px-6 sm:pt-14 lg:grid-cols-[1.02fr_1fr] lg:gap-4 lg:pb-24 lg:pt-16">
@@ -103,12 +104,12 @@ export function Hero({ demoHref }: { demoHref: string }) {
           </p>
           <div className={cn("mt-9 flex flex-col gap-3 min-[400px]:flex-row", styles.enter)} style={delay(240)}>
             <Button asChild variant="primary" size="lg">
-              <a href={demoHref}>
-                Demander une démo <ArrowRight aria-hidden />
-              </a>
+              <Link href={PRICING_HREF}>
+                Demander un tarif <ArrowRight aria-hidden />
+              </Link>
             </Button>
             <Button asChild variant="outline" size="lg">
-              <Link href="/login">Se connecter</Link>
+              <Link href="/services">Découvrir les services</Link>
             </Button>
           </div>
           <ul className={cn("mt-7 flex flex-wrap gap-x-5 gap-y-2 text-[13px] text-fg-muted", styles.enter)} style={delay(320)}>

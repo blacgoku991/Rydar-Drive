@@ -1,4 +1,4 @@
-/* Animations de la page d'accueil (couleurs : jetons de globals.css).
+/* Animations du site vitrine (couleurs : jetons de globals.css).
    Tout est désactivé quand l'utilisateur demande moins d'animations. */
 
 @keyframes rise {
@@ -12,7 +12,7 @@
   }
 }
 
-/* Entrée du héro, décalée par --delay */
+/* Entrée du héro et des en-têtes de page, décalée par --delay */
 @media (prefers-reduced-motion: no-preference) {
   .enter {
     animation: rise 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;

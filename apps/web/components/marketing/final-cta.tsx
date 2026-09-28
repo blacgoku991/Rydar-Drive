@@ -1,15 +1,19 @@
-import { ArrowRight, Mail } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { RadarMark } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { CONTACT_EMAIL, DEMO_HREF } from "./contact";
+import { PRICING_HREF, QUESTION_HREF } from "./contact";
 import styles from "./landing.module.css";
 import { fr } from "./typo";
 
-export function FinalCta() {
+/**
+ * Appel final de chaque page du site vitrine : demande de tarif ou question, par le formulaire de contact.
+ * `spaced` : marge haute, quand la section précédente est bordée (fond teinté) plutôt qu'aérée.
+ */
+export function FinalCta({ spaced }: { spaced?: boolean }) {
   return (
-    <section aria-labelledby="cta-titre" className="relative z-10 px-4 pb-24 sm:px-6">
+    <section aria-labelledby="cta-titre" className={cn("relative z-10 px-4 pb-24 sm:px-6", spaced && "pt-20 sm:pt-28")}>
       <div
         className={cn(
           "relative mx-auto max-w-6xl overflow-hidden rounded-[28px] border border-line-strong bg-ink-850 px-6 py-16 text-center sm:px-12 sm:py-20",
@@ -34,24 +38,21 @@ export function FinalCta() {
             <span className="text-gradient">Passez au dispatch automatique.</span>
           </h2>
           <p className="mx-auto mt-5 max-w-xl text-pretty text-[16px] leading-relaxed text-fg-muted">
-            {fr("Montrez-nous comment vous travaillez aujourd'hui : nous vous montrons la même journée sur Rydar Drive.")}
+            {fr(
+              "Dites-nous comment vous travaillez : taille de votre flotte ou de votre réseau de chauffeurs, mode flotte ou centrale à commission. Nous vous proposons une formule adaptée.",
+            )}
           </p>
           <div className="mt-9 flex flex-col justify-center gap-3 min-[400px]:flex-row">
             <Button asChild variant="primary" size="lg">
-              <a href={DEMO_HREF}>
-                Demander une démo <ArrowRight aria-hidden />
-              </a>
+              <Link href={PRICING_HREF}>
+                Demander un tarif <ArrowRight aria-hidden />
+              </Link>
             </Button>
             <Button asChild variant="outline" size="lg">
-              <Link href="/login">Se connecter</Link>
+              <Link href={QUESTION_HREF}>Poser une question</Link>
             </Button>
           </div>
-          <p className="mt-6 inline-flex items-center gap-2 text-[13.5px] text-fg-muted">
-            <Mail className="size-4" aria-hidden />
-            <a href={`mailto:${CONTACT_EMAIL}`} className="underline decoration-white/20 underline-offset-4 transition-colors hover:text-fg">
-              {CONTACT_EMAIL}
-            </a>
-          </p>
+          <p className="mt-6 text-[13.5px] text-fg-muted">{fr("Réponse par e-mail, à l'adresse que vous indiquez.")}</p>
         </div>
       </div>
     </section>

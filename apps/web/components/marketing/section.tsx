@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import styles from "./landing.module.css";
 
-/** Section de la page d'accueil : ancre sous l'en-tête collant, largeur commune, marges verticales. */
+/** Section du site vitrine : ancre sous l'en-tête collant, largeur commune, marges verticales. */
 export function Section({
   id,
   labelledBy,
@@ -23,7 +23,7 @@ export function Section({
   );
 }
 
-/** Titre de section : surtitre lime, titre, introduction. */
+/** Titre de section (h2) : surtitre lime, titre, introduction. */
 export function SectionHeading({
   id,
   eyebrow,
@@ -32,7 +32,7 @@ export function SectionHeading({
   center,
 }: {
   id: string;
-  eyebrow: string;
+  eyebrow: ReactNode;
   title: ReactNode;
   intro?: ReactNode;
   center?: boolean;
