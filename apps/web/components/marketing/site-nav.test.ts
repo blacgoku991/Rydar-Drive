@@ -38,11 +38,12 @@ function expectNoDemoNorMailto(html: string) {
 }
 
 describe("site vitrine : liens de contact", () => {
-  it("contactHref : sujet et offre en paramètres d'URL, encodés", () => {
+  it("contactHref : sujet et offre en paramètres d'URL, code d'offre invalide ignoré", () => {
     expect(contactHref()).toBe("/contact");
-    expect(contactHref("tarif")).toBe("/contact?sujet=tarif");
-    expect(contactHref("tarif", "pro")).toBe("/contact?sujet=tarif&offre=pro");
-    expect(contactHref("tarif", "a b&c")).toBe("/contact?sujet=tarif&offre=a+b%26c");
+    expect(contactHref("pricing")).toBe("/contact?sujet=tarif");
+    expect(contactHref("pricing", "pro")).toBe("/contact?sujet=tarif&offre=pro");
+    expect(contactHref("pricing", "a b&c")).toBe("/contact?sujet=tarif");
+    expect(contactHref("partnership")).toBe("/contact?sujet=partenariat");
     expect(PRICING_HREF).toBe("/contact?sujet=tarif");
     expect(QUESTION_HREF).toBe("/contact?sujet=question");
   });

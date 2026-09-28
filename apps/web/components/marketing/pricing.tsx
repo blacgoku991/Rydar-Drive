@@ -66,7 +66,7 @@ export function PlanCards({ plans }: { plans: PublicPlan[] }) {
             variant={p.highlighted ? "primary" : "secondary"}
             className="mt-8 h-auto min-h-10 w-full whitespace-normal py-2 text-center"
           >
-            <Link href={contactHref("tarif", p.code)}>Choisir l&apos;offre {p.name}</Link>
+            <Link href={contactHref("pricing", p.code)}>Choisir l&apos;offre {p.name}</Link>
           </Button>
         </article>
       ))}

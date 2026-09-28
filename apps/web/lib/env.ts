@@ -22,5 +22,10 @@ export function serverEnv() {
     osrmUrl: process.env.OSRM_URL || "https://router.project-osrm.org",
     googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || "",
     mapboxToken: process.env.MAPBOX_TOKEN || "",
+    /**
+     * Destinataire des demandes du formulaire de contact (/contact). Vide : e-mail de contact de /admin/legal, puis
+     * LEGAL_EMAIL (lib/legal.ts). Les e-mails partent par la file email_outbox (service mailer du VPS).
+     */
+    contactNotifyEmail: (process.env.CONTACT_NOTIFY_EMAIL || "").trim().toLowerCase(),
   };
 }

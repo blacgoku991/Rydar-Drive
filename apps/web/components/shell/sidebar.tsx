@@ -1,6 +1,6 @@
 "use client";
 import {
-  BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Menu, MessageCircle, Radar,
+  BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Mail, Menu, MessageCircle, Radar,
   Route, ScrollText, Settings, ShieldCheck, Sparkles, UserX, Users,
 } from "lucide-react";
 import { HandCoins, Waypoints } from "lucide-react";
@@ -20,8 +20,8 @@ const ICONS = {
   message: MessageCircle,
   // Mode centrale : Encaissements, Réseau
   wallet: HandCoins, network: Waypoints,
-  // Super admin : suppressions de comptes chauffeur
-  userX: UserX,
+  // Super admin : suppressions de comptes chauffeur, demandes du formulaire de contact
+  userX: UserX, mail: Mail,
 };
 export type NavIcon = keyof typeof ICONS;
 /** Pastille de compteur : rouge (alertes, défaut), lime (messages), ambre. */

@@ -233,3 +233,6 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   super admin admin_platform_overview, admin_platform_account ; service role svc_platform_confirm/reject/reopen/record_payment,
   svc_platform_adjust, svc_platform_review_entry, svc_platform_remind, svc_platform_terms, svc_platform_billing_update.
 - Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.watch_driver_gps() (app fermée → hors ligne), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.
+- Formulaire de contact (005700) : service role svc_contact_submit (demande + e-mails en une transaction) ; worker
+  private.purge_contact_data() (ménage) ; mailer private.claim_emails(n), private.complete_email(id, ok, erreur, définitif) ;
+  LISTEN rydar_emails.

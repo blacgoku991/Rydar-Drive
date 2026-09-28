@@ -52,7 +52,7 @@ export default function PricingPage() {
       <PageHeader
         id="tarifs-titre"
         eyebrow="Tarifs"
-        title="Une offre pour chaque centrale"
+        title="Une offre pour chaque centrale."
         intro={fr("Abonnement mensuel ou annuel, prix hors taxes. Vous arrêtez le renouvellement quand vous voulez, depuis le tableau de bord.")}
       />
       <section aria-label="Offres" className="relative z-10">

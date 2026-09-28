@@ -12,6 +12,7 @@ export function AdminShell({
   openReports = 0,
   platformToReview = 0,
   deletionsToReview = 0,
+  contactsToReview = 0,
 }: {
   children: React.ReactNode;
   user: { name: string; email: string };
@@ -24,6 +25,8 @@ export function AdminShell({
    * « Suppressions de comptes » (admin_account_deletions : failed + stalled)
    */
   deletionsToReview?: number;
+  /** Nouvelles demandes du formulaire de contact, pas encore ouvertes (pastille « Demandes de contact ») */
+  contactsToReview?: number;
 }) {
   const [, start] = useTransition();
   const sections: NavSection[] = [
@@ -31,6 +34,14 @@ export function AdminShell({
       title: "Plateforme",
       items: [
         { href: "/admin", label: "Vue d'ensemble", icon: "dashboard", exact: true },
+        {
+          href: "/admin/contacts",
+          label: "Demandes de contact",
+          icon: "mail",
+          badge: contactsToReview,
+          badgeTone: "brand",
+          badgeLabel: `${contactsToReview} nouvelle${contactsToReview > 1 ? "s" : ""} demande${contactsToReview > 1 ? "s" : ""} de contact`,
+        },
         { href: "/admin/carte", label: "Carte en direct", icon: "globe" },
         { href: "/admin/organizations", label: "Rattacheurs", icon: "building" },
         {

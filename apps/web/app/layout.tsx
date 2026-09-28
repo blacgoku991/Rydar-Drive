@@ -17,7 +17,7 @@ function appBaseUrl() {
 
 // Pas d'image ni de nom de site Open Graph par défaut : ils seraient hérités par les pages publiques des centrales
 // (mini-site /book/[slug] en marque blanche, lien d'inscription /rejoindre/[code]). Chaque page publique de Rydar
-// déclare les siens (voir app/page.tsx).
+// déclare les siens (site vitrine : marketingMetadata, components/marketing/seo.ts).
 export const metadata: Metadata = {
   metadataBase: appBaseUrl(),
   title: { default: "Rydar Drive — Dispatch VTC temps réel", template: "%s · Rydar Drive" },

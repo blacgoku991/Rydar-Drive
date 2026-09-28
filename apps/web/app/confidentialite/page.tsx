@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
-import { LEGAL_UPDATED_AT, LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
+import { LEGAL_VERSION, PRIVACY_UPDATED_AT, getLegalInfo } from "@/lib/legal";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +20,7 @@ export default async function PrivacyPage() {
   );
   const link = "text-fg underline underline-offset-2";
   return (
-    <LegalPage title="Politique de confidentialité" updatedAt={LEGAL_UPDATED_AT}>
+    <LegalPage title="Politique de confidentialité" updatedAt={PRIVACY_UPDATED_AT}>
       <p>
         Rydar Drive est un logiciel de dispatch pour les centrales et flottes de VTC, édité par{" "}
         <span className="text-fg">{legal.name}</span>
@@ -106,6 +106,7 @@ export default async function PrivacyPage() {
             <>Acceptation des CGV et de l&apos;accord de traitement au nom d&apos;une centrale : date, version et e-mail de la personne qui a accepté, gardés comme preuve du contrat même si son compte est supprimé.</>,
             <>Moyens de paiement que la centrale propose à ses chauffeurs (lien de paiement, bénéficiaire, IBAN et BIC, consignes) : visibles de son équipe et des chauffeurs à qui ils sont proposés, modifiables par le propriétaire et les administrateurs seulement.</>,
             <>Visiteurs : aucune mesure d&apos;audience ni publicité. Le serveur reçoit, comme tout site, l&apos;adresse IP et le navigateur, pour la sécurité. Voir la <Link href="/cookies" className={link}>politique cookies</Link>.</>,
+            <>Formulaire de contact (demande de tarif, question, partenariat) : nom, adresse e-mail et message, et si vous les indiquez société, téléphone, taille de flotte et offre visée ; une empreinte (hachage) de l&apos;adresse IP, pour prévenir les envois abusifs ; les e-mails échangés à propos de la demande (accusé de réception, réponses).</>,
           ]}
         />
       </LegalSection>
@@ -120,6 +121,7 @@ export default async function PrivacyPage() {
             <>Assurer la sécurité, prévenir la fraude, bannir un auteur de fraude : intérêt légitime de la centrale et de l&apos;éditeur.</>,
             <>Garder, après la suppression d&apos;un compte, les empreintes d&apos;un chauffeur qui doit encore des commissions à la centrale : constatation, exercice ou défense des droits de la centrale en justice (article 17.3.e du RGPD), l&apos;éditeur agissant pour son compte.</>,
             <>Gérer les comptes des centrales, les abonnements et les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur, et obligations comptables.</>,
+            <>Répondre à une demande envoyée par le formulaire de contact et en accuser réception : mesures précontractuelles prises à votre demande, et intérêt légitime de l&apos;éditeur à répondre aux personnes qui le contactent.</>,
             <>Traiter les signalements de contenus illicites et répondre aux autorités : obligation légale.</>,
             <>Établir des statistiques anonymes pour améliorer le service : intérêt légitime de l&apos;éditeur.</>,
           ]}
@@ -158,6 +160,7 @@ export default async function PrivacyPage() {
             <>Les chauffeurs à qui une course est proposée (les plus proches pour une course immédiate, tous les chauffeurs compatibles de la centrale pour une course planifiée) : adresses de départ et d&apos;arrivée, date et heure, nombre de passagers et de bagages, numéro et provenance du vol, précisions et prix, sans le nom ni le téléphone du client. Le chauffeur attribué reçoit en plus le nom et le téléphone du client.</>,
             <>Le client : seulement ce que la centrale lui communique, par exemple le prénom du chauffeur et le modèle, la couleur et la plaque du véhicule (que l&apos;API remet à la centrale). Le logiciel ne montre pas la position du chauffeur au client.</>,
             <>L&apos;éditeur (support, sécurité, traitement des signalements, facturation) : il peut consulter les données des centrales, y compris le fil « Chauffeurs » et la carte des chauffeurs en ligne, dans la limite de ces missions.</>,
+            <>Demandes du formulaire de contact : l&apos;éditeur seul. Les e-mails qui s&apos;y rapportent partent du serveur de messagerie de l&apos;éditeur, hébergé avec le site.</>,
             <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : hébergement, notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
             <>Les autorités, lorsque la loi l&apos;exige.</>,
           ]}
@@ -184,6 +187,7 @@ export default async function PrivacyPage() {
             <>Historique des positions, y compris la position relevée lors d&apos;une alerte de course (chauffeur immobile, GPS muet) : 30 jours, ou jusqu&apos;à la clôture de l&apos;alerte si elle reste ouverte plus longtemps. La dernière position connue est remplacée à chaque envoi.</>,
             <>Messages, signalements pour la flotte (y compris leur copie dans le journal de la centrale) et signalements de messages : 180 jours. Un message retiré par la centrale disparaît aussitôt de l&apos;application, du tableau de bord et des alertes enregistrées ; une notification déjà affichée sur un téléphone y reste jusqu&apos;à ce que son destinataire l&apos;efface. Il est effacé à la même échéance. Auteurs masqués : tant que les deux comptes existent.</>,
             <>Notifications, y compris les relances WhatsApp : 90 jours après leur envoi prévu, qu&apos;elles aient abouti ou non. Journaux d&apos;appels de l&apos;API : 90 jours.</>,
+            <>Demandes du formulaire de contact : 3 ans après leur envoi, puis supprimées avec les e-mails qui s&apos;y rapportent ; une demande classée indésirable, 30 jours après ce classement. L&apos;empreinte de l&apos;adresse IP est effacée au bout d&apos;un an. Vous pouvez demander l&apos;effacement plus tôt (article 11).</>,
             <>Adresse IP et navigateur enregistrés dans le journal de sécurité (inscription par lien, actions sensibles de l&apos;équipe) et historique des connexions du service d&apos;authentification : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
             <>Courses (y compris les coordonnées du client), gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course, pour les obligations comptables de la centrale, puis supprimés, y compris une course jamais terminée.</>,
             <>Comptes et journal des actions de l&apos;équipe d&apos;une centrale : tant qu&apos;elle utilise le service, puis supprimés dans les 30 jours qui suivent la fin du contrat, sauf les actions sur les frais plateforme et leurs paiements, gardées avec ce registre comptable.</>,

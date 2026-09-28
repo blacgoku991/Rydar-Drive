@@ -17,6 +17,7 @@ la centrale doit les frais plateforme à Rydar.
   MapLibre 6, Supabase SSR ; `proxy.ts` (mini-sites, pages légales non réécrites).
 - `apps/driver` Expo 57 / RN 0.86 / expo-router ; entrée `index.ts` (tâche GPS avant expo-router) ; `src/lib/{location,api,supabase}.ts`.
 - `apps/worker` Node : dispatch_tick, file `notifications` → push (Expo/FCM/APNs) + WhatsApp (`src/whatsapp.ts`), rappels, vols.
+  Service `mailer` (même image, `dist/mailer.js`, réseau de l'hôte) : file `email_outbox` → SMTP 127.0.0.1:25 (Postfix du VPS).
 - `packages/shared` (`@rydar/shared`) : types, schémas zod 4, libellés FR, navigation, centrale, platform-fees, whatsapp.
 - `supabase/migrations` = source de vérité (numéro suivant = dernier de `ls supabase/migrations` + 100) ; `tests/db` vitest sur PG réel.
   TypeScript épinglé 5.9.
@@ -88,6 +89,9 @@ la centrale doit les frais plateforme à Rydar.
   RLS ; `platform.updated` = ids seulement), `driver:{id}`, `fleet:{org}`.
 - Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` idempotente (version `LEGAL_VERSION` de `@rydar/shared`,
   changer = nouvelle acceptation : bandeaux web + écran app `terms-gate`).
+- Site vitrine multi-pages, sans « démo » ; formulaire `/contact` (`lib/contact.ts` → `svc_contact_submit`, mig 005700) →
+  `/admin/contacts`. Le web n'envoie AUCUN e-mail : il écrit dans `email_outbox` (adresses validées comme en base,
+  accusé de réception au contenu fixe) ; le mailer envoie.
 - Suppression de compte chauffeur : `svc_delete_driver_account` (mig 004000) + file `private.account_deletions` (worker 5 min,
   besoin de SUPABASE_URL/SERVICE_ROLE_KEY) ; fiche supprimée figée (DRIVER_DELETED) ; outil /admin/suppressions.
 - Messagerie flotte modérée (004100) ; registre des frais `on delete restrict` (004200) : une centrale avec frais s'archive.

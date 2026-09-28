@@ -9,6 +9,7 @@ Rydar Drive repose sur un principe : **la base de données est l'arbitre**. Isol
 | **PostgreSQL / Supabase** | Données, RLS, moteur de dispatch, temps réel, outbox des notifications | PostgreSQL 16, PostGIS 3, Supabase Auth, Realtime (broadcast), Storage |
 | **apps/web** | Dashboard rattacheur, Super Admin, API publique v1, mini-site de réservation, facturation | Next.js 16 (App Router, `proxy.ts`), React 19, Tailwind v4, Radix, MapLibre GL, Recharts, @supabase/ssr, Stripe |
 | **apps/worker** | Tick du dispatch (expirations, vagues suivantes, escalades), envoi des pushs et des relances WhatsApp, ménage (durées de conservation), reprise des suppressions de compte chauffeur | Node 22, `pg` (LISTEN/NOTIFY, `FOR UPDATE SKIP LOCKED`), Expo Push, FCM HTTP v1, APNs HTTP/2, API WhatsApp Cloud, API Storage et Auth de Supabase (clé service role) |
+| **mailer** (même image, `dist/mailer.js`) | E-mails du formulaire de contact : lit la file `email_outbox` (`private.claim_emails`, réveil `LISTEN rydar_emails`) et l'envoie au serveur mail du VPS (SMTP `127.0.0.1:25`, réseau de l'hôte), réessais espacés puis échec visible dans `/admin/contacts` | Node 22, `pg`, nodemailer |
 | **apps/driver** | Application chauffeur : EN LIGNE / HORS LIGNE, GPS, offres, cycle de course | Expo SDK 57, React Native 0.86, expo-router, expo-location (tâche de fond), expo-notifications, react-native-maps |
 | **packages/shared** | Vocabulaire commun : statuts, transitions, catégories, schémas zod (messages FR), formatage | TypeScript, zod 4 |
 
@@ -213,3 +214,18 @@ L'app envoie sa position avec `update_driver_location`. La fonction répond avec
 | `owner` / `admin` | Une organisation | Tout gérer dans l'organisation : chauffeurs, réglages, clés API, équipe, abonnement ; en mode centrale : lien d'inscription, candidatures, bannissements, annulation de dettes |
 | `dispatcher` | Une organisation | Créer, attribuer et annuler des courses, suivre la flotte ; en mode centrale : confirmer ou contester les paiements, relancer |
 | Chauffeur (`drivers.user_id`) | Ses offres et ses courses | Passer EN LIGNE / HORS LIGNE, envoyer sa position, accepter ou refuser, faire avancer **ses** courses |
+
+## Formulaire de contact et e-mails
+
+Le site vitrine (`/`, `/services`, `/avantages`, `/tarifs`, `/faq`, `/contact`) n'a plus de lien « démo » : « Demander
+un tarif » et les boutons des offres ouvrent `/contact?sujet=tarif[&offre=code]`. L'action serveur (`lib/contact.ts`)
+écarte les robots (champ piège), valide (`contactRequestSchema` de `@rydar/shared`), limite (IP /64 : 5 par heure,
+adresse : 3 par jour, 200 par heure en tout), puis appelle `svc_contact_submit` (service role) qui enregistre la demande
+(`contact_requests`) et met en file, dans la même transaction, la notification à l'admin (`CONTACT_NOTIFY_EMAIL`, sinon
+e-mail de `/admin/legal`, adresses validées comme en base) et un accusé de réception au contenu fixe (un par adresse et
+par 24 h, 30 par heure en tout). Le site n'envoie aucun e-mail : le service `mailer` les envoie au serveur mail du VPS.
+Le super admin traite les demandes dans `/admin/contacts` (statut, note, réponse par e-mail, suppression, nouvel essai,
+e-mail de test) ; lecture par RLS (super admin seul), écritures par le service role et `audit()`. Conservation :
+demande 3 ans, indésirable 30 jours après son classement, empreinte d'IP 1 an (`private.purge_contact_data`, ménage du
+worker).
+

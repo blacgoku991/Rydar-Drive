@@ -235,7 +235,7 @@ export function ServiceThemes() {
         id="reservations"
         index={1}
         eyebrow="Réservations"
-        title="Recevoir les courses"
+        title="Recevoir les courses."
         intro="Mini-site à vos couleurs, votre propre site ou le tableau de bord : toutes les réservations arrivent au même endroit, prêtes à partir au dispatch."
       >
         <Feature

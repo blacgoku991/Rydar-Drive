@@ -82,6 +82,21 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 
 Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domaine personnalisé sont vérifiés **par des triggers en base** (`PLAN_LIMIT_*`, `PLAN_FEATURE_*`). Contourner l'interface ne permet pas de les dépasser.
 
+## Formulaire de contact et e-mails
+
+- Public et sans compte : champ piège (robot → faux succès, rien d'enregistré), validation partagée, limites par IP
+  (seau /64, 5 par heure), par adresse (3 par jour) et globale (200 par heure), plafond SQL (`CONTACT_BUSY`, 300 par
+  heure glissante). L'adresse IP n'est gardée qu'en empreinte HMAC (poivre du serveur), effacée au bout d'un an.
+- L'accusé de réception part vers une adresse saisie par un inconnu : contenu FIXE (aucune donnée saisie), un par
+  adresse et par 24 h (SQL), 30 par heure en tout. Le formulaire ne peut pas servir à écrire à un tiers.
+- En-têtes : adresses d'une seule pièce (ni espace, ni séparateur, ni nom affiché : contraintes SQL, mêmes règles côté
+  web), sujets nettoyés (`sanitizeHeaderText`) ; enveloppe SMTP explicite à un seul destinataire. Adresse de
+  notification mal configurée : ignorée, la demande est quand même enregistrée.
+- Lecture de `contact_requests` et `email_outbox` : super admin seul (RLS) ; écritures : service role (web) après
+  `requireSuperAdmin()`, journalisées (`audit()`). Le site n'envoie aucun e-mail ; le mailer (réseau de l'hôte) ne publie
+  aucun port, son point de santé n'écoute que sur 127.0.0.1, ses journaux ne contiennent ni corps, ni sujet, ni adresse
+  complète.
+
 ## Frais plateforme (centrales → Rydar)
 
 - Les frais d'une course terminée sont **dus par la centrale** dès la fin de course (`platform_fee_entries`, trigger
