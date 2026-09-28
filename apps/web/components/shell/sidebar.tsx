@@ -46,11 +46,13 @@ type Props = {
   onSwitchOrg?: (id: string) => void;
   signOut: () => void;
   footer?: React.ReactNode;
+  /** Information cookies (CookieNotice placement « sidebar ») : dans le flux, au-dessus du menu du compte. */
+  notice?: React.ReactNode;
   /** Action à droite du logo (ex. cloche des notifications). */
   headerAction?: React.ReactNode;
 };
 
-function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, headerAction, onNavigate }: Props & { onNavigate?: () => void }) {
+function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, notice, headerAction, onNavigate }: Props & { onNavigate?: () => void }) {
   const pathname = usePathname();
   const current = orgs?.find((o) => o.id === currentOrgId);
   return (
@@ -126,6 +128,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
       </nav>
 
       {footer && <div className="px-3 pb-3">{footer}</div>}
+      {notice}
 
       <div className="border-t border-line p-2">
         <DropdownMenu>

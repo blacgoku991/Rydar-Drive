@@ -518,8 +518,12 @@ type DriverBanRow = { user_id: string | null; status: string; application_status
 const driverMayLogin = (d: DriverBanRow) => !d.banned_at && !d.deleted_at && (d.status === "active" || d.application_status === "pending");
 
 /**
- * Réactivation : comptes dont un ANCIEN bannissement Auth hérité de la suspension est levé — membres actifs et chauffeurs
- * autorisés de la centrale ; jamais un compte dont la fiche chauffeur est bannie, suspendue ou inactive.
+ * Réactivation : comptes dont un ANCIEN bannissement Auth hérité est levé (ancienne suspension de centrale, ancienne
+ * désactivation de fiche qui bannissait le compte) :
+ *  - chauffeurs de la centrale autorisés à se connecter (fiche active ou candidature en attente) ;
+ *  - membres actifs : comptes de gestion, jamais verrouillés pour une raison de fiche chauffeur — levée même si leur
+ *    fiche (ici ou ailleurs) est inactive ou suspendue, SAUF fiche bannie (centrale ou plateforme) : vrai bannissement,
+ *    levé là où il a été décidé.
  */
 async function inheritedBanUserIds(orgId: string) {
   const admin = createAdminClient();
@@ -531,19 +535,77 @@ async function inheritedBanUserIds(orgId: string) {
   const candidates = new Set<string>(((drivers ?? []) as DriverBanRow[]).filter(driverMayLogin).map((d) => d.user_id!));
   const memberIds = ((members ?? []) as { user_id: string }[]).map((m) => m.user_id);
   if (memberIds.length) {
-    // Membre qui est aussi chauffeur (ici ou ailleurs) : sa fiche décide
+    // Membre qui est aussi chauffeur (ici ou ailleurs) : seule une fiche bannie garde le verrou
     const { data: rows } = await admin.from("drivers").select("user_id, status, application_status, banned_at, deleted_at").in("user_id", memberIds);
-    const blocked = new Set(((rows ?? []) as DriverBanRow[]).filter((d) => !driverMayLogin(d)).map((d) => d.user_id));
-    for (const id of memberIds) if (!blocked.has(id)) candidates.add(id);
+    const banned = new Set(((rows ?? []) as DriverBanRow[]).filter((d) => !!d.banned_at).map((d) => d.user_id));
+    for (const id of memberIds) if (!banned.has(id)) candidates.add(id);
   }
   return [...candidates];
+}
+
+/**
+ * « Débloquer la connexion » d'un membre (page de la centrale, carte « Accès ») : lève le verrou Auth d'un compte qui
+ * n'est PAS banni — victime d'un ancien bannissement hérité (suspension de centrale, désactivation de sa fiche chauffeur
+ * par une autre centrale avant le correctif), qu'aucune autre action ne lève. Fiche chauffeur bannie (centrale ou
+ * plateforme) : refus, ce bannissement se lève là où il a été décidé. Journalisé (member.login_unlocked).
+ */
+export async function unlockMemberLogin(orgId: string, memberId: string): Promise<Result<{ message: string }>> {
+  const session = await requireSuperAdmin();
+  if (!uuid.safeParse(orgId).success || !uuid.safeParse(memberId).success) return { ok: false, error: "Demande invalide." };
+  const admin = createAdminClient();
+  const { data: member } = await admin
+    .from("organization_users")
+    .select("user_id, role, status, user:users!organization_users_user_id_fkey(email)")
+    .eq("id", memberId)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+  if (!member) return { ok: false, error: "Membre introuvable." };
+  const m = member as unknown as { user_id: string; role: string; status: string; user: { email: string } | { email: string }[] | null };
+  const email = (Array.isArray(m.user) ? m.user[0] : m.user)?.email ?? null;
+
+  const [{ data: row, error: cardError }, { data: account, error: accountError }] = await Promise.all([
+    admin.from("drivers").select("id, status, banned_at, ban_scope, organization_id").eq("user_id", m.user_id).maybeSingle(),
+    admin.auth.admin.getUserById(m.user_id),
+  ]);
+  if (cardError || accountError || !account?.user) return { ok: false, error: "Vérification impossible pour le moment : réessayez." };
+  const card = row as { id: string; status: string; banned_at: string | null; ban_scope: string | null; organization_id: string } | null;
+  if (card?.banned_at) {
+    return {
+      ok: false,
+      error:
+        card.ban_scope === "platform"
+          ? "Compte banni de la plateforme (signalement de fraude) : la connexion reste bloquée tant que ce bannissement n'est pas levé (Centrales)."
+          : "Fiche chauffeur bannie par sa centrale : la connexion reste bloquée ; seule cette centrale peut lever le bannissement.",
+    };
+  }
+  const bannedUntil = account.user.banned_until ? Date.parse(account.user.banned_until) : NaN;
+  if (!(bannedUntil > Date.now())) return { ok: true, message: "Ce compte n'est pas bloqué : aucune action nécessaire." };
+
+  const { error } = await admin.auth.admin.updateUserById(m.user_id, { ban_duration: "none" });
+  if (error) return { ok: false, error: "Déblocage impossible pour le moment : réessayez." };
+  await audit({
+    organizationId: orgId,
+    actorUserId: session.user.id,
+    actorType: "super_admin",
+    action: "member.login_unlocked",
+    entityType: "organization_users",
+    entityId: m.user_id,
+    severity: "warning",
+    metadata: {
+      email, role: m.role, member_status: m.status, banned_until: account.user.banned_until ?? null,
+      driver_id: card?.id ?? null, driver_status: card?.status ?? null, driver_organization_id: card?.organization_id ?? null,
+    },
+  });
+  revalidatePath(`/admin/organizations/${orgId}`);
+  return { ok: true, message: `Connexion débloquée : ${email ?? "ce compte"} peut de nouveau se connecter.` };
 }
 
 /**
  * Suspendre / réactiver / archiver : effet immédiat via la RLS (données, actions, connexion chauffeur refusée avec le
  * motif « centrale suspendue ») et le déclencheur SQL des sessions. Plus aucun bannissement Auth : l'équipe doit pouvoir
  * ouvrir /suspended pour régler ses frais, et un membre d'une autre centrale active ou le super admin ne sont jamais
- * verrouillés. Réactivation : levée des anciens bannissements hérités (membres, chauffeurs autorisés).
+ * verrouillés. Réactivation : levée des anciens bannissements hérités (membres actifs sauf fiche bannie, chauffeurs
+ * autorisés : inheritedBanUserIds).
  */
 export async function setOrganizationStatus(orgId: string, status: "active" | "suspended" | "archived", reason?: string): Promise<Result> {
   const session = await requireSuperAdmin();

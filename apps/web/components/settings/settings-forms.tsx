@@ -535,9 +535,12 @@ export function TeamPanel({ members, isOwner, canInvite }: { members: any[]; isO
                   <Button variant="ghost" size="xs" disabled={pending} onClick={() => save(() => resendMemberInvitation(m.id), "Invitation renvoyée")}>
                     Renvoyer l&apos;invitation
                   </Button>
-                  <Button variant="ghost" size="xs" disabled={pending} onClick={() => save(() => cancelMemberInvitation(m.id), "Invitation annulée")}>
-                    Annuler
-                  </Button>
+                  {/* Invitation d'un propriétaire : seul un propriétaire l'annule (ou le super admin) */}
+                  {(m.role !== "owner" || isOwner) && (
+                    <Button variant="ghost" size="xs" disabled={pending} onClick={() => save(() => cancelMemberInvitation(m.id), "Invitation annulée")}>
+                      Annuler
+                    </Button>
+                  )}
                 </div>
               )}
               {!invited && isOwner && m.role !== "owner" && (

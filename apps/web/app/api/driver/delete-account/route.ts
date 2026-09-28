@@ -7,7 +7,7 @@ import { deleteDriverAccount } from "@/lib/driver-deletion";
 import { DRIVER_LOGIN_WINDOW, driverLoginEmailKey, driverLoginPairKey } from "@/lib/driver-session";
 import { env } from "@/lib/env";
 import { rateLimit, rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
-import { ipFromHeaders } from "@/lib/request";
+import { ipBucket, ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -30,9 +30,9 @@ export function OPTIONS(req: Request) {
  *  - jeton refusé (expiré, session révoquée : compte suspendu, banni, centrale suspendue…) : e-mail + mot de passe,
  *    vérifiés par un client anonyme sans cookie ni persistance ; refus de Supabase Auth pour une autre raison que
  *    de mauvais identifiants (compte Auth banni…) : empreinte vérifiée par la base (svc_driver_password_check).
- * Anti brute force : IP, puis MÊMES compteurs que la connexion (/api/auth/driver-login : pas de second budget de mots
- * de passe) — couple (adresse, IP) strict et plafond global plus haut de l'adresse (un tiers qui connaît l'adresse ne
- * bloque pas le chauffeur depuis une autre IP) —, puis compte (1 h).
+ * Anti brute force : IP (IPv6 regroupée par /64), puis MÊMES compteurs que la connexion (/api/auth/driver-login : pas
+ * de second budget de mots de passe) — couple (adresse, IP) strict et plafond global plus haut de l'adresse (un tiers
+ * qui connaît l'adresse ne bloque pas le chauffeur depuis une autre IP) —, puis compte (1 h).
  * Aperçu { preview: true, email?, password? } (écran « Supprimer mon compte », avant la confirmation) : même
  * authentification et mêmes compteurs, RIEN n'est supprimé (même avec « confirm ») ; 200 { code: "PREVIEW", debt } :
  * commissions encore dues à la centrale (svc_driver_deletion_debt), lisibles même compte suspendu, banni, désactivé,
@@ -75,7 +75,8 @@ function authUnavailable(error: AuthError) {
 }
 
 async function handle(req: Request): Promise<NextResponse> {
-  const ip = ipFromHeaders(req.headers) ?? "0.0.0.0";
+  // IP regroupée (IPv6 : préfixe /64), comme la connexion : mêmes clés de couple (adresse, IP)
+  const ip = ipBucket(ipFromHeaders(req.headers));
   const body = (await req.json().catch(() => null)) as unknown;
   const credentials = loginSchema.safeParse(body);
 

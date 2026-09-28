@@ -20,6 +20,27 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const metadata: Metadata = { title: "Rattacheur" };
 export const dynamic = "force-dynamic";
 
+/**
+ * Connexion des membres : compte Auth verrouillé (ancien bannissement hérité, ou bannissement réel) et fiche chauffeur
+ * bannie éventuelle (une seule fiche par compte). Lecture service role, après requireSuperAdmin ; illisible = non signalé.
+ */
+async function memberLoginLocks(userIds: string[]) {
+  const locked = new Set<string>();
+  const bans = new Map<string, "org" | "platform">();
+  if (!userIds.length) return { locked, bans };
+  const admin = createAdminClient();
+  const now = Date.now();
+  const [accounts, cards] = await Promise.all([
+    Promise.all(userIds.map((id) => admin.auth.admin.getUserById(id).then((r) => r.data.user ?? null, () => null))),
+    admin.from("drivers").select("user_id, banned_at, ban_scope").in("user_id", userIds),
+  ]);
+  for (const u of accounts) if (u?.banned_until && Date.parse(u.banned_until) > now) locked.add(u.id);
+  for (const d of (cards.data ?? []) as { user_id: string; banned_at: string | null; ban_scope: string | null }[]) {
+    if (d.banned_at) bans.set(d.user_id, d.ban_scope === "platform" ? "platform" : "org");
+  }
+  return { locked, bans };
+}
+
 export default async function OrganizationAdminPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
@@ -37,7 +58,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     db.from("drivers").select("id, first_name, last_name, number, presence, status, location:driver_locations(updated_at)").eq("organization_id", id).neq("presence", "offline").order("number"),
     db.from("ride_events").select("id, level, message, created_at").eq("organization_id", id).in("level", ["warning", "error"]).gte("created_at", since).order("id", { ascending: false }).limit(20),
     db.from("notifications").select("id, type, title, status, last_error, created_at").eq("organization_id", id).order("created_at", { ascending: false }).limit(12),
-    db.from("organization_users").select("id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)").eq("organization_id", id),
+    db.from("organization_users").select("id, user_id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)").eq("organization_id", id),
     db.from("api_keys").select("id", { count: "exact", head: true }).eq("organization_id", id).is("revoked_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("application_status", "pending"),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).not("banned_at", "is", null),
@@ -47,8 +68,16 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   const k = (kpis.data ?? {}) as any;
   const status = org.status as OrgStatus;
   const model = (org.dispatch_model ?? "fleet") as DispatchModel;
-  const accessMembers = ((members.data ?? []) as any[]).map(
-    (m) => ({ ...m, user: Array.isArray(m.user) ? (m.user[0] ?? null) : m.user }) as AccessMember,
+  const memberRows = (members.data ?? []) as any[];
+  const locks = await memberLoginLocks([...new Set(memberRows.map((m) => m.user_id as string).filter(Boolean))]);
+  const accessMembers = memberRows.map(
+    ({ user_id, ...m }) =>
+      ({
+        ...m,
+        user: Array.isArray(m.user) ? (m.user[0] ?? null) : m.user,
+        loginLocked: locks.locked.has(user_id),
+        driverBan: locks.bans.get(user_id) ?? null,
+      }) as AccessMember,
   );
   const joinUrl = org.join_code ? `${env.appUrl}/rejoindre/${org.join_code}` : null;
   const platformAccount = ((platform.data ?? null) as AdminPlatformAccount | null)?.account ?? null;

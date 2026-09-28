@@ -1,5 +1,6 @@
 "use client";
 import { useTransition } from "react";
+import { CookieNotice } from "@/components/legal/cookie-notice";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { signOut } from "@/app/login/actions";
 import { runAction } from "@/lib/run-action";
@@ -75,6 +76,7 @@ export function AdminShell({
         subtitle="Super admin"
         user={user}
         signOut={() => start(() => runAction(() => signOut()))}
+        notice={<CookieNotice href="/cookies" placement="sidebar" />}
         footer={
           <div className="rounded-xl border border-brand/20 bg-brand/[0.05] px-3 py-2.5 text-[12px] text-fg-muted">
             <span className="font-semibold text-brand">Mode plateforme</span> — accès en lecture à tous les tenants, écritures journalisées.

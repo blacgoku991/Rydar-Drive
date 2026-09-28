@@ -4,6 +4,7 @@ import { AlertDialog as A } from "radix-ui";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
 import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-provider";
+import { CookieNotice } from "@/components/legal/cookie-notice";
 import { OrgPlatformBanner } from "@/components/platform-fees/org-platform-banner";
 import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
@@ -190,6 +191,7 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
           }))
         }
         signOut={() => start(() => runAction(() => signOut()))}
+        notice={<CookieNotice href="/cookies" placement="sidebar" />}
       />
       <div className="lg:pl-[232px]">
         {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}

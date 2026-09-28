@@ -1,16 +1,17 @@
 import "server-only";
 // Frais plateforme (côté centrale) : organisation courante, y compris SUSPENDUE (elle doit pouvoir régler Rydar).
-// Même choix que requireOrg (cookie → dernière utilisée → première) ; le rôle owner / admin est vérifié en base
-// par chaque RPC (assert_platform_payer) et par les appelants avant tout appel.
+// MÊME choix que requireOrg / getOrgContext (pickMembership : cookie → dernière utilisée → première ACTIVE) : « J'ai
+// payé » et l'export du relevé visent la centrale affichée, jamais une autre centrale du compte. Le rôle owner / admin
+// est vérifié en base par chaque RPC (assert_platform_payer) et par les appelants avant tout appel.
 import { cookies } from "next/headers";
-import { ORG_COOKIE, getSession, isAdminRole } from "@/lib/auth";
+import { ORG_COOKIE, getSession, isAdminRole, pickMembership } from "@/lib/auth";
 
 export async function getPayerContext() {
   const session = await getSession();
   if (!session || !session.memberships.length) return null;
   const jar = await cookies();
   const wanted = jar.get(ORG_COOKIE)?.value ?? session.profile.last_active_org_id;
-  const current = session.memberships.find((m) => m.org.id === wanted) ?? session.memberships[0]!;
+  const current = pickMembership(session.memberships, wanted);
   if (current.org.status !== "active" && current.org.status !== "suspended") return null;
   return { ...session, org: current.org, role: current.role, canPay: isAdminRole(current.role) };
 }

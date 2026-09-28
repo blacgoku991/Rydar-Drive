@@ -265,10 +265,17 @@ export async function resendMemberInvitation(memberId: string): Promise<Result> 
   return { ok: true };
 }
 
-/** « Annuler l'invitation » : l'adhésion en attente est supprimée (aucune session n'est touchée). */
+/**
+ * « Annuler l'invitation » : l'adhésion en attente est supprimée (aucune session n'est touchée). Invitation d'un
+ * PROPRIÉTAIRE : seul un propriétaire l'annule (ou le super admin, /admin) — un administrateur ne retire pas son
+ * propriétaire à la centrale, comme updateMember qui refuse toute modification d'un propriétaire.
+ */
 export async function cancelMemberInvitation(memberId: string): Promise<Result> {
   const inv = await pendingInvitation(memberId);
   if (!inv.ctx) return { ok: false, error: inv.error };
+  if (inv.row.role === "owner" && inv.ctx.role !== "owner") {
+    return { ok: false, error: "Seul un propriétaire peut annuler l'invitation d'un propriétaire." };
+  }
   const { error } = await createAdminClient()
     .from("organization_users")
     .delete()
