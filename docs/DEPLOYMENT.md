@@ -171,7 +171,7 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 | --- | --- |
 | `DATABASE_URL` | **Requise.** Connexion à la base (voir ci-dessous) |
 | `SUPABASE_URL` (à défaut `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (ou `SUPABASE_SECRET_KEY`) | **Requises en production.** API Storage et administration d'Auth, avec la clé service role : le worker termine les suppressions de compte chauffeur restées inachevées (dossier des justificatifs, compte de connexion). Sans elles, il écrit l'erreur `account deletions cannot be completed` au démarrage, puis toutes les heures tant que la file n'est pas vide, et `/admin/suppressions` affiche ces suppressions « en retard ». Le kit VPS les transmet (`deploy/docker-compose.yml`) |
-| `DATABASE_SSLMODE`, `DATABASE_CA_FILE` | Chiffrement de la connexion à la base, prioritaire sur le `sslmode` de `DATABASE_URL` : `verify-full` (certificat du serveur vérifié avec la racine `DATABASE_CA_FILE`) ou `no-verify` (repli). Vide : `DATABASE_URL` telle quelle. Voir « Connexion chiffrée à la base » |
+| `DATABASE_SSLMODE`, `DATABASE_CA_FILE` | Chiffrement de la connexion à la base, prioritaire sur le `sslmode` de `DATABASE_URL` : `verify-full` (certificat du serveur vérifié avec la racine `DATABASE_CA_FILE`), `no-verify` (repli) ou `disable` (base locale seulement : Supabase auto-hébergé). Vide : `DATABASE_URL` telle quelle. Voir « Connexion chiffrée à la base » |
 | `EXPO_ACCESS_TOKEN` | Pushs par Expo (voir « Pushs » plus bas). **Recommandé en production**, avec l'option Expo *Enhanced Security for Push Notifications* : sans elle, quiconque connaît le jeton push d'un téléphone peut lui envoyer une notification affichée comme venant de Rydar Drive. `FCM_*` / `APNS_*` pour un envoi direct (`APNS_PRODUCTION=false` : serveur sandbox d'Apple) |
 | `WHATSAPP_API_VERSION` | Facultative ([WHATSAPP.md](WHATSAPP.md)). Aucun jeton WhatsApp dans l'environnement : ils sont en base, lisibles par le seul service role |
 | `*_MS` | Fréquences des tâches (tableau ci-dessous), défauts conseillés |
@@ -213,6 +213,12 @@ kit VPS) avec la racine publique de Supabase, versionnée dans `deploy/supabase-
 worker (`/etc/rydar/supabase-ca.crt`). Sans cette vérification, un intermédiaire placé entre le VPS et Supabase pourrait
 se faire passer pour la base et obtenir une session `postgres` (RLS contournée). Le mot de passe de la base ne passe
 jamais dans une ligne de commande (`PGPASSWORD`, `deploy/pg-url.sh`).
+
+**Supabase auto-hébergé sur le VPS** (base sur la même machine, par exemple `127.0.0.1:5432`) : `DATABASE_SSLMODE=disable`,
+connexion sans chiffrement, que `deploy/configure.sh` choisit seul pour une base locale. Le worker et `deploy/pg-url.sh`
+ne l'acceptent que pour une base locale : `localhost`, `127.x`, `::1`, adresse privée (`10.x`, `172.16` à `172.31.x`,
+`192.168.x`) ou conteneur Docker (nom sans point, ex. `supavisor`) ; pour toute autre base, le worker refuse de démarrer
+et `migrate.sh` s'arrête. Le port de la base ne doit alors jamais être joignable depuis Internet.
 
 **Contrôle** (une fois après la mise à jour qui introduit la vérification, puis après tout changement de ce réglage) :
 

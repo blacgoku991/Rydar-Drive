@@ -70,7 +70,8 @@ la centrale doit les frais plateforme à Rydar.
   au compte Auth (mot de passe, ban, sessions) ; suspendre une centrale ne bannit personne au niveau Auth.
 - Web : action serveur dans `startTransition`/onClick → `runAction` (`lib/run-action.ts`) ; heure saisie = fuseau de la centrale
   (`components/booking/zoned-time.ts`) ; `next` de redirection via `lib/safe-next.ts` ; Host du proxy validé (`lib/hostname.ts`).
-- Worker et scripts : base en `verify-full` (`deploy/supabase-ca.crt`), repli `DATABASE_SSLMODE=no-verify` ; aucun secret en argv.
+- Worker et scripts : base en `verify-full` (`deploy/supabase-ca.crt`), repli `DATABASE_SSLMODE=no-verify` ; `disable` =
+  base LOCALE seulement (Supabase auto-hébergé du VPS : `isLocalDbHost` = `pg_local_host`) ; aucun secret en argv.
 
 ## Métier (l'essentiel)
 - Dispatch (PL/pgSQL) : instantané = vagues STRICTES (défaut 4→8→12→16 km `dispatch_radii_m`, une par délai

@@ -54,13 +54,15 @@ la file si le serveur mail est injoignable, relance à son retour).
   `rydardrive.com`), e-mail qui reçoit les demandes (`contact@rydardrive.com` proposé), modèles Supabase Auth en
   français avec code à 8 chiffres (défaut : anglais, lien sans code → « Mot de passe oublié » de l'app inutilisable),
   copie des sauvegardes hors du VPS, `/admin/legal`, centrale « Démo App Review ».
-- Commits LOCAUX du VPS absents de GitHub (rebasés par `update-production.sh` à chaque mise à jour ; un conflit
-  bloquerait la mise à jour) : `7bae746` `DATABASE_SSLMODE=disable` accepté pour une base Supabase LOCALE seulement
-  (refusé pour une base distante) — `apps/worker/src/config.ts`, `config.test.ts`, `deploy/pg-url.sh`,
-  `deploy/configure.sh`, `deploy/.env.example` ; `3e33625` `ascAppId` dans `apps/driver/eas.json` (envoi TestFlight
-  depuis le VPS). Demandé : les pousser sur GitHub (sinon hôte de DATABASE_URL + règle « locale » + ascAppId pour les
-  reprendre ici). D'ici là, NE PAS modifier ces fichiers. Ensuite : `deploy/CLAUDE-VPS.md` (Supabase auto-hébergé ;
-  étape 5 : les e-mails attendent sans limite de durée), ligne « verify-full » de CLAUDE.md.
+- Commits locaux du VPS (`14fd3d4` base locale, `3e33625` ascAppId) REPRIS sur GitHub : `DATABASE_SSLMODE=disable`
+  accepté pour une base LOCALE seulement (localhost, 127.x, ::1, 10.x, 172.16-31.x, 192.168.x, nom sans point ;
+  `isLocalDbHost` = `pg_local_host`), refusé sinon ; `configure.sh` le choisit seul pour une base locale ;
+  `ascAppId` 6816428044 dans `apps/driver/eas.json`. Le VPS (DATABASE_URL `127.0.0.1:5432`) doit abandonner ses
+  commits locaux (sauvegarde de branche puis `git reset --hard origin/…`, puis `install.sh`) au lieu d'un rebase.
+- VPS, suite du 29/09 : Postfix pour le site ET pour Supabase Auth (modèles français, code à 8 chiffres, signés DKIM),
+  demandes → contact@rydardrive.com, copie chiffrée des sauvegardes prête (clés OVH Object Storage à saisir par
+  l'utilisateur), DNS du domaine chez my-ndns (ns3/ns4.my-ndns.com) et non OVH, DNS inverse fait chez OVH ;
+  redémarrage (38 mises à jour) à faire en présence de l'utilisateur.
 
 ## À faire par l'utilisateur
 - Mettre à jour le VPS : `cd /opt/rydar && bash deploy/update-production.sh` (migrations 003600 à 005700, nouveau

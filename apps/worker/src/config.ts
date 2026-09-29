@@ -5,20 +5,55 @@ function num(name: string, fallback: number) {
 }
 
 /** Modes TLS acceptés pour DATABASE_SSLMODE (kit VPS : verify-full par défaut, deploy/docker-compose.yml). */
-export const DATABASE_SSL_MODES = ["verify-full", "no-verify"] as const;
+export const DATABASE_SSL_MODES = ["verify-full", "no-verify", "disable"] as const;
+
+/** Hôte d'une chaîne de connexion postgresql://utilisateur:mot-de-passe@hôte:port/base (sans crochets IPv6), "" si illisible. */
+export function dbUrlHost(url: string): string {
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    host = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)/i.exec(url)?.[1] ?? "";
+  }
+  return host.replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+/**
+ * Base « locale » (Supabase auto-hébergé sur ce serveur ou sur un réseau privé), seule autorisée sans chiffrement
+ * (DATABASE_SSLMODE=disable) : localhost, 127.x, ::1, adresse privée (10.x, 172.16 à 172.31.x, 192.168.x) ou nom
+ * sans point (conteneur Docker, ex. supavisor). Même règle que deploy/pg-url.sh (pg_local_host).
+ */
+export function isLocalDbHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h === "::1") return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number) as [number, number, number, number];
+    if ([a, b, c, d].some((x) => x > 255)) return false;
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  return /^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$/.test(h);
+}
 
 /**
  * DATABASE_URL avec le mode TLS imposé par DATABASE_SSLMODE (vide : chaîne inchangée) :
  *  - verify-full : certificat du serveur vérifié (nom compris) avec la racine DATABASE_CA_FILE (sslrootcert) —
  *    racine publique Supabase versionnée dans deploy/supabase-ca.crt ;
- *  - no-verify : ancien mode, chiffré SANS vérification (repli seulement, docs/DEPLOYMENT.md).
+ *  - no-verify : ancien mode, chiffré SANS vérification (repli seulement, docs/DEPLOYMENT.md) ;
+ *  - disable : sans chiffrement, pour une base locale seulement (Supabase auto-hébergé, isLocalDbHost) ; refusé
+ *    pour une base distante.
  * Les sslmode / sslrootcert de la chaîne sont remplacés (le sslmode de l'URL l'emporte sur toute option `ssl` de pg).
  */
 export function withSslMode(url: string, mode?: string, caFile?: string): string {
   const m = (mode || "").trim();
   if (!m) return url;
   if (!(DATABASE_SSL_MODES as readonly string[]).includes(m)) {
-    throw new Error(`DATABASE_SSLMODE invalide : « ${m} » (attendu : ${DATABASE_SSL_MODES.join(" ou ")})`);
+    throw new Error(`DATABASE_SSLMODE invalide : « ${m} » (attendu : verify-full, no-verify ou disable)`);
+  }
+  if (m === "disable" && !isLocalDbHost(dbUrlHost(url))) {
+    throw new Error(
+      "DATABASE_SSLMODE=disable refusé : base distante. Sans chiffrement, seulement une base sur ce serveur ou sur un réseau privé (Supabase auto-hébergé) ; sinon verify-full",
+    );
   }
   const q = url.indexOf("?");
   const params = (q < 0 ? "" : url.slice(q + 1)).split("&").filter((p) => p && !/^(sslmode|sslrootcert)=/i.test(p));

@@ -76,7 +76,7 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
 
 ### 5. E-mails du formulaire de contact (serveur mail du VPS)
 
-Les demandes du formulaire de contact (« Demander un tarif ») s'affichent dans `https://DOMAINE/admin/contacts`. Le service `mailer` envoie en plus une notification au propriétaire, un accusé de réception au demandeur et les réponses du Super Admin, par le serveur mail du VPS (`127.0.0.1:25`) : le site n'envoie rien lui-même. Sans serveur mail, rien n'est perdu : les e-mails attendent en file (8 essais sur une vingtaine d'heures) puis passent en échec, visible dans `/admin/contacts`. Les e-mails d'authentification (invitations, mot de passe oublié) ne sont pas concernés : ils partent par Supabase (étape 2, *SMTP Settings*).
+Les demandes du formulaire de contact (« Demander un tarif ») s'affichent dans `https://DOMAINE/admin/contacts`. Le service `mailer` envoie en plus une notification au propriétaire, un accusé de réception au demandeur et les réponses du Super Admin, par le serveur mail du VPS (`127.0.0.1:25`) : le site n'envoie rien lui-même. Sans serveur mail, rien n'est perdu : les e-mails attendent en file, sans limite de durée, et partent dans la minute où il répond ; l'état du service d'envoi et du serveur mail se lit dans `/admin/contacts`. Les e-mails d'authentification (invitations, mot de passe oublié) ne sont pas concernés : ils partent par Supabase (étape 2, *SMTP Settings*).
 
 1. **Serveur déjà présent ?** `sudo ss -ltnp | grep ':25 '`
    - rien : installer Postfix (point 2) ;
@@ -126,6 +126,7 @@ Termine par un résumé pour le propriétaire : ce qui fonctionne (adresses), ce
 
 - Supabase : le rôle `postgres` n'est pas super-utilisateur ; les migrations en tiennent compte. Une erreur « must be owner of … » est à signaler, pas à contourner.
 - `DATABASE_URL` : Session pooler, **port 5432** (le worker écoute `LISTEN/NOTIFY`, impossible avec le port 6543 du mode transaction). La connexion directe `db.xxx.supabase.co` est en IPv6, injoignable depuis Docker. `configure.sh` gère tout cela.
+- Supabase auto-hébergé sur ce serveur (base en `127.0.0.1:5432`) : `DATABASE_SSLMODE=disable`, choisi par `configure.sh`, accepté pour une base locale seulement (`docs/DEPLOYMENT.md`, « Connexion chiffrée à la base ») ; le port de la base ne doit jamais être joignable depuis Internet.
 - Certificat de la base : le worker et `migrate.sh` le vérifient avec `deploy/supabase-ca.crt` (`DATABASE_SSLMODE=verify-full`, défaut). Si `migrate.sh` affiche « certificat du serveur de la base NON vérifié », rien n'est modifié : suivre le contrôle de `docs/DEPLOYMENT.md` (« Connexion chiffrée à la base ») avec le propriétaire ; le repli `DATABASE_SSLMODE=no-verify` (ancien mode, sans vérification) est sa décision, jamais un réflexe.
 - HTTPS en échec : un enregistrement AAAA qui pointe ailleurs, ou un DNS pas encore propagé. Caddy réessaie tout seul (voir ses journaux).
 - Les variables `NEXT_PUBLIC_*` sont intégrées à la construction du site : après un changement de domaine, d'URL ou de clé publishable, relancer `sudo bash deploy/install.sh`, qui reconstruit.

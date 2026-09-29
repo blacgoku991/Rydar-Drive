@@ -113,7 +113,8 @@ while :; do
   ask NEXT_PUBLIC_SUPABASE_URL "URL du projet Supabase"
   url="${answer%/}"
   if [[ "$url" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
-    [[ "$url" =~ ^https://.*\.supabase\.co$ ]] || echo "  ⚠ adresse inhabituelle (attendu : https://xxxx.supabase.co)"
+    [[ "$url" =~ ^https://.*\.supabase\.co$ ]] \
+      || echo "  ⚠ adresse hors supabase.co : normal pour un Supabase auto-hébergé, sinon attendu https://xxxx.supabase.co"
     put NEXT_PUBLIC_SUPABASE_URL "$url"
     break
   fi
@@ -161,6 +162,7 @@ done
 # ------------------------------------------------------------------ Base de données
 echo
 echo "Base : Supabase → bouton « Connect » → « Session pooler » (port 5432) → copiez la chaîne telle quelle."
+echo "  (Supabase auto-hébergé sur ce serveur : postgresql://postgres:MOT_DE_PASSE@127.0.0.1:5432/postgres)"
 while :; do
   ask DATABASE_URL "Chaîne de connexion (postgresql://…)" secret
   db="$answer"
@@ -190,11 +192,24 @@ while :; do
   if [[ "$db" != *sslmode=* ]]; then
     if [[ "$db" == *\?* ]]; then db="$db&sslmode=no-verify"; else db="$db?sslmode=no-verify"; fi
   fi
-  if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+  if command -v docker >/dev/null && docker info >/dev/null 2>&1 && pg_local_host "$db"; then
+    # Supabase auto-hébergé (base sur ce serveur ou sur un réseau privé) : connexion locale, sans chiffrement.
+    # Jamais pour une base distante (pg_local_host, même règle que le worker)
+    mode=disable
+    echo "  vérification de la connexion (1re fois : téléchargement du client PostgreSQL)…"
+    if ! db_check "$db" "$mode"; then
+      echo "  ✗ connexion impossible : $(tail -1 "$TMP/pg.err")"
+      continue
+    fi
+    echo "  ✓ connexion à la base locale réussie (non chiffrée, sur ce serveur : DATABASE_SSLMODE=disable)"
+    put DATABASE_SSLMODE "$mode"
+  elif command -v docker >/dev/null && docker info >/dev/null 2>&1; then
     # Chiffrement : certificat du serveur vérifié (verify-full, racine deploy/supabase-ca.crt) sauf repli no-verify
     mode="$(get DATABASE_SSLMODE)"
     case "${mode:-verify-full}" in
       verify-full | no-verify) mode="${mode:-verify-full}" ;;
+      # Réglage d'une ancienne base locale : une base distante est toujours chiffrée
+      disable) mode=verify-full ;;
       *) echo "  ⚠ DATABASE_SSLMODE « $mode » inconnu : verify-full"; mode=verify-full ;;
     esac
     echo "  vérification de la connexion (1re fois : téléchargement du client PostgreSQL)…"
@@ -220,6 +235,9 @@ while :; do
     put DATABASE_SSLMODE "$mode"
   else
     echo "  (Docker pas encore installé : la connexion sera vérifiée pendant l'installation)"
+    # Base locale (Supabase auto-hébergé) : sans chiffrement ; base distante : réglage actuel (verify-full par défaut)
+    if pg_local_host "$db"; then put DATABASE_SSLMODE disable
+    elif [ "$(get DATABASE_SSLMODE)" = disable ]; then put DATABASE_SSLMODE verify-full; fi
   fi
   put DATABASE_URL "$db"
   break
