@@ -56,7 +56,8 @@ la centrale doit les frais plateforme à Rydar.
 - Git : branche `claude/confident-clarke-rpfwmo` ; `git fetch`/`pull` avant push (l'utilisateur modifie aussi via le VPS) ;
   pas de PR sans demande.
 - Jamais de secret dans le chat (l'utilisateur les saisit via `sudo bash /opt/rydar/deploy/configure.sh`). Claude sur le VPS :
-  `deploy/CLAUDE-VPS.md` (pas de seed, pas de code modifié sur le serveur).
+  `deploy/CLAUDE-VPS.md` (pas de seed, pas de code modifié sur le serveur). Commande à taper par l'utilisateur : ligne
+  « COMMANDE À COPIER : » puis un seul bloc bash d'une ligne, sans commentaire.
 - Shell : jamais `pkill -f <motif>` si le motif est dans la commande (tue le shell). Sandbox : tuiles/géocodage/routage externes
   bloqués → `scripts/dev-geo/`.
 

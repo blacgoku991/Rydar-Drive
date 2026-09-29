@@ -54,15 +54,15 @@ la file si le serveur mail est injoignable, relance à son retour).
   `rydardrive.com`), e-mail qui reçoit les demandes (`contact@rydardrive.com` proposé), modèles Supabase Auth en
   français avec code à 8 chiffres (défaut : anglais, lien sans code → « Mot de passe oublié » de l'app inutilisable),
   copie des sauvegardes hors du VPS, `/admin/legal`, centrale « Démo App Review ».
-- Commits locaux du VPS (`14fd3d4` base locale, `3e33625` ascAppId) REPRIS sur GitHub : `DATABASE_SSLMODE=disable`
-  accepté pour une base LOCALE seulement (localhost, 127.x, ::1, 10.x, 172.16-31.x, 192.168.x, nom sans point ;
-  `isLocalDbHost` = `pg_local_host`), refusé sinon ; `configure.sh` le choisit seul pour une base locale ;
-  `ascAppId` 6816428044 dans `apps/driver/eas.json`. Le VPS (DATABASE_URL `127.0.0.1:5432`) doit abandonner ses
-  commits locaux (sauvegarde de branche puis `git reset --hard origin/…`, puis `install.sh`) au lieu d'un rebase.
-- VPS, suite du 29/09 : Postfix pour le site ET pour Supabase Auth (modèles français, code à 8 chiffres, signés DKIM),
-  demandes → contact@rydardrive.com, copie chiffrée des sauvegardes prête (clés OVH Object Storage à saisir par
-  l'utilisateur), DNS du domaine chez my-ndns (ns3/ns4.my-ndns.com) et non OVH, DNS inverse fait chez OVH ;
-  redémarrage (38 mises à jour) à faire en présence de l'utilisateur.
+- VPS au 29/09 (après redémarrage) : sur le commit GitHub `f1aadd2` (commits locaux abandonnés, sauvegarde
+  `backup/avant-reprise-20260929-1629`), mises à jour Ubuntu installées, worker `"dbSsl":"disable"`, 0 migration,
+  mailer `smtpReady`. Supabase auto-hébergé (`/opt/supabase`) ; worker → `supavisor:5432` par
+  `deploy/docker-compose.override.yml` (non versionné, réseau `supabase_default`, `WORKER_DATABASE_URL`, monte aussi
+  `Caddyfile.local` pour `api.rydardrive.com`) ; migrations et mailer → `127.0.0.1:5432` (Supavisor publié en local).
+  Postfix sert aussi Supabase Auth (modèles français, code à 8 chiffres, DKIM) ; demandes → contact@rydardrive.com ;
+  DNS du domaine chez my-ndns (SPF, DKIM `rydar._domainkey`, DMARC), DNS inverse chez OVH. Reste : essais (Gmail
+  SPF/DKIM/DMARC PASS, formulaire, mot de passe oublié), clés OVH Object Storage de la copie chiffrée hors VPS,
+  `/admin/legal`, « Démo App Review », puis stores (ascAppId 6816428044 dans `eas.json`).
 
 ## À faire par l'utilisateur
 - Mettre à jour le VPS : `cd /opt/rydar && bash deploy/update-production.sh` (migrations 003600 à 005700, nouveau

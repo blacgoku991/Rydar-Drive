@@ -220,6 +220,16 @@ ne l'acceptent que pour une base locale : `localhost`, `127.x`, `::1`, adresse p
 `192.168.x`) ou conteneur Docker (nom sans point, ex. `supavisor`) ; pour toute autre base, le worker refuse de démarrer
 et `migrate.sh` s'arrête. Le port de la base ne doit alors jamais être joignable depuis Internet.
 
+Montage en production (rydardrive.com), hors dépôt :
+- `/opt/supabase` : Supabase auto-hébergé ; `docker-compose.rydar.yml` y publie le port de Supavisor sur `127.0.0.1:5432`
+  seulement : `DATABASE_URL` en `127.0.0.1:5432` pour les migrations (`migrate.sh`, réseau de l'hôte) et le mailer
+  (réseau de l'hôte) ;
+- `deploy/docker-compose.override.yml` (non versionné, lu automatiquement par `docker compose`) : rattache le worker au
+  réseau Docker `supabase_default` et remplace sa `DATABASE_URL` par `WORKER_DATABASE_URL` (`supavisor:5432`) ; monte
+  aussi `Caddyfile.local` dans Caddy (`api.DOMAIN` → Supabase) ;
+- ces fichiers, `deploy/.env` et la configuration de `/opt/supabase` doivent être dans la sauvegarde chiffrée : sans eux,
+  une réinstallation repart de zéro.
+
 **Contrôle** (une fois après la mise à jour qui introduit la vérification, puis après tout changement de ce réglage) :
 
 1. Racine versionnée : `openssl x509 -in deploy/supabase-ca.crt -noout -subject -enddate -fingerprint -sha256` doit
