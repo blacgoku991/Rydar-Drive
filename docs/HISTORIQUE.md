@@ -205,6 +205,10 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   aucun emoji (FLEET_REPORT_META.ionicon dans l'app, .emoji seulement pour le web), aucune animation décorative en boucle, pas de
   lueur/dégradé/flou décoratif, pas de pastille d'icône teintée ; couleur = information ; casse normale ; « Course 1692 » ;
   espace insécable avant ? : ; ! ; cibles ≥ 48 px (56 en conduite) ; texte d'information en `muted`, jamais `subtle`.
+- **Carte chauffeur (`components/map/follow.ts`)** : un geste suspend le suivi le temps du geste (contacts RN sur le
+  MapView + mouvements de la carte, classe `MapGestures`) ; chauffeur resté près du centre → suivi gardé (zoom,
+  orientation) ; carte déplacée ailleurs → « Recentrer » + retour auto après 10 s en roulant ; rotation à deux doigts
+  partout, boussole hors guidage (flèche iOS = cap − orientation de la carte).
 - **Session Claude sur le VPS de production (`/opt/rydar`) : suivre `deploy/CLAUDE-VPS.md`** (secrets jamais dans le chat, pas de seed,
   pas de code modifié sur le serveur).
 - [x] **Audit de sécurité maximal (09/2026, `docs/AUDIT.md`)** : 21 auditeurs → 170 constats → contre-expertise (0 réfuté) →

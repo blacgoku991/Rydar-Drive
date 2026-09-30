@@ -7,8 +7,8 @@ export type Coord = [number, number];
 export type MapReport = LatLng & { id: string; type: FleetReportType };
 
 export type RydarMapProps = {
-  /** Position du chauffeur (précision en mètres : cercle d'incertitude) */
-  me?: (LatLng & { heading?: number | null; accuracy?: number | null; speed?: number | null }) | null;
+  /** Position du chauffeur (précision en mètres : cercle d'incertitude ; at : horodatage du point, ms) */
+  me?: (LatLng & { heading?: number | null; accuracy?: number | null; speed?: number | null; at?: number | null }) | null;
   pickup?: LatLng | null;
   dropoff?: LatLng | null;
   /** Tracé de la course [lng, lat][] */

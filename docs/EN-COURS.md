@@ -22,6 +22,13 @@ Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `202
 la file si le serveur mail est injoignable, relance à son retour).
 
 ## Depuis l'audit
+- App chauffeur, carte (retour d'essai sur iPhone : « ne se recentre pas quand j'avance, impossible d'orienter la
+  vue »). Avant, tout glissement coupait le suivi jusqu'au bouton « Recentrer » et la rotation était bloquée hors
+  guidage. Désormais (`components/map/follow.ts`, `rydar-map.tsx`) : un geste suspend le suivi le temps du geste ;
+  chauffeur resté près du centre (zoom, rotation, petit glissement) → le suivi continue avec le zoom et l'orientation
+  choisis ; carte déplacée ailleurs → « Recentrer », et retour automatique après 10 s sans toucher la carte quand il
+  roule (accueil et guidage). Rotation à deux doigts partout, bouton boussole (nord en haut) quand la carte est
+  tournée, hors guidage. Tests : `follow.test.ts`. JS seul → mise à jour EAS ; à confirmer sur iPhone et Android.
 - App chauffeur : panneau de l'accueil réductible (`CollapsibleSheet`, `components/ui.tsx`) : glisser vers le bas ou
   toucher la poignée → résumé d'une ligne (état + action principale) et carte dégagée ; rouvert par glissé vers le haut,
   appui, ou automatiquement à l'arrivée d'une course. JS seul → mise à jour EAS (docs/STORES.md § 10). Vérifié au
@@ -71,8 +78,8 @@ la file si le serveur mail est injoignable, relance à son retour).
 - E-mails du formulaire de contact : `ss -ltnp | grep ':25 '` doit montrer le serveur mail (Postfix) du VPS, sinon étape
   5 de `deploy/CLAUDE-VPS.md` ; `sudo bash deploy/configure.sh` pour l'e-mail qui reçoit les demandes ; DNS : SPF (et
   DKIM, DMARC, DNS inverse) pour éviter les indésirables ; puis `/admin/contacts` → « Envoyer le test ».
-- Publier la mise à jour de l'app (panneau réductible, point de position figé) : depuis `apps/driver`,
-  `eas update --channel production --environment production --message "Panneau réductible, position à jour"`.
+- Publier la mise à jour de l'app (carte : suivi pendant les gestes, rotation, boussole) : depuis `apps/driver`,
+  `eas update --channel production --environment production --message "Carte : suivi, rotation, boussole"`.
 - Après la mise à jour : les contrôles de `docs/DEPLOYMENT.md` (section « Après la mise à jour de l'audit ») et de
   `docs/AUDIT.md` (« À vérifier en production ») ; Supabase › Authentication : code e-mail à 8 chiffres.
 - Remplir `/admin/legal`, puis faire relire les textes par un juriste.

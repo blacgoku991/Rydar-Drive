@@ -2,9 +2,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { FLEET_REPORT_META } from "@rydar/shared";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
-import MapView, { Circle, Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
+import { Platform, Pressable, StyleSheet, View, type GestureResponderEvent } from "react-native";
+import MapView, { Circle, Marker, Polyline, PROVIDER_DEFAULT, type Details, type Region } from "react-native-maps";
+import Svg, { G, Path } from "react-native-svg";
 import { colors } from "@/theme";
+import { MapGestures, headingGap, isNorthUp, nearCenter, normHeading, shouldAutoRecenter } from "./follow";
 import { MeMarker } from "./me-marker";
 import type { MapReport, RydarMapProps } from "./types";
 
@@ -78,12 +80,30 @@ function ahead(p: { lat: number; lng: number }, heading: number, m: number) {
   };
 }
 
+/** Cadrage programmé (Recentrer, boussole, reprise du suivi) : aucun mouvement de suivi pendant son animation (ms). */
+const FRAME_MS = 700;
+/** Orientation de la carte relue au plus toutes les … ms pendant un geste (flèche du chauffeur, boussole). */
+const HEADING_REFRESH_MS = 100;
+
+/** Aiguille de la boussole : pointe rouge vers le nord (tournée de l'inverse de l'orientation de la carte). */
+function CompassNeedle({ heading }: { heading: number }) {
+  return (
+    <Svg width={24} height={24} viewBox="0 0 24 24">
+      <G rotation={-heading} origin="12, 12">
+        <Path d="M12 2.5 L16.5 12 L7.5 12 Z" fill={colors.red} />
+        <Path d="M12 21.5 L16.5 12 L7.5 12 Z" fill={colors.muted} />
+      </G>
+    </Svg>
+  );
+}
+
 function RydarMapImpl({
   me, pickup, dropoff, route, routeMuted, navigation = false, dim, padding = DEFAULT_PADDING, zoom = 16, reports, selectedReportId, onReportPress, focus,
   controlsBottom = 24,
 }: RydarMapProps) {
   const ref = useRef<MapView>(null);
-  // Suivi du chauffeur tant qu'il ne déplace pas la carte à la main ; bouton « Recentrer » ensuite
+  // Suivi du chauffeur : suspendu le temps d'un geste, arrêté quand la carte est déplacée ailleurs (bouton « Recentrer »,
+  // retour automatique quand il roule)
   const [follow, setFollow] = useState(true);
   const followRef = useRef(true);
   followRef.current = follow;
@@ -97,14 +117,54 @@ function RydarMapImpl({
   // Tracé repéré par son arrivée : le tracé restant du guidage raccourcit à chaque point sans recadrer la carte
   const routeEnd = route && route.length > 1 ? route[route.length - 1] : null;
   const key = `${pickup?.lat},${pickup?.lng},${dropoff?.lat},${dropoff?.lng},${routeEnd?.[0]},${routeEnd?.[1]},${hasMe ? 1 : 0},${focus?.lat},${focus?.lng},${navigation}`;
-  // Orientation de la carte (guidage : sens de marche ; sinon nord en haut)
+  // Orientation de la carte : sens de marche en guidage, sinon nord en haut ou celle choisie à deux doigts
   const [camHeading, setCamHeading] = useState(0);
   const camHeadingRef = useRef(0);
   const lastNavCamera = useRef(0);
-  const height = useRef(0);
-  // Dernières valeurs pour « Recentrer » (position à jour, pas celle du dernier cadrage)
-  const latest = useRef({ me, pickup, dropoff, routeCoords, focus, padding, zoom, navigation });
-  latest.current = { me, pickup, dropoff, routeCoords, focus, padding, zoom, navigation };
+  const size = useRef({ width: 0, height: 0 });
+  const frameAt = useRef(0);
+  const headingAt = useRef(0);
+  const alive = useRef(true);
+  // Dernières valeurs pour « Recentrer » et les rappels de la carte (position à jour, pas celle du dernier cadrage)
+  const latest = useRef({ me, pickup, dropoff, routeCoords, focus, padding, zoom, navigation, framed });
+  latest.current = { me, pickup, dropoff, routeCoords, focus, padding, zoom, navigation, framed };
+  /**
+   * Gestes du chauffeur. Carte immobile après un geste qui l'a bougée : chauffeur resté près du centre (zoom, rotation,
+   * petit glissement) → le suivi continue ; carte déplacée ailleurs → « Recentrer ». Guidage, course cadrée ou
+   * signalement ouvert : tout geste arrête le suivi.
+   */
+  const [gestures] = useState(
+    () =>
+      new MapGestures((g) => {
+        const { me, navigation, focus, framed } = latest.current;
+        if (navigation || framed || focus || !me) {
+          setFollow(false);
+          return;
+        }
+        ref.current
+          ?.pointForCoordinate(toLL(me))
+          .then((p) => {
+            if (alive.current && !g.busy) setFollow(nearCenter(p, size.current));
+          })
+          .catch(() => {
+            if (alive.current) setFollow(false);
+          });
+      }),
+  );
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      gestures.dispose();
+    };
+  }, [gestures]);
+
+  const showHeading = useCallback((h: number) => {
+    const n = normHeading(h);
+    if (headingGap(n, camHeadingRef.current) <= 1) return;
+    camHeadingRef.current = n;
+    setCamHeading(n);
+  }, []);
 
   /** Caméra de guidage : chauffeur un peu sous le centre, carte tournée dans son sens de marche. */
   const navCamera = useCallback((duration: number) => {
@@ -114,25 +174,19 @@ function RydarMapImpl({
     const heading = me.heading ?? camHeadingRef.current;
     const z = navZoom(me.speed ?? null);
     const metersPerPx = (156_543.03 * Math.cos((me.lat * Math.PI) / 180)) / 2 ** z;
-    const center = ahead(me, heading, height.current * NAV_LOOK_AHEAD * metersPerPx);
+    const center = ahead(me, heading, size.current.height * NAV_LOOK_AHEAD * metersPerPx);
     ref.current?.animateCamera({ center, heading, zoom: z, altitude: altitudeFor(z), pitch: 0 }, { duration });
-    if (heading !== camHeadingRef.current) {
-      camHeadingRef.current = heading;
-      setCamHeading(heading);
-    }
-  }, []);
+    showHeading(heading);
+  }, [showHeading]);
 
   const frame = useCallback(() => {
     const { me, pickup, dropoff, routeCoords, focus, padding, zoom, navigation } = latest.current;
+    // Bilan de geste en attente sans objet : l'app recadre la carte
+    gestures.drop();
+    frameAt.current = Date.now();
     if (navigation && me && !focus) {
       navCamera(600);
       return;
-    }
-    // Fin du guidage : retour au nord en haut avant de cadrer
-    if (camHeadingRef.current !== 0) {
-      camHeadingRef.current = 0;
-      setCamHeading(0);
-      ref.current?.setCamera({ heading: 0 });
     }
     if (focus) {
       ref.current?.animateCamera({ center: toLL(focus), zoom, altitude: altitudeFor(zoom), pitch: 0 }, { duration: 600 });
@@ -142,9 +196,39 @@ function RydarMapImpl({
     if (pickup) pts.push(toLL(pickup));
     if (dropoff) pts.push(toLL(dropoff));
     if (me && (pickup || dropoff)) pts.push(toLL(me));
-    if (pts.length > 1) ref.current?.fitToCoordinates(pts, { edgePadding: padding, animated: true });
-    else if (me) ref.current?.animateCamera({ center: toLL(me), zoom, altitude: altitudeFor(zoom), pitch: 0, heading: 0 }, { duration: 600 });
-  }, [navCamera]);
+    if (pts.length > 1) {
+      // Vue d'ensemble de la course (fin du guidage comprise) : nord en haut avant de cadrer
+      if (!isNorthUp(camHeadingRef.current)) {
+        camHeadingRef.current = 0;
+        setCamHeading(0);
+        ref.current?.setCamera({ heading: 0 });
+      }
+      ref.current?.fitToCoordinates(pts, { edgePadding: padding, animated: true });
+    } else if (me) {
+      // Chauffeur seul, à l'échelle de la rue ; orientation choisie à deux doigts conservée (boussole pour le nord)
+      ref.current?.animateCamera({ center: toLL(me), zoom, altitude: altitudeFor(zoom), pitch: 0 }, { duration: 600 });
+    }
+  }, [navCamera, gestures]);
+
+  /** Retour sur le chauffeur sans changer le zoom ni l'orientation choisis (guidage : caméra de navigation). */
+  const resume = useCallback(() => {
+    const { me, navigation } = latest.current;
+    gestures.drop();
+    followRef.current = true;
+    setFollow(true);
+    if (!me) return;
+    frameAt.current = Date.now();
+    if (navigation) navCamera(600);
+    else ref.current?.animateCamera({ center: toLL(me) }, { duration: 600 });
+  }, [navCamera, gestures]);
+
+  /** Boussole : nord en haut, même centre et même zoom. */
+  const northUp = useCallback(() => {
+    frameAt.current = Date.now();
+    camHeadingRef.current = 0;
+    setCamHeading(0);
+    ref.current?.animateCamera({ heading: 0 }, { duration: 400 });
+  }, []);
 
   // Cadrage : signalement ciblé, course (tracé + points), sinon le chauffeur à l'échelle de la rue
   useEffect(() => {
@@ -152,20 +236,74 @@ function RydarMapImpl({
     frame();
   }, [key, frame]);
 
-  // Suivi : la carte accompagne le chauffeur. Guidage : position, cap et zoom
+  // Suivi : la carte accompagne le chauffeur, jamais pendant un geste. Guidage : position, cap et zoom
   useEffect(() => {
-    if (!follow || !me || focus || !navigation) return;
+    if (!follow || !me || focus || !navigation || gestures.busy) return;
     if (Date.now() - lastNavCamera.current >= NAV_CAMERA_MS) navCamera(900);
   }, [follow, me?.lat, me?.lng, me?.heading, focus, navigation, navCamera]);
-  // Hors guidage : centre seulement, zoom choisi conservé (un changement de cap, boussole comprise, ne bouge pas la carte)
+  // Hors guidage : centre seulement, zoom et orientation choisis conservés (un changement de cap, boussole comprise,
+  // ne bouge pas la carte)
   useEffect(() => {
-    if (!follow || !me || focus || navigation || framed) return;
+    if (!follow || !me || focus || navigation || framed || gestures.busy) return;
+    // Cadrage en cours (Recentrer, boussole, reprise) : il place déjà la carte
+    if (Date.now() - frameAt.current < FRAME_MS) return;
     ref.current?.animateCamera({ center: toLL(me) }, { duration: 500 });
   }, [follow, me?.lat, me?.lng, framed, focus, navigation]);
 
+  /** Orientation réelle de la carte (rotation à deux doigts, cap refusé) : flèche du chauffeur et boussole justes. */
+  const refreshHeading = useCallback((force: boolean) => {
+    const now = Date.now();
+    if (!force && now - headingAt.current < HEADING_REFRESH_MS) return;
+    headingAt.current = now;
+    ref.current
+      ?.getCamera()
+      .then((c) => {
+        if (alive.current) showHeading(c.heading ?? 0);
+      })
+      .catch(() => null);
+  }, [showHeading]);
+
+  const onTouchStart = useCallback(() => gestures.touchStart(), [gestures]);
+  const onTouchEnd = useCallback((e: GestureResponderEvent) => gestures.touchEnd(e.nativeEvent.touches?.length ?? 0), [gestures]);
+  const onPanDrag = useCallback(() => gestures.panDrag(), [gestures]);
+
+  const onRegionChange = useCallback((_region: Region, details?: Details) => {
+    // iOS : les animations de l'app n'émettent rien, tout mouvement vient du chauffeur ou de la carte elle-même (double
+    // appui) ; Android : isGesture
+    const gesture = Platform.OS === "ios" || details?.isGesture === true;
+    gestures.regionChange(gesture);
+    if (gesture) refreshHeading(false);
+  }, [gestures, refreshHeading]);
+
+  const onRegionChangeComplete = useCallback(() => {
+    refreshHeading(true);
+    gestures.regionChangeComplete();
+  }, [gestures, refreshHeading]);
+
+  // Chaque seconde : geste resté sans fin (contact perdu) ; retour automatique sur le chauffeur quand il roule et
+  // ne touche plus la carte (accueil et guidage ; une course cadrée ou un signalement ouvert restent où ils sont)
+  useEffect(() => {
+    const t = setInterval(() => {
+      gestures.tick();
+      if (followRef.current || gestures.busy) return;
+      const { me, navigation, framed, focus } = latest.current;
+      if (!me || !(navigation || (!framed && !focus))) return;
+      if (shouldAutoRecenter(me, gestures.lastTouchAt, Date.now())) resume();
+    }, 1000);
+    return () => clearInterval(t);
+  }, [gestures, resume]);
+
   const accuracy = me?.accuracy ?? null;
+  const showCompass = !navigation && !isNorthUp(camHeading);
+  const showRecenter = !follow && (me != null || framed);
   return (
-    <View style={StyleSheet.absoluteFill} onLayout={(e) => (height.current = e.nativeEvent.layout.height)}>
+    <View
+      style={StyleSheet.absoluteFill}
+      onLayout={(e) => {
+        const { width, height } = e.nativeEvent.layout;
+        size.current = { width, height };
+      }}
+    >
       <MapView
         ref={ref}
         style={StyleSheet.absoluteFill}
@@ -175,25 +313,17 @@ function RydarMapImpl({
         showsCompass={false}
         showsPointsOfInterests={false}
         toolbarEnabled={false}
-        // Carte à plat, nord en haut : lisible d'un coup d'œil au volant. Guidage : rotation permise, sinon Apple Plans
-        // ignore le cap de la caméra (la carte ne tournerait pas dans le sens de marche)
+        // Carte à plat, lisible d'un coup d'œil au volant. Rotation à deux doigts partout (boussole pour revenir au
+        // nord) ; en guidage, la carte tourne d'elle-même dans le sens de marche
         pitchEnabled={false}
-        rotateEnabled={navigation}
+        rotateEnabled
         showsBuildings={false}
-        onPanDrag={() => {
-          if (followRef.current) setFollow(false);
-        }}
-        onRegionChangeComplete={() => {
-          if (!navigation) return;
-          // Orientation réelle de la carte (geste de rotation, cap refusé) : la flèche du chauffeur reste juste
-          void ref.current?.getCamera().then((c) => {
-            const h = ((c.heading % 360) + 360) % 360;
-            if (Math.abs(((h - camHeadingRef.current + 540) % 360) - 180) > 1) {
-              camHeadingRef.current = h;
-              setCamHeading(h);
-            }
-          }).catch(() => null);
-        }}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
+        onPanDrag={onPanDrag}
+        onRegionChange={onRegionChange}
+        onRegionChangeComplete={onRegionChangeComplete}
         initialRegion={me ? { ...toLL(me), latitudeDelta: 0.01, longitudeDelta: 0.01 } : { latitude: 48.8634, longitude: 2.3488, latitudeDelta: 0.12, longitudeDelta: 0.12 }}
       >
         {mutedCoords && <Polyline coordinates={mutedCoords} strokeColor="rgba(158,165,177,0.45)" strokeWidth={4} lineDashPattern={[2, 8]} />}
@@ -223,19 +353,35 @@ function RydarMapImpl({
         {me && <MeMarker me={me} mapHeading={camHeading} navigation={navigation} />}
       </MapView>
       {dim && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(6,7,9,0.55)" }]} />}
-      {!follow && (me || framed) && (
-        <Pressable
-          onPress={() => {
-            setFollow(true);
-            frame();
-          }}
-          style={({ pressed }) => [styles.recenter, { bottom: controlsBottom, opacity: pressed ? 0.8 : 1 }]}
-          accessibilityRole="button"
-          accessibilityLabel={navigation ? "Reprendre le guidage" : "Recentrer la carte"}
-          hitSlop={6}
-        >
-          <Ionicons name={navigation ? "navigate" : "locate"} size={22} color={colors.fg} />
-        </Pressable>
+      {/* Commandes de la carte, au-dessus des panneaux : boussole (carte tournée), puis « Recentrer » au plus près du pouce */}
+      {(showCompass || showRecenter) && (
+        <View style={[styles.controls, { bottom: controlsBottom }]} pointerEvents="box-none">
+          {showCompass && (
+            <Pressable
+              onPress={northUp}
+              style={({ pressed }) => [styles.control, { opacity: pressed ? 0.8 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Remettre le nord en haut"
+              hitSlop={6}
+            >
+              <CompassNeedle heading={camHeading} />
+            </Pressable>
+          )}
+          {showRecenter && (
+            <Pressable
+              onPress={() => {
+                setFollow(true);
+                frame();
+              }}
+              style={({ pressed }) => [styles.control, { opacity: pressed ? 0.8 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel={navigation ? "Reprendre le guidage" : "Recentrer la carte"}
+              hitSlop={6}
+            >
+              <Ionicons name={navigation ? "navigate" : "locate"} size={22} color={colors.fg} />
+            </Pressable>
+          )}
+        </View>
       )}
     </View>
   );
@@ -247,8 +393,9 @@ export const RydarMap = memo(RydarMapImpl);
 const styles = StyleSheet.create({
   pickup: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.brand, borderWidth: 5, borderColor: "#0b0d10" },
   dropoff: { width: 16, height: 16, borderRadius: 3, backgroundColor: colors.fg, borderWidth: 4, borderColor: "#0b0d10" },
-  recenter: {
-    position: "absolute", right: 16, width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center",
+  controls: { position: "absolute", right: 16, alignItems: "center", gap: 12 },
+  control: {
+    width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center",
     backgroundColor: "rgba(17,19,24,0.94)", borderWidth: 1, borderColor: colors.lineStrong,
   },
   reportWrap: { alignItems: "center", paddingTop: 4, paddingHorizontal: 4 },
