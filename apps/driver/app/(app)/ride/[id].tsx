@@ -19,6 +19,7 @@ import { useNavigation } from "@/hooks/use-navigation";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { setHighAccuracy } from "@/lib/location";
+import { overdue, overdueHint } from "@/lib/planning";
 import { navUrl, rideTarget, type NavApp, type RideTarget } from "@/lib/ride-target";
 import { approachSeconds, colors, control, mono, overlay, radius, space, type, weight } from "@/theme";
 
@@ -166,6 +167,8 @@ export default function RideScreen() {
   const etaToTarget = nav.remainingS ?? estimatedEta;
   const distLeft = nav.remainingM ?? distToTarget;
   const guiding = navOn && (nav.next != null || nav.rerouting);
+  // Planifiée pas démarrée à l'heure : encore démarrable, clôturée par le serveur quelques heures après (lib/planning)
+  const late = overdue(ride);
   const navApp = Platform.OS === "ios" ? "Plans" : "Maps";
 
   async function advance() {
@@ -261,6 +264,15 @@ export default function RideScreen() {
       <Sheet style={styles.sheet}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           {toPickup && <PickupShiftBanner ride={ride} tz={home?.organization.timezone} />}
+          {late && (
+            <View style={styles.late} accessibilityLiveRegion="polite">
+              <Ionicons name="time-outline" size={20} color={colors.amber} style={styles.iconTop} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lateTitle}>Heure de prise en charge dépassée</Text>
+                <Text style={styles.lateSub}>{overdueHint(late, home?.organization.timezone)}</Text>
+              </View>
+            </View>
+          )}
           {step && <StepDots steps={STEPS.map((s) => s.label)} current={stepIndex} />}
 
           <View style={styles.targetRow}>
@@ -444,6 +456,12 @@ const styles = StyleSheet.create({
     flexDirection: "row", gap: space.md, padding: space.lg, borderRadius: radius.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
   },
   iconTop: { marginTop: 1 },
+  late: {
+    flexDirection: "row", alignItems: "flex-start", gap: space.md, padding: space.lg, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface2,
+  },
+  lateTitle: { color: colors.amber, fontSize: type.body, fontWeight: weight.semibold, lineHeight: 21 },
+  lateSub: { color: colors.muted, fontSize: type.footnote, lineHeight: 18, marginTop: 2 },
   noteLabel: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium, marginBottom: 2 },
   noteText: { color: colors.fg, fontSize: type.body, lineHeight: 21 },
   footer: {

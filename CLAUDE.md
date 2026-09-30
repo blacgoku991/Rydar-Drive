@@ -80,6 +80,8 @@ la centrale doit les frais plateforme à Rydar.
   NO_DRIVER_FOUND + explication ; position fraîche seulement ; planifiée = offre à toute la flotte puis géo à T-lead.
   Accept atomique (`accept_ride_offer`, verrou course + chauffeur, index unique) → « Course déjà attribuée. » ; course attribuée
   pendant une autre = enchaînée à la fin (`private.release_driver_ride`).
+- Planifiée acceptée jamais démarrée : annulée « Non effectuée » 6 h après l'heure de prise en charge
+  (`private.expire_unstarted_rides` via le ménage, `UNSTARTED_RIDE_EXPIRY_HOURS`) ; avant, l'app l'affiche « heure dépassée ».
 - Présence : app ouverte (même arrière-plan / verrouillé) = en ligne + GPS en direct ; app fermée → hors ligne après 3 min (15 si app < 1.1.0) sans
   position ni `driver_heartbeat` (`private.watch_driver_gps`, jamais en course), sans notification.
 - Centrale : `ride_settlements` (due→declared→paid|disputed|waived) ; moyens chauffeur = lien | virement (RIB) | espèces | autre,

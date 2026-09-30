@@ -196,7 +196,7 @@ Tâches périodiques :
 | --- | --- | --- |
 | `private.dispatch_tick()` | 2 s (`DISPATCH_TICK_MS`) | vagues, délais des offres, bascule des planifiées |
 | notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s ; relances WhatsApp (`private.claim_whatsapp`, [WHATSAPP.md](WHATSAPP.md)) |
-| `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | durées de conservation (§ 6) : positions, messages, notifications, journaux (celui de Supabase Auth une fois par heure), adresses IP, courses, bannissements (`private.purge_expired_bans`) ; un échec de la purge des courses, des bannissements ou du journal Auth est renvoyé dans `errors` (journal `housekeeping incomplete`, niveau warn) sans bloquer le reste ; ne met jamais un chauffeur hors ligne |
+| `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | courses planifiées acceptées jamais démarrées : annulées « Non effectuée » 6 h après l'heure de prise en charge (`private.expire_unstarted_rides`, compteur `rides_expired`) ; durées de conservation (§ 6) : positions, messages, notifications, journaux (celui de Supabase Auth une fois par heure), adresses IP, courses, bannissements (`private.purge_expired_bans`) ; un échec de la purge des courses, des bannissements ou du journal Auth est renvoyé dans `errors` (journal `housekeeping incomplete`, niveau warn) sans bloquer le reste ; ne met jamais un chauffeur hors ligne |
 | `private.purge_contact_data()` | 5 min (juste après la précédente) | formulaire de contact : demandes de plus de 3 ans, demandes indésirables de plus de 30 jours, e-mails sans demande (e-mails de test) de plus d'un an, une fois envoyés ou en échec (journal `contact data purged`). Appel séparé : son échec (warn) ne touche pas au ménage ; avant sa migration (005700), un seul avertissement, sans erreur |
 | `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |
 | `private.watch_driver_gps()` | 30 s (`WATCH_DRIVER_GPS_MS`) | application fermée (ni position ni signe de vie depuis 3 min) : chauffeur hors ligne, sans notification (jamais en course) |
@@ -437,7 +437,7 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
   signataire pour les CGV et l'accord de traitement) ;
 - les durées annoncées par `/confidentialite` (§ 9 et § 10), `/suppression-compte` et `/dpa` (§ 11) sont appliquées
   par le code :
-  - `private.housekeeping` (worker, toutes les 5 min ; dernière définition : migration 004800, toute redéfinition
+  - `private.housekeeping` (worker, toutes les 5 min ; dernière définition : migration 005900, toute redéfinition
     part de celle-ci) : historique des positions, et position du chauffeur relevée par une alerte close, 30 jours ;
     messages, signalements de la flotte (copie dans le journal comprise) et signalements de messages 180 jours ;
     notifications (90 jours après l'envoi prévu) et journaux d'API 90 jours ; adresse IP et navigateur du journal

@@ -54,6 +54,12 @@ export const DRIVER_FLOW: Partial<Record<RideStatus, { next: RideStatus; label: 
   IN_PROGRESS: { next: "COMPLETED", label: "Terminer la course", hint: "Arrivé à destination" },
 };
 
+/**
+ * Course planifiée acceptée mais jamais démarrée : clôturée par le serveur (annulée, motif « Non effectuée ») ce nombre
+ * d'heures après l'heure de prise en charge. Même valeur que private.expire_unstarted_rides (migration 20260924005900).
+ */
+export const UNSTARTED_RIDE_EXPIRY_HOURS = 6;
+
 /** Filtres de l'écran Courses (dashboard). */
 export const RIDE_FILTERS = [
   { key: "all", label: "Toutes" },

@@ -239,6 +239,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.watch_driver_gps() (app fermée → hors ligne), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.
 - Formulaire de contact (005700) : service role svc_contact_submit (demande + e-mails en une transaction) ; worker
   private.purge_contact_data() (ménage) ; mailer private.claim_emails(n), private.complete_email(id, ok, erreur, définitif) ;
-  LISTEN rydar_emails. 005800 : mailer private.report_mailer_status(jsonb) (table public.mailer_status, lecture super
+  LISTEN rydar_emails. 005900 : private.expire_unstarted_rides(limite) (planifiées acceptées jamais démarrées,
+  annulées 6 h après l'heure, via private.housekeeping). 005800 : mailer private.report_mailer_status(jsonb) (table public.mailer_status, lecture super
   admin), private.release_emails(ids) (lot rendu sans essai compté), private.requeue_waiting_emails() (relance au retour
   du serveur mail et au démarrage).

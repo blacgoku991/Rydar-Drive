@@ -19,6 +19,7 @@ import { batteryRestricted, requestBatteryExemption } from "@/lib/battery";
 import { useFleetRules } from "@/lib/chat-moderation";
 import { useAppEvent } from "@/lib/events";
 import { locationPermissionBlocked } from "@/lib/location";
+import { overdue } from "@/lib/planning";
 import { colors, control, mono, overlay, presenceColor, radius, space, type, weight } from "@/theme";
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -321,6 +322,8 @@ export default function Home() {
 
   const next = home?.next_scheduled ?? null;
   const nextWhen = next ? formatRideDate(next.pickup_at, home?.organization.timezone) : "";
+  // Prochaine course dont l'heure est passée sans démarrage : signalée (clôturée par le serveur quelques heures après)
+  const nextLate = next != null && overdue({ type: "scheduled", status: "ACCEPTED", pickup_at: next.pickup_at }, now) != null;
   const nextPrice = next ? formatPrice(centrale && next.driver_payout_cents != null ? next.driver_payout_cents : next.price_cents) : "";
 
   return (
@@ -334,6 +337,7 @@ export default function Home() {
         onReportPress={onReportPress}
         focus={focus}
         controlsBottom={bottomH + GAP}
+        controlsTop={insets.top + 72}
       />
 
       {/* Barre supérieure : profil, gains du jour, messages, planning */}
@@ -499,11 +503,14 @@ export default function Home() {
                       onPress={() => router.push({ pathname: "/ride/[id]", params: { id: next.id } })}
                       style={({ pressed }) => [styles.next, pressed && { backgroundColor: colors.surface3 }]}
                       accessibilityRole="button"
-                      accessibilityLabel={`Prochaine course, ${nextWhen}, de ${shortAddress(next.pickup_address)} à ${shortAddress(next.dropoff_address)}, ${nextPrice}`}
+                      accessibilityLabel={`Prochaine course, ${nextWhen}${nextLate ? ", heure dépassée" : ""}, de ${shortAddress(next.pickup_address)} à ${shortAddress(next.dropoff_address)}, ${nextPrice}`}
                     >
-                      <Ionicons name="time-outline" size={20} color={colors.muted} />
+                      <Ionicons name="time-outline" size={20} color={nextLate ? colors.amber : colors.muted} />
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.nextWhen} numberOfLines={1}>{nextWhen}</Text>
+                        <Text style={styles.nextWhen} numberOfLines={1}>
+                          {nextWhen}
+                          {nextLate ? <Text style={styles.nextLate}> · heure dépassée</Text> : null}
+                        </Text>
                         <Text style={styles.nextRoute} numberOfLines={1}>
                           {shortAddress(next.pickup_address)} → {shortAddress(next.dropoff_address)}
                         </Text>
@@ -589,6 +596,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
   },
   nextWhen: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
+  nextLate: { color: colors.amber },
   nextRoute: { color: colors.muted, fontSize: type.subhead, marginTop: 2 },
   nextPrice: { color: colors.fg, fontSize: type.callout, fontWeight: weight.bold, ...mono },
 });

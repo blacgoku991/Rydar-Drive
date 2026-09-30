@@ -1,4 +1,5 @@
-// Ménage périodique (private.housekeeping, dernière définition 20260924004800) : durées de conservation annoncées
+// Ménage périodique (private.housekeeping, dernière définition 20260924005900) : courses planifiées acceptées jamais
+// démarrées clôturées 6 h après l'heure de prise en charge (« rides_expired ») ; durées de conservation annoncées
 // par /confidentialite et /dpa. Les purges longues ou hors de nos tables (courses de plus de 10 ans, bannissements de
 // plus de 3 ans, journal d'audit de Supabase Auth de plus d'un an) sont isolées en SQL : un échec revient dans
 // « errors » sans bloquer le reste du ménage et elles sont retentées au passage suivant. Journal en niveau warn dans ce

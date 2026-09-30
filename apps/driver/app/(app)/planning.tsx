@@ -9,14 +9,18 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { blockerInfo, frTypo } from "@/components/centrale";
 import { BigButton, Card, RouteLine, Screen, ScreenHeader } from "@/components/ui";
 import { alertDriverBlocked, useDriver } from "@/hooks/driver-context";
+import { useNow } from "@/hooks/use-now";
 import { api, refusalText, type AcceptResult } from "@/lib/api";
-import { myRides, waitsForCurrentRide } from "@/lib/planning";
+import { myRides, overdue, overdueHint, waitsForCurrentRide } from "@/lib/planning";
 import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
 
 const NBSP = "\u00A0";
 
 /** Instantanée attribuée pendant une autre course : le serveur refuse de la démarrer avant (DRIVER_BUSY). */
 const AFTER_CURRENT = "À démarrer après votre course en cours";
+
+/** Planifiée acceptée, heure passée, pas démarrée : clôturée par le serveur quelques heures plus tard (lib/planning). */
+const LATE = "Heure de prise en charge dépassée";
 
 /** « 3 passagers », « 1 bagage » */
 const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? many : one}`;
@@ -33,6 +37,8 @@ export default function Planning() {
   const currentRideId = home?.driver.current_ride_id ?? null;
   const available = offers.filter((o) => o.mode === "fleet");
   const mine = useMemo(() => (upcoming && driverId ? myRides(upcoming, driverId) : null), [upcoming, driverId]);
+  // Planifiées en retard : heure de clôture automatique à jour
+  const now = useNow(30_000);
 
   // « Mes courses » lues par la fiche du chauffeur (filtre côté serveur) : en même temps que l'accueil si elle est
   // connue, sinon après lui (accueil illisible : erreur affichée, jamais « Aucune course »)
@@ -143,13 +149,15 @@ export default function Planning() {
             // Instantanée attribuée : pas d'heure de prise en charge à afficher (dès que possible)
             const when = r.type === "instant" ? "Course immédiate" : formatRideDate(r.pickup_at, tz);
             const after = waitsForCurrentRide(r, currentRideId);
+            const late = overdue(r, now);
+            const lateHint = late ? overdueHint(late, tz, new Date(now)) : null;
             const amount = formatPrice(r.driver_payout_cents ?? r.price_cents);
             return (
               <Pressable
                 key={r.id}
                 onPress={() => router.push({ pathname: "/ride/[id]", params: { id: r.id } })}
                 accessibilityRole="button"
-                accessibilityLabel={`Course ${r.number}, ${when}${after ? `, ${AFTER_CURRENT.toLowerCase()}` : ""}, ${shortAddress(r.pickup_address)} vers ${shortAddress(r.dropoff_address)}, ${amount}`}
+                accessibilityLabel={`Course ${r.number}, ${when}${late ? `, ${LATE.toLowerCase()}. ${lateHint}` : ""}${after ? `, ${AFTER_CURRENT.toLowerCase()}` : ""}, ${shortAddress(r.pickup_address)} vers ${shortAddress(r.dropoff_address)}, ${amount}`}
                 accessibilityHint="Ouvre le détail de la course"
               >
                 {({ pressed }) => (
@@ -166,6 +174,15 @@ export default function Planning() {
                       <Text style={styles.price}>{amount}</Text>
                       <Ionicons name="chevron-forward" size={20} color={colors.muted} />
                     </View>
+                    {late && (
+                      <View style={styles.late}>
+                        <Ionicons name="time-outline" size={20} color={colors.amber} style={styles.lateIcon} />
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <Text style={styles.lateTitle}>{LATE}</Text>
+                          <Text style={styles.hint}>{lateHint}</Text>
+                        </View>
+                      </View>
+                    )}
                     <RouteLine from={shortAddress(r.pickup_address)} to={shortAddress(r.dropoff_address)} />
                   </Card>
                 )}
@@ -191,6 +208,9 @@ const styles = StyleSheet.create({
   when: { color: colors.fg, fontSize: type.headline, fontWeight: weight.semibold, ...mono },
   meta: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium, ...mono },
   hint: { color: colors.muted, fontSize: type.footnote, lineHeight: 18 },
+  late: { flexDirection: "row", alignItems: "flex-start", gap: space.sm },
+  lateIcon: { marginTop: 1 },
+  lateTitle: { color: colors.amber, fontSize: type.footnote, fontWeight: weight.semibold, lineHeight: 18 },
   price: { color: colors.fg, fontSize: type.headline, fontWeight: weight.bold, ...mono },
   blocked: {
     flexDirection: "row", alignItems: "center", gap: space.md, minHeight: control.md, paddingHorizontal: space.md, paddingVertical: 10,
