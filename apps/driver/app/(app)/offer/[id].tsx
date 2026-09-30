@@ -359,7 +359,8 @@ export default function OfferScreen() {
   return (
     <Screen>
       <View style={[styles.mapBox, (centrale || blocked) && { height: blocked ? "27%" : "37%" }]}>
-        <RydarMap me={me} pickup={pickup} dropoff={dropoff} route={route} padding={MAP_PADDING} />
+        {/* Offre (quelques secondes pour décider) : carte fixe, sans rotation ni boussole (compte à rebours à droite) */}
+        <RydarMap me={me} pickup={pickup} dropoff={dropoff} route={route} padding={MAP_PADDING} rotatable={false} />
         <SafeAreaView edges={["top"]} style={styles.mapTop} pointerEvents="box-none">
           <View style={styles.headBox} accessible accessibilityRole="header" accessibilityLabel={`${offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée"}, course ${offer.number}, ${category}`}>
             <Text style={styles.kicker}>{offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée"}</Text>

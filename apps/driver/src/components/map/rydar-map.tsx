@@ -6,7 +6,7 @@ import { Platform, Pressable, StyleSheet, View, type GestureResponderEvent } fro
 import MapView, { Circle, Marker, Polyline, PROVIDER_DEFAULT, type Details, type Region } from "react-native-maps";
 import Svg, { G, Path } from "react-native-svg";
 import { colors } from "@/theme";
-import { MapGestures, headingGap, isNorthUp, nearCenter, normHeading, shouldAutoRecenter } from "./follow";
+import { MapGestures, headingGap, isNorthUp, nearCenter, normHeading, shouldAutoRecenter, type TouchPoint } from "./follow";
 import { MeMarker } from "./me-marker";
 import type { MapReport, RydarMapProps } from "./types";
 
@@ -84,6 +84,15 @@ function ahead(p: { lat: number; lng: number }, heading: number, m: number) {
 const FRAME_MS = 700;
 /** Orientation de la carte relue au plus toutes les … ms pendant un geste (flèche du chauffeur, boussole). */
 const HEADING_REFRESH_MS = 100;
+/** Guidage : orientation relue seulement à la fin des mouvements de caméra (le cap visé est déjà connu). */
+const NAV_HEADING_MS = 1000;
+/** Boutons de la carte : côté et écart (px). */
+const CONTROL = 48;
+const CONTROL_GAP = 12;
+
+/** Contacts d'un événement tactile (identifiant, position à l'écran). */
+const touchPoints = (e: GestureResponderEvent): TouchPoint[] =>
+  (e.nativeEvent.changedTouches ?? []).map((t) => ({ id: String(t.identifier), x: t.pageX, y: t.pageY }));
 
 /** Aiguille de la boussole : pointe rouge vers le nord (tournée de l'inverse de l'orientation de la carte). */
 function CompassNeedle({ heading }: { heading: number }) {
@@ -99,7 +108,7 @@ function CompassNeedle({ heading }: { heading: number }) {
 
 function RydarMapImpl({
   me, pickup, dropoff, route, routeMuted, navigation = false, dim, padding = DEFAULT_PADDING, zoom = 16, reports, selectedReportId, onReportPress, focus,
-  controlsBottom = 24,
+  controlsBottom = 24, controlsTop = 0, rotatable = true,
 }: RydarMapProps) {
   const ref = useRef<MapView>(null);
   // Suivi du chauffeur : suspendu le temps d'un geste, arrêté quand la carte est déplacée ailleurs (bouton « Recentrer »,
@@ -122,8 +131,14 @@ function RydarMapImpl({
   const camHeadingRef = useRef(0);
   const lastNavCamera = useRef(0);
   const size = useRef({ width: 0, height: 0 });
+  // Hauteur de la carte (place des boutons : boussole masquée faute de place)
+  const [mapHeight, setMapHeight] = useState(0);
   const frameAt = useRef(0);
   const headingAt = useRef(0);
+  const headingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cadrage demandé pendant un geste (nouvelle course, signalement…) : fait à la fin du geste, jamais sous le doigt
+  const frameWanted = useRef(false);
+  const flushFrameRef = useRef<() => void>(() => undefined);
   const alive = useRef(true);
   // Dernières valeurs pour « Recentrer » et les rappels de la carte (position à jour, pas celle du dernier cadrage)
   const latest = useRef({ me, pickup, dropoff, routeCoords, focus, padding, zoom, navigation, framed });
@@ -135,20 +150,19 @@ function RydarMapImpl({
    */
   const [gestures] = useState(
     () =>
-      new MapGestures((g) => {
+      new MapGestures((g, gen) => {
+        const done = (next: boolean | null) => {
+          if (!alive.current || !g.finish(gen)) return;
+          if (next != null) setFollow(next);
+          flushFrameRef.current();
+        };
         const { me, navigation, focus, framed } = latest.current;
-        if (navigation || framed || focus || !me) {
-          setFollow(false);
-          return;
-        }
-        ref.current
-          ?.pointForCoordinate(toLL(me))
-          .then((p) => {
-            if (alive.current && !g.busy) setFollow(nearCenter(p, size.current));
-          })
-          .catch(() => {
-            if (alive.current) setFollow(false);
-          });
+        const map = ref.current;
+        if (navigation || framed || focus || !me || !map) return done(false);
+        map
+          .pointForCoordinate(toLL(me))
+          .then((p) => done(nearCenter(p, size.current)))
+          .catch(() => done(false));
       }),
   );
   useEffect(() => {
@@ -156,6 +170,7 @@ function RydarMapImpl({
     return () => {
       alive.current = false;
       gestures.dispose();
+      if (headingTimer.current) clearTimeout(headingTimer.current);
     };
   }, [gestures]);
 
@@ -230,11 +245,23 @@ function RydarMapImpl({
     ref.current?.animateCamera({ heading: 0 }, { duration: 400 });
   }, []);
 
-  // Cadrage : signalement ciblé, course (tracé + points), sinon le chauffeur à l'échelle de la rue
+  // Cadrage : signalement ciblé, course (tracé + points), sinon le chauffeur à l'échelle de la rue. Geste en cours :
+  // à la fin de celui-ci
   useEffect(() => {
+    if (gestures.busy) {
+      frameWanted.current = true;
+      return;
+    }
+    frameWanted.current = false;
     setFollow(true);
     frame();
-  }, [key, frame]);
+  }, [key, frame, gestures]);
+  flushFrameRef.current = () => {
+    if (!frameWanted.current || gestures.busy) return;
+    frameWanted.current = false;
+    setFollow(true);
+    frame();
+  };
 
   // Suivi : la carte accompagne le chauffeur, jamais pendant un geste. Guidage : position, cap et zoom
   useEffect(() => {
@@ -250,9 +277,23 @@ function RydarMapImpl({
     ref.current?.animateCamera({ center: toLL(me) }, { duration: 500 });
   }, [follow, me?.lat, me?.lng, framed, focus, navigation]);
 
-  /** Orientation réelle de la carte (rotation à deux doigts, cap refusé) : flèche du chauffeur et boussole justes. */
+  /**
+   * Orientation réelle de la carte (rotation à deux doigts, cap refusé) : flèche du chauffeur et boussole justes. Pendant
+   * une animation de l'app (Recentrer, boussole, reprise, guidage), relue une fois à la fin, jamais au milieu : une
+   * animation interrompue rendrait l'ancien cap (bouton boussole qui clignote).
+   */
   const refreshHeading = useCallback((force: boolean) => {
     const now = Date.now();
+    const wait = Math.max(frameAt.current + FRAME_MS, lastNavCamera.current + NAV_HEADING_MS) - now;
+    if (wait > 0) {
+      if (!headingTimer.current) {
+        headingTimer.current = setTimeout(() => {
+          headingTimer.current = null;
+          refreshHeading(true);
+        }, wait);
+      }
+      return;
+    }
     if (!force && now - headingAt.current < HEADING_REFRESH_MS) return;
     headingAt.current = now;
     ref.current
@@ -263,16 +304,21 @@ function RydarMapImpl({
       .catch(() => null);
   }, [showHeading]);
 
-  const onTouchStart = useCallback(() => gestures.touchStart(), [gestures]);
-  const onTouchEnd = useCallback((e: GestureResponderEvent) => gestures.touchEnd(e.nativeEvent.touches?.length ?? 0), [gestures]);
+  const onTouchStart = useCallback((e: GestureResponderEvent) => gestures.touchStart(touchPoints(e)), [gestures]);
+  const onTouchMove = useCallback((e: GestureResponderEvent) => gestures.touchMove(touchPoints(e)), [gestures]);
+  const onTouchEnd = useCallback((e: GestureResponderEvent) => {
+    gestures.touchEnd(touchPoints(e).map((p) => p.id));
+    flushFrameRef.current();
+  }, [gestures]);
   const onPanDrag = useCallback(() => gestures.panDrag(), [gestures]);
+  const onDoublePress = useCallback(() => gestures.doublePress(), [gestures]);
 
   const onRegionChange = useCallback((_region: Region, details?: Details) => {
-    // iOS : les animations de l'app n'émettent rien, tout mouvement vient du chauffeur ou de la carte elle-même (double
-    // appui) ; Android : isGesture
-    const gesture = Platform.OS === "ios" || details?.isGesture === true;
-    gestures.regionChange(gesture);
-    if (gesture) refreshHeading(false);
+    // Android : isGesture = mouvement dû au chauffeur. iOS : aucune certitude (un cadrage fitToCoordinates émet aussi) :
+    // les gestes sont repérés par les doigts, le glissement et le double appui
+    const user = Platform.OS === "android" && details?.isGesture === true;
+    gestures.regionChange(user);
+    if (user || gestures.busy) refreshHeading(false);
   }, [gestures, refreshHeading]);
 
   const onRegionChangeComplete = useCallback(() => {
@@ -285,6 +331,7 @@ function RydarMapImpl({
   useEffect(() => {
     const t = setInterval(() => {
       gestures.tick();
+      flushFrameRef.current();
       if (followRef.current || gestures.busy) return;
       const { me, navigation, framed, focus } = latest.current;
       if (!me || !(navigation || (!framed && !focus))) return;
@@ -294,14 +341,18 @@ function RydarMapImpl({
   }, [gestures, resume]);
 
   const accuracy = me?.accuracy ?? null;
-  const showCompass = !navigation && !isNorthUp(camHeading);
   const showRecenter = !follow && (me != null || framed);
+  // Boussole : carte tournée hors guidage, s'il reste la place au-dessus de « Recentrer » (sous la barre du haut)
+  const room = mapHeight - controlsBottom - controlsTop;
+  const showCompass =
+    rotatable && !navigation && !isNorthUp(camHeading) && (mapHeight === 0 || room >= CONTROL + (showRecenter ? CONTROL + CONTROL_GAP : 0));
   return (
     <View
       style={StyleSheet.absoluteFill}
       onLayout={(e) => {
         const { width, height } = e.nativeEvent.layout;
         size.current = { width, height };
+        setMapHeight(height);
       }}
     >
       <MapView
@@ -313,15 +364,17 @@ function RydarMapImpl({
         showsCompass={false}
         showsPointsOfInterests={false}
         toolbarEnabled={false}
-        // Carte à plat, lisible d'un coup d'œil au volant. Rotation à deux doigts partout (boussole pour revenir au
-        // nord) ; en guidage, la carte tourne d'elle-même dans le sens de marche
+        // Carte à plat, lisible d'un coup d'œil au volant. Rotation à deux doigts (boussole pour revenir au nord) ; en
+        // guidage, la carte tourne d'elle-même dans le sens de marche
         pitchEnabled={false}
-        rotateEnabled
+        rotateEnabled={rotatable || navigation}
         showsBuildings={false}
         onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
         onPanDrag={onPanDrag}
+        onDoublePress={onDoublePress}
         onRegionChange={onRegionChange}
         onRegionChangeComplete={onRegionChangeComplete}
         initialRegion={me ? { ...toLL(me), latitudeDelta: 0.01, longitudeDelta: 0.01 } : { latitude: 48.8634, longitude: 2.3488, latitudeDelta: 0.12, longitudeDelta: 0.12 }}
@@ -393,9 +446,9 @@ export const RydarMap = memo(RydarMapImpl);
 const styles = StyleSheet.create({
   pickup: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.brand, borderWidth: 5, borderColor: "#0b0d10" },
   dropoff: { width: 16, height: 16, borderRadius: 3, backgroundColor: colors.fg, borderWidth: 4, borderColor: "#0b0d10" },
-  controls: { position: "absolute", right: 16, alignItems: "center", gap: 12 },
+  controls: { position: "absolute", right: 16, alignItems: "center", gap: CONTROL_GAP },
   control: {
-    width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center",
+    width: CONTROL, height: CONTROL, borderRadius: CONTROL / 2, alignItems: "center", justifyContent: "center",
     backgroundColor: "rgba(17,19,24,0.94)", borderWidth: 1, borderColor: colors.lineStrong,
   },
   reportWrap: { alignItems: "center", paddingTop: 4, paddingHorizontal: 4 },

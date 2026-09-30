@@ -53,62 +53,130 @@ export const SETTLE_MS = 400;
 export const TOUCH_STALE_MS = 4000;
 /** Même garde quand la carte ne signale pas les contacts (glissements seuls) : fin du geste plus tôt (ms). */
 export const DRAG_STALE_MS = 1000;
+/** Déplacement d'un doigt (px) au-delà duquel le chauffeur bouge la carte (glisser, pincer, tourner), pas un appui. */
+export const MOVE_PX = 10;
+/** Bilan sans réponse de la carte depuis ce délai (ms) : abandonné, suivi inchangé (jamais une carte bloquée). */
+export const EVAL_TIMEOUT_MS = 2000;
+
+/** Doigt sur la carte : identifiant du contact et position à l'écran. */
+export type TouchPoint = { id: string; x: number; y: number };
+
+/** Glissement signalé sans contact (la carte ne transmet pas les contacts) : doigt fictif. */
+const DRAG = "drag";
 
 /**
- * Gestes du chauffeur sur la carte : doigts posés, carte bougée, fin du geste (élan compris). onSettled est appelé une
- * fois la carte immobile après un geste qui l'a déplacée (glisser, zoomer, tourner) ; un simple appui ne compte pas.
+ * Gestes du chauffeur sur la carte : doigts posés (suivis un par un, un pouce posé ailleurs sur l'écran ne compte
+ * pas), carte bougée (doigts déplacés, glissement, double appui ; Android : mouvement de la carte dû à un geste),
+ * fin du geste (élan compris). onSettled(g, gen) est appelé une fois la carte immobile après un geste qui l'a bougée ;
+ * un simple appui ne compte pas. Le bilan (asynchrone) reste compté dans busy jusqu'à finish(gen).
  */
 export class MapGestures {
-  /** Au moins un doigt sur la carte */
-  touching = false;
+  /** Doigt posé sur la carte → position de départ */
+  private fingers = new Map<string, { x: number; y: number }>();
   /** Doigts levés, fin du mouvement attendue (élan de la carte) */
   settling = false;
   /** Dernier contact ou mouvement venu du chauffeur (ms) */
   lastTouchAt = 0;
+  private evaluating = false;
+  private evaluatingSince = 0;
+  private generation = 0;
   private moved = false;
   /** La carte signale les contacts (sinon, les glissements seuls en tiennent lieu) */
   private touchSeen = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private readonly onSettled: (g: MapGestures) => void;
+  private readonly onSettled: (g: MapGestures, gen: number) => void;
   private readonly clock: () => number;
 
-  constructor(onSettled: (g: MapGestures) => void, clock: () => number = Date.now) {
+  constructor(onSettled: (g: MapGestures, gen: number) => void, clock: () => number = Date.now) {
     this.onSettled = onSettled;
     this.clock = clock;
   }
 
-  /** Geste en cours ou pas encore terminé : la carte ne bouge pas d'elle-même. */
+  /** Au moins un doigt sur la carte */
+  get touching() {
+    return this.fingers.size > 0;
+  }
+
+  /** Geste en cours, pas encore terminé ou pas encore évalué : la carte ne bouge pas d'elle-même. */
   get busy() {
-    return this.touching || this.settling;
+    return this.touching || this.settling || this.evaluating;
   }
 
-  touchStart() {
+  touchStart(points: TouchPoint[]) {
     this.touchSeen = true;
-    this.touching = true;
-    this.lastTouchAt = this.clock();
+    if (this.evaluating) {
+      // Bilan du geste précédent pas encore rendu : repris à la fin de celui-ci (la carte a bougé)
+      this.evaluating = false;
+      this.generation += 1;
+      this.moved = true;
+    } else if (!this.touching && !this.settling) {
+      this.moved = false;
+    }
+    // Doigt ajouté pendant le geste ou pendant l'élan du précédent : un seul bilan, à la fin
     this.clearTimer();
-    // Nouveau geste pendant l'élan du précédent : un seul bilan, à la fin de celui-ci
-    if (!this.settling) this.moved = false;
+    this.settling = false;
+    for (const p of points) this.fingers.set(p.id, { x: p.x, y: p.y });
+    this.lastTouchAt = this.clock();
   }
 
-  /** Fin d'un contact ; remaining : doigts encore posés (fin d'un zoom à deux doigts : le geste continue). */
-  touchEnd(remaining: number) {
-    if (remaining > 0) return;
-    this.endTouch();
+  touchMove(points: TouchPoint[]) {
+    this.lastTouchAt = this.clock();
+    for (const p of points) {
+      const start = this.fingers.get(p.id);
+      if (!start) {
+        // Doigt toujours posé (contact tenu pour terminé faute d'événement) : de nouveau suivi
+        this.fingers.set(p.id, { x: p.x, y: p.y });
+        this.clearTimer();
+        this.settling = false;
+      } else if (Math.hypot(p.x - start.x, p.y - start.y) > MOVE_PX) {
+        this.moved = true;
+      }
+    }
+  }
+
+  /** Fin (ou annulation) de contacts : plus aucun doigt → fin du geste. */
+  touchEnd(ids: string[]) {
+    const had = this.fingers.size;
+    for (const id of ids) this.fingers.delete(id);
+    this.lastTouchAt = this.clock();
+    if (had > 0 && this.fingers.size === 0) this.endTouch();
   }
 
   /** Carte glissée au doigt. */
   panDrag() {
     this.moved = true;
     this.lastTouchAt = this.clock();
-    if (!this.touchSeen) this.touching = true;
+    if (!this.touchSeen && !this.fingers.has(DRAG)) {
+      this.fingers.set(DRAG, { x: 0, y: 0 });
+      this.clearTimer();
+      this.settling = false;
+    }
   }
 
-  /** La carte bouge ; gesture : mouvement venu du chauffeur ou de la carte elle-même, pas d'une animation de l'app. */
-  regionChange(gesture: boolean) {
-    if (!this.busy) return;
-    if (this.touching && gesture) this.moved = true;
+  /** Double appui (zoom) : geste du chauffeur, la carte bouge ensuite d'elle-même. */
+  doublePress() {
+    this.moved = true;
     this.lastTouchAt = this.clock();
+    if (!this.touching) {
+      this.settling = true;
+      this.schedule();
+    }
+  }
+
+  /**
+   * La carte bouge. user : à coup sûr à cause d'un geste (Android : isGesture), y compris sans contact signalé ou
+   * après le lever des doigts (élan, double appui) ; sinon simple indice (iOS : animations de l'app comprises).
+   */
+  regionChange(user: boolean) {
+    if (user) {
+      this.moved = true;
+      this.lastTouchAt = this.clock();
+      if (!this.touching) {
+        this.settling = true;
+        this.schedule();
+      }
+      return;
+    }
     // Élan après le geste : bilan quand la carte s'arrête
     if (this.settling && !this.touching) this.schedule();
   }
@@ -118,9 +186,17 @@ export class MapGestures {
     if (this.settling && !this.touching) this.settle();
   }
 
-  /** Appelé chaque seconde : contact resté sans fin (événement perdu) tenu pour terminé. */
+  /** Appelé chaque seconde : contact resté sans fin (événement perdu), bilan resté sans réponse. */
   tick() {
-    if (this.touching && this.clock() - this.lastTouchAt > (this.touchSeen ? TOUCH_STALE_MS : DRAG_STALE_MS)) this.endTouch();
+    const now = this.clock();
+    if (this.touching && now - this.lastTouchAt > (this.touchSeen ? TOUCH_STALE_MS : DRAG_STALE_MS)) {
+      this.fingers.clear();
+      this.endTouch();
+    }
+    if (this.evaluating && now - this.evaluatingSince > EVAL_TIMEOUT_MS) {
+      this.evaluating = false;
+      this.generation += 1;
+    }
   }
 
   /** Bilan en attente devenu sans objet (carte recadrée par l'app). */
@@ -128,6 +204,15 @@ export class MapGestures {
     this.clearTimer();
     this.settling = false;
     this.moved = false;
+    this.evaluating = false;
+    this.generation += 1;
+  }
+
+  /** Bilan rendu : true s'il vaut encore (ni recadrage, ni nouveau geste, ni abandon depuis). */
+  finish(gen: number) {
+    if (!this.evaluating || gen !== this.generation) return false;
+    this.evaluating = false;
+    return true;
   }
 
   dispose() {
@@ -135,12 +220,8 @@ export class MapGestures {
   }
 
   private endTouch() {
-    this.touching = false;
     this.lastTouchAt = this.clock();
-    if (!this.moved) {
-      this.settling = false;
-      return;
-    }
+    if (!this.moved) return;
     this.settling = true;
     this.schedule();
   }
@@ -156,7 +237,10 @@ export class MapGestures {
     this.settling = false;
     this.moved = false;
     this.lastTouchAt = this.clock();
-    this.onSettled(this);
+    this.evaluating = true;
+    this.evaluatingSince = this.clock();
+    this.generation += 1;
+    this.onSettled(this, this.generation);
   }
 
   private clearTimer() {

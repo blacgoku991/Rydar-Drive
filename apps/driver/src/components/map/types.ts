@@ -33,4 +33,8 @@ export type RydarMapProps = {
   focus?: LatLng | null;
   /** Distance (px) entre le bas de la carte et le bouton « Recentrer » (au-dessus des panneaux) */
   controlsBottom?: number;
+  /** Hauteur (px) occupée en haut de la carte (barre de boutons) : les boutons de la carte restent en dessous */
+  controlsTop?: number;
+  /** Rotation à deux doigts et boussole (défaut : oui ; en guidage, la carte tourne toujours d'elle-même) */
+  rotatable?: boolean;
 };
