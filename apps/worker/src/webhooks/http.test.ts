@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { describeNetworkError, postWebhook, resultFromStatus } from "./http";
+import { describeNetworkError, postWebhook, resultFromStatus, timeoutMessage } from "./http";
 import { resolveWebhookTarget, type Resolver } from "./ssrf";
 import { startServer } from "./test-server";
 
@@ -60,6 +60,17 @@ describe("webhooks — envoi HTTP", () => {
     const r = await postWebhook(await resolveWebhookTarget(s.url(), lax), BODY, HEADERS, { ...OPTS, timeoutMs: 300 });
     expect(r).toEqual({ ok: false, statusCode: null, error: "Délai dépassé (0,3 s)" });
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("délai déjà épuisé (résolution DNS lente) : aucune connexion, message avec le délai total de l'essai", async () => {
+    const s = await server((_req, res) => {
+      res.writeHead(200).end();
+    });
+    const target = await resolveWebhookTarget(s.url(), lax);
+    expect(await postWebhook(target, BODY, HEADERS, { ...OPTS, timeoutMs: 0, totalMs: 10_000 })).toEqual({ ok: false, statusCode: null, error: "Délai dépassé (10 s)" });
+    expect(await postWebhook(target, BODY, HEADERS, { ...OPTS, timeoutMs: -5, totalMs: 10_000 })).toMatchObject({ ok: false, statusCode: null });
+    expect(s.received).toHaveLength(0);
+    expect(timeoutMessage(2_500)).toBe("Délai dépassé (2,5 s)");
   });
 
   it("2xx reçu puis corps qui traîne : succès au délai (le code fait foi)", async () => {
