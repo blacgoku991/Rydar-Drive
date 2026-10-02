@@ -31,6 +31,8 @@ const DRIVER_COLUMNS =
   "id, number, first_name, last_name, phone, photo_url, presence, status, current_ride_id, online_since, vehicle:vehicles(brand, model, plate, color, category, seats), location:driver_locations(lat, lng, heading, speed_mps, updated_at)";
 /** Course attribuée pas encore terminée : un chauffeur qui n'est plus actif ne peut plus la faire avancer. */
 const DRIVER_STUCK = new Set(["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"]);
+/** Course close : sans temps réel, le sondage peut s'espacer jusqu'à 60 s ; sinon 30 s au plus. */
+const CLOSED = new Set(["COMPLETED", "CANCELLED"]);
 
 function Info({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return (
@@ -49,16 +51,22 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const ctx = await requireOrg();
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
 
-  const { data: ride } = await ctx.supabase.from("rides").select("*").eq("id", id).eq("organization_id", ctx.org.id).maybeSingle();
-  if (!ride) notFound();
-
   const centrale = ctx.org.dispatch_model === "centrale";
-  const [events, offers, drivers, alerts, settlement, rideDriver] = await Promise.all([
-    ctx.supabase.from("ride_events").select("id, category, level, type, message, actor_type, data, created_at").eq("ride_id", id).order("id"),
+  // Course et données liées en un seul aller-retour : toutes ne dépendent que de l'id de l'URL (filtrées aussi par
+  // centrale, sous RLS) ; rien n'est affiché si la course n'est pas celle de la centrale (notFound ci-dessous)
+  const [{ data: ride }, events, offers, drivers, alerts, settlement] = await Promise.all([
+    ctx.supabase.from("rides").select("*").eq("id", id).eq("organization_id", ctx.org.id).maybeSingle(),
+    ctx.supabase
+      .from("ride_events")
+      .select("id, category, level, type, message, actor_type, data, created_at")
+      .eq("ride_id", id)
+      .eq("organization_id", ctx.org.id)
+      .order("id"),
     ctx.supabase
       .from("ride_offers")
       .select("id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, responded_at, expires_at, closed_reason")
       .eq("ride_id", id)
+      .eq("organization_id", ctx.org.id)
       .order("sent_at"),
     ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("organization_id", ctx.org.id).eq("status", "active"),
     // Alertes de suivi (retard, immobile, GPS muet, pas démarrée), les plus récentes d'abord
@@ -73,11 +81,14 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
     centrale
       ? ctx.supabase.from("ride_settlements").select("*").eq("ride_id", id).eq("organization_id", ctx.org.id).maybeSingle()
       : Promise.resolve({ data: null }),
-    // Chauffeur de la course même s'il n'est plus actif (suspendu, désactivé) : la liste ci-dessus ne garde que les actifs
-    ride.driver_id
-      ? ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("id", ride.driver_id).eq("organization_id", ctx.org.id).maybeSingle()
-      : Promise.resolve({ data: null }),
   ]);
+  if (!ride) notFound();
+  // Chauffeur de la course même s'il n'est plus actif (suspendu, désactivé) : la liste ci-dessus ne garde que les
+  // actifs ; lu seulement dans ce cas (rare)
+  const rideDriver =
+    ride.driver_id && !((drivers.data ?? []) as { id: string }[]).some((d) => d.id === ride.driver_id)
+      ? await ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("id", ride.driver_id).eq("organization_id", ctx.org.id).maybeSingle()
+      : { data: null };
 
   const driverRows = [...((drivers.data ?? []) as any[])];
   if (rideDriver.data && !driverRows.some((d) => d.id === ride.driver_id)) driverRows.push(rideDriver.data);
@@ -109,11 +120,16 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
 
   return (
     <>
-      <LiveRefresh rideId={id} events={["ride.updated", "ride.event", "offer.updated", "ride.alert", "settlement.updated"]} />
+      <LiveRefresh
+        rideId={id}
+        events={["ride.updated", "ride.event", "offer.updated", "ride.alert", "settlement.updated"]}
+        maxPollMs={CLOSED.has(status) ? 60_000 : 30_000}
+      />
       <div className="border-b border-line">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
           <div>
-            <Link href="/dashboard/rides" className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
+            {/* Liens sans préchargement : il repartait à chaque relecture de la fiche (LiveRefresh) */}
+            <Link href="/dashboard/rides" prefetch={false} className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
               <ArrowLeft className="size-3.5" /> Courses
             </Link>
             <div className="flex flex-wrap items-center gap-3">
@@ -222,7 +238,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                     <div className="flex items-center gap-3">
                       <Avatar name={`${driver.first_name} ${driver.last_name}`} size={44} />
                       <div>
-                        <Link href={`/dashboard/drivers/${driver.id}`} className="text-[15px] font-semibold hover:text-brand">
+                        <Link href={`/dashboard/drivers/${driver.id}`} prefetch={false} className="text-[15px] font-semibold hover:text-brand">
                           {driver.first_name} {driver.last_name}
                         </Link>
                         <p className="text-[12.5px] text-fg-subtle">Chauffeur #{driver.number} · {formatPhone(driver.phone)}</p>

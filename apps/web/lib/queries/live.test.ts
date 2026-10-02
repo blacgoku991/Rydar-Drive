@@ -101,6 +101,27 @@ describe("getLiveSnapshot", () => {
     expect(table.seen.map((s) => s.ids.length).sort((a, b) => a - b)).toEqual([50, 100, 100]);
   });
 
+  it("tracés : seulement ceux des courses client à bord (les autres sont chargés à la demande)", async () => {
+    const selects: string[] = [];
+    const client = fakeClient({
+      rides: (calls) => {
+        const select = String(arg(calls, "select")?.[1] ?? "");
+        selects.push(select);
+        if (select === "id, route_polyline") return { data: [{ id: "r2", route_polyline: "abc" }], error: null };
+        return arg(calls, "not")
+          ? { data: [ride("r1", "ACCEPTED"), ride("r2", "PASSENGER_ONBOARD"), ride("r3", "IN_PROGRESS")], error: null }
+          : { data: [], error: null };
+      },
+    });
+    const snap = await getLiveSnapshot(client, "org");
+    const byId = Object.fromEntries(snap.rides.map((r) => [r.id, r]));
+    expect("route_polyline" in byId.r1!).toBe(false);
+    expect(byId.r2!.route_polyline).toBe("abc");
+    expect(byId.r3!.route_polyline).toBeNull();
+    // Les listes de courses ne lisent jamais la colonne du tracé
+    expect(selects.filter((s) => s !== "id, route_polyline").every((s) => !s.includes("route_polyline"))).toBe(true);
+  });
+
   it("erreur sur les offres : lève aussi", async () => {
     const client = fakeClient({
       rides: (calls) => (arg(calls, "not") ? { data: [ride("r1")], error: null } : { data: [], error: null }),

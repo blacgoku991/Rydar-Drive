@@ -3,6 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { lruCache } from "@/lib/geo/cache";
 import { bookingHostKey } from "@/lib/hostname";
 import { serverFetch } from "@/lib/server-fetch";
+import { publishesAsymmetricKey } from "@/lib/supabase/jwks";
+import { decodeJwt, verifiableLocally } from "@/lib/supabase/jwt";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
@@ -37,6 +39,36 @@ async function resolveBookingSlug(host: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Aiguillage seulement (redirection vers /login) : le contrôle qui fait foi est getUser() au rendu de chaque layout et
+ * page protégés (lib/auth.ts : requireUser / requireOrg / requireSuperAdmin ; routes d'export : getSession) et sur
+ * /login ci-dessous. PostgREST vérifie aussi la signature de chaque requête, sous RLS.
+ *
+ * getSession() lit les cookies et ne contacte Auth que pour rafraîchir un jeton expiré (cookies réécrits par setAll) :
+ * c'est le rôle du proxy, sur toutes les requêtes (préchargements compris), et il est gardé.
+ *  - Jeton à clé asymétrique (ES256 / RS256 + kid, cas de la production) : signature vérifiée sur place par getClaims()
+ *    (JWKS public gardé 10 min par processus), sans appel réseau.
+ *  - Autre jeton (HS256, sans kid…) alors qu'Auth publie une clé asymétrique (production) : jeton émis avant une
+ *    rotation des clés, ou falsifié → getClaims() le fait vérifier par Auth (/auth/v1/user), comme avant ; refusé →
+ *    /login?next=… dès le proxy (lib/supabase/jwks.ts, JWKS lu une fois par processus et gardé 10 min).
+ *  - Pile en HS256 seul (JWKS vide : pile locale) : seule une requête à Auth pourrait vérifier la signature. Elle n'est
+ *    pas faite ici à chaque requête : un jeton illisible ou falsifié passe l'aiguillage mais est refusé au rendu
+ *    (getUser → /login), sans aucune donnée lue (PostgREST le refuse aussi).
+ */
+async function hasSession(supabase: ReturnType<typeof createServerClient>): Promise<boolean> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  const jwt = decodeJwt(token);
+  if (!token || !jwt) return false;
+  if (verifiableLocally(jwt.header) || (await publishesAsymmetricKey(SUPABASE_URL, SUPABASE_KEY, serverFetch))) {
+    const { data } = await supabase.auth.getClaims(token);
+    return !!data?.claims?.sub;
+  }
+  return typeof jwt.payload.sub === "string" && !!jwt.payload.sub;
 }
 
 const PROTECTED = ["/dashboard", "/admin"];
@@ -89,8 +121,7 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  const { data } = await supabase.auth.getClaims();
-  const authed = !!data?.claims?.sub;
+  const authed = await hasSession(supabase);
 
   if (!authed && PROTECTED.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
     const url = request.nextUrl.clone();
@@ -99,9 +130,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
   if (authed && pathname === "/login") {
-    // getClaims() vérifie le jeton localement (clés asymétriques) : une session révoquée ailleurs (déconnexion globale,
-    // membre désactivé…) passerait pour valide jusqu'à l'expiration du jeton → boucle /login ↔ /dashboard. Auth confirme
-    // ici la session ; si elle n'existe plus, auth-js efface les cookies (setAll) et la page de connexion s'affiche.
+    // hasSession() ne demande pas toujours à Auth si la session existe encore : une session révoquée ailleurs
+    // (déconnexion globale, membre désactivé…) passerait pour valide jusqu'à l'expiration du jeton → boucle
+    // /login ↔ /dashboard. Auth confirme ici la session ; si elle n'existe plus, auth-js efface les cookies (setAll) et
+    // la page de connexion s'affiche.
     const { data: current } = await supabase.auth.getUser();
     if (current?.user) {
       const url = request.nextUrl.clone();

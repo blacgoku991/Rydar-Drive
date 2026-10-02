@@ -117,8 +117,11 @@ export type LiveSnapshot = {
 };
 
 // (une seule chaîne littérale : supabase-js en déduit le type des lignes)
+// Sans route_polyline (jusqu'à 20 000 caractères par course) : la carte ne trace le parcours que de la course
+// sélectionnée (chargé à la demande, GET /api/dashboard/rides/[id]?route=1) ou des courses client à bord (ci-dessous).
 const RIDE_FIELDS =
-  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, estimated_distance_m, estimated_duration_s, route_polyline, payment_method, accepted_at, created_at, updated_at, flight_mode, flight_status, flight_scheduled_arrival, flight_estimated_arrival, flight_actual_arrival, flight_delay_minutes, flight_terminal, flight_origin, flight_checked_at, pickup_at_original";
+  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, estimated_distance_m, estimated_duration_s, payment_method, accepted_at, created_at, updated_at, flight_mode, flight_status, flight_scheduled_arrival, flight_estimated_arrival, flight_actual_arrival, flight_delay_minutes, flight_terminal, flight_origin, flight_checked_at, pickup_at_original";
+const ON_BOARD_STATUSES = ["PASSENGER_ONBOARD", "IN_PROGRESS"];
 export const ALERT_FIELDS = "id, ride_id, driver_id, kind, severity, message, data, status, resolution, muted_until, created_at, updated_at";
 const REPORT_FIELDS = "id, report_type, body, lat, lng, expires_at, confirmations, dismissals, author_name, author_type, author_driver_id, created_at";
 
@@ -177,7 +180,7 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
   const recent = new Date(Date.now() - 30 * 60_000).toISOString();
   const horizon = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
-  const [drivers, active, finished, kpis, alerts, reports] = await Promise.all([
+  const [drivers, active, finished, kpis, alerts, reports, onboardRoutes] = await Promise.all([
     supabase
       .from("drivers")
       .select(
@@ -218,9 +221,20 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: false })
       .limit(200),
+    // Tracés des courses client à bord (dessinés sur la carte sans sélection) ; les autres sont chargés à la demande
+    supabase
+      .from("rides")
+      .select("id, route_polyline")
+      .eq("organization_id", orgId)
+      .in("status", ON_BOARD_STATUSES)
+      .not("route_polyline", "is", null)
+      .limit(400),
   ]);
 
   const rideRows = [...((must(active, "courses actives") ?? []) as LiveRide[]), ...((must(finished, "courses terminées") ?? []) as LiveRide[])];
+  const routes = new Map(((must(onboardRoutes, "tracés") ?? []) as { id: string; route_polyline: string }[]).map((r) => [r.id, r.route_polyline]));
+  // Client à bord : tracé connu (null = aucun) ; sinon la clé reste absente (« à charger »)
+  for (const r of rideRows) if (ON_BOARD_STATUSES.includes(r.status)) r.route_polyline = routes.get(r.id) ?? null;
   const openIds = rideRows.filter((r) => ["SEARCHING_DRIVER", "OFFERED"].includes(r.status)).map((r) => r.id);
   const offers = openIds.length ? await pendingOffers(supabase, openIds) : [];
 

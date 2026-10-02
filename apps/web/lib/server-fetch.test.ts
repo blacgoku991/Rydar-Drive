@@ -47,6 +47,40 @@ describe("appels sortants du serveur web (Supabase)", () => {
     await dispatcher.close();
   });
 
+  it("nom avec adresses IPv4 et IPv6 : toujours IPv4 (conteneur sans IPv6 : plus d'échec une requête sur deux)", async () => {
+    const dispatcher = createServerDispatcher({
+      // 2001:db8::/32 : plage de documentation, jamais joignable (ici : pas d'IPv6 du tout, EAFNOSUPPORT / ENETUNREACH)
+      lookup: (_origin, _options, callback) =>
+        callback(null, [
+          { address: "127.0.0.1", family: 4, ttl: DNS_CACHE_MS },
+          { address: "2001:db8::1", family: 6, ttl: DNS_CACHE_MS },
+        ]),
+    });
+    const results: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await undiciFetch(`http://supabase.rydar.test:${port}/rest/v1/`, { dispatcher }).then(
+        (r) => `ok ${r.status}`,
+        (e: Error & { cause?: { code?: string } }) => `erreur ${e.cause?.code ?? e.message}`,
+      );
+      results.push(res);
+    }
+    expect(results).toEqual(Array(6).fill("ok 200"));
+    await dispatcher.close();
+  });
+
+  it("nom sans adresse IPv4 (AAAA seul) : l'IPv6 reste utilisée", async () => {
+    let picked = "";
+    const dispatcher = createServerDispatcher({
+      lookup: (_origin, _options, callback) => callback(null, [{ address: "::1", family: 6, ttl: DNS_CACHE_MS }]),
+    });
+    // Pas de serveur IPv6 ici : seule l'adresse tentée compte (jamais « aucune adresse »)
+    await undiciFetch(`http://supabase.rydar.test:${port}/`, { dispatcher }).catch((e: Error & { cause?: { address?: string; code?: string } }) => {
+      picked = e.cause?.address ?? e.cause?.code ?? e.message;
+    });
+    expect(picked).not.toMatch(/No DNS entries|ENOTFOUND/);
+    await dispatcher.close();
+  });
+
   it("connexions gardées ouvertes 60 s (4 s par défaut)", () => {
     expect(KEEP_ALIVE_MS).toBeGreaterThanOrEqual(60_000);
   });

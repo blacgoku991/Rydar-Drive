@@ -60,12 +60,19 @@ export type FleetMapHandle = {
 
 type Padding = { top: number; bottom: number; left: number; right: number };
 
+/** Ce que la carte lit d'un chauffeur (une fiche complète LiveDriver convient aussi). */
+export type MapDriver = Pick<LiveDriver, "id" | "number" | "first_name" | "last_name" | "presence" | "location"> & {
+  vehicle: Pick<NonNullable<LiveDriver["vehicle"]>, "plate"> | null;
+};
+
 type Props = {
-  drivers: LiveDriver[];
+  drivers: MapDriver[];
   rides: LiveRide[];
   offers: LiveOffer[];
   selectedDriverId?: string | null;
   selectedRideId?: string | null;
+  /** Courses en alerte ouverte : sur la carte quelle que soit l'heure de prise en charge (comme la liste « En cours »). */
+  alertRideIds?: ReadonlySet<string>;
   onSelectDriver?: (id: string | null) => void;
   onSelectRide?: (id: string | null) => void;
   showOffline?: boolean;
@@ -92,9 +99,15 @@ const SEARCHING = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED"]);
 const TO_PICKUP = new Set(["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED"]);
 const ON_BOARD = new Set(["PASSENGER_ONBOARD", "IN_PROGRESS"]);
 const TERMINAL = new Set(["COMPLETED", "CANCELLED", "NO_DRIVER_FOUND"]);
+/** Chauffeur en route, arrivé ou client à bord : affichée quelle que soit l'heure de prise en charge. */
+const UNDERWAY = new Set(["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"]);
+/** Au-delà, une course n'est sur la carte que si elle est en cours ou sélectionnée (comme la liste « En cours »). */
+const HORIZON_MS = 2 * 3600_000;
 
-type CarMarker = { marker: MLMarker; el: HTMLDivElement; pos: [number, number]; anim?: number };
+type CarMarker = { marker: MLMarker; el: HTMLDivElement; pos: [number, number] };
+type CarAnim = { from: [number, number]; to: [number, number]; start: number; px?: { x: number; y: number } };
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+const ANIM_MS = 1600;
 
 const polyCache = new Map<string, Coord[]>();
 function routeOf(r: LiveRide): Coord[] | null {
@@ -108,6 +121,8 @@ function routeOf(r: LiveRide): Coord[] | null {
   return c;
 }
 
+const isGeo = (r: LiveRide) => r.type === "instant" || r.dispatch_mode === "geo";
+
 export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   {
     drivers,
@@ -115,6 +130,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     offers,
     selectedDriverId,
     selectedRideId,
+    alertRideIds,
     onSelectDriver,
     onSelectRide,
     showOffline = false,
@@ -138,6 +154,12 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   const stops = useRef(new Map<string, { marker: MLMarker; el: HTMLDivElement }>());
   const ends = useRef(new Map<string, MLMarker>());
   const reportMarkers = useRef(new Map<string, { marker: MLMarker; el: HTMLButtonElement }>());
+  // Dernier état appliqué à chaque marqueur : le DOM n'est touché que pour ce qui a changé
+  const carKeys = useRef(new Map<string, string>());
+  const stopKeys = useRef(new Map<string, string>());
+  // Glissements en cours (une seule boucle d'animation pour tous les véhicules)
+  const anims = useRef(new Map<string, CarAnim>());
+  const raf = useRef(0);
   const popup = useRef<{ popup: MLPopup; id: string } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const fitted = useRef(false);
@@ -147,6 +169,13 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   paddingRef.current = padding;
   const dataRef = useRef({ drivers, rides, focus });
   dataRef.current = { drivers, rides, focus };
+
+  // Horloge lente : positions devenues anciennes, courses entrant dans l'horizon de 2 h (sans attendre un événement)
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // ---------------------------------------------------------------- calques
   useEffect(() => {
@@ -205,10 +234,17 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     const stopsMap = stops.current;
     const endsMap = ends.current;
     const reportsMap = reportMarkers.current;
+    const carKeysMap = carKeys.current;
+    const stopKeysMap = stopKeys.current;
+    const animsMap = anims.current;
     return () => {
-      carsMap.forEach((m) => cancelAnimationFrame(m.anim ?? 0));
+      cancelAnimationFrame(raf.current);
+      raf.current = 0;
+      animsMap.clear();
       carsMap.clear();
+      carKeysMap.clear();
       stopsMap.clear();
+      stopKeysMap.clear();
       endsMap.clear();
       reportsMap.clear();
       const p = popup.current;
@@ -236,7 +272,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   const fitAll = useCallback(() => {
     const pts: Coord[] = [...(dataRef.current.focus ?? [])];
     if (!pts.length) for (const d of dataRef.current.drivers) if (d.location && d.presence !== "offline") pts.push([d.location.lng, d.location.lat]);
-    const soon = Date.now() + 2 * 3600_000;
+    const soon = Date.now() + HORIZON_MS;
     if (!dataRef.current.focus?.length)
       for (const r of dataRef.current.rides) if (!TERMINAL.has(r.status) && new Date(r.pickup_at).getTime() < soon) pts.push([r.pickup_lng, r.pickup_lat]);
     fitPoints(pts);
@@ -255,14 +291,52 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
 
   // ---------------------------------------------------------------- véhicules
   const offeredDrivers = useMemo(() => new Set(offers.filter((o) => o.status === "pending").map((o) => o.driver_id)), [offers]);
+  const selectedRide = useMemo(() => (selectedRideId ? (rides.find((r) => r.id === selectedRideId) ?? null) : null), [rides, selectedRideId]);
+  // Chauffeurs liés à la course sélectionnée (attribué ou sollicité) : les autres sont estompés
+  const relatedDrivers = useMemo(() => {
+    if (!selectedRide) return null;
+    const ids = new Set<string>();
+    if (selectedRide.driver_id) ids.add(selectedRide.driver_id);
+    for (const o of offers) if (o.ride_id === selectedRide.id) ids.add(o.driver_id);
+    return ids;
+  }, [selectedRide, offers]);
+  const hasRides = rides.length > 0;
+
+  // Une seule boucle d'animation pour tous les véhicules qui glissent vers leur nouvelle position. Une voiture n'est
+  // déplacée que si sa position à l'écran a bougé d'au moins un demi-pixel (vue d'ensemble : quelques pixels en 1,6 s,
+  // inutile de la réécrire à chaque image) ; la dernière image pose toujours la position exacte.
+  const step = useCallback((t: number) => {
+    raf.current = 0;
+    const map = mapRef.current;
+    for (const [id, a] of anims.current) {
+      const m = cars.current.get(id);
+      if (!m || !map) {
+        anims.current.delete(id);
+        continue;
+      }
+      const k = Math.max(0, Math.min(1, (t - a.start) / ANIM_MS));
+      const e = ease(k);
+      const at: [number, number] = [a.from[0] + (a.to[0] - a.from[0]) * e, a.from[1] + (a.to[1] - a.from[1]) * e];
+      if (k >= 1) {
+        m.marker.setLngLat(a.to);
+        anims.current.delete(id);
+        continue;
+      }
+      const px = map.project(at);
+      if (a.px && Math.abs(px.x - a.px.x) < 0.5 && Math.abs(px.y - a.px.y) < 0.5) continue;
+      a.px = { x: px.x, y: px.y };
+      m.marker.setLngLat(at);
+    }
+    if (anims.current.size) raf.current = requestAnimationFrame(step);
+  }, [mapRef]);
 
   useEffect(() => {
     const map = mapRef.current;
     const lib = libRef.current;
     if (!ready || !map || !lib) return;
     const now = Date.now();
+    const pageHidden = document.visibilityState === "hidden";
     const seen = new Set<string>();
-    const selectedRide = selectedRideId ? rides.find((r) => r.id === selectedRideId) : null;
     for (const d of drivers) {
       if (!d.location) continue;
       if (d.presence === "offline" && !showOffline) continue;
@@ -278,23 +352,21 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         const marker = new lib.Marker({ element: el, anchor: "center" }).setLngLat(target).addTo(map);
         m = { marker, el, pos: target };
         cars.current.set(d.id, m);
+        carKeys.current.delete(d.id);
       } else if (m.pos[0] !== target[0] || m.pos[1] !== target[1]) {
-        cancelAnimationFrame(m.anim ?? 0);
-        const from = m.marker.getLngLat();
-        const start = performance.now();
-        const entry = m;
-        const step = (t: number) => {
-          const k = Math.min(1, (t - start) / 1600);
-          const e = ease(k);
-          entry.marker.setLngLat([from.lng + (target[0] - from.lng) * e, from.lat + (target[1] - from.lat) * e]);
-          if (k < 1) entry.anim = requestAnimationFrame(step);
-        };
-        entry.anim = requestAnimationFrame(step);
+        if (pageHidden) {
+          // Onglet caché : aucune animation (invisible), la voiture est posée directement à sa position
+          anims.current.delete(d.id);
+          m.marker.setLngLat(target);
+        } else {
+          const from = m.marker.getLngLat();
+          anims.current.set(d.id, { from: [from.lng, from.lat], to: target, start: performance.now() });
+        }
         m.pos = target;
       }
       const stale = now - new Date(d.location.updated_at).getTime() > staleMs;
-      const related = !selectedRide || selectedRide.driver_id === d.id || offers.some((o) => o.ride_id === selectedRide.id && o.driver_id === d.id);
-      updateCar(m.el, {
+      const related = !relatedDrivers || relatedDrivers.has(d.id);
+      const state = {
         color: PRESENCE_COLOR[d.presence as DriverPresence] ?? PRESENCE_COLOR.offline,
         heading: d.location.heading,
         moving: (d.location.speed_mps ?? 0) > 0.8,
@@ -303,39 +375,54 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         selected: d.id === selectedDriverId,
         pulse: offeredDrivers.has(d.id),
         dim: stale || d.presence === "offline" || !related,
-      });
-      m.el.style.zIndex = d.id === selectedDriverId ? "6" : related && selectedRide ? "5" : "3";
+      };
+      const z = d.id === selectedDriverId ? "6" : related && selectedRide ? "5" : "3";
+      const key = `${state.color}|${state.heading}|${state.moving}|${state.initials}|${state.label}|${state.selected}|${state.pulse}|${state.dim}|${z}`;
+      if (carKeys.current.get(d.id) !== key) {
+        updateCar(m.el, state);
+        m.el.style.zIndex = z;
+        carKeys.current.set(d.id, key);
+      }
     }
     for (const [id, m] of cars.current) {
       if (!seen.has(id)) {
-        cancelAnimationFrame(m.anim ?? 0);
+        anims.current.delete(id);
+        carKeys.current.delete(id);
         m.marker.remove();
         cars.current.delete(id);
       }
     }
-    if (!fitted.current && (pendingFit.current || drivers.length || rides.length)) {
+    if (anims.current.size && !raf.current) raf.current = requestAnimationFrame(step);
+    if (!fitted.current && (pendingFit.current || drivers.length || hasRides)) {
       const pending = pendingFit.current;
       pendingFit.current = null;
       if (pending) fitPoints(pending);
       else fitAll();
       fitted.current = true;
     }
-  }, [drivers, ready, showOffline, selectedDriverId, selectedRideId, rides, offers, offeredDrivers, fitAll, fitPoints, mapRef, libRef, staleMs]);
+  }, [drivers, ready, showOffline, selectedDriverId, selectedRide, relatedDrivers, offeredDrivers, hasRides, step, fitAll, fitPoints, mapRef, libRef, staleMs, tick]);
 
   // ---------------------------------------------------------------- courses & tracés
+  // Courses sur la carte : sélectionnée, ou non terminée et (prise en charge dans moins de 2 h, chauffeur en route /
+  // client à bord, ou alerte ouverte). Une course acceptée pour plus tard n'est ni épinglée ni reliée à la position
+  // actuelle de son chauffeur.
+  const visible = useMemo(() => {
+    const soon = Date.now() + HORIZON_MS;
+    return rides.filter(
+      (r) =>
+        r.id === selectedRideId ||
+        (!TERMINAL.has(r.status) && (new Date(r.pickup_at).getTime() < soon || UNDERWAY.has(r.status) || !!alertRideIds?.has(r.id))),
+    );
+    // tick : réévaluation de l'horizon de 2 h
+  }, [rides, selectedRideId, alertRideIds, tick]);
+
+  // Épingles départ / arrivée : ne dépendent que des courses (jamais des positions GPS)
   useEffect(() => {
     const map = mapRef.current;
     const lib = libRef.current;
     if (!ready || !map || !lib) return;
-    const soon = Date.now() + 2 * 3600_000;
-    const visible = rides.filter(
-      (r) => r.id === selectedRideId || (!TERMINAL.has(r.status) && (new Date(r.pickup_at).getTime() < soon || !SEARCHING.has(r.status))),
-    );
-    const byId = new Map(drivers.map((d) => [d.id, d]));
     const seen = new Set<string>();
     const seenEnds = new Set<string>();
-    const features: GeoJSON.Feature[] = [];
-
     for (const r of visible) {
       const selected = r.id === selectedRideId;
       const onboard = ON_BOARD.has(r.status);
@@ -353,12 +440,21 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
           const marker = new lib.Marker({ element: el, anchor: "center" }).setLngLat([r.pickup_lng, r.pickup_lat]).addTo(map);
           p = { marker, el };
           stops.current.set(r.id, p);
+          stopKeys.current.delete(r.id);
         }
-        p.marker.setLngLat([r.pickup_lng, r.pickup_lat]);
-        p.el.style.setProperty("--c", rideColor(r.status));
-        p.el.dataset.searching = String(SEARCHING.has(r.status) && (r.type === "instant" || r.dispatch_mode === "geo"));
-        p.el.dataset.dim = String(!!selectedRideId && !selected);
-        p.el.style.zIndex = selected ? "4" : "2";
+        const color = rideColor(r.status);
+        const searching = String(SEARCHING.has(r.status) && isGeo(r));
+        const dim = String(!!selectedRideId && !selected);
+        const z = selected ? "4" : "2";
+        const key = `${r.pickup_lng},${r.pickup_lat}|${color}|${searching}|${dim}|${z}`;
+        if (stopKeys.current.get(r.id) !== key) {
+          p.marker.setLngLat([r.pickup_lng, r.pickup_lat]);
+          p.el.style.setProperty("--c", color);
+          p.el.dataset.searching = searching;
+          p.el.dataset.dim = dim;
+          p.el.style.zIndex = z;
+          stopKeys.current.set(r.id, key);
+        }
       }
       // Arrivée : course sélectionnée ou client à bord
       if ((selected || onboard) && r.dropoff_lat != null && r.dropoff_lng != null) {
@@ -374,7 +470,34 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         e.setLngLat([r.dropoff_lng, r.dropoff_lat]);
         e.getElement().dataset.dim = String(!!selectedRideId && !selected);
       }
+    }
+    for (const [id, p] of stops.current) if (!seen.has(id)) (p.marker.remove(), stops.current.delete(id), stopKeys.current.delete(id));
+    for (const [id, e] of ends.current) if (!seenEnds.has(id)) (e.remove(), ends.current.delete(id));
+  }, [visible, selectedRideId, ready, mapRef, libRef]);
 
+  // Positions dont dépend un tracé : chauffeur en approche d'une course affichée, chauffeurs sollicités pour la course
+  // sélectionnée. Les tracés ne sont recalculés (setData, nouveau rendu de la carte) que si l'une d'elles change.
+  const tracedDrivers = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of visible) if (r.driver_id && TO_PICKUP.has(r.status) && r.status !== "DRIVER_ARRIVED") ids.add(r.driver_id);
+    if (selectedRide && SEARCHING.has(selectedRide.status) && isGeo(selectedRide))
+      for (const o of offers) if (o.ride_id === selectedRide.id && o.status === "pending") ids.add(o.driver_id);
+    return ids;
+  }, [visible, selectedRide, offers]);
+  const tracedKey = useMemo(() => {
+    let key = "";
+    for (const d of drivers) if (d.location && tracedDrivers.has(d.id)) key += `${d.id}:${d.location.lng},${d.location.lat};`;
+    return key;
+  }, [drivers, tracedDrivers]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    const byId = new Map(dataRef.current.drivers.map((d) => [d.id, d]));
+    const features: GeoJSON.Feature[] = [];
+    for (const r of visible) {
+      const selected = r.id === selectedRideId;
+      const onboard = ON_BOARD.has(r.status);
       const d = r.driver_id ? byId.get(r.driver_id) : undefined;
       const trip = routeOf(r) ?? (r.dropoff_lat != null && r.dropoff_lng != null ? [[r.pickup_lng, r.pickup_lat], [r.dropoff_lng, r.dropoff_lat]] as Coord[] : null);
       if (trip && (selected || onboard)) {
@@ -392,8 +515,8 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
           geometry: { type: "LineString", coordinates: real ?? [[d.location.lng, d.location.lat], [r.pickup_lng, r.pickup_lat]] },
         });
       }
-      // Recherche en cours sur la course sélectionnée : rayon + chauffeurs sollicités
-      if (selected && SEARCHING.has(r.status) && (r.type === "instant" || r.dispatch_mode === "geo")) {
+      // Recherche en cours sur la course sélectionnée : chauffeurs sollicités
+      if (selected && SEARCHING.has(r.status) && isGeo(r)) {
         for (const o of offers) {
           const od = o.ride_id === r.id && o.status === "pending" ? byId.get(o.driver_id) : undefined;
           if (od?.location)
@@ -405,19 +528,26 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
         }
       }
     }
-    for (const [id, p] of stops.current) if (!seen.has(id)) (p.marker.remove(), stops.current.delete(id));
-    for (const [id, e] of ends.current) if (!seenEnds.has(id)) (e.remove(), ends.current.delete(id));
+    setData(map, "rd-routes", features);
+    // tracedKey : positions des chauffeurs utilisées ci-dessus (lues dans dataRef)
+  }, [visible, offers, tracedKey, ready, selectedRideId, approach, mapRef]);
 
-    const sel = visible.find((r) => r.id === selectedRideId);
+  // Rayon de recherche de la course sélectionnée : redessiné seulement si la course, son statut ou son rayon changent
+  const radius =
+    selectedRide && SEARCHING.has(selectedRide.status) && isGeo(selectedRide) && selectedRide.dispatch_radius_m
+      ? { lat: selectedRide.pickup_lat, lng: selectedRide.pickup_lng, m: selectedRide.dispatch_radius_m }
+      : null;
+  const radiusKey = radius ? `${radius.lat},${radius.lng},${radius.m}` : "";
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
     setData(
       map,
       "rd-radius",
-      sel && SEARCHING.has(sel.status) && (sel.type === "instant" || sel.dispatch_mode === "geo") && sel.dispatch_radius_m
-        ? [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circlePolygon({ lat: sel.pickup_lat, lng: sel.pickup_lng }, sel.dispatch_radius_m)] } }]
-        : [],
+      radius ? [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circlePolygon({ lat: radius.lat, lng: radius.lng }, radius.m)] } }] : [],
     );
-    setData(map, "rd-routes", features);
-  }, [rides, offers, drivers, ready, selectedRideId, approach, mapRef, libRef]);
+    // radiusKey résume `radius`
+  }, [radiusKey, ready, mapRef]);
 
   // ---------------------------------------------------------------- signalements de la flotte
   // Âges et durées restantes rafraîchis toutes les 30 s ; un signalement expiré disparaît sans attendre le serveur.

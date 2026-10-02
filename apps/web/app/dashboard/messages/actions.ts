@@ -1,11 +1,11 @@
 "use server";
 import {
-  extractErrorCode, type ChatMessage, type ChatModerationQueue, type ChatOverview, type ChatOverviewModerated, type ChatThreadKey,
+  extractErrorCode, type ChatMessage, type ChatModerationQueue, type ChatOverview, type ChatThreadKey,
   type DismissChatReportResult, type RemoveChatMessageResult,
 } from "@rydar/shared";
 import { CHAT_MAX_LENGTH, chatErrorMessage, isThreadKey, isUuid, threadDriverId, toChatMessage } from "@/components/chat/chat-utils";
 import { getOrgContext } from "@/lib/org-context";
-import { loadChatOverview, loadModerationQueue, loadThreadPage, type ThreadPage } from "./queries";
+import { loadChatCounts, loadChatOverview, loadModerationQueue, loadThreadPage, type ThreadPage } from "./queries";
 
 type Fail = { ok: false; error: string };
 
@@ -18,11 +18,12 @@ export async function fetchChatOverview(): Promise<ChatOverview | null> {
 
 /**
  * Compteurs de la barre latérale : messages non lus, et messages du fil flotte signalés par les chauffeurs en
- * attente de décision (chat_overview.open_reports ; 0 sur un serveur sans la migration 20260924004100).
+ * attente de décision (public.chat_counts : sans relire toute la liste des fils).
  */
 export async function fetchChatUnread(): Promise<{ unread: number; openReports: number } | null> {
-  const overview = (await fetchChatOverview()) as ChatOverviewModerated | null;
-  return overview ? { unread: overview.unread_total, openReports: overview.open_reports ?? 0 } : null;
+  const ctx = await getOrgContext();
+  if (!ctx) return null;
+  return loadChatCounts(ctx.supabase, ctx.org.id);
 }
 
 export async function fetchThreadMessages(thread: string, before?: string | null): Promise<({ ok: true } & ThreadPage) | Fail> {

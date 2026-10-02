@@ -51,10 +51,14 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
   const page = Math.max(1, Number(sp.page) || 1);
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
 
+  // Mode centrale : règlement de fin de course embarqué dans la même requête (ride_settlements.ride_id unique ; clé
+  // étrangère (organization_id, ride_id) → renvoyé en tableau par PostgREST), sans second aller-retour
   let query = ctx.supabase
     .from("rides")
     .select(
-      "id, number, type, status, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, route_polyline, estimated_distance_m, pickup_at, customer_name, customer_phone, vehicle_category, price_cents, driver_payout_cents, driver:drivers!rides_organization_id_driver_id_fkey(first_name, last_name, number)",
+      `id, number, type, status, source, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, route_polyline, estimated_distance_m, pickup_at, customer_name, customer_phone, vehicle_category, price_cents, driver_payout_cents, driver:drivers!rides_organization_id_driver_id_fkey(first_name, last_name, number)${
+        centrale ? ", settlement:ride_settlements(ride_id, status, direction, amount_cents, due_at, currency)" : ""
+      }`,
       { count: "exact" },
     )
     .eq("organization_id", ctx.org.id);
@@ -74,13 +78,8 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
     ctx.supabase.rpc("org_ride_counts", { p_org: ctx.org.id, p_since: since }),
     getPricing(ctx.supabase, ctx.org.id),
   ]);
-  // Mode centrale : règlements des courses affichées (une requête pour la page)
-  const rideIds = (rides ?? []).map((r: { id: string }) => r.id);
-  const { data: settlementRows } =
-    centrale && rideIds.length
-      ? await ctx.supabase.from("ride_settlements").select("ride_id, status, direction, amount_cents, due_at, currency").in("ride_id", rideIds)
-      : { data: [] as SettlementCell[] };
-  const settlementByRide = new Map(((settlementRows ?? []) as SettlementCell[]).map((x) => [x.ride_id, x]));
+  const settlementOf = (r: { settlement?: SettlementCell | SettlementCell[] | null }): SettlementCell | null =>
+    (Array.isArray(r.settlement) ? r.settlement[0] : r.settlement) ?? null;
   const now = Date.now();
   const totalPages = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
   const href = (f: string, p = 1) => `/dashboard/rides?filter=${f}${q ? `&q=${encodeURIComponent(q)}` : ""}${p > 1 ? `&page=${p}` : ""}`;
@@ -101,6 +100,8 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
               <Link
                 key={f.key}
                 href={href(f.key)}
+                // Pages dynamiques : un préchargement ne contient aucune donnée (voir la barre latérale)
+                prefetch={false}
                 className={cn(
                   "flex shrink-0 items-center gap-2 border-b-2 px-3 pb-3 pt-1 text-[13px] font-medium transition-colors",
                   active ? "border-brand text-fg" : "border-transparent text-fg-muted hover:text-fg",
@@ -152,7 +153,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                 {rides.map((r: any) => (
                   <TR key={r.id} className="group relative">
                     <TD>
-                      <Link href={`/dashboard/rides/${r.id}`} className="absolute inset-0 z-0" aria-label={`Course ${r.number}`} />
+                      <Link href={`/dashboard/rides/${r.id}`} prefetch={false} className="absolute inset-0 z-0" aria-label={`Course ${r.number}`} />
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] font-semibold tabular-nums text-fg">#{r.number}</span>
                         <RideTypeTag type={r.type} />
@@ -194,7 +195,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
 
                     <TD>
                       <RideStatusBadge status={r.status} />
-                      {centrale && settlementByRide.has(r.id) && <SettlementLine s={settlementByRide.get(r.id)!} now={now} />}
+                      {centrale && settlementOf(r) && <SettlementLine s={settlementOf(r)!} now={now} />}
                     </TD>
                   </TR>
                 ))}
@@ -209,12 +210,12 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
             </span>
             <div className="flex gap-2">
               <Button asChild variant="outline" size="sm" className={cn(page <= 1 && "pointer-events-none opacity-40")}>
-                <Link href={href(filter, page - 1)}>
+                <Link href={href(filter, page - 1)} prefetch={false}>
                   <ChevronLeft /> Précédent
                 </Link>
               </Button>
               <Button asChild variant="outline" size="sm" className={cn(page >= totalPages && "pointer-events-none opacity-40")}>
-                <Link href={href(filter, page + 1)}>
+                <Link href={href(filter, page + 1)} prefetch={false}>
                   Suivant <ChevronRight />
                 </Link>
               </Button>

@@ -2,23 +2,15 @@
 // Pages Réseau / Inscriptions : nouvelles candidatures en temps réel (driver.application sur org:{id}) + repli par sondage.
 import type { DispatchModel, DriverApplicationEvent } from "@rydar/shared";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { joinedLabel } from "@/components/network/join-copy";
-import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
+import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
+import { useLiveSync } from "@/components/realtime/use-live-sync";
 
 export function NetworkLive({ pollMs = 30_000, model = "centrale" }: { pollMs?: number; model?: DispatchModel }) {
   const router = useRouter();
-  const status = useRealtimeStatus();
-  const timer = useRef<number | null>(null);
-
-  const refresh = () => {
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => router.refresh(), 350);
-  };
-  useEffect(() => () => {
-    if (timer.current) window.clearTimeout(timer.current);
-  }, []);
+  // Temps réel indisponible : rafraîchissement périodique (délai croissant, en pause onglet caché)
+  const { schedule } = useLiveSync(() => router.refresh(), { pollMs, maxPollMs: Math.max(pollMs, 120_000), debounceMs: 350 });
 
   useRealtimeEvent("driver.application", (e: DriverApplicationEvent) => {
     if (!e?.driver?.id) return;
@@ -34,15 +26,8 @@ export function NetworkLive({ pollMs = 30_000, model = "centrale" }: { pollMs?: 
         description: model === "centrale" ? "Validation automatique : niveau « Nouveau »." : "Validation automatique.",
       });
     }
-    refresh();
+    schedule();
   });
-
-  // Temps réel indisponible : rafraîchissement périodique
-  useEffect(() => {
-    if (status === "live") return;
-    const id = window.setInterval(() => router.refresh(), pollMs);
-    return () => window.clearInterval(id);
-  }, [status, router, pollMs]);
 
   return null;
 }
