@@ -21,6 +21,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       platformToReview={(payments.count ?? 0) + (reductions.count ?? 0)}
       deletionsToReview={Number(d?.failed ?? 0) + Number(d?.stalled ?? 0)}
       contactsToReview={contacts.count ?? 0}
+      centraleName={session.memberships.length === 1 ? session.memberships[0]!.org.name : session.memberships.length > 1 ? "Mes centrales" : null}
     >
       {children}
     </AdminShell>

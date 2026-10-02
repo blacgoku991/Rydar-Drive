@@ -37,6 +37,8 @@ type ShellProps = {
   centraleCounts?: CentraleCounts | null;
   /** Bandeau au-dessus du contenu (conditions à accepter) */
   topBanner?: React.ReactNode;
+  /** Compte super admin aussi membre de la centrale : lien vers l'espace plateforme (/admin, droits revérifiés là-bas) */
+  superAdmin?: boolean;
 };
 
 export function DashboardShell(props: ShellProps) {
@@ -79,7 +81,7 @@ function useCentraleCounts(orgId: string, enabled: boolean, initial: CentraleCou
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
-function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner }: ShellProps) {
+function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin }: ShellProps) {
   const router = useRouter();
   const [, start] = useTransition();
   const { unread, openReports } = useChatUnread();
@@ -174,6 +176,7 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
       ],
     },
     { title: "Organisation", items: [{ href: "/dashboard/settings", label: "Réglages", icon: "settings" }] },
+    ...(superAdmin ? [{ title: "Plateforme", items: [{ href: "/admin", label: "Espace super admin", icon: "shield" as const }] }] : []),
   ];
   return (
     <AlertsProvider key={org.id} scope={`${org.id}:${user.email}`}>

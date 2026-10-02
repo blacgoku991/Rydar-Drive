@@ -85,6 +85,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       }}
       centraleCounts={centraleCounts}
       topBanner={orgTermsDue ? <TermsBanner orgName={ctx.org.name} /> : userTermsDue ? <UserTermsBanner /> : null}
+      superAdmin={ctx.profile.is_super_admin === true}
     >
       {children}
     </DashboardShell>

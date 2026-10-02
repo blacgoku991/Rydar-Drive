@@ -13,6 +13,7 @@ export function AdminShell({
   platformToReview = 0,
   deletionsToReview = 0,
   contactsToReview = 0,
+  centraleName = null,
 }: {
   children: React.ReactNode;
   user: { name: string; email: string };
@@ -27,6 +28,8 @@ export function AdminShell({
   deletionsToReview?: number;
   /** Nouvelles demandes du formulaire de contact, pas encore ouvertes (pastille « Demandes de contact ») */
   contactsToReview?: number;
+  /** Super admin aussi membre d'une ou plusieurs centrales : lien vers son espace centrale (/dashboard) */
+  centraleName?: string | null;
 }) {
   const [, start] = useTransition();
   const sections: NavSection[] = [
@@ -80,6 +83,8 @@ export function AdminShell({
         { href: "/admin/audit", label: "Sécurité & audit", icon: "shield" },
       ],
     },
+    // Même compte, espace centrale (les droits de /dashboard sont ceux de l'adhésion à la centrale)
+    ...(centraleName ? [{ title: "Mon espace", items: [{ href: "/dashboard", label: centraleName, icon: "building" as const }] }] : []),
   ];
   return (
     <>
