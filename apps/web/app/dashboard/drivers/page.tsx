@@ -1,20 +1,15 @@
-import {
-  DRIVER_STATUS_META, VEHICLE_CATEGORY_META, formatPercent, formatPhone, formatPrice, formatRelative,
-  type DriverStatus, type OrgDocumentAlerts, type VehicleCategory,
-} from "@rydar/shared";
+import type { DriverStatus, OrgDocumentAlerts } from "@rydar/shared";
 import { Link2, Search, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DocumentAlertsCard } from "@/components/drivers/document-alerts";
 import { DriverFormSheet } from "@/components/drivers/driver-form-sheet";
+import { DriversTable, type DriverTableRow } from "@/components/drivers/drivers-table";
 import { FleetOverviewMap } from "@/components/drivers/fleet-overview-map";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
-import { PresenceBadge } from "@/components/rides/status";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Avatar, EmptyState } from "@/components/ui/misc";
-import { Table, TD, TH, THead, TR } from "@/components/ui/table";
+import { EmptyState } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +41,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     ctx.supabase.rpc("org_document_alerts", { p_org: ctx.org.id }),
   ]);
   const m = new Map(((metrics ?? []) as any[]).map((x) => [x.driver_id, x]));
+  const serverNow = Date.now();
   const all = (drivers ?? []) as any[];
   const busy = new Set(["en_route", "arrived", "on_trip"]);
   const list = all.filter((d) => {
@@ -60,6 +56,29 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     }
   });
   const active = all.filter((d) => d.status === "active");
+  const one = <T,>(x: T | T[] | null | undefined): T | null => (Array.isArray(x) ? (x[0] ?? null) : (x ?? null));
+  // Lignes compactes pour le tableau (composant client) : seuls les champs affichés quittent le serveur
+  const rows: DriverTableRow[] = list.map((d) => {
+    const x = m.get(d.id);
+    const vehicle = one<any>(d.vehicle);
+    return {
+      id: d.id,
+      number: d.number,
+      first_name: d.first_name,
+      last_name: d.last_name,
+      phone: d.phone,
+      photo_url: d.photo_url,
+      status: d.status as DriverStatus,
+      presence: d.presence,
+      vehicle: vehicle ? { brand: vehicle.brand, model: vehicle.model, plate: vehicle.plate, category: vehicle.category } : null,
+      seen_at: one<any>(d.location)?.updated_at ?? null,
+      rate: x?.acceptance_rate != null ? Number(x.acceptance_rate) : null,
+      offers: x?.offers ?? 0,
+      completed: x?.completed ?? 0,
+      cancelled: x?.cancelled ?? 0,
+      revenue_cents: Number(x?.revenue_cents ?? 0),
+    };
+  });
 
   return (
     <>
@@ -91,14 +110,23 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
         {docAlerts && <DocumentAlertsCard alerts={docAlerts as OrgDocumentAlerts} />}
 
         <Card className="relative h-[320px] overflow-hidden">
+          {/* Carte : seulement ce qu'elle affiche (position, présence, nom, plaque) */}
           <FleetOverviewMap
             drivers={active
               .filter((d) => d.presence !== "offline")
-              .map((d) => ({
-                ...d,
-                vehicle: Array.isArray(d.vehicle) ? (d.vehicle[0] ?? null) : d.vehicle,
-                location: Array.isArray(d.location) ? (d.location[0] ?? null) : d.location,
-              }))}
+              .map((d) => {
+                const vehicle = one<any>(d.vehicle);
+                const loc = one<any>(d.location);
+                return {
+                  id: d.id,
+                  number: d.number,
+                  first_name: d.first_name,
+                  last_name: d.last_name,
+                  presence: d.presence,
+                  vehicle: vehicle ? { plate: vehicle.plate } : null,
+                  location: loc ? { lat: loc.lat, lng: loc.lng, heading: loc.heading, speed_mps: loc.speed_mps, updated_at: loc.updated_at } : null,
+                };
+              })}
           />
         </Card>
 
@@ -125,65 +153,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
           {!list.length ? (
             <EmptyState icon={<Users />} title="Aucun chauffeur" description="Ajoutez vos chauffeurs : ils recevront les courses dans l'application Rydar Drive." />
           ) : (
-            <Table>
-              <THead>
-                <tr>
-                  <TH>Chauffeur</TH>
-                  <TH>Véhicule</TH>
-                  <TH>Présence</TH>
-                  <TH className="text-right">Acceptation</TH>
-                  <TH className="text-right">Terminées</TH>
-                  <TH className="text-right">Annulées</TH>
-                  <TH className="text-right">CA 30 j</TH>
-                  <TH>Compte</TH>
-                </tr>
-              </THead>
-              <tbody>
-                {list.map((d) => {
-                  const x = m.get(d.id);
-                  const rate = x?.acceptance_rate != null ? Number(x.acceptance_rate) : null;
-                  const loc = Array.isArray(d.location) ? d.location[0] : d.location;
-                  return (
-                    <TR key={d.id} className="relative">
-                      <TD>
-                        <Link href={`/dashboard/drivers/${d.id}`} className="absolute inset-0" aria-label={`${d.first_name} ${d.last_name}`} />
-                        <div className="flex items-center gap-3">
-                          <Avatar name={`${d.first_name} ${d.last_name}`} src={d.photo_url} size={34} />
-                          <div className="min-w-0">
-                            <p className="truncate text-[13.5px] font-medium">
-                              {d.first_name} {d.last_name} <span className="num text-[11.5px] text-fg-subtle">#{d.number}</span>
-                            </p>
-                            <p className="text-[12px] text-fg-subtle">{formatPhone(d.phone)}</p>
-                          </div>
-                        </div>
-                      </TD>
-                      <TD>
-                        <p className="text-[13px]">{d.vehicle ? `${d.vehicle.brand ?? ""} ${d.vehicle.model}` : "—"}</p>
-                        <p className="text-[12px] text-fg-subtle">
-                          <span className="num">{d.vehicle?.plate}</span> · {d.vehicle ? VEHICLE_CATEGORY_META[d.vehicle.category as VehicleCategory]?.label : ""}
-                        </p>
-                      </TD>
-                      <TD>
-                        <PresenceBadge presence={d.presence} />
-                        <p className="mt-1 text-[11px] text-fg-subtle">{loc?.updated_at ? `vu ${formatRelative(loc.updated_at)}` : "jamais connecté"}</p>
-                      </TD>
-                      <TD className="text-right">
-                        <span className={cn("num text-[13.5px] font-semibold", rate == null ? "text-fg-subtle" : rate >= 0.6 ? "text-brand" : rate >= 0.35 ? "text-amber" : "text-red")}>
-                          {formatPercent(rate)}
-                        </span>
-                        <p className="num text-[11px] text-fg-subtle">{x?.offers ?? 0} offres</p>
-                      </TD>
-                      <TD className="num text-right text-[13.5px]">{x?.completed ?? 0}</TD>
-                      <TD className="num text-right text-[13.5px] text-fg-muted">{x?.cancelled ?? 0}</TD>
-                      <TD className="num text-right text-[13.5px] font-semibold">{formatPrice(Number(x?.revenue_cents ?? 0))}</TD>
-                      <TD>
-                        <Badge tone={DRIVER_STATUS_META[d.status as DriverStatus].tone}>{DRIVER_STATUS_META[d.status as DriverStatus].label}</Badge>
-                      </TD>
-                    </TR>
-                  );
-                })}
-              </tbody>
-            </Table>
+            <DriversTable rows={rows} serverNow={serverNow} />
           )}
         </Card>
       </PageBody>

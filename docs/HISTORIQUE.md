@@ -316,6 +316,64 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   déploiement : 404 → 200). `prefetch={false}` aussi sur le relevé des frais (mois, retour, courses) : 15 → 1 requête
   Next au chargement (14 préchargements → 0), CPU Next 360 → 240 ms. Branche fusionnée avec 006400 (frais des flottes).
 
+- [x] **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, sans migration)** — constats
+  CR1-CR5, CR8, SD-2, SD-3 (partiel), SD-6, SD-9 de l'analyse de performance :
+  - Centre de commande : `driver.location` regroupés (`useRef<Map>`, une action `locations` par seconde, rien onglet caché ;
+    position plus ancienne que la connue ignorée) ; réducteur sorti dans `components/command/live-state.ts` (testé).
+    `FleetMap` : clés par marqueur (DOM touché seulement si l'état change), une boucle rAF pour toutes les voitures, pas
+    de réécriture sous 0,5 px, saut direct onglet caché ; épingles séparées des tracés ; `rd-routes` redessiné seulement
+    si une position utile (approche, offres de la course sélectionnée) ou les courses changent ; `rd-radius` si la
+    course sélectionnée / son rayon changent ; visibles = sélectionnée ou non terminée et (< 2 h ou en route / à bord) :
+    plus d'épingles ni de lignes d'approche pour les ACCEPTED lointaines ; horloge lente 30 s (positions anciennes,
+    horizon). `MapDriver` : la carte n'exige que id, numéro, nom, présence, position, plaque.
+  - Horloges : `useNow(15_000)` pour l'écran ; `useSharedNow(ms, repli)` (`hooks/use-now.ts`, une minuterie par
+    intervalle, `useSyncExternalStore`) pour `LiveClock`, le compte à rebours des vagues (`ride-row.tsx`), « vu il y a »
+    (`fleet-panel.tsx`) et la console super admin (`live-console.tsx`, âges, « Actualisé il y a »). `RideRow` et les
+    lignes de la flotte mémorisées (rappels stables, chauffeur comparé sur ce qui est affiché).
+  - `@rydar/shared` `format.ts` : `dateTimeFormat` / `numberFormat` mémorisés (clé locale + options, 200 au plus),
+    sorties identiques (1 117 comparaisons ; `formatRideDate` ×22, `formatPrice` ×30 plus rapides).
+  - Synchronisation : `RealtimeProvider` expose `generation` (réabonnements) et une valeur mémorisée ;
+    `components/realtime/use-live-sync.ts` (événement → relecture regroupée, différée onglet caché ; réabonnement ou
+    retour du temps réel → relecture ; repli « offline » seulement, délai ×3 jusqu'au plafond, en pause onglet caché ;
+    sécurité optionnelle en temps réel). Utilisé par `LiveRefresh` (5 → 15 → 45 → 60 s), `NetworkLive`, Encaissements
+    (15 s → 2 min ; plus de relecture fixe de 120 s : relecture à la prochaine échéance, une par minute au plus) et le
+    centre de commande (instantané : reconnexion, retour après 1 min caché, 2 min en temps réel, repli 6 → 18 → 30 s ;
+    KPI 2 s au plus, seulement sur statut / prix / horaire / présence). Compteurs de la barre (120 s) en pause onglet
+    caché. `prefetch={false}` sur les liens de la barre latérale et du bandeau des conditions (pages dynamiques sans
+    loading.js : le préchargement ne servait à rien et repartait après chaque `router.refresh`).
+  - Instantané : `route_polyline` retiré de `RIDE_FIELDS` ; 3e lecture parallèle des tracés des courses client à bord ;
+    autres tracés chargés à la demande (`GET /api/dashboard/rides/[id]?route=1`, RLS + `getOrgContext`), gardés par le
+    réducteur tant que le trajet est le même ; recadrage si le tracé déborde.
+  - Encaissements : `components/settlements/settlement-list.ts` (rang, tri, version compacte) ; une seule variante de
+    ligne (`xl:contents` + `xl:order-*`) ; « À traiter » trié côté serveur puis 100 lignes (`n` jusqu'à 500, « Afficher
+    plus ») ; règlements ouverts envoyés en version compacte (compteurs, WhatsApp). Les compteurs restent calculés sur la
+    liste ouverte (org_settlement_overview n'a ni le nombre de retards ni celui des « à verser » ; pas de migration).
+  - Chauffeurs : `components/drivers/drivers-table.tsx` (client, lignes compactes, heure du rendu serveur pour « vu »).
+  Mesures (build de prod, base rydar_perf, A = 0cc5c0f, B = ce lot, médianes, A/B alternés, machine partagée) :
+  /dashboard CPU ×4 sans canevas, 50 chauffeurs toutes les 5 s : occupation 99,5 → 36,1 %, script 58,4 → 6,5 %, rendus
+  de carte 10,3 → 1,0/s, tâches longues 175 → 4 par 30 s ; au repos : 16,3 → 8,7 %, script 7,3 → 1,3 %, tâches
+  longues 24 → 0 ; épingles 209 → 15. Serveur : Encaissements (250 à traiter) HTML 3,57 → 1,22 Mo, CPU 660 → 200 ms,
+  TTFB 1 048 → 447 ms ; filtre « Encaissés » 1,53 → 1,05 Mo, 250 → 140 ms ; Chauffeurs 1,08 Mo → 576 Ko (RSC 649 → 145 Ko),
+  CPU 140 → 90 ms ; Courses CPU 70 → 50 ms. Requêtes en 60 s, temps réel coupé : fiche course 180 → 6, Encaissements 75 → 12,
+  « En direct » 10 → 3 instantanés (0 onglet caché). Captures A/B identiques (hors épingles lointaines retirées).
+  Corrections après revue (A = 1bce786, B = correctifs, mêmes conditions) :
+  - `LiveRefresh` prend `maxPollMs` : fiche d'une course non close (ni terminée ni annulée) relue au plus toutes les
+    30 s sans temps réel (60 s sinon) ; course en cours, temps réel coupé, 180 s : 4 → 7 relectures, mais 12 → 7
+    requêtes (liens sans préchargement, ci-dessous).
+  - Encaissements : relecture de sécurité toutes les 5 min en temps réel (`livePollMs: 300_000`, diffusion perdue sans
+    coupure du canal) : 0 → 1 relecture en 310 s (une seule requête de plus, occupation 3,1 % des deux côtés).
+  - Sélection des Encaissements : `carrySelection` (`settlement-list.ts`, testé) ; une ligne cochée sortie des lignes
+    affichées après une relecture (re-tri des 100 premières) reste cochée, affichée sous « Sélection conservée », tant
+    que l'index des ouverts la donne avec le même statut et le même montant ; retirée sinon (vérifié dans Chromium en
+    réécrivant la relecture RSC : A perdait les 2 cases sans le dire, B garde la ligne encore ouverte, 1 sélectionné).
+  - Carte : `alertRideIds` (alertes ouvertes) : une course en alerte reste épinglée au-delà de 2 h comme dans la liste
+    « En cours » (alerte injectée dans l'instantané : 19 → 20 épingles, occupation inchangée 7,1 %).
+  - `prefetch={false}` sur les liens des fiches course (retour, chauffeur, règlement) et des Encaissements (onglets,
+    cartes, soldes, numéros de course, réglages, relevé) : chaque relecture relançait ~2 (fiche) ou ~10 (Encaissements)
+    préchargements de 2,4 Ko inutiles ; temps réel coupé, 120 s : fiche 15 → 5 requêtes, Encaissements 12 → 2 ; temps
+    de navigation au clic inchangé (médianes 944-1 600 ms des deux côtés).
+  - Barre latérale : commentaire « rendre le préchargement si un app/dashboard/loading.tsx arrive ».
+
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.

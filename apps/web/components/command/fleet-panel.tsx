@@ -1,8 +1,9 @@
 "use client";
 import { PRESENCE_META, formatRelative, initials, type DriverPresence } from "@rydar/shared";
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { PRESENCE_COLOR } from "@/components/map/map-theme";
+import { useSharedNow } from "@/hooks/use-now";
 import type { LiveDriver, LiveRide } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +22,9 @@ export function FleetPanel({
   drivers: LiveDriver[];
   rides: Record<string, LiveRide>;
   selectedId: string | null;
+  /** Fonction stable de préférence : seules les lignes dont les données changent sont re-rendues. */
   onSelect: (id: string) => void;
+  /** Heure de repli (rendu serveur, hydratation) ; « vu il y a » suit ensuite sa propre horloge d'une seconde. */
   now: number;
   staleMs?: number;
   className?: string;
@@ -65,39 +68,71 @@ export function FleetPanel({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {list.map((d) => {
-          const ride = d.current_ride_id ? rides[d.current_ride_id] : undefined;
-          const stale = d.location ? now - new Date(d.location.updated_at).getTime() > staleMs : true;
-          return (
-            <button
-              key={d.id}
-              type="button"
-              onClick={() => onSelect(d.id)}
-              className={cn("flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors", selectedId === d.id ? "bg-white/[0.07]" : "hover:bg-white/[0.035]")}
-            >
-              <span className="relative shrink-0">
-                <span className="grid size-8 place-items-center rounded-full bg-ink-600 text-[11px] font-semibold text-fg-muted">{initials(d.first_name, d.last_name)}</span>
-                <span className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-ink-800" style={{ background: PRESENCE_COLOR[d.presence] }} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium text-fg">
-                  {d.first_name} {d.last_name}
-                </span>
-                <span className="block truncate text-[11.5px] text-fg-subtle">
-                  {ride ? `${PRESENCE_META[d.presence].label} · #${ride.number}` : d.vehicle ? `${d.vehicle.model} · ${d.vehicle.plate}` : "Sans véhicule"}
-                </span>
-              </span>
-              <span className={cn("shrink-0 text-[11px] tabular-nums", stale && d.presence !== "offline" ? "text-amber" : "text-fg-subtle")}>
-                {d.location ? formatRelative(d.location.updated_at, new Date(now)).replace("il y a ", "") : "—"}
-              </span>
-            </button>
-          );
-        })}
+        {list.map((d) => (
+          <FleetRow
+            key={d.id}
+            d={d}
+            rideNumber={d.current_ride_id ? rides[d.current_ride_id]?.number : undefined}
+            selected={selectedId === d.id}
+            onSelect={onSelect}
+            fallbackNow={now}
+            staleMs={staleMs}
+          />
+        ))}
         {!list.length && <p className="px-3 py-8 text-center text-[12.5px] text-fg-subtle">Aucun chauffeur dans ce filtre.</p>}
       </div>
     </div>
   );
 }
+
+/** « 12 s », « 3 min » : seule partie de la ligne rafraîchie chaque seconde (horloge commune). */
+function SeenAgo({ d, fallbackNow, staleMs }: { d: LiveDriver; fallbackNow: number; staleMs: number }) {
+  const now = useSharedNow(1000, fallbackNow);
+  const stale = d.location ? now - new Date(d.location.updated_at).getTime() > staleMs : true;
+  return (
+    <span className={cn("shrink-0 text-[11px] tabular-nums", stale && d.presence !== "offline" ? "text-amber" : "text-fg-subtle")}>
+      {d.location ? formatRelative(d.location.updated_at, new Date(now)).replace("il y a ", "") : "—"}
+    </span>
+  );
+}
+
+const FleetRow = memo(function FleetRow({
+  d,
+  rideNumber,
+  selected,
+  onSelect,
+  fallbackNow,
+  staleMs,
+}: {
+  d: LiveDriver;
+  rideNumber: number | undefined;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  fallbackNow: number;
+  staleMs: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(d.id)}
+      className={cn("flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors", selected ? "bg-white/[0.07]" : "hover:bg-white/[0.035]")}
+    >
+      <span className="relative shrink-0">
+        <span className="grid size-8 place-items-center rounded-full bg-ink-600 text-[11px] font-semibold text-fg-muted">{initials(d.first_name, d.last_name)}</span>
+        <span className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-ink-800" style={{ background: PRESENCE_COLOR[d.presence] }} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium text-fg">
+          {d.first_name} {d.last_name}
+        </span>
+        <span className="block truncate text-[11.5px] text-fg-subtle">
+          {rideNumber != null ? `${PRESENCE_META[d.presence].label} · #${rideNumber}` : d.vehicle ? `${d.vehicle.model} · ${d.vehicle.plate}` : "Sans véhicule"}
+        </span>
+      </span>
+      <SeenAgo d={d} fallbackNow={fallbackNow} staleMs={staleMs} />
+    </button>
+  );
+});
 
 function Chip({ active, onClick, label, n, color }: { active: boolean; onClick: () => void; label: string; n: number; color?: string }) {
   return (

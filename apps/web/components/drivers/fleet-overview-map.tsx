@@ -1,10 +1,9 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { FleetMap } from "@/components/map/fleet-map";
-import type { LiveDriver } from "@/lib/queries/live";
+import { FleetMap, type MapDriver } from "@/components/map/fleet-map";
 
 /** Carte de la flotte (page Chauffeurs) : clic sur un véhicule → fiche du chauffeur. */
-export function FleetOverviewMap({ drivers }: { drivers: LiveDriver[] }) {
+export function FleetOverviewMap({ drivers }: { drivers: MapDriver[] }) {
   const router = useRouter();
   return (
     <FleetMap

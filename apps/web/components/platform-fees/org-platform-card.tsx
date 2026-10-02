@@ -70,7 +70,7 @@ export function OrgPlatformCard({
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <Button asChild variant="outline" size="sm" className="flex-1 sm:flex-none">
-              <Link href={statementHref}>
+              <Link href={statementHref} prefetch={false}>
                 <FileText /> Relevé mensuel
               </Link>
             </Button>

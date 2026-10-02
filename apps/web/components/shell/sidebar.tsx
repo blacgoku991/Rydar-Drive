@@ -100,11 +100,11 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
                 const active = item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <li key={item.href}>
+                    {/* Sans préchargement : chaque lien visible relançait le rendu (et l'authentification) de sa page.
+                        Si un app/dashboard/loading.tsx est ajouté, revenir au préchargement par défaut (squelette
+                        instantané). */}
                     <Link
                       href={item.href}
-                      // Pas de préchargement : les pages du tableau de bord sont dynamiques (sans loading.tsx), un
-                      // préchargement ne contient aucune donnée mais passe par le proxy et occupe le serveur (une
-                      // vingtaine de requêtes par page affichée). Le clic reste une seule requête RSC.
                       prefetch={false}
                       onClick={onNavigate}
                       className={cn(

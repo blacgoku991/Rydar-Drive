@@ -334,7 +334,7 @@ export function RideMoneyCard({
           </p>
         )}
         {settlement && (
-          <Link href={`/dashboard/settlements?filter=all${settlement.driver_id ? `&driver=${settlement.driver_id}` : ""}#reglements`} className="inline-block text-[12px] text-fg-subtle underline-offset-2 hover:text-fg hover:underline">
+          <Link href={`/dashboard/settlements?filter=all${settlement.driver_id ? `&driver=${settlement.driver_id}` : ""}#reglements`} prefetch={false} className="inline-block text-[12px] text-fg-subtle underline-offset-2 hover:text-fg hover:underline">
             Tous les règlements de {parseDriverLabel(settlement.driver_label).firstName} →
           </Link>
         )}

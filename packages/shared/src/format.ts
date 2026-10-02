@@ -1,25 +1,63 @@
 // Formatage FR (prix, distances, durées, dates, téléphones).
 
-const nbsp = " ";
+const nbsp = "\u00A0";
+
+// Formateurs Intl mémorisés : en construire un coûte 50 à 150 µs (contre 1 à 3 µs pour un format), et les listes
+// (Encaissements, Courses, centre de commande) en appellent des milliers par rendu. Clé = locale + options ; cache
+// borné (fuseaux et devises sont en nombre fini, la purge n'est qu'un garde-fou).
+const MAX_CACHED = 200;
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+const numberFormats = new Map<string, Intl.NumberFormat>();
+const relativeFormats = new Map<string, Intl.RelativeTimeFormat>();
+
+function cached<F, O>(cache: Map<string, F>, make: (locale: string, options: O) => F, locale: string, options: O): F {
+  const key = `${locale}|${JSON.stringify(options)}`;
+  let f = cache.get(key);
+  if (!f) {
+    if (cache.size >= MAX_CACHED) cache.clear();
+    f = make(locale, options);
+    cache.set(key, f);
+  }
+  return f;
+}
+
+/** `new Intl.DateTimeFormat(locale, options)` mémorisé (mêmes arguments → même formateur). */
+export function dateTimeFormat(locale: string, options: Intl.DateTimeFormatOptions = {}): Intl.DateTimeFormat {
+  return cached(dateFormats, (l, o) => new Intl.DateTimeFormat(l, o), locale, options);
+}
+
+/** `new Intl.NumberFormat(locale, options)` mémorisé. */
+export function numberFormat(locale: string, options: Intl.NumberFormatOptions = {}): Intl.NumberFormat {
+  return cached(numberFormats, (l, o) => new Intl.NumberFormat(l, o), locale, options);
+}
+
+function relativeTimeFormat(locale: string, options: Intl.RelativeTimeFormatOptions): Intl.RelativeTimeFormat {
+  return cached(relativeFormats, (l, o) => new Intl.RelativeTimeFormat(l, o), locale, options);
+}
 
 export function formatPrice(cents: number | null | undefined, currency = "EUR", opts: { empty?: string } = {}): string {
   if (cents === null || cents === undefined || Number.isNaN(cents)) return opts.empty ?? "—";
   const value = cents / 100;
-  const formatted = new Intl.NumberFormat("fr-FR", {
+  const formatted = numberFormat("fr-FR", {
     style: "currency",
     currency,
     minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
     maximumFractionDigits: 2,
   }).format(value);
-  return formatted.replace(/ /g, nbsp);
+  return formatted.replace(/\u202F/g, nbsp);
 }
 
 export function formatCompactPrice(cents: number | null | undefined, currency = "EUR"): string {
   if (cents === null || cents === undefined) return "—";
   if (Math.abs(cents) < 1_000_000) return formatPrice(Math.round(cents / 100) * 100, currency);
-  return new Intl.NumberFormat("fr-FR", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 })
+  return numberFormat("fr-FR", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 })
     .format(cents / 100)
-    .replace(/ /g, nbsp);
+    .replace(/\u202F/g, nbsp);
+}
+
+/** Équivalent de `n.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d })`, formateur mémorisé. */
+function frFixed(n: number, digits: number): string {
+  return numberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
 }
 
 export function formatDistance(meters: number | null | undefined): string {
@@ -27,7 +65,7 @@ export function formatDistance(meters: number | null | undefined): string {
   if (meters < 1000) return `${Math.round(meters)}${nbsp}m`;
   const km = meters / 1000;
   const digits = km < 10 && Math.round(meters) % 1000 !== 0 ? 1 : 0;
-  return `${km.toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits })}${nbsp}km`;
+  return `${frFixed(km, digits)}${nbsp}km`;
 }
 
 export function formatDuration(seconds: number | null | undefined): string {
@@ -42,19 +80,19 @@ export function formatDuration(seconds: number | null | undefined): string {
 
 export function formatNumber(n: number | null | undefined, digits = 0): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
-  return n.toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return frFixed(n, digits);
 }
 
 export function formatPercent(ratio: number | null | undefined, digits = 0): string {
   if (ratio === null || ratio === undefined || Number.isNaN(ratio)) return "—";
-  return `${(ratio * 100).toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits })}${nbsp}%`;
+  return `${frFixed(ratio * 100, digits)}${nbsp}%`;
 }
 
 const TZ = "Europe/Paris";
 
 export function formatTime(date: Date | string | null | undefined, timeZone = TZ, withSeconds = false): string {
   if (!date) return "—";
-  return new Intl.DateTimeFormat("fr-FR", {
+  return dateTimeFormat("fr-FR", {
     hour: "2-digit",
     minute: "2-digit",
     second: withSeconds ? "2-digit" : undefined,
@@ -64,11 +102,11 @@ export function formatTime(date: Date | string | null | undefined, timeZone = TZ
 
 export function formatDate(date: Date | string | null | undefined, timeZone = TZ): string {
   if (!date) return "—";
-  return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone }).format(new Date(date));
+  return dateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone }).format(new Date(date));
 }
 
 function dayKey(d: Date, timeZone: string) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  return dateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 }
 
 /** « Aujourd'hui 14:32 », « Demain 06:30 », « Hier 22:10 », « jeu. 25/09 06:30 ». */
@@ -81,7 +119,7 @@ export function formatRideDate(date: Date | string | null | undefined, timeZone 
   if (key === dayKey(now, timeZone)) return `Aujourd'hui ${time}`;
   if (key === dayKey(new Date(now.getTime() + day), timeZone)) return `Demain ${time}`;
   if (key === dayKey(new Date(now.getTime() - day), timeZone)) return `Hier ${time}`;
-  const label = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", timeZone }).format(d);
+  const label = dateTimeFormat("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", timeZone }).format(d);
   return `${label} ${time}`;
 }
 
@@ -90,12 +128,13 @@ export function formatRelative(date: Date | string | null | undefined, now = new
   if (!date) return "—";
   const diff = new Date(date).getTime() - now.getTime();
   const abs = Math.abs(diff);
-  const rtf = new Intl.RelativeTimeFormat("fr", { numeric: "auto", style: "short" });
+  const rtf = relativeTimeFormat("fr", { numeric: "auto", style: "short" });
   if (abs < 60_000) return rtf.format(Math.round(diff / 1000), "second");
   if (abs < 3_600_000) return rtf.format(Math.round(diff / 60_000), "minute");
   if (abs < 86_400_000) return rtf.format(Math.round(diff / 3_600_000), "hour");
   return rtf.format(Math.round(diff / 86_400_000), "day");
 }
+
 
 /**
  * Normalise un numéro FR/international en E.164 (+33612345678). Retourne null si invalide.
