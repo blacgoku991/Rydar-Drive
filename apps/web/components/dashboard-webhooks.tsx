@@ -52,7 +52,7 @@ export type WebhookDeliveryRow = {
 };
 
 const NB = String.fromCharCode(0xa0); // espace insécable (avant : ; ! ? et dans « »)
-const DEFAULT_EVENTS: WebhookEvent[] = ["ride.accepted", "ride.driver_arrived", "ride.completed", "ride.cancelled", "ride.no_driver_found"];
+const DEFAULT_EVENTS: WebhookEvent[] = ["ride.accepted", "ride.driver_arrived", "ride.completed", "ride.cancelled", "ride.no_driver_found", "ride.search_restarted"];
 
 function hostOf(url: string | undefined) {
   if (!url) return "adresse supprimée";
