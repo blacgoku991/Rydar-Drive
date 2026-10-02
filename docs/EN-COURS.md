@@ -38,13 +38,17 @@ pour les flottes, `20260924006400` frais Rydar des flottes.
   « Frais Rydar » pour une flotte, relance du super admin au nom de « la flotte », signal « courses sans prix » juste
   pour une flotte (part en % perdue seulement), tests de tous les chemins (fin côté serveur, prix corrigé par un
   dispatcher, réglage pendant la fin de course, flotte → centrale sans règlement).
-  **À faire AVANT d'activer des frais sur une flotte** (propriétaire) : (1) réécrire l'article 5 des CGV (`/cgv` :
-  aujourd'hui « Frais plateforme (modèle centrale) … dans la limite du prix ») et l'article 3 (flotte : % du prix + frais
-  fixes facturés à la flotte, fixes dus même sans prix, sans plafond), puis monter `LEGAL_VERSION` (nouvelle acceptation
-  par les organisations ET les chauffeurs) et passer `CGV_COVERS_FLEET_FEES` à true (`components/admin/fees.ts`, retire
-  l'avertissement du super admin) ; (2) `/tarifs` et `pricing.tsx` ne parlent encore de frais par course que pour les
-  centrales ; (3) modèle WhatsApp neutre à faire approuver (WHATSAPP.md). Ensuite seulement : régler les frais de chaque
-  flotte (ex. 2 €) — seules les courses terminées après le réglage sont facturées.
+  CGV, `/tarifs` et `pricing.tsx` mis à jour (version 2026-10-02, entrée suivante). **Reste AVANT d'activer des frais
+  sur une flotte** (propriétaire) : (1) la flotte a accepté la version 2026-10-02 (`/admin/legal`) — sinon l'art. 16 des
+  CGV qu'elle a acceptées impose 30 jours d'annonce pour une modification défavorable ; (2) modèle WhatsApp neutre à
+  faire approuver (WHATSAPP.md). Ensuite seulement : régler les frais de chaque flotte (ex. 2 €) — seules les courses
+  terminées après le réglage sont facturées.
+- **CGV version 2026-10-02** (validée par le propriétaire) : frais plateforme par course pour les DEUX modèles (art. 3 et
+  5 : flotte = % + fixe sans plafond, fixe seul sans prix ; centrale = prélevés, plafonnés au prix), cumulables avec
+  l'abonnement (art. 4 : montant de l'offre à la souscription, aucun prix en dur) ; réseau partagé = option régie par une
+  convention distincte (une phrase, frais dus « y compris » avec l'option) ; `/confidentialite` § 7 : organisations
+  partenaires. `LEGAL_VERSION` = `2026-10-02` → tout le monde ré-accepte une fois (bandeaux du tableau de bord ; app
+  chauffeur après `eas update`, JS seul). Avertissement `CGV_COVERS_FLEET_FEES` retiré. Aucune migration.
 - **Mini-sites coupés pour toute la plateforme (demande du propriétaire, migration 006200)** : jusqu'à réactivation par
   le super admin (Offres & limites, carte « Mini-sites de réservation », confirmation, journal d'audit). Coupé : menu
   « Mini-site » masqué, éditeur remplacé par « Les mini-sites de réservation sont momentanément désactivés par Rydar. »,

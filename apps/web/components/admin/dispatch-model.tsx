@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { updateDispatchModel } from "@/app/admin/actions";
-import { CGV_COVERS_FLEET_FEES, centsToInput, eurosToCents, parsePercent, percentToInput, platformFee, readFees } from "@/components/admin/fees";
+import { centsToInput, eurosToCents, parsePercent, percentToInput, platformFee, readFees } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
@@ -112,16 +112,6 @@ export function FeeFields({
             Exemple : course à <span className="num text-fg-muted">59 €</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> de frais plateforme, déduits avant la part chauffeur et la commission.
           </p>
         ))}
-      {model === "fleet" && !CGV_COVERS_FLEET_FEES && (
-        <p role="note" className="flex items-start gap-2 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span>
-            CGV à mettre à jour avant de facturer une flotte{"\u00a0"}: l&apos;article 5 ne prévoit encore les frais par course que pour les
-            centrales (prélevés sur le prix, plafonnés). Publiez d&apos;abord la nouvelle version (flotte{"\u00a0"}: % du prix + frais fixes
-            facturés à la flotte, fixes dus même sans prix), acceptée par la flotte, puis réglez ses frais ici.
-          </span>
-        </p>
-      )}
     </div>
   );
 }

@@ -287,6 +287,15 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   (décision documentée, SECURITY.md). Tests : 16 dans `fleet-platform-fees.test.ts` (fin côté serveur, prix d'une course
   terminée baissé puis remonté par un dispatcher, réglage pendant la fin de course, flotte → centrale sans règlement,
   menu, temps réel, relance) + `zeroPriceText`.
+- [x] **CGV version 2026-10-02 (frais par course pour tous les modèles + abonnement)** — `/cgv` art. 3 (deux modèles,
+  frais par course possibles dans les deux, réseau partagé = convention distincte), art. 4 (abonnement au montant de
+  l'offre à la souscription, cumulable avec les frais), art. 5 « Frais plateforme » décrit le SQL : flotte = % + fixe
+  sans plafond, fixe seul sans prix, taux figés à la fin de course ; centrale = prélevés, plafonnés au prix, rien sans
+  prix, taux du calcul de la répartition ; changement de taux affiché dans le tableau de bord, jamais sur les frais
+  inscrits ; dus par l'organisation à qui appartient la course (réseau partagé compris). `/confidentialite` § 7
+  (organisations partenaires), `/tarifs` et `pricing.tsx` (flotte comme centrale). `LEGAL_VERSION` → `2026-10-02`
+  (nouvelle acceptation web + app), `CGV_UPDATED_AT` / `PRIVACY_UPDATED_AT` ; `CGV_COVERS_FLEET_FEES` et
+  l'avertissement du super admin retirés. Aucune version légale en dur en SQL : aucune migration.
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

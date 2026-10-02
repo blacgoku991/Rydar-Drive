@@ -130,10 +130,9 @@ Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domain
   (décision 006400) : ce sont les conditions de l'organisation, pas des montants dus, et les retirer du GRANT par
   colonne casserait tout `select('*')` sur `organizations`. Compte, écritures, paiements, relevé et menu
   (`org_platform_fees_enabled`) restent réservés à l'owner / admin.
-- **CGV** : l'article 5 en vigueur ne couvre encore que les frais des centrales (prélevés sur le prix, plafonnés). Avant
-  de régler des frais sur une flotte : réécrire l'article (flotte : % + fixe facturés à la flotte, fixe dû sans prix) et
-  monter `LEGAL_VERSION` ; d'ici là, avertissement à côté des champs (`CGV_COVERS_FLEET_FEES = false`,
-  `components/admin/fees.ts`).
+- **CGV** (version 2026-10-02) : l'article 5 couvre les frais des deux modèles (flotte : % + fixe facturés à la flotte,
+  fixe dû sans prix, sans plafond ; centrale : prélevés sur le prix, plafonnés). Régler les frais d'une flotte après son
+  acceptation de cette version (`/admin/legal`).
 - **Registre immuable** : aucune écriture ne se modifie ni ne se supprime (trigger `platform_entry_guard`, même en service
   role) ; tout changement de frais est une nouvelle écriture de correction. Registre et paiements ne partent pas non plus
   avec la centrale : clés étrangères en `on delete restrict` (migration 004200), une centrale qui en a s'archive. Une **baisse** (prix corrigé après la course)

@@ -86,5 +86,7 @@ export { LEGAL_VERSION } from "@rydar/shared";
 
 /** Date de dernière mise à jour affichée sur les pages légales. */
 export const LEGAL_UPDATED_AT = "27 septembre 2026";
-/** Politique de confidentialité : formulaire de contact ajouté (données, finalité, destinataires, durée). */
-export const PRIVACY_UPDATED_AT = "28 septembre 2026";
+/** CGV : frais plateforme par course pour les deux modèles (flotte et centrale), cumulables avec l'abonnement. */
+export const CGV_UPDATED_AT = "2 octobre 2026";
+/** Politique de confidentialité : organisations partenaires (option réseau partagé) parmi les destinataires. */
+export const PRIVACY_UPDATED_AT = "2 octobre 2026";

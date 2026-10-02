@@ -265,7 +265,7 @@ export const FLEET_CHAT_RULES_POINTS = [
  * Version des documents légaux : date ISO (AAAA-MM-JJ), comparable comme du texte. À changer quand leur contenu
  * change de façon importante : centrales et chauffeurs sont alors invités à accepter la nouvelle version.
  */
-export const LEGAL_VERSION = "2026-09-27";
+export const LEGAL_VERSION = "2026-10-02";
 
 /**
  * Version acceptée ÉGALE à celle en vigueur (comme le web) : une version « postérieure » inscrite dans le registre

@@ -14,7 +14,7 @@ export const metadata: Metadata = marketingMetadata({
   path: "/tarifs",
   title: "Tarifs du logiciel de dispatch VTC",
   description: fr(
-    "Abonnement mensuel ou annuel, prix hors taxes, renouvellement arrêté quand vous voulez depuis le tableau de bord. Mode centrale : frais plateforme par course terminée.",
+    "Abonnement mensuel ou annuel, prix hors taxes, renouvellement arrêté quand vous voulez depuis le tableau de bord. Selon l'offre : frais plateforme par course terminée, flotte comme centrale.",
   ),
 });
 
