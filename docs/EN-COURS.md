@@ -23,6 +23,10 @@ la file si le serveur mail est injoignable, relance à son retour), `20260924005
 démarrées.
 
 ## Depuis l'audit
+- Web : lien « Mot de passe oublié » (et invitation) du tableau de bord : après validation, `/auth/callback`
+  renvoyait vers l'adresse interne du serveur Next derrière Caddy (`https://0.0.0.0:3000/auth/set-password`).
+  Redirection désormais par chemin relatif (`redirect()` : les cookies de session partent avec). Contournement avant la
+  mise à jour : remplacer `0.0.0.0:3000` par `rydardrive.com` dans l'adresse (même navigateur, session déjà ouverte).
 - Courses planifiées acceptées mais jamais démarrées (retour d'essai : « Hier 06:30 » toujours dans « Mes courses »,
   encore démarrable) : migration `20260924005900` : annulées par le système, motif « Non effectuée », 6 h après l'heure
   de prise en charge (`private.expire_unstarted_rides`, appelée par le ménage toutes les 5 min ; chauffeur prévenu
