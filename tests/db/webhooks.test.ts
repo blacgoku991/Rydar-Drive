@@ -1,7 +1,9 @@
-// Webhooks sortants (migration 20260924006000_webhooks) : détection des événements sur les courses (création, cycle du
-// chauffeur, attribution, retrait, annulation, fin de recherche, heure modifiée), filtrage par adresse, prise et compte
-// rendu du worker (forme de « ride », verrous, reprises, désactivation automatique), conservation, fonctions svc_*
-// (validation, ajout ou mise à jour, secret, plafond, isolement des centrales, journal d'audit) et droits d'accès.
+// Webhooks sortants (migrations 20260924006000_webhooks et 20260924006100_webhooks_hardening) : détection des événements
+// sur les courses (création, cycle du chauffeur, attribution, retrait, annulation, fin de recherche, relance, heure
+// modifiée ; centrale suspendue ou offre sans l'API : rien), filtrage par adresse, prise et compte rendu du worker (forme
+// de « ride », un envoi en cours par adresse, tour de rôle entre centrales, verrous, reprises, désactivation
+// automatique, comptes rendus simultanés), conservation, fonctions svc_* (validation, ajout ou mise à jour, secret,
+// plafond, tests et renvois bornés, isolement des centrales, journal d'audit) et droits d'accès.
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -20,8 +22,9 @@ type Actor = { type: string; id: string | null };
 const EVENTS = [
   "ride.created", "ride.accepted", "ride.driver_unassigned", "ride.driver_en_route", "ride.driver_arrived",
   "ride.passenger_onboard", "ride.in_progress", "ride.completed", "ride.cancelled", "ride.no_driver_found",
-  "ride.rescheduled",
+  "ride.search_restarted", "ride.rescheduled",
 ];
+const AUTO_DISABLED = "Désactivé automatiquement : 50 échecs consécutifs et aucun envoi réussi depuis 3 jours";
 const DELAYS = [60, 300, 900, 3600, 10800, 21600, 43200, 86400];
 const CHAIN = ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS", "COMPLETED"];
 const ENDPOINT_KEYS = [
@@ -183,6 +186,19 @@ async function claimOne(id: string) {
   return row as Row;
 }
 
+/** Tout ce qui est dû, comme le worker : un envoi par adresse à la fois, chaque envoi pris rendu « envoyé » avant la
+ *  prise suivante. Renvoie les envois dans l'ordre où ils ont été pris. */
+async function claimAll(limit = 10): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let i = 0; i < 50; i++) {
+    const rows = await claim(limit);
+    if (rows.length === 0) break;
+    for (const r of rows) await complete(r.id, true, 200);
+    out.push(...rows);
+  }
+  return out;
+}
+
 async function superAdmin() {
   const id = await createAuthUser(`sa-${randomUUID().slice(0, 8)}@rydar.dev`, "Super Admin");
   await sql("update public.users set is_super_admin = true where id = $1", [id]);
@@ -316,7 +332,7 @@ describe("Webhooks : événements des courses", () => {
     ]);
   });
 
-  it("dispatch sans chauffeur jusqu'au bout : ride.no_driver_found une seule fois ; « Relancer » une course passée → rescheduled", async () => {
+  it("dispatch sans chauffeur jusqu'au bout : ride.no_driver_found une seule fois ; « Relancer » une course passée → search_restarted puis rescheduled", async () => {
     const org = await createOrg("WH Sans chauffeur");
     await addEndpoint(org);
     const ride = await createRideAsOwner(org);
@@ -329,12 +345,115 @@ describe("Webhooks : événements des courses", () => {
     expect(ended![1]).toBe("NO_DRIVER_FOUND");
     expect(["SEARCHING_DRIVER", "OFFERED"]).toContain(ended![2]);
 
-    // Relance : retour en recherche sans chauffeur retiré (rien) mais heure remise à maintenant (rescheduled)
+    // Relance : de nouveau en recherche (search_restarted) et heure remise à maintenant (rescheduled), dans cet ordre
     expect((await rpc(org.ownerId, "redispatch_ride", [ride.id])).code).toBe("RELAUNCHED");
-    expect((await triples(ride.id)).slice(2)).toEqual([["ride.rescheduled", "SEARCHING_DRIVER", "NO_DRIVER_FOUND"]]);
+    expect((await triples(ride.id)).slice(2)).toEqual([
+      ["ride.search_restarted", "SEARCHING_DRIVER", "NO_DRIVER_FOUND"],
+      ["ride.rescheduled", "SEARCHING_DRIVER", "NO_DRIVER_FOUND"],
+    ]);
   });
 
-  it("heure de prise en charge modifiée : rescheduled (même statut) ; rien pour une course terminée, annulée ou sans chauffeur", async () => {
+  it("« Relancer » une course sans chauffeur dont l'heure est à venir : search_restarted seul (heure inchangée)", async () => {
+    const org = await createOrg("WH Relance future");
+    const ep = await addEndpoint(org);
+    const ride = await createRideAsOwner(org, { pickup_at: inMinutes(180) });
+    expect(ride.type).toBe("scheduled");
+    await sql(`update public.rides set status = 'NO_DRIVER_FOUND', no_driver_at = now() where id = $1`, [ride.id]);
+    expect((await triples(ride.id, ep.id)).map((x) => x[0])).toEqual(["ride.created", "ride.no_driver_found"]);
+
+    expect((await rpc(org.ownerId, "redispatch_ride", [ride.id])).code).toBe("RELAUNCHED");
+    const after = (await triples(ride.id, ep.id)).slice(2);
+    expect(after).toEqual([["ride.search_restarted", "SEARCHING_DRIVER", "NO_DRIVER_FOUND"]]);
+
+    // Deuxième recherche sans chauffeur : de nouveau ride.no_driver_found (le destinataire voit l'aller-retour)
+    await sql(`update public.rides set status = 'NO_DRIVER_FOUND', no_driver_at = now() where id = $1`, [ride.id]);
+    expect((await triples(ride.id, ep.id)).slice(3).map((x) => x[0])).toEqual(["ride.no_driver_found"]);
+
+    // Abonnement limité aux autres événements : rien de nouveau pour cette adresse
+    const other = await addEndpoint(org, ["ride.completed"]);
+    expect((await rpc(org.ownerId, "redispatch_ride", [ride.id])).code).toBe("RELAUNCHED");
+    expect(await typesOf(other.id)).toEqual([]);
+  });
+
+  it("vol retardé d'une course sans chauffeur remise en service (requalified fleet) : rescheduled puis search_restarted ; relance refusée : rescheduled seul", async () => {
+    const org = await createOrg("WH Vol relance");
+    const ep = await addEndpoint(org);
+    const MIN = 60_000;
+    const T0 = new Date(Math.ceil((Date.now() + 30 * MIN) / MIN) * MIN);
+    const airportRide = () =>
+      createRideAsOwner(org, {
+        pickup_address: "Aéroport Paris-Charles de Gaulle, Terminal 2E, 95700 Roissy-en-France",
+        pickup_lat: 49.0047, pickup_lng: 2.571, flight_number: "AF 7777", pickup_at: T0.toISOString(),
+      });
+    const apply = async (rideId: string, scheduled: Date, estimated: Date) =>
+      (await sql("select private.apply_flight_status($1, 'delayed', $2, $3, null, null, null, 'test', null) as r", [
+        rideId, scheduled, estimated,
+      ]))[0].r as Row;
+
+    const ride = await airportRide();
+    expect(ride.type).toBe("instant");
+    await sql(`update public.rides set status = 'NO_DRIVER_FOUND', no_driver_at = now() where id = $1`, [ride.id]);
+    const S = new Date(T0.getTime() - 15 * MIN);
+    const res = await apply(ride.id, S, new Date(S.getTime() + 150 * MIN));
+    expect(res).toMatchObject({ pickup_changed: true, requalified: "fleet" });
+    expect(await rideStatus(ride.id)).toBe("SEARCHING_DRIVER");
+    expect((await triples(ride.id, ep.id)).slice(2)).toEqual([
+      ["ride.rescheduled", "NO_DRIVER_FOUND", "NO_DRIVER_FOUND"],
+      ["ride.search_restarted", "SEARCHING_DRIVER", "NO_DRIVER_FOUND"],
+    ]);
+
+    // Relance refusée (quota mensuel atteint) : la course reste sans chauffeur, son heure suit le vol → rescheduled seul
+    const blocked = await airportRide();
+    await sql(`update public.rides set status = 'NO_DRIVER_FOUND', no_driver_at = now() where id = $1`, [blocked.id]);
+    await sql(`update public.organizations set limits_override = '{"max_rides_per_month": 1}' where id = $1`, [org.id]);
+    const res2 = await apply(blocked.id, S, new Date(S.getTime() + 150 * MIN));
+    expect(res2).toMatchObject({ pickup_changed: true, requalified: null });
+    expect(await rideStatus(blocked.id)).toBe("NO_DRIVER_FOUND");
+    expect((await triples(blocked.id, ep.id)).slice(2)).toEqual([["ride.rescheduled", "NO_DRIVER_FOUND", "NO_DRIVER_FOUND"]]);
+  });
+
+  it("centrale suspendue ou archivée, offre sans l'API : aucun événement enregistré ; de nouveau active avec l'API : événements", async () => {
+    const org = await createOrg("WH Centrale inactive");
+    const ep = await addEndpoint(org);
+    const ride = await createRideAsOwner(org, { pickup_at: inMinutes(240) });
+    expect(await typesOf(ep.id)).toEqual(["ride.created"]);
+    const shift = () => sql(`update public.rides set pickup_at = pickup_at + interval '10 minutes' where id = $1`, [ride.id]);
+
+    for (const status of ["suspended", "archived"]) {
+      await sql(`update public.organizations set status = $2 where id = $1`, [org.id, status]);
+      await shift();
+      expect(await typesOf(ep.id), status).toEqual(["ride.created"]);
+    }
+    await sql(`update public.organizations set status = 'active' where id = $1`, [org.id]);
+    await shift();
+    expect(await typesOf(ep.id)).toEqual(["ride.created", "ride.rescheduled"]);
+
+    // Offre sans l'API (surcharge du super admin, mêmes règles que l'API v1) : rien ; de nouveau incluse : événements
+    await sql(`update public.organizations set limits_override = '{"api_access": false}' where id = $1`, [org.id]);
+    await shift();
+    expect(await typesOf(ep.id)).toHaveLength(2);
+    const plan = await sql(
+      `insert into public.plans (code, name, limits) values ($1, 'Sans API', '{"api_access": false}') returning id`,
+      [`wh_no_api_${randomUUID().slice(0, 8)}`],
+    );
+    await sql(`update public.organizations set limits_override = '{}', plan_id = $2 where id = $1`, [org.id, plan[0].id]);
+    await shift();
+    expect(await typesOf(ep.id)).toHaveLength(2);
+    // Centrale sans offre : tout est inclus (private.org_limits, comme l'API v1)
+    await sql(`update public.organizations set plan_id = null where id = $1`, [org.id]);
+    await shift();
+    expect(await typesOf(ep.id)).toEqual(["ride.created", "ride.rescheduled", "ride.rescheduled"]);
+    // Surcharge en chaîne : « true » vaut oui (comme ::boolean de limits_audit), une valeur mal formée vaut non, sans
+    // jamais faire échouer la course
+    await sql(`update public.organizations set plan_id = $2, limits_override = '{"api_access": "true"}' where id = $1`, [org.id, plan[0].id]);
+    await shift();
+    expect(await typesOf(ep.id)).toHaveLength(4);
+    await sql(`update public.organizations set limits_override = '{"api_access": {"x": 1}}' where id = $1`, [org.id]);
+    await shift();
+    expect(await typesOf(ep.id)).toHaveLength(4);
+  });
+
+  it("heure de prise en charge modifiée : rescheduled (même statut, course sans chauffeur comprise) ; rien pour une course terminée ou annulée", async () => {
     const org = await createOrg("WH Heure");
     await addEndpoint(org);
     const ride = await createRideAsOwner(org, { pickup_at: inMinutes(240) });
@@ -346,7 +465,7 @@ describe("Webhooks : événements des courses", () => {
     await sql(`update public.rides set pickup_at = pickup_at where id = $1`, [ride.id]);
     expect(await deliveriesOf(ride.id)).toHaveLength(2);
 
-    for (const closed of ["CANCELLED", "COMPLETED", "NO_DRIVER_FOUND"]) {
+    for (const closed of ["CANCELLED", "COMPLETED"]) {
       const r = await createRideAsOwner(org, { pickup_at: inMinutes(300) });
       await sql(`update public.rides set status = $2 where id = $1`, [r.id, closed]);
       const n = (await deliveriesOf(r.id)).length;
@@ -356,9 +475,20 @@ describe("Webhooks : événements des courses", () => {
       const r2 = await createRideAsOwner(org, { pickup_at: inMinutes(300) });
       await sql(`update public.rides set status = $2, pickup_at = pickup_at + interval '1 hour' where id = $1`, [r2.id, closed]);
       expect((await triples(r2.id)).slice(1).map((x) => x[0]), closed).toEqual([
-        { CANCELLED: "ride.cancelled", COMPLETED: "ride.completed", NO_DRIVER_FOUND: "ride.no_driver_found" }[closed],
+        { CANCELLED: "ride.cancelled", COMPLETED: "ride.completed" }[closed],
       ]);
     }
+
+    // Course sans chauffeur : pas finale (relance, vol retardé) → son heure modifiée est signalée
+    const ndf = await createRideAsOwner(org, { pickup_at: inMinutes(300) });
+    await sql(`update public.rides set status = 'NO_DRIVER_FOUND' where id = $1`, [ndf.id]);
+    await sql(`update public.rides set pickup_at = pickup_at + interval '1 hour' where id = $1`, [ndf.id]);
+    const t = (await triples(ndf.id)).slice(1);
+    expect(t.map((x) => x[0])).toEqual(["ride.no_driver_found", "ride.rescheduled"]);
+    expect(t[1]).toEqual(["ride.rescheduled", "NO_DRIVER_FOUND", "NO_DRIVER_FOUND"]);
+    const ndf2 = await createRideAsOwner(org, { pickup_at: inMinutes(300) });
+    await sql(`update public.rides set status = 'NO_DRIVER_FOUND', pickup_at = pickup_at + interval '1 hour' where id = $1`, [ndf2.id]);
+    expect((await triples(ndf2.id)).slice(1).map((x) => x[0])).toEqual(["ride.no_driver_found", "ride.rescheduled"]);
   });
 
   it("statut et heure changés par la même requête : événement de statut puis rescheduled (1 µs plus tard)", async () => {
@@ -510,7 +640,8 @@ describe("Webhooks : private.claim_webhook_deliveries", () => {
     const rideId = await apiRide(org, { pickup_at: inMinutes(120), flight_number: "AF1234", comment: "Code 1234B" });
     expect((await rpc(org.ownerId, "assign_ride", [rideId, d.id])).code).toBe("ASSIGNED");
 
-    const rows = await claim(10);
+    // Une seule adresse : un envoi par prise, dans l'ordre des événements
+    const rows = await claimAll();
     expect(rows.map((r) => r.event_type)).toEqual(["ride.created", "ride.accepted"]);
     for (const r of rows) {
       expect(Object.keys(r).sort()).toEqual(CLAIM_KEYS);
@@ -546,17 +677,17 @@ describe("Webhooks : private.claim_webhook_deliveries", () => {
     // Chauffeur sans véhicule ; course sans chauffeur ; « ping » ; course supprimée
     await sql(`update public.drivers set vehicle_id = null where id = $1`, [d.id]);
     const again = await insertDelivery(org, ep.id, { ride_id: rideId, event_type: "ride.accepted", event_status: "ACCEPTED" });
-    expect((await claim()).find((r) => r.id === again.id)!.ride.driver).toEqual({ first_name: "Karim", vehicle: null });
+    expect((await claimAll()).find((r) => r.id === again.id)!.ride.driver).toEqual({ first_name: "Karim", vehicle: null });
     const lone = await apiRide(org, { pickup_at: inMinutes(300) });
-    expect((await claim()).find((r) => r.event_type === "ride.created")!.ride).toMatchObject({ id: lone, driver: null });
+    expect((await claimAll()).find((r) => r.event_type === "ride.created")!.ride).toMatchObject({ id: lone, driver: null });
     const p = await ping(org, ep.id);
-    const pinged = (await claim()).find((r) => r.id === p.delivery_id)!;
+    const pinged = (await claimAll()).find((r) => r.id === p.delivery_id)!;
     expect(pinged).toMatchObject({ event_type: "ping", event_status: null, previous_status: null, ride: null });
     const orphan = await insertDelivery(org, ep.id, { ride_id: null, event_type: "ride.cancelled", event_status: "CANCELLED" });
-    expect((await claim()).find((r) => r.id === orphan.id)!.ride).toBeNull();
+    expect((await claimAll()).find((r) => r.id === orphan.id)!.ride).toBeNull();
   });
 
-  it("plus anciens d'abord, lot limité, verrou 2 min ; ni envoi futur, ni adresse désactivée ; envoi « en cours » expiré repris", async () => {
+  it("une adresse : un seul envoi en cours, le plus ancien dû d'abord, verrou 2 min ; ni envoi futur, ni adresse désactivée ; « en cours » expiré repris", async () => {
     const org = await createOrg("WH Lot");
     const ep = await addEndpoint(org);
     const off = await addEndpoint(org);
@@ -567,32 +698,130 @@ describe("Webhooks : private.claim_webhook_deliveries", () => {
     const disabled = await insertDelivery(org, off.id);
     await setEnabled(org, off.id, false);
     const stale = await insertDelivery(org, ep.id, { status: "sending", locked_until: new Date(Date.now() - 1000), occurred_at: new Date(Date.now() - 10_000) });
-    const busy = await insertDelivery(org, ep.id, { status: "sending", locked_until: new Date(Date.now() + 60_000) });
     const done = await insertDelivery(org, ep.id, { status: "delivered" });
     const failed = await insertDelivery(org, ep.id, { status: "failed" });
 
-    const first = await claim(2);
-    expect(first.map((r) => r.id)).toEqual([stale.id, a.id]);
-    const rest = await claim(10);
-    expect(rest.map((r) => r.id)).toEqual([b.id, c.id]);
+    // Envoi « en cours » expiré (worker arrêté) repris en premier, seul : l'adresse est ensuite occupée
+    expect((await claim(10)).map((r) => r.id)).toEqual([stale.id]);
     expect(await claim(10)).toEqual([]);
-
     const [lock] = await sql(
-      `select status, extract(epoch from (locked_until - now())) as s from public.webhook_deliveries where id = $1`, [a.id]);
+      `select status, extract(epoch from (locked_until - now())) as s from public.webhook_deliveries where id = $1`, [stale.id]);
     expect(lock.status).toBe("sending");
     expect(Number(lock.s)).toBeGreaterThan(115);
     expect(Number(lock.s)).toBeLessThanOrEqual(120);
-    for (const x of [future, disabled, busy, done, failed]) {
+
+    // Chaque compte rendu libère l'adresse : le suivant, dans l'ordre des événements
+    const order: string[] = [];
+    let current = stale.id;
+    for (let i = 0; i < 3; i++) {
+      await complete(current, true, 200);
+      const next = await claim(10);
+      expect(next).toHaveLength(1);
+      // Pris sans compter d'essai (compté au compte rendu)
+      expect((await deliveryRow(next[0]!.id)).attempts).toBe(0);
+      current = next[0]!.id;
+      order.push(current);
+    }
+    expect(order).toEqual([a.id, b.id, c.id]);
+    await complete(c.id, true, 200);
+    expect(await claim(10)).toEqual([]);
+    for (const x of [future, disabled, done, failed]) {
       expect((await deliveryRow(x.id)).status).toBe(x.status);
     }
-    // Pris sans compter d'essai (compté au compte rendu)
-    expect((await deliveryRow(a.id)).attempts).toBe(0);
 
-    // Limites : null → 20 par défaut, négatif → rien, plafond 100
-    for (let i = 0; i < 25; i++) await insertDelivery(org, ep.id);
+    // Envoi en cours chez un autre worker (verrou valide) : l'adresse est sautée, ses autres envois attendent
+    const busyEp = await addEndpoint(org);
+    const busy = await insertDelivery(org, busyEp.id, { status: "sending", locked_until: new Date(Date.now() + 60_000) });
+    const queued = await insertDelivery(org, busyEp.id, { occurred_at: new Date(Date.now() - 60_000) });
+    expect(await claim(10)).toEqual([]);
+    expect((await deliveryRow(queued.id)).status).toBe("pending");
+    await complete(busy.id, true, 200);
+    expect((await claim(10)).map((r) => r.id)).toEqual([queued.id]);
+    await complete(queued.id, true, 200);
+
+    // Limites : null → 20 par défaut, négatif → rien, plafond 100 (25 adresses insérées directement : le plafond
+    // de 10 par centrale n'est contrôlé que par svc_webhook_upsert)
+    for (let i = 0; i < 25; i++) {
+      const [e] = await sql(`insert into public.webhook_endpoints (organization_id, url) values ($1, $2) returning id`, [org.id, hookUrl("lot")]);
+      await insertDelivery(org, e.id);
+    }
     expect(await claim(-5)).toEqual([]);
     expect(await claim(null)).toHaveLength(20);
     expect(await claim(1000)).toHaveLength(5);
+  });
+
+  it("tour de rôle entre centrales : une centrale avec beaucoup d'envois en attente ne passe pas devant les autres", async () => {
+    const big = await createOrg("WH Grosse centrale");
+    const small = await createOrg("WH Petite centrale");
+    const tiny = await createOrg("WH Toute petite centrale");
+    const bigEps = [await addEndpoint(big), await addEndpoint(big), await addEndpoint(big)];
+    // Arriéré de la grosse centrale : 5 envois anciens par adresse
+    for (const e of bigEps) {
+      for (let i = 0; i < 5; i++) await insertDelivery(big, e.id, { occurred_at: new Date(Date.now() - 3_600_000 + i * 1000) });
+    }
+    const s = await insertDelivery(small, (await addEndpoint(small)).id);
+    const t = await insertDelivery(tiny, (await addEndpoint(tiny)).id);
+
+    // Premier tour : une adresse par centrale (les deux petites passent malgré l'arriéré, plus ancien)
+    const first = await claim(3);
+    expect(first.map((r) => r.organization_id).sort()).toEqual([big.id, small.id, tiny.id].sort());
+    expect(first.map((r) => r.id)).toEqual(expect.arrayContaining([s.id, t.id]));
+    // Puis les autres adresses de la grosse centrale, une ligne chacune (la première est occupée)
+    const second = await claim(10);
+    expect(second).toHaveLength(2);
+    expect(second.every((r) => r.organization_id === big.id)).toBe(true);
+    const busyEndpoint = first.find((r) => r.organization_id === big.id)!.endpoint_id;
+    expect(new Set(second.map((r) => r.endpoint_id)).size).toBe(2);
+    expect(second.some((r) => r.endpoint_id === busyEndpoint)).toBe(false);
+    expect(await claim(10)).toEqual([]);
+  });
+
+  it("tour de rôle avec des envois en cours (worker : une prise par place libérée) : la centrale qui occupe déjà des places passe derrière", async () => {
+    const big = await createOrg("WH Places occupées");
+    const small = await createOrg("WH Événement frais");
+    const bigEps = [await addEndpoint(big), await addEndpoint(big), await addEndpoint(big), await addEndpoint(big)];
+    // 3 places tenues par la grosse centrale (adresses lentes), arriéré ancien sur sa 4e adresse
+    for (const e of bigEps.slice(0, 3)) {
+      await insertDelivery(big, e.id, { status: "sending", locked_until: new Date(Date.now() + 60_000) });
+    }
+    const backlog: Row[] = [];
+    for (let i = 0; i < 3; i++) {
+      backlog.push(await insertDelivery(big, bigEps[3]!.id, { occurred_at: new Date(Date.now() - 3_600_000 + i * 1000) }));
+    }
+    const fresh = await insertDelivery(small, (await addEndpoint(small)).id);
+
+    // Place libérée : l'événement frais de l'autre centrale passe devant l'arriéré, plus ancien
+    expect((await claim(1)).map((r) => r.id)).toEqual([fresh.id]);
+    // Place suivante : l'arriéré (seul envoi encore dû)
+    expect((await claim(1)).map((r) => r.id)).toEqual([backlog[0]!.id]);
+    expect(await claim(1)).toEqual([]);
+  });
+
+  it("un test (« ping ») passe en tête de son adresse, devant l'arriéré dû", async () => {
+    const org = await createOrg("WH Test en tête");
+    const ep = await addEndpoint(org);
+    const old: Row[] = [];
+    for (let i = 0; i < 3; i++) {
+      old.push(await insertDelivery(org, ep.id, {
+        event_type: "ride.cancelled", event_status: "CANCELLED", occurred_at: new Date(Date.now() - 600_000 + i * 1000),
+      }));
+    }
+    const p = await ping(org, ep.id);
+    const order = (await claimAll()).map((r) => r.id);
+    expect(order).toEqual([p.delivery_id, ...old.map((d) => d.id)]);
+  });
+
+  it("centrale suspendue ou archivée : aucun envoi pris, ils restent en attente ; repris à la réactivation", async () => {
+    const org = await createOrg("WH Prise suspendue");
+    const ep = await addEndpoint(org);
+    const x = await insertDelivery(org, ep.id);
+    for (const status of ["suspended", "archived"]) {
+      await sql(`update public.organizations set status = $2 where id = $1`, [org.id, status]);
+      expect(await claim(10), status).toEqual([]);
+      expect((await deliveryRow(x.id)).status).toBe("pending");
+    }
+    await sql(`update public.organizations set status = 'active' where id = $1`, [org.id]);
+    expect((await claim(10)).map((r) => r.id)).toEqual([x.id]);
   });
 
   it("heures de « ride » en UTC (« +00:00 », comme PostgREST), quel que soit le fuseau de la connexion du worker", async () => {
@@ -612,21 +841,38 @@ describe("Webhooks : private.claim_webhook_deliveries", () => {
     }
   });
 
-  it("for update skip locked : une ligne verrouillée par un autre worker est sautée", async () => {
+  it("for update skip locked : une ligne verrouillée par un autre worker est sautée, sans prendre un autre envoi de son adresse", async () => {
     const org = await createOrg("WH Verrou");
     const ep = await addEndpoint(org);
+    const ep2 = await addEndpoint(org);
     const x = await insertDelivery(org, ep.id, { occurred_at: new Date(Date.now() - 5000) });
     const y = await insertDelivery(org, ep.id);
+    const z = await insertDelivery(org, ep2.id);
     const other = await pool.connect();
     try {
       await other.query("begin");
       await other.query(`select id from public.webhook_deliveries where id = $1 for update`, [x.id]);
-      expect((await claim(10)).map((r) => r.id)).toEqual([y.id]);
+      // x est en train d'être pris ailleurs : y (même adresse) attend, z (autre adresse) part
+      expect((await claim(10)).map((r) => r.id)).toEqual([z.id]);
       await other.query("rollback");
     } finally {
       other.release();
     }
     expect((await claim(10)).map((r) => r.id)).toEqual([x.id]);
+    expect((await deliveryRow(y.id)).status).toBe("pending");
+  });
+
+  it("deux prises simultanées : jamais deux envois en cours pour une même adresse", async () => {
+    const org = await createOrg("WH Prises simultanées");
+    const eps = [await addEndpoint(org), await addEndpoint(org), await addEndpoint(org)];
+    for (const e of eps) for (let i = 0; i < 4; i++) await insertDelivery(org, e.id, { occurred_at: new Date(Date.now() - 10_000 + i) });
+    const batches = await Promise.all(Array.from({ length: 4 }, () => claim(10)));
+    const taken = batches.flat();
+    expect(taken).toHaveLength(3);
+    expect(new Set(taken.map((r) => r.endpoint_id)).size).toBe(3);
+    const [{ n }] = await sql(
+      `select max(c)::int as n from (select count(*) as c from public.webhook_deliveries where status = 'sending' group by endpoint_id) x`);
+    expect(n).toBe(1);
   });
 });
 
@@ -663,7 +909,7 @@ describe("Webhooks : private.complete_webhook_delivery et private.purge_webhook_
   it("échecs : nouvel essai après 1 min, 5 min, 15 min, 1 h, 3 h, 6 h, 12 h, 24 h ; échec définitif au 9e", async () => {
     const org = await createOrg("WH Reprises");
     const ep = await addEndpoint(org);
-    const x = await insertDelivery(org, ep.id);
+    const x = await insertDelivery(org, ep.id, { event_type: "ride.cancelled", event_status: "CANCELLED" });
     for (let n = 1; n <= 9; n++) {
       await claimOne(x.id);
       await complete(x.id, false, 503, "Service Unavailable");
@@ -685,7 +931,7 @@ describe("Webhooks : private.complete_webhook_delivery et private.purge_webhook_
     expect(e.last_failure_at).toBeInstanceOf(Date);
 
     // Échec signalé pour un envoi qui n'est plus « en cours » : ignoré
-    const y = await insertDelivery(org, ep.id, { next_attempt_at: new Date(Date.now() + 60_000) });
+    const y = await insertDelivery(org, ep.id, { event_type: "ride.cancelled", next_attempt_at: new Date(Date.now() + 60_000) });
     await complete(y.id, false, 500, "trop tard");
     expect(await deliveryRow(y.id)).toMatchObject({ status: "pending", attempts: 0, last_error: null });
     expect((await endpointRow(ep.id)).consecutive_failures).toBe(9);
@@ -714,27 +960,35 @@ describe("Webhooks : private.complete_webhook_delivery et private.purge_webhook_
     }
   });
 
-  it("désactivation automatique : 50 échecs consécutifs sans succès depuis 3 jours (ou jamais) ; envois en attente → échec", async () => {
+  it("désactivation automatique : 50 échecs consécutifs et aucun succès depuis 3 jours (jamais réussi : 3 jours depuis la création) ; envois en attente → échec", async () => {
     const org = await createOrg("WH Désactivation");
     const cases = [
-      { last: "now() - interval '4 days'", disabled: true },
-      { last: "null", disabled: true },
-      { last: "now() - interval '1 day'", disabled: false },
+      { last: "now() - interval '4 days'", created: "now()", disabled: true },
+      { last: "null", created: "now() - interval '4 days'", disabled: true },
+      // Adresse neuve qui n'a jamais réussi (récepteur pas encore déployé, mauvais secret…) : 3 jours de délai
+      { last: "null", created: "now() - interval '2 days'", disabled: false },
+      { last: "null", created: "now()", disabled: false },
+      { last: "now() - interval '1 day'", created: "now() - interval '30 days'", disabled: false },
     ];
     for (const c of cases) {
+      const label = `succès ${c.last}, créée ${c.created}`;
       const ep = await addEndpoint(org);
-      await sql(`update public.webhook_endpoints set consecutive_failures = 49, last_success_at = ${c.last} where id = $1`, [ep.id]);
-      const x = await insertDelivery(org, ep.id);
-      const waiting = await insertDelivery(org, ep.id, { next_attempt_at: new Date(Date.now() + 3_600_000) });
+      await sql(
+        `update public.webhook_endpoints set consecutive_failures = 49, last_success_at = ${c.last}, created_at = ${c.created} where id = $1`,
+        [ep.id],
+      );
+      const x = await insertDelivery(org, ep.id, { event_type: "ride.created", event_status: "CREATED" });
+      const waiting = await insertDelivery(org, ep.id, { event_type: "ride.created", next_attempt_at: new Date(Date.now() + 3_600_000) });
       await claimOne(x.id);
       await complete(x.id, false, 500, "Internal Server Error");
       const e = await endpointRow(ep.id);
-      expect(e.consecutive_failures).toBe(50);
-      expect(e.enabled, c.last).toBe(!c.disabled);
+      expect(e.consecutive_failures, label).toBe(50);
+      expect(e.enabled, label).toBe(!c.disabled);
       if (c.disabled) {
-        expect(e.disabled_reason).toBe("Désactivé automatiquement : échecs répétés depuis 3 jours");
+        expect(e.disabled_reason).toBe(AUTO_DISABLED);
         expect(await deliveryRow(waiting.id)).toMatchObject({ status: "failed" });
-        expect((await deliveryRow(waiting.id)).last_error).toMatch(/^Webhook désactivé automatiquement/);
+        expect((await deliveryRow(waiting.id)).last_error).toBe(
+          "Webhook désactivé automatiquement (50 échecs consécutifs, aucun envoi réussi depuis 3 jours)");
         // Réactivation : motif et compteur effacés, plus d'échec automatique au prochain essai
         const r = await setEnabled(org, ep.id, true);
         expect(r.endpoint).toMatchObject({ enabled: true, disabled_reason: null });
@@ -743,6 +997,43 @@ describe("Webhooks : private.complete_webhook_delivery et private.purge_webhook_
         expect(e.disabled_reason).toBeNull();
         expect((await deliveryRow(waiting.id)).status).toBe("pending");
       }
+    }
+  });
+
+  it("test (« ping ») en échec : définitif dès le premier échec (aucun nouvel essai) ; un autre test est aussitôt possible", async () => {
+    const org = await createOrg("WH Ping échec");
+    const ep = await addEndpoint(org);
+    const p = await ping(org, ep.id);
+    expect(p.ok).toBe(true);
+    await claimOne(p.delivery_id);
+    await complete(p.delivery_id, false, 401, "HTTP 401");
+    expect(await deliveryRow(p.delivery_id)).toMatchObject({ status: "failed", attempts: 1, last_status_code: 401, locked_until: null });
+    expect((await endpointRow(ep.id)).consecutive_failures).toBe(1);
+    expect(await claim(10)).toEqual([]);
+    expect((await ping(org, ep.id)).ok).toBe(true);
+  });
+
+  it("comptes rendus simultanés d'une même adresse au seuil de désactivation : ni interblocage (40P01) ni erreur", async () => {
+    const org = await createOrg("WH Comptes rendus simultanés");
+    for (let trial = 0; trial < 6; trial++) {
+      const ep = await addEndpoint(org);
+      await sql(
+        `update public.webhook_endpoints set consecutive_failures = 47, created_at = now() - interval '4 days' where id = $1`, [ep.id]);
+      const ids: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        ids.push((await insertDelivery(org, ep.id, { event_type: "ride.created", status: "sending", locked_until: new Date(Date.now() + 120_000) })).id);
+      }
+      // Chaque compte rendu sur sa propre connexion (comme les envois parallèles du worker)
+      const results = await Promise.allSettled(
+        ids.map((id) => pool.query(`select private.complete_webhook_delivery($1::uuid, false, 503, 'HTTP 503')`, [id])),
+      );
+      const errors = results.filter((r): r is PromiseRejectedResult => r.status === "rejected").map((r) => r.reason?.code ?? String(r.reason));
+      expect(errors, `essai ${trial}`).toEqual([]);
+      // Le 50e échec désactive l'adresse et passe ses autres envois en échec : les comptes rendus suivants n'y changent rien
+      const e = await endpointRow(ep.id);
+      expect(e).toMatchObject({ enabled: false, disabled_reason: AUTO_DISABLED, consecutive_failures: 50 });
+      const statuses = await sql(`select status from public.webhook_deliveries where endpoint_id = $1`, [ep.id]);
+      expect(statuses.every((r) => r.status === "failed")).toBe(true);
     }
   });
 
@@ -1062,6 +1353,77 @@ describe("Webhooks : suppression, activation, secret, test, renvoi", () => {
     expect(log).toMatchObject({ organization_id: org.id, entity_type: "webhook_deliveries" });
   });
 
+  it("test : un seul « ping » en attente ou en cours par adresse (WEBHOOK_TEST_PENDING), libre dès qu'il a abouti ; refus sans ligne ni journal", async () => {
+    const org = await createOrg("WH Ping unique");
+    const ep = await addEndpoint(org);
+    const ep2 = await addEndpoint(org);
+    const pings = async () =>
+      Number((await sql(`select count(*) from public.audit_logs where organization_id = $1 and action = 'webhook.ping'`, [org.id]))[0].count);
+
+    const first = await ping(org, ep.id);
+    expect(first.ok).toBe(true);
+    const again = await ping(org, ep.id);
+    expect(again).toMatchObject({ ok: false, code: "WEBHOOK_TEST_PENDING" });
+    expect(again.message).toBeTruthy();
+    // Autre adresse de la centrale : test possible
+    expect((await ping(org, ep2.id)).ok).toBe(true);
+
+    // En cours : toujours refusé ; abouti : nouveau test possible
+    await claimOne(first.delivery_id);
+    expect((await ping(org, ep.id)).code).toBe("WEBHOOK_TEST_PENDING");
+    await complete(first.delivery_id, true, 204);
+    expect((await ping(org, ep.id)).ok).toBe(true);
+
+    expect(await pings()).toBe(3);
+    expect(await sql(`select 1 from public.webhook_deliveries where endpoint_id = $1 and event_type = 'ping'`, [ep.id])).toHaveLength(2);
+
+    // Pings simultanés sur une même adresse : un seul accepté
+    const ep3 = await addEndpoint(org);
+    const results = await Promise.all(Array.from({ length: 4 }, () => ping(org, ep3.id)));
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok).every((r) => r.code === "WEBHOOK_TEST_PENDING")).toBe(true);
+  });
+
+  it("tests et renvois : 10 par minute au plus pour la centrale (WEBHOOK_TEST_RATE_LIMITED) ; refus sans ligne ni journal ; autre centrale non touchée", async () => {
+    const org = await createOrg("WH Quota tests");
+    const other = await createOrg("WH Quota voisine");
+    const ep = await addEndpoint(org);
+    const ep2 = await addEndpoint(org);
+    const done: Row[] = [];
+    for (let i = 0; i < 10; i++) done.push(await insertDelivery(org, ep.id, { event_type: "ride.created", status: "delivered" }));
+    const counted = async () =>
+      Number((await sql(
+        `select count(*) from public.audit_logs where organization_id = $1 and action in ('webhook.ping', 'webhook.redelivered')`,
+        [org.id],
+      ))[0].count);
+
+    expect((await ping(org, ep.id)).ok).toBe(true);
+    for (let i = 0; i < 9; i++) expect(await redeliver(org, done[i]!.id), `renvoi ${i}`).toEqual({ ok: true });
+    expect(await counted()).toBe(10);
+
+    const tooManyPings = await ping(org, ep2.id);
+    expect(tooManyPings).toMatchObject({ ok: false, code: "WEBHOOK_TEST_RATE_LIMITED" });
+    expect(tooManyPings.message).toBeTruthy();
+    expect(await redeliver(org, done[9]!.id)).toMatchObject({ ok: false, code: "WEBHOOK_TEST_RATE_LIMITED" });
+    expect((await deliveryRow(done[9]!.id)).status).toBe("delivered");
+    expect(await sql(`select 1 from public.webhook_deliveries where endpoint_id = $1`, [ep2.id])).toEqual([]);
+    expect(await counted()).toBe(10);
+    // Introuvable et désactivé passent avant le quota
+    expect(await redeliver(org, randomUUID())).toMatchObject({ code: "WEBHOOK_DELIVERY_NOT_FOUND" });
+
+    // Autre centrale : son propre quota
+    expect((await ping(other, (await addEndpoint(other)).id)).ok).toBe(true);
+
+    // Une minute plus tard : de nouveau possible
+    await sql(
+      `update public.audit_logs set created_at = created_at - interval '61 seconds'
+        where organization_id = $1 and action in ('webhook.ping', 'webhook.redelivered')`,
+      [org.id],
+    );
+    expect((await ping(org, ep2.id)).ok).toBe(true);
+    expect(await redeliver(org, done[9]!.id)).toEqual({ ok: true });
+  });
+
   it("chaque fonction svc_* revérifie l'auteur (dispatcher, autre centrale : FORBIDDEN)", async () => {
     const org = await createOrg("WH Auteur svc");
     const ep = await addEndpoint(org);
@@ -1099,6 +1461,7 @@ describe("Webhooks : droits d'accès", () => {
     "select private.webhook_ride_json(gen_random_uuid())",
     "select * from private.webhook_check_url('https://example.com')",
     "select private.webhook_event_types()",
+    "select private.webhook_tests_exhausted(gen_random_uuid())",
   ];
 
   it("svc_* : service role seulement ; claim / complete / purge et helpers : ni client ni service role", async () => {
@@ -1125,10 +1488,10 @@ describe("Webhooks : droits d'accès", () => {
         where n.nspname = 'private' and p.proname = any ($1::text[]) order by 1`,
       [["queue_ride_webhooks", "claim_webhook_deliveries", "complete_webhook_delivery", "purge_webhook_deliveries",
         "webhook_ride_json", "webhook_endpoint_json", "webhook_check_url", "webhook_ip_blocked", "webhook_actor",
-        "webhook_audit", "webhook_event_types"]],
+        "webhook_audit", "webhook_event_types", "webhook_tests_exhausted"]],
     );
     expect(definer.filter((r) => r.prosecdef).map((r) => r.proname)).toEqual(["queue_ride_webhooks"]);
-    expect(definer).toHaveLength(11);
+    expect(definer).toHaveLength(12);
     const svcDefiner = await sql(
       `select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public' and p.proname like 'svc\\_webhook\\_%' and p.prosecdef

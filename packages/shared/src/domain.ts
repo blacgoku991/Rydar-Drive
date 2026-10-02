@@ -253,6 +253,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   WEBHOOK_NOT_FOUND: "Webhook introuvable.",
   WEBHOOK_DISABLED: "Webhook désactivé : réactivez-le avant de l'essayer.",
   WEBHOOK_DELIVERY_NOT_FOUND: "Envoi introuvable.",
+  // Tests et renvois bornés (20260924006100)
+  WEBHOOK_TEST_PENDING: "Un test de ce webhook est déjà en cours d'envoi : attendez son résultat avant d'en relancer un.",
+  WEBHOOK_TEST_RATE_LIMITED: "Trop de tests et de renvois de webhooks en une minute (10 au plus par centrale) : réessayez dans un instant.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */

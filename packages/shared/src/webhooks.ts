@@ -8,7 +8,8 @@ import type { Tone } from "./domain";
 /** Version du format des événements (champ « api_version » de chaque envoi). */
 export const WEBHOOK_API_VERSION = "2026-10-01";
 
-/** Événements auxquels une adresse peut s'abonner (liste vide = tous). Miroir de la migration 006000. */
+/** Événements auxquels une adresse peut s'abonner (liste vide = tous). Miroir de private.webhook_event_types
+ *  (migrations 006000 et 006100 : ride.search_restarted). */
 export const WEBHOOK_EVENTS = [
   "ride.created",
   "ride.accepted",
@@ -20,6 +21,7 @@ export const WEBHOOK_EVENTS = [
   "ride.completed",
   "ride.cancelled",
   "ride.no_driver_found",
+  "ride.search_restarted",
   "ride.rescheduled",
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
@@ -39,6 +41,10 @@ export const WEBHOOK_EVENT_META: Record<WebhookEvent, { label: string; descripti
   "ride.completed": { label: "Course terminée", description: "Le client est arrivé à destination." },
   "ride.cancelled": { label: "Course annulée", description: "Annulation par la centrale, l'API ou le système." },
   "ride.no_driver_found": { label: "Aucun chauffeur trouvé", description: "La recherche s'est terminée sans chauffeur." },
+  "ride.search_restarted": {
+    label: "Recherche relancée",
+    description: "La course restée sans chauffeur repart en recherche (« Relancer », vol retardé).",
+  },
   "ride.rescheduled": { label: "Horaire modifié", description: "L'heure de prise en charge a changé." },
 };
 

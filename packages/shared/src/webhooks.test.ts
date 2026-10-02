@@ -16,8 +16,9 @@ import {
 } from "./webhooks";
 
 describe("événements", () => {
-  it("11 événements abonnables, chacun avec un libellé français ; ping hors liste", () => {
-    expect(WEBHOOK_EVENTS).toHaveLength(11);
+  it("12 événements abonnables, chacun avec un libellé français ; ping hors liste", () => {
+    expect(WEBHOOK_EVENTS).toHaveLength(12);
+    expect(WEBHOOK_EVENTS).toContain("ride.search_restarted");
     for (const e of WEBHOOK_EVENTS) {
       expect(e).toMatch(/^ride\.[a-z_]+$/);
       expect(WEBHOOK_EVENT_META[e].label.length).toBeGreaterThan(3);
@@ -152,7 +153,10 @@ describe("webhookUpsertSchema (POST /api/v1/webhooks, dashboard)", () => {
   });
 
   it("chaque code d'erreur des webhooks a un libellé", () => {
-    for (const code of [...Object.values(WEBHOOK_FIELD_ERROR_CODES), "WEBHOOK_LIMIT", "WEBHOOK_NOT_FOUND", "WEBHOOK_DISABLED"]) {
+    for (const code of [
+      ...Object.values(WEBHOOK_FIELD_ERROR_CODES), "WEBHOOK_LIMIT", "WEBHOOK_NOT_FOUND", "WEBHOOK_DISABLED",
+      "WEBHOOK_DELIVERY_NOT_FOUND", "WEBHOOK_TEST_PENDING", "WEBHOOK_TEST_RATE_LIMITED",
+    ]) {
       expect(ERROR_MESSAGES[code], code).toBeTruthy();
     }
   });

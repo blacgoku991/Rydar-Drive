@@ -157,7 +157,8 @@ Rydar Drive prévient votre serveur à chaque changement de statut d'une course 
 | `ride.completed` | Course terminée | `COMPLETED` |
 | `ride.cancelled` | Course annulée (dashboard, API, ou « Non effectuée » 6 h après l'heure d'une course planifiée jamais démarrée) | `CANCELLED` |
 | `ride.no_driver_found` | Recherche terminée sans chauffeur | `NO_DRIVER_FOUND` |
-| `ride.rescheduled` | Heure de prise en charge modifiée (course ni terminée, ni annulée, ni sans chauffeur) ; peut accompagner un autre événement de la même modification | statut courant |
+| `ride.search_restarted` | La course restée sans chauffeur repart en recherche (« Relancer », vol retardé qui la remet en service) ; `data.previous_status` = `NO_DRIVER_FOUND` | `CREATED`, `SEARCHING_DRIVER` ou `OFFERED` |
+| `ride.rescheduled` | Heure de prise en charge modifiée (course ni terminée, ni annulée ; course sans chauffeur comprise, son heure suit le vol) ; peut accompagner un autre événement de la même modification | statut courant |
 | `ping` | Envoi de test (bouton du dashboard ou `POST /webhooks/{id}/test`), jamais abonnable | `data` vide (`{}`) |
 
 Les étapes internes du dispatch (vagues, offres aux chauffeurs) ne produisent aucun événement. Une adresse abonnée à **tous** les événements (liste vide, par défaut) recevra aussi ceux ajoutés plus tard.
