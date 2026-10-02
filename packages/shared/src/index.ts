@@ -12,3 +12,4 @@ export * from "./navigation";
 export * from "./platform-fees";
 export * from "./whatsapp";
 export * from "./contact";
+export * from "./api-ride";

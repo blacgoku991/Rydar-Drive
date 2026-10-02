@@ -10,8 +10,16 @@ export function createPool(applicationName: string, options: Omit<pg.PoolConfig,
 
 export const pool = createPool("rydar-worker");
 
-/** Connexion dédiée LISTEN (réveil instantané du worker). Nécessite une connexion directe (pas le pooler transactionnel). */
-export async function listen(channel: string, onNotify: (payload: string | undefined) => void, applicationName = "rydar-worker-listen") {
+/**
+ * Connexion dédiée LISTEN (réveil instantané du worker), une seule pour tous les canaux donnés (le pooler en mode
+ * session de Supabase compte chaque connexion). Nécessite une connexion directe (pas le pooler transactionnel).
+ */
+export async function listen(
+  channel: string | string[],
+  onNotify: (payload: string | undefined, channel: string) => void,
+  applicationName = "rydar-worker-listen",
+) {
+  const channels = Array.isArray(channel) ? channel : [channel];
   let client: pg.Client | null = null;
   let stopped = false;
   let retry: NodeJS.Timeout | undefined;
@@ -24,12 +32,12 @@ export async function listen(channel: string, onNotify: (payload: string | undef
     if (stopped) return;
     try {
       client = new pg.Client({ connectionString: config.databaseUrl, application_name: applicationName });
-      client.on("notification", (msg) => onNotify(msg.payload));
+      client.on("notification", (msg) => onNotify(msg.payload, msg.channel));
       client.on("error", () => undefined);
       client.on("end", () => reconnect(2000));
       await client.connect();
-      await client.query(`listen ${channel}`);
-      log("info", "listening", { channel });
+      for (const c of channels) await client.query(`listen ${c}`);
+      log("info", "listening", { channel: channels.join(",") });
     } catch (error) {
       log("warn", "listen failed, retrying", { error: (error as Error).message, ...dbTlsHint(error) });
       reconnect(5000);

@@ -212,40 +212,10 @@ export async function readJson(req: Request, maxBytes = 32_768): Promise<unknown
   }
 }
 
-/** Représentation publique d'une course (aucun champ interne). */
-export function publicRide(r: any, appUrl: string) {
-  const d = Array.isArray(r.driver) ? r.driver[0] : r.driver;
-  const v = d ? (Array.isArray(d.vehicle) ? d.vehicle[0] : d.vehicle) : null;
-  return {
-    id: r.id,
-    number: r.number,
-    type: r.type,
-    status: r.status,
-    pickup: { address: r.pickup_address, lat: r.pickup_lat, lng: r.pickup_lng },
-    dropoff: { address: r.dropoff_address, lat: r.dropoff_lat, lng: r.dropoff_lng },
-    pickup_at: r.pickup_at,
-    passengers: r.passengers,
-    luggage: r.luggage,
-    vehicle_category: r.vehicle_category,
-    price_cents: r.price_cents,
-    currency: r.currency,
-    payment_method: r.payment_method,
-    flight_number: r.flight_number,
-    external_reference: r.external_reference,
-    route: r.estimated_distance_m != null ? { distance_m: r.estimated_distance_m, duration_s: r.estimated_duration_s, polyline: r.route_polyline ?? null } : null,
-    driver: d ? { first_name: d.first_name, vehicle: v ? { model: `${v.brand ?? ""} ${v.model}`.trim(), color: v.color, plate: v.plate } : null } : null,
-    timestamps: {
-      created_at: r.created_at,
-      accepted_at: r.accepted_at ?? null,
-      driver_arrived_at: r.driver_arrived_at ?? null,
-      started_at: r.started_at ?? null,
-      completed_at: r.completed_at ?? null,
-      cancelled_at: r.cancelled_at ?? null,
-    },
-    links: { self: `${appUrl}/api/v1/rides/${r.id}` },
-  };
-}
+/** Représentation publique d'une course (aucun champ interne) : partagée avec les webhooks du worker (@rydar/shared). */
+export { publicRide } from "@rydar/shared";
 
+/** Colonnes lues pour publicRide ; private.claim_webhook_deliveries construit la même ligne en SQL (mêmes noms). */
 export const PUBLIC_RIDE_SELECT =
   "id, number, type, status, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, passengers, luggage, vehicle_category, price_cents, currency, payment_method, flight_number, external_reference, estimated_distance_m, estimated_duration_s, route_polyline, created_at, accepted_at, driver_arrived_at, started_at, completed_at, cancelled_at, driver:drivers!rides_organization_id_driver_id_fkey(first_name, vehicle:vehicles(brand, model, color, plate))";
 

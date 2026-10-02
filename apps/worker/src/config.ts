@@ -1,4 +1,6 @@
 // Configuration du worker (variables d'environnement).
+import { webhookAllowPrivate } from "./webhooks/ssrf";
+
 function num(name: string, fallback: number) {
   const v = Number(process.env[name]);
   return Number.isFinite(v) && v > 0 ? v : fallback;
@@ -109,6 +111,17 @@ export const config = {
     cacheMs: num("FLIGHT_CACHE_MS", 120_000),
   },
   batchSize: num("NOTIFICATION_BATCH", 200),
+  /**
+   * Webhooks sortants (webhooks.ts) : URL publique du site pour le lien « self » des courses, comme l'API v1 (APP_URL,
+   * à défaut NEXT_PUBLIC_APP_URL ; deploy/docker-compose.yml : https://DOMAIN). WEBHOOK_ALLOW_PRIVATE_URLS=1 : adresses
+   * internes et http:// acceptées, pour les tests et le développement SEULEMENT (jamais en production : SSRF).
+   */
+  webhooks: {
+    appUrl: (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").trim().replace(/\/+$/, ""),
+    /** false : lien « self » vers localhost (avertissement au démarrage). */
+    appUrlConfigured: !!(process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL),
+    allowPrivateUrls: webhookAllowPrivate(process.env),
+  },
   /** Relances WhatsApp (API WhatsApp Business Cloud) : identifiants par expéditeur en base, voir docs/WHATSAPP.md. */
   whatsapp: {
     batch: num("WHATSAPP_BATCH", 20),
