@@ -6,7 +6,22 @@ import { selectFlightProvider, withCache } from "./flights";
 import { flightJob, type QueryFn } from "./flights/job";
 import { createContactPurge, runHousekeeping, type QueryFn as HousekeepingQuery } from "./housekeeping";
 import { checkPushReceipts, processNotifications, stopNotifications } from "./notifications";
+import { createWebhookDispatcher, WEBHOOK_POLL_MS, WEBHOOK_PURGE_MS } from "./webhooks";
 import { processWhatsApp, stopWhatsApp } from "./whatsapp";
+
+/**
+ * Webhooks sortants des centrales (webhooks.ts) : réveil par LISTEN rydar_webhooks, sondage toutes les 5 s, purge
+ * toutes les heures. Fonctions SQL absentes (migration pas encore appliquée) : avertissement unique, sans erreur.
+ */
+const webhooks = createWebhookDispatcher({
+  query: (sql, params) => pool.query(sql, params),
+  appUrl: config.webhooks.appUrl,
+  allowPrivate: config.webhooks.allowPrivateUrls,
+});
+async function processWebhooks() {
+  await webhooks.process();
+}
+const purgeWebhooks = single("purgeWebhooks", webhooks.purge);
 
 const state = {
   lastTick: 0,
@@ -18,6 +33,7 @@ const state = {
   documents: { lastRun: 0, last: null as Record<string, unknown> | null },
   settlements: { lastRun: 0, reminders: 0, last: null as Record<string, unknown> | null },
   deletions: accountDeletionStats,
+  webhooks: webhooks.stats,
 };
 
 /** Travaux en cours (tick, envoi, accusés, ménage) : attendus à l'arrêt avant de fermer le pool. */
@@ -214,8 +230,19 @@ async function main() {
     flights: flightChoice.provider?.name ?? "off",
     flightsReason: flightChoice.reason,
     accountDeletions: supabaseApi() ? "on" : "off: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing",
+    webhooksAppUrl: config.webhooks.appUrl,
   });
-  const stop = await listen("rydar_notifications", () => {
+  if (!config.webhooks.appUrlConfigured && process.env.NODE_ENV === "production") {
+    log("warn", "webhooks: APP_URL missing, ride links point to http://localhost:3000 (deploy/docker-compose.yml: APP_URL)");
+  }
+  if (config.webhooks.allowPrivateUrls) {
+    log("warn", "webhooks: WEBHOOK_ALLOW_PRIVATE_URLS=1, internal addresses and http:// allowed (tests and development only, never in production)");
+  }
+  const stop = await listen(["rydar_notifications", "rydar_webhooks"], (_payload, channel) => {
+    if (channel === "rydar_webhooks") {
+      run(processWebhooks);
+      return;
+    }
     state.lastNotify = Date.now();
     run(processNotifications);
     run(processWhatsApp);
@@ -231,10 +258,14 @@ async function main() {
     setInterval(() => run(documentReminders), config.documentRemindersMs),
     setInterval(() => run(settlementReminders), config.settlementRemindersMs),
     setInterval(() => run(accountDeletions), config.accountDeletionsMs),
+    setInterval(() => run(processWebhooks), WEBHOOK_POLL_MS),
+    setInterval(() => run(purgeWebhooks), WEBHOOK_PURGE_MS),
     ...(flights ? [setInterval(() => run(flightCheck), config.flights.pollMs)] : []),
   ];
   run(processNotifications);
   run(processWhatsApp);
+  run(processWebhooks);
+  run(purgeWebhooks);
   run(documentReminders);
   run(settlementReminders);
   run(accountDeletions);
@@ -260,6 +291,7 @@ async function main() {
     timers.forEach(clearInterval);
     stopNotifications();
     stopWhatsApp();
+    webhooks.stop();
     flights?.stop();
     health.close();
     await within(stop(), 1_000);
