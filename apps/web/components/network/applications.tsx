@@ -1,8 +1,9 @@
 "use client";
-// Page Réseau : candidatures reçues par le lien d'inscription (validation / refus, documents déposés).
+// Pages Réseau (centrale) / Inscriptions (flotte) : candidatures reçues par le lien d'inscription (validation / refus,
+// documents déposés). Flotte : pas de niveau de confiance à choisir (« confirmé », comme un chauffeur créé par la flotte).
 import {
   DOCUMENT_TYPE_LABELS, TRUST_LEVEL_META, VEHICLE_CATEGORY_META, formatDate, formatPhone, formatPrice, formatRelative,
-  type DocumentType, type TrustLevel, type VehicleCategory,
+  type DispatchModel, type DocumentType, type TrustLevel, type VehicleCategory,
 } from "@rydar/shared";
 import { CarFront, Check, FileText, IdCard, Inbox, UserRound, X } from "lucide-react";
 import Link from "next/link";
@@ -12,6 +13,7 @@ import { toast } from "sonner";
 import { approveApplication, rejectApplication } from "@/app/dashboard/network/actions";
 import { DriverDocuments } from "@/components/drivers/driver-documents";
 import type { DocumentView } from "@/components/drivers/documents";
+import { joinedLabel, rejectReasons } from "@/components/network/join-copy";
 import { fullName } from "@/components/network/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,7 +57,6 @@ export function debtText(debt: CandidateDebt) {
   return `Même téléphone, e-mail ou carte VTC que ${who} en devant ${formatPrice(debt.owedCents)} de commissions${rides}.`;
 }
 
-const REJECT_REASONS = ["Carte VTC manquante", "Documents incomplets", "Véhicule non conforme", "Zone non couverte", "Réseau complet"];
 const REQUIRED: DocumentType[] = ["vtc_card", "driving_license", "identity", "insurance", "vehicle_registration"];
 
 function DocDots({ c }: { c: Candidate }) {
@@ -72,20 +73,25 @@ function DocDots({ c }: { c: Candidate }) {
 
 type ApplicationTarget = { id: string; first_name: string; last_name: string; missing?: DocumentType[]; debt?: CandidateDebt | null };
 
-/** Boutons « Refuser » / « Valider » d'une candidature, avec leurs dialogues (page Réseau, fiche chauffeur). */
+/** Boutons « Refuser » / « Valider » d'une candidature, avec leurs dialogues (page Réseau / Inscriptions, fiche chauffeur). */
 export function ApplicationActions({
   candidate,
   newDriverMaxPriceCents,
   trustAfterRides,
+  model,
 }: {
   candidate: ApplicationTarget;
   newDriverMaxPriceCents: number | null;
   trustAfterRides: number | null;
+  /** Flotte : validé « confirmé », sans choix de niveau ni plafond de prix */
+  model: DispatchModel;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [dialog, setDialog] = useState<"approve" | "reject" | null>(null);
-  const [trust, setTrust] = useState<TrustLevel>("new");
+  const fleet = model !== "centrale";
+  const initialTrust: TrustLevel = fleet ? "trusted" : "new";
+  const [trust, setTrust] = useState<TrustLevel>(initialTrust);
   const [reason, setReason] = useState("");
   const name = fullName(candidate);
   const missing = candidate.missing ?? [];
@@ -100,7 +106,9 @@ export function ApplicationActions({
     start(() => runAction(async () => {
       const res = await approveApplication(candidate.id, trust);
       if (!res.ok) return void toast.error(res.error);
-      toast.success(`${name} rejoint le réseau`, { description: `${TRUST_LEVEL_META[trust].label} · prévenu par notification.` });
+      toast.success(fleet ? `${name} ${joinedLabel(model)}` : `${name} rejoint le réseau`, {
+        description: fleet ? "Prévenu par notification." : `${TRUST_LEVEL_META[trust].label} · prévenu par notification.`,
+      });
       setDialog(null);
       router.refresh();
     }));
@@ -118,30 +126,36 @@ export function ApplicationActions({
       <Button variant="outline" size="sm" onClick={() => { setReason(""); setDialog("reject"); }}>
         <X /> Refuser
       </Button>
-      <Button variant="primary" size="sm" onClick={() => { setTrust("new"); setDialog("approve"); }}>
+      <Button variant="primary" size="sm" onClick={() => { setTrust(initialTrust); setDialog("approve"); }}>
         <Check /> Valider
       </Button>
 
       <Dialog open={dialog === "approve"} onOpenChange={(o) => !o && !pending && setDialog(null)}>
         <DialogContent title={`Valider ${name} ?`} description="Son compte devient actif : il peut passer en ligne et recevoir vos courses. Il est prévenu par notification.">
-          <div role="radiogroup" aria-label="Niveau de confiance" className="grid gap-2 sm:grid-cols-2">
-            {(["new", "trusted"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                role="radio"
-                aria-checked={trust === t}
-                onClick={() => setTrust(t)}
-                className={cn("flex flex-col justify-start rounded-xl border p-3.5 text-left", trust === t ? "border-brand/50 bg-brand/[0.06]" : "border-line hover:border-line-strong")}
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span className={cn("text-[13.5px] font-semibold", trust === t && "text-brand")}>{t === "new" ? "Nouveau (courses plafonnées)" : "Confirmé"}</span>
-                  {trust === t && <Check className="size-4 shrink-0 text-brand" />}
-                </span>
-                <span className="mt-1 block text-[12px] leading-snug text-fg-subtle">{t === "new" ? newHelp : TRUST_LEVEL_META.trusted.description}</span>
-              </button>
-            ))}
-          </div>
+          {fleet ? (
+            <p className="text-[13px] leading-relaxed text-fg-muted">
+              Il rejoint votre flotte comme un chauffeur que vous créez vous-même. Vous pourrez le suspendre ou le désactiver depuis sa fiche.
+            </p>
+          ) : (
+            <div role="radiogroup" aria-label="Niveau de confiance" className="grid gap-2 sm:grid-cols-2">
+              {(["new", "trusted"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="radio"
+                  aria-checked={trust === t}
+                  onClick={() => setTrust(t)}
+                  className={cn("flex flex-col justify-start rounded-xl border p-3.5 text-left", trust === t ? "border-brand/50 bg-brand/[0.06]" : "border-line hover:border-line-strong")}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className={cn("text-[13.5px] font-semibold", trust === t && "text-brand")}>{t === "new" ? "Nouveau (courses plafonnées)" : "Confirmé"}</span>
+                    {trust === t && <Check className="size-4 shrink-0 text-brand" />}
+                  </span>
+                  <span className="mt-1 block text-[12px] leading-snug text-fg-subtle">{t === "new" ? newHelp : TRUST_LEVEL_META.trusted.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {candidate.debt && (
             <p className="mt-4 rounded-lg border border-red/25 bg-red/[0.07] px-3 py-2.5 text-[12.5px] text-red">
               {debtText(candidate.debt)} Montant à la date de sa candidature : vérifiez vos encaissements avant de valider.
@@ -164,7 +178,7 @@ export function ApplicationActions({
       <Dialog open={dialog === "reject"} onOpenChange={(o) => !o && !pending && setDialog(null)}>
         <DialogContent title={`Refuser ${name} ?`} description="Le candidat voit votre motif dans l'application. Pour écarter un fraudeur, bannissez-le depuis sa fiche.">
           <div className="mb-3 flex flex-wrap gap-1.5">
-            {REJECT_REASONS.map((r) => (
+            {rejectReasons(model).map((r) => (
               <button
                 key={r}
                 type="button"
@@ -197,6 +211,7 @@ export function ApplicationsCard({
   newDriverMaxPriceCents,
   trustAfterRides,
   joinActive,
+  model,
 }: {
   candidates: Candidate[];
   canManage: boolean;
@@ -204,6 +219,7 @@ export function ApplicationsCard({
   newDriverMaxPriceCents: number | null;
   trustAfterRides: number | null;
   joinActive: boolean;
+  model: DispatchModel;
 }) {
   const [docsFor, setDocsFor] = useState<string | null>(null);
   const docsCandidate = candidates.find((c) => c.id === docsFor) ?? null;
@@ -293,7 +309,7 @@ export function ApplicationsCard({
                   </Button>
                   {canManage && (
                     <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-                      <ApplicationActions candidate={c} newDriverMaxPriceCents={newDriverMaxPriceCents} trustAfterRides={trustAfterRides} />
+                      <ApplicationActions candidate={c} newDriverMaxPriceCents={newDriverMaxPriceCents} trustAfterRides={trustAfterRides} model={model} />
                     </div>
                   )}
                 </div>
@@ -303,7 +319,7 @@ export function ApplicationsCard({
         </ul>
       )}
       {!canManage && candidates.length > 0 && (
-        <p className="border-t border-line px-5 py-3 text-[12px] text-fg-subtle">Validation et refus réservés aux administrateurs de la centrale.</p>
+        <p className="border-t border-line px-5 py-3 text-[12px] text-fg-subtle">Validation et refus réservés aux administrateurs (propriétaire ou admin).</p>
       )}
 
       <Dialog open={!!docsCandidate} onOpenChange={(o) => !o && setDocsFor(null)}>

@@ -55,7 +55,7 @@ const FAQ_GROUPS: { id: string; title: string; items: Question[] }[] = [
       {
         q: "Comment mes chauffeurs rejoignent-ils la centrale ?",
         a: fr(
-          "Depuis le tableau de bord, vous créez le compte du chauffeur ou l'invitez par e-mail. En mode centrale, vous pouvez aussi partager votre lien d'inscription : le chauffeur installe l'application et dépose sa candidature avec ses documents, que vous vérifiez avant de le valider.",
+          "Depuis le tableau de bord, vous créez le compte du chauffeur ou l'invitez par e-mail. Vous pouvez aussi partager votre lien d'inscription : le chauffeur installe l'application et dépose sa candidature avec ses documents, que vous vérifiez avant de le valider.",
         ),
       },
       {

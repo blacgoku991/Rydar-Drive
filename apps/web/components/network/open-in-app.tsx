@@ -4,7 +4,18 @@
 // ce bloc sert quand le lien a été ouvert dans le navigateur (tapé, copié, ou app absente).
 import { ArrowUpRight, Smartphone } from "lucide-react";
 
-export function OpenInApp({ code, appStoreUrl, playStoreUrl }: { code: string; appStoreUrl: string | null; playStoreUrl?: string | null }) {
+export function OpenInApp({
+  code,
+  appStoreUrl,
+  playStoreUrl,
+  organizationName,
+}: {
+  code: string;
+  appStoreUrl: string | null;
+  playStoreUrl?: string | null;
+  /** Centrale ou flotte du lien */
+  organizationName?: string;
+}) {
   return (
     <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-brand/30 bg-brand/[0.06] p-4 sm:flex-row sm:items-center lg:hidden">
       <span className="flex min-w-0 flex-1 items-center gap-3">
@@ -13,7 +24,9 @@ export function OpenInApp({ code, appStoreUrl, playStoreUrl }: { code: string; a
         </span>
         <span className="min-w-0 text-[13px] leading-snug">
           <span className="block font-semibold">Inscrivez-vous dans l&apos;application</span>
-          <span className="block text-fg-muted">Rydar Drive installée : vous êtes rattaché à la centrale en un geste.</span>
+          <span className="block text-fg-muted">
+            Rydar Drive installée{" "}: vous êtes rattaché à {organizationName ?? "la centrale"} en un geste.
+          </span>
         </span>
       </span>
       <span className="flex shrink-0 gap-2">

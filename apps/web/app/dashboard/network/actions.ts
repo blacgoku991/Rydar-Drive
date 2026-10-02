@@ -1,5 +1,5 @@
 "use server";
-// Page Réseau (mode centrale) : lien d'inscription, candidatures, levée d'un bannissement d'identité.
+// Page Réseau (centrale) / Inscriptions (flotte) : lien d'inscription, candidatures, levée d'un bannissement d'identité.
 // Contrôles de rôle ici (owner / admin) ET en base (private.assert_org_member dans chaque RPC).
 import { humanizeError, type TrustLevel } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
@@ -43,9 +43,8 @@ export type JoinLinkState = { join_code: string | null; join_enabled: boolean; j
 /** Lien d'inscription : activer / couper, validation automatique, régénération (l'ancien lien cesse de fonctionner). */
 export async function updateJoinLink(input: { enabled?: boolean; regenerate?: boolean; autoApprove?: boolean }): Promise<Result<JoinLinkState>> {
   const ctx = await managerCtx();
-  if (!ctx) return { ok: false, error: "Réservé aux administrateurs de la centrale." };
-  if (ctx.org.dispatch_model !== "centrale") return { ok: false, error: "Le lien d'inscription est réservé aux comptes en mode centrale." };
-  // null = inchangé (coalesce côté SQL)
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs (propriétaire ou admin)." };
+  // Flotte comme centrale (20260924006300). null = inchangé (coalesce côté SQL)
   const { data, error } = await ctx.supabase.rpc("set_join_link", {
     p_org: ctx.org.id,
     p_enabled: input.enabled ?? null,
@@ -60,12 +59,13 @@ export async function updateJoinLink(input: { enabled?: boolean; regenerate?: bo
   return { ok: true, join_code: res.join_code ?? null, join_enabled: !!res.join_enabled, join_auto_approve: !!res.join_auto_approve };
 }
 
-/** Valider une candidature (niveau de confiance au choix). */
-export async function approveApplication(driverId: string, trustLevel: TrustLevel): Promise<Result<{ message: string }>> {
+/** Valider une candidature (niveau de confiance au choix en centrale ; flotte : « confirmé », comme en base). */
+export async function approveApplication(driverId: string, requestedLevel: TrustLevel): Promise<Result<{ message: string }>> {
   const ctx = await managerCtx();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent valider une candidature." };
-  if (!uuid.safeParse(driverId).success || !["new", "trusted"].includes(trustLevel)) return { ok: false, error: "Demande invalide." };
+  if (!uuid.safeParse(driverId).success || !["new", "trusted"].includes(requestedLevel)) return { ok: false, error: "Demande invalide." };
   if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Candidature introuvable." };
+  const trustLevel: TrustLevel = ctx.org.dispatch_model === "centrale" ? requestedLevel : "trusted";
   const { data, error } = await ctx.supabase.rpc("approve_driver_application", { p_driver_id: driverId, p_trust_level: trustLevel });
   if (error || !data) return { ok: false, error: triggerError(error, "Validation impossible.") };
   const res = data as RpcResult;
@@ -116,7 +116,7 @@ export async function rejectApplication(driverId: string, reason: string): Promi
 /** Débloquer une identité précise (ex. plaque d'une voiture de location reprise par un autre chauffeur). */
 export async function liftIdentityBan(identityId: string, reason?: string): Promise<Result<{ message: string }>> {
   const ctx = await managerCtx();
-  if (!ctx) return { ok: false, error: "Réservé aux administrateurs de la centrale." };
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs (propriétaire ou admin)." };
   if (!uuid.safeParse(identityId).success) return { ok: false, error: "Demande invalide." };
   const { data, error } = await ctx.supabase.rpc("lift_identity_ban", { p_id: identityId, p_reason: reason?.trim().slice(0, 500) || null });
   if (error || !data) return { ok: false, error: actionError(error, "Action impossible.") };

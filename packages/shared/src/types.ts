@@ -806,6 +806,8 @@ export interface JoinInfo {
   message?: string;
   organization?: { id: Uuid; name: string; logo_url: string | null; brand_color: string | null; city: string | null; phone: string | null; email: string | null };
   auto_approve?: boolean;
+  /** Modèle de l'organisation (20260924006300) : flotte → aucune mention de commission sur la page d'inscription */
+  dispatch_model?: DispatchModel;
 }
 
 /** RPC svc_identity_check (service role) */

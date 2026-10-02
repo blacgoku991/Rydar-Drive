@@ -1,11 +1,14 @@
 "use client";
-// Page Réseau : lien d'inscription /rejoindre/{code} à partager dans les groupes WhatsApp / Telegram.
+// Pages Réseau (centrale) et Inscriptions (flotte) : lien d'inscription /rejoindre/{code} à partager dans les groupes
+// WhatsApp / Telegram (textes selon le modèle de l'organisation : join-copy.ts).
+import type { DispatchModel } from "@rydar/shared";
 import { Check, Copy, ExternalLink, Link2, MessageCircle, RefreshCw, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { updateJoinLink, type JoinLinkState } from "@/app/dashboard/network/actions";
-import { joinMessage, joinUrl } from "@/components/network/labels";
+import { autoApproveHelp, joinMessage, joinShareText } from "@/components/network/join-copy";
+import { joinUrl } from "@/components/network/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -58,7 +61,18 @@ function CopyButton({ text, label, done, className, variant = "secondary" }: { t
   );
 }
 
-export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string; initial: JoinLinkState; canManage: boolean }) {
+export function JoinLinkCard({
+  orgName,
+  initial,
+  canManage,
+  model,
+}: {
+  orgName: string;
+  initial: JoinLinkState;
+  canManage: boolean;
+  /** Modèle de l'organisation : textes du message partagé et de la validation automatique */
+  model: DispatchModel;
+}) {
   const router = useRouter();
   const [state, setState] = useState(initial);
   const [pending, start] = useTransition();
@@ -67,7 +81,7 @@ export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string;
   useEffect(() => setState(initial), [initial]);
 
   const url = state.join_code ? joinUrl(state.join_code) : null;
-  const message = url ? joinMessage(orgName, url) : "";
+  const message = url ? joinMessage(orgName, url, model) : "";
 
   const save = (key: NonNullable<typeof busy>, input: Parameters<typeof updateJoinLink>[0], success: string) => {
     setBusy(key);
@@ -100,7 +114,7 @@ export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string;
               <Link2 /> Créer le lien d&apos;inscription
             </Button>
           ) : (
-            <p className="text-[12.5px] text-fg-subtle">Un administrateur de la centrale peut le créer.</p>
+            <p className="text-[12.5px] text-fg-subtle">Un administrateur (propriétaire ou admin) peut le créer.</p>
           )}
         </div>
       ) : (
@@ -130,7 +144,7 @@ export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string;
                 </a>
               </Button>
               <Button asChild size="sm" variant="outline">
-                <a href={`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(`Rejoignez le réseau ${orgName} sur Rydar Drive`)}`} target="_blank" rel="noreferrer">
+                <a href={`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(joinShareText(orgName, model))}`} target="_blank" rel="noreferrer">
                   <Send /> Telegram
                 </a>
               </Button>
@@ -153,9 +167,7 @@ export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string;
             <label className="flex cursor-pointer items-center justify-between gap-4 px-3.5 py-3">
               <span className="min-w-0">
                 <span className="block text-[13px] font-medium">Validation automatique des inscrits</span>
-                <span className="block text-[12px] text-fg-subtle">
-                  {state.join_auto_approve ? "Actifs dès l'inscription, au niveau « Nouveau » (courses plafonnées)." : "Chaque inscrit attend votre validation ci-contre."}
-                </span>
+                <span className="block text-[12px] text-fg-subtle">{autoApproveHelp(model, state.join_auto_approve)}</span>
               </span>
               <Switch
                 checked={state.join_auto_approve}
@@ -174,7 +186,7 @@ export function JoinLinkCard({ orgName, initial, canManage }: { orgName: string;
               </Button>
             </div>
           ) : (
-            <p className="text-[12px] text-fg-subtle">Réglages du lien réservés aux administrateurs de la centrale.</p>
+            <p className="text-[12px] text-fg-subtle">Réglages du lien réservés aux administrateurs (propriétaire ou admin).</p>
           )}
         </div>
       )}

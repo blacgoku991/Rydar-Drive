@@ -1,12 +1,13 @@
 "use client";
-// Page Réseau : nouvelles candidatures en temps réel (driver.application sur org:{id}) + repli par sondage.
-import type { DriverApplicationEvent } from "@rydar/shared";
+// Pages Réseau / Inscriptions : nouvelles candidatures en temps réel (driver.application sur org:{id}) + repli par sondage.
+import type { DispatchModel, DriverApplicationEvent } from "@rydar/shared";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
+import { joinedLabel } from "@/components/network/join-copy";
 import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
 
-export function NetworkLive({ pollMs = 30_000 }: { pollMs?: number }) {
+export function NetworkLive({ pollMs = 30_000, model = "centrale" }: { pollMs?: number; model?: DispatchModel }) {
   const router = useRouter();
   const status = useRealtimeStatus();
   const timer = useRef<number | null>(null);
@@ -28,7 +29,10 @@ export function NetworkLive({ pollMs = 30_000 }: { pollMs?: number }) {
       toast.info(`Nouvelle candidature : ${name}`, { id: `application-${e.driver.id}`, description: "Vérifiez ses informations puis validez ou refusez." });
     } else if (e.action === "approved" && e.driver.applied_at) {
       // Inscription par le lien avec validation automatique (svc_driver_apply)
-      toast.success(`${name} a rejoint le réseau`, { id: `application-${e.driver.id}`, description: "Validation automatique : niveau « Nouveau »." });
+      toast.success(`${name} ${joinedLabel(model)}`, {
+        id: `application-${e.driver.id}`,
+        description: model === "centrale" ? "Validation automatique : niveau « Nouveau »." : "Validation automatique.",
+      });
     }
     refresh();
   });

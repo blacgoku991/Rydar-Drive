@@ -22,8 +22,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     ctx.supabase.rpc("chat_overview", { p_org: ctx.org.id }),
     // Compteur « Chauffeurs » : documents déposés à valider (candidats exclus, comme la page Chauffeurs)
     countPendingDocuments(ctx.supabase, ctx.org.id),
-    // Mode centrale : « Encaissements » (à confirmer + en retard) et « Réseau » (candidatures en attente)
-    centrale ? fetchCentraleCounts(ctx.supabase, ctx.org.id) : Promise.resolve(null),
+    // « Réseau » (centrale) / « Inscriptions » (flotte) : candidatures en attente ; mode centrale : « Encaissements »
+    // (à confirmer + en retard)
+    fetchCentraleCounts(ctx.supabase, ctx.org.id, { settlements: centrale }),
     // Mode centrale : lien de paiement et instructions (réclamations WhatsApp depuis les alertes et les fiches)
     centrale
       ? ctx.supabase

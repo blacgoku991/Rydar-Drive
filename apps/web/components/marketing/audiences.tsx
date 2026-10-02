@@ -24,7 +24,7 @@ const AUDIENCES: Audience[] = [
       "Toute la flotte en direct : qui est libre, en route, en retard.",
       "En mode centrale : commissions calculées, suivies et relancées automatiquement.",
       "Vos clients réservent chez vous, sans compte à créer.",
-      "Chauffeurs ajoutés depuis le tableau de bord ou, en mode centrale, inscrits par votre lien ; vous contrôlez leurs documents.",
+      "Chauffeurs ajoutés depuis le tableau de bord ou inscrits par votre lien ; vous contrôlez leurs documents.",
     ],
   },
   {

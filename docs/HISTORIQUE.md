@@ -244,6 +244,20 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   réécrit vers `/_mini-site-indisponible` = 404 neutre (plus jamais l'accueil ni `/login` de la plateforme sous le
   domaine d'une centrale) ; « indisponible » sur `/tarifs`, l'onglet Abonnement et `/admin/plans` (« · coupé ») ;
   compteur de la carte limité aux centrales actives ; test DB de la rétrogradation en service role.
+- [x] **Lien d'inscription des chauffeurs pour les flottes (10/2026, migration 006300)** : `set_join_link`,
+  `svc_driver_apply` sans restriction de modèle ; flotte : fiche « new » (sans effet en flotte),
+  `approve_driver_application` force « confirmé », validation automatique = reste « new » (plafonné si passage en
+  centrale ; avertissement dans le dialogue super admin), journal et messages « … la flotte » ; `private.organizations_dispatch_model_guard`
+  ne coupe plus le lien (trigger sur `dispatch_model` seul : code, état, validation auto, candidatures conservés ;
+  garde SETTLEMENTS_OPEN inchangée). Web : même page `/dashboard/network`, menu « Inscriptions » (flotte, icône
+  `userPlus`, pastille des candidatures, juste sous « Chauffeurs ») / « Réseau » (centrale) + bouton « Lien
+  d'inscription » sur la page Chauffeurs ; textes par modèle `components/network/join-copy.ts` (page /rejoindre, message
+  WhatsApp / Telegram, validation sans niveau de confiance) ; `/api/join/{code}` renvoie `model` (app : textes JS seuls,
+  EAS) ; dialogue super admin du modèle mis à jour. Tests : `tests/db/fleet-join.test.ts`, `join-copy.test.ts`.
+  Après revue : textes neutres (erreurs de `lib/join.ts` selon le modèle, « propriétaire ou admin », site vitrine sans
+  « en mode centrale »), défaut unique `joinInfoModel` (sans modèle → centrale), écran d'attente de l'app sans « Nouveau »
+  en flotte, pastille des candidatures sans bannis ni supprimés ; tests `lib/join.test.ts` (route GET + erreurs) et
+  `lib/network-actions.test.ts` (validation « confirmé » en flotte).
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
@@ -258,7 +272,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - RPC chauffeur : accept_ride_offer, decline_ride_offer, driver_update_ride_status, driver_set_online, update_driver_location, driver_heartbeat, driver_register_device, driver_home, driver_offers ; centrale : driver_settlements, driver_declare_payment, driver_account_state.
 - RPC dashboard : cancel_ride, assign_ride, redispatch_ride, reassign_ride, acknowledge_ride_alert, org_kpis, org_stats, driver_stats, org_usage, platform_overview ; svc_cancel_ride (service_role).
   Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
-  ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application, admin_centrale_overview ;
+  ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application (aussi en flotte, 006300), admin_centrale_overview ;
   service role : svc_join_info, svc_identity_check, svc_driver_apply, svc_platform_ban/unban/dismiss_report.
 - Frais plateforme : centrale org_platform_status, org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
   super admin admin_platform_overview, admin_platform_account ; service role svc_platform_confirm/reject/reopen/record_payment,

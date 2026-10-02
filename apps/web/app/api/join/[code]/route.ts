@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import { JOIN_LINK_INACTIVE, joinInfoModel } from "@/components/network/join-copy";
 import { driverAppCors } from "@/lib/driver-app-cors";
 import { applyWithJoinLink, loadJoinInfo } from "@/lib/join";
 import { rateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
 
-// Inscription d'un chauffeur depuis l'application, par le lien d'une centrale (même logique que /rejoindre/{code}).
+// Inscription d'un chauffeur depuis l'application, par le lien d'une centrale ou d'une flotte (même logique que
+// /rejoindre/{code}).
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -13,18 +15,24 @@ export function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: driverAppCors(req) });
 }
 
-/** Carte de la centrale affichée dans l'app avant l'inscription. */
+/** Carte de l'organisation (flotte ou centrale) affichée dans l'app avant l'inscription. */
 export async function GET(req: Request, { params }: { params: Promise<{ code: string }> }) {
   const headers = { ...NO_STORE, ...driverAppCors(req) };
   const limit = await rateLimit(`join:info:${await clientIp()}`, 60, 900);
   if (!limit.ok) return NextResponse.json({ ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes." }, { status: 429, headers });
   const info = await loadJoinInfo((await params).code);
   if (!info?.organization) {
-    return NextResponse.json({ ok: false, error: "Ce lien d'inscription n'est plus actif. Demandez un nouveau lien à la centrale." }, { status: 404, headers });
+    return NextResponse.json({ ok: false, error: JOIN_LINK_INACTIVE }, { status: 404, headers });
   }
   const o = info.organization;
   return NextResponse.json(
-    { ok: true, autoApprove: !!info.auto_approve, organization: { name: o.name, logoUrl: o.logo_url, brandColor: o.brand_color, city: o.city, phone: o.phone } },
+    {
+      ok: true,
+      autoApprove: !!info.auto_approve,
+      // Flotte ou centrale (20260924006300) : l'app adapte ses textes ; une ancienne app ignore le champ
+      model: joinInfoModel(info.dispatch_model),
+      organization: { name: o.name, logoUrl: o.logo_url, brandColor: o.brand_color, city: o.city, phone: o.phone },
+    },
     { headers },
   );
 }

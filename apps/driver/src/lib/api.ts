@@ -379,6 +379,8 @@ export const api = {
 /** Centrale derrière un lien d'inscription (GET /api/join/{code}). */
 export type JoinCentrale = {
   autoApprove: boolean;
+  /** Flotte ou centrale (serveur ≥ 20260924006300 ; absent avant : seules les centrales avaient un lien) */
+  model: "fleet" | "centrale";
   organization: { name: string; logoUrl: string | null; brandColor: string | null; city: string | null; phone: string | null };
 };
 
@@ -403,7 +405,7 @@ export async function fetchJoinCentrale(code: string): Promise<JoinCentrale> {
   if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
   const json = (await res.json().catch(() => ({}))) as Partial<JoinCentrale> & { ok?: boolean; error?: string };
   if (!res.ok || !json.ok || !json.organization) throw new ApiError(json.error ?? "Lien d'inscription invalide.", "JOIN_LINK_INVALID");
-  return { autoApprove: !!json.autoApprove, organization: json.organization };
+  return { autoApprove: !!json.autoApprove, model: json.model === "fleet" ? "fleet" : "centrale", organization: json.organization };
 }
 
 export async function joinCentrale(code: string, input: JoinInput): Promise<JoinResponse> {

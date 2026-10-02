@@ -1,9 +1,11 @@
 "use client";
-// Page publique /rejoindre/{code} : candidature d'un chauffeur (ouverte depuis WhatsApp / Telegram → mobile d'abord).
-import { VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, type VehicleCategory } from "@rydar/shared";
+// Page publique /rejoindre/{code} : candidature d'un chauffeur (ouverte depuis WhatsApp / Telegram → mobile d'abord),
+// pour une centrale ou une flotte (textes : join-copy.ts).
+import { VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, type DispatchModel, type VehicleCategory } from "@rydar/shared";
 import { AlertCircle, Check, Eye, EyeOff, FileText, LogIn, Minus, Plus, Smartphone, Wifi } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { applyToCentrale, type JoinResult } from "@/app/rejoindre/[code]/actions";
+import { joinSuccessCopy } from "@/components/network/join-copy";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
@@ -30,8 +32,9 @@ function Section({ step, title, hint, children }: { step: number; title: string;
   );
 }
 
-function SuccessScreen({ result }: { result: Extract<JoinResult, { ok: true }> }) {
+function SuccessScreen({ result, model }: { result: Extract<JoinResult, { ok: true }>; model: DispatchModel }) {
   const approved = result.status === "APPROVED";
+  const copy = joinSuccessCopy(result.organizationName, model, approved);
   const ref = useRef<HTMLDivElement>(null);
   // Mobile : la confirmation remplace le formulaire → on l'amène à l'écran
   useEffect(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
@@ -40,7 +43,7 @@ function SuccessScreen({ result }: { result: Extract<JoinResult, { ok: true }> }
     { icon: LogIn, title: "Connectez-vous", text: result.email ? `Avec ${result.email} et le mot de passe choisi.` : "Avec votre e-mail et le mot de passe choisi." },
     { icon: FileText, title: "Déposez vos documents", text: "Carte VTC, permis de conduire, pièce d'identité, assurance et carte grise : une photo suffit." },
     approved
-      ? { icon: Wifi, title: "Passez EN LIGNE", text: "Vous recevez les courses proches de vous, avec votre part affichée avant d'accepter." }
+      ? { icon: Wifi, title: "Passez EN LIGNE", text: copy.online ?? "" }
       : { icon: Check, title: "Attendez la validation", text: `${result.organizationName} vérifie votre profil : vous recevrez une notification dès la validation.` },
   ];
   return (
@@ -55,11 +58,7 @@ function SuccessScreen({ result }: { result: Extract<JoinResult, { ok: true }> }
         <h2 className="text-[22px] font-semibold leading-tight tracking-tight">
           {approved ? "Bienvenue, votre compte est actif" : `Candidature envoyée à ${result.organizationName}`}
         </h2>
-        <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-fg-muted">
-          {approved
-            ? `Vous faites maintenant partie du réseau ${result.organizationName}.`
-            : "Merci ! La centrale étudie votre candidature. En attendant, préparez votre compte dans l'application."}
-        </p>
+        <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-fg-muted">{copy.text}</p>
       </div>
       <p className="mb-3 mt-8 text-[12px] font-medium uppercase tracking-[0.08em] text-fg-subtle">Prochaines étapes</p>
       <ol className="space-y-2.5">
@@ -82,7 +81,18 @@ function SuccessScreen({ result }: { result: Extract<JoinResult, { ok: true }> }
   );
 }
 
-export function JoinForm({ code, organizationName, autoApprove }: { code: string; organizationName: string; autoApprove: boolean }) {
+export function JoinForm({
+  code,
+  organizationName,
+  autoApprove,
+  model,
+}: {
+  code: string;
+  organizationName: string;
+  autoApprove: boolean;
+  /** Centrale (réseau à commission) ou flotte : textes de la confirmation et du message */
+  model: DispatchModel;
+}) {
   const formRef = useRef<HTMLFormElement>(null);
   const [pending, start] = useTransition();
   const [category, setCategory] = useState<VehicleCategory>("standard");
@@ -92,7 +102,8 @@ export function JoinForm({ code, organizationName, autoApprove }: { code: string
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Extract<JoinResult, { ok: true }> | null>(null);
 
-  if (done) return <SuccessScreen result={done} />;
+  if (done) return <SuccessScreen result={done} model={model} />;
+  const recipient = model === "centrale" ? "la centrale" : organizationName;
 
   const err = (k: string) => errors[k];
   const focusFirstError = (fe: Record<string, string>) => {
@@ -259,10 +270,10 @@ export function JoinForm({ code, organizationName, autoApprove }: { code: string
         </div>
       </Section>
 
-      <Section step={4} title="Un mot pour la centrale" hint="optionnel">
+      <Section step={4} title={`Un mot pour ${recipient}`} hint="optionnel">
         <div data-field="message">
           <Field error={err("message")}>
-            <Textarea name="message" maxLength={1000} className="text-base sm:text-sm" placeholder="Disponibilités, secteurs, expérience, langues parlées…" aria-label="Message pour la centrale" />
+            <Textarea name="message" maxLength={1000} className="text-base sm:text-sm" placeholder="Disponibilités, secteurs, expérience, langues parlées…" aria-label={`Message pour ${recipient}`} />
           </Field>
         </div>
       </Section>

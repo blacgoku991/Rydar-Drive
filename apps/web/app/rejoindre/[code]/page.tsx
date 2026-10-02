@@ -1,9 +1,10 @@
 import type { JoinInfo } from "@rydar/shared";
-import { BadgeEuro, HandCoins, Link2Off, MapPin, Navigation, Phone } from "lucide-react";
+import { BadgeEuro, CalendarClock, FileCheck, HandCoins, Link2Off, MapPin, Navigation, Phone } from "lucide-react";
 import type { Metadata } from "next";
 import { cache } from "react";
 import { Logo, RadarMark } from "@/components/brand/logo";
 import { LegalLinks } from "@/components/legal/legal-links";
+import { JOIN_LINK_INACTIVE, joinInfoModel, joinPageCopy } from "@/components/network/join-copy";
 import { JoinForm } from "@/components/network/join-form";
 import { OpenInApp } from "@/components/network/open-in-app";
 import { loadJoinInfo } from "@/lib/join";
@@ -20,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<{ code: str
   if (!info?.organization) return { title: { absolute: "Lien d'inscription — Rydar Drive" }, robots: NOINDEX };
   return {
     title: { absolute: `Rejoindre ${info.organization.name} — Chauffeurs VTC` },
-    description: `Inscrivez-vous comme chauffeur VTC indépendant dans le réseau ${info.organization.name} sur Rydar Drive.`,
+    description: joinPageCopy(info.organization.name, joinInfoModel(info.dispatch_model), !!info.auto_approve).description,
     robots: NOINDEX,
   };
 }
@@ -39,10 +40,17 @@ function readableOn(hex: string) {
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b! > 0.35 ? "#0b0d04" : "#ffffff";
 }
 
+// Centrale à commission (inchangé)
 const BENEFITS = [
   { icon: Navigation, title: "Courses près de vous", text: "Proposées selon votre position : vous acceptez celles qui vous conviennent." },
   { icon: BadgeEuro, title: "Votre part affichée avant d'accepter", text: "Chaque offre indique ce que vous gagnez, commission déjà déduite." },
   { icon: HandCoins, title: "Commission réglée en 2 clics depuis l'app", text: "Lien de paiement, espèces ou virement : pas de relance par message." },
+];
+// Flotte : ni commission ni part chauffeur
+const FLEET_BENEFITS = [
+  { icon: Navigation, title: "Courses près de vous", text: "Proposées selon votre position : vous acceptez celles qui vous conviennent." },
+  { icon: CalendarClock, title: "Planning et itinéraire dans l'app", text: "Courses à venir, guidage jusqu'au client et messages avec l'équipe au même endroit." },
+  { icon: FileCheck, title: "Documents déposés depuis l'app", text: "Carte VTC, permis, assurance : une photo suffit, l'équipe les valide." },
 ];
 
 function InvalidLink() {
@@ -56,7 +64,7 @@ function InvalidLink() {
         </div>
         <h1 className="text-[22px] font-semibold tracking-tight">Lien invalide ou désactivé</h1>
         <p className="mt-3 text-[14px] leading-relaxed text-fg-muted">
-          Ce lien d&apos;inscription n&apos;est plus actif. Demandez le lien à jour à la centrale qui vous l&apos;a envoyé.
+          {JOIN_LINK_INACTIVE}
         </p>
       </div>
     </main>
@@ -71,6 +79,11 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
   const brand = brandColor(org.brand_color);
   const style = { "--color-brand": brand, "--color-brand-strong": brand, "--color-brand-fg": readableOn(brand) } as React.CSSProperties;
   const autoApprove = !!info.auto_approve;
+  // Flotte → textes sans commission ; réponse sans modèle (base d'avant 20260924006300, où seules les centrales avaient
+  // un lien) → centrale (joinInfoModel, même défaut que /api/join/{code})
+  const model = joinInfoModel(info.dispatch_model);
+  const copy = joinPageCopy(org.name, model, autoApprove);
+  const benefits = model === "centrale" ? BENEFITS : FLEET_BENEFITS;
 
   return (
     <main style={style} className="grain relative min-h-dvh overflow-x-clip bg-ink-950">
@@ -110,7 +123,12 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           )}
         </header>
 
-        <OpenInApp code={code.toLowerCase()} appStoreUrl={process.env.IOS_APP_URL || null} playStoreUrl={process.env.ANDROID_APP_URL || null} />
+        <OpenInApp
+          code={code.toLowerCase()}
+          appStoreUrl={process.env.IOS_APP_URL || null}
+          playStoreUrl={process.env.ANDROID_APP_URL || null}
+          organizationName={org.name}
+        />
 
         <div className="mt-8 grid gap-8 lg:mt-14 lg:grid-cols-[1fr_520px] lg:gap-12">
           <section className="lg:sticky lg:top-10 lg:self-start lg:pt-6">
@@ -118,15 +136,11 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
               <span className="size-1.5 animate-breathe rounded-full bg-brand" /> Recrutement chauffeurs VTC
             </span>
             <h1 className="mt-4 text-[30px] font-semibold leading-[1.08] tracking-tight sm:text-[40px] lg:text-[48px]">
-              <span className="text-gradient">Rejoignez le réseau {org.name}</span>
+              <span className="text-gradient">{copy.title}</span>
             </h1>
-            <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-fg-muted">
-              Inscription en 2 minutes.{" "}
-              {autoApprove ? "Votre compte est actif dès l'inscription" : "La centrale valide votre profil"}, puis vous recevez les courses dans
-              l&apos;application Rydar Drive.
-            </p>
+            <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-fg-muted">{copy.lead}</p>
             <ul className="mt-6 grid gap-3 lg:mt-10 lg:gap-5">
-              {BENEFITS.map((b) => (
+              {benefits.map((b) => (
                 <li key={b.title} className="flex gap-3">
                   <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.03]">
                     <b.icon className="size-4 text-brand" />
@@ -143,11 +157,9 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           <section aria-label="Formulaire d'inscription" className="glass relative overflow-hidden rounded-3xl">
             <div className="hairline-top border-b border-line px-5 py-4 sm:px-7">
               <h2 className="text-[17px] font-semibold tracking-tight">{autoApprove ? "Créer mon compte chauffeur" : "Ma candidature"}</h2>
-              <p className="mt-0.5 text-[12.5px] text-fg-muted">
-                Chauffeur VTC indépendant · {autoApprove ? "activation immédiate" : `réponse de ${org.name}`}
-              </p>
+              <p className="mt-0.5 text-[12.5px] text-fg-muted">{copy.formSubtitle}</p>
             </div>
-            <JoinForm code={code.toLowerCase()} organizationName={org.name} autoApprove={autoApprove} />
+            <JoinForm code={code.toLowerCase()} organizationName={org.name} autoApprove={autoApprove} model={model} />
           </section>
         </div>
 
