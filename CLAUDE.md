@@ -43,6 +43,7 @@ la centrale doit les frais plateforme à Rydar.
   Fichier `"use server"` : n'exporter que des fonctions async.
 - Tailwind v4 : classes custom = `@utility`. PG regex : répétition ≤ 255 (`{1,512}` interdit).
 - IP client : toujours `ipFromHeaders` (`lib/request.ts`) + `rateLimitAll` ; jamais lire CF-Connecting-IP / X-Real-IP soi-même.
+- Perf : `<Link>` du tableau de bord en `prefetch={false}` ; proxy sans appel réseau à Auth par requête (getUser : /login et rendu).
 - Export CSV : BOM UTF-8, « ; », cellule commençant par = + - @ tab CR préfixée d'une apostrophe (modèle
   `app/dashboard/settlements/rydar/export/route.ts`).
 - WhatsApp : API officielle Cloud de Meta + modèles approuvés (`WHATSAPP_TEMPLATES`) seulement, jamais d'outil non officiel.

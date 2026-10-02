@@ -169,6 +169,7 @@ export function OrgPlatformBanner({ orgId, timeZone, enabled }: { orgId: string;
       </p>
       <Link
         href="/dashboard/settlements#frais-plateforme"
+        prefetch={false}
         className={cn("inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[12px] font-medium transition-colors", t.button)}
       >
         Régler

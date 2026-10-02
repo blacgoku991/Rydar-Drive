@@ -258,6 +258,22 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   « en mode centrale »), défaut unique `joinInfoModel` (sans modèle → centrale), écran d'attente de l'app sans « Nouveau »
   en flotte, pastille des candidatures sans bannis ni supprimés ; tests `lib/join.test.ts` (route GET + erreurs) et
   `lib/network-actions.test.ts` (validation « confirmé » en flotte).
+- [x] **Lenteur, volet serveur / auth / base (10/2026, migration 006500)** : `proxy.ts` = `getSession()` (cookies,
+  rafraîchissement gardé) puis `getClaims(jeton)` seulement pour un jeton ES256/RS256 + kid (vérifié sur place, JWKS) ;
+  jeton HS256 = aiguillage sans appel à Auth (rejeté au rendu) ; `/login` garde `getUser()`. `lib/auth.ts` : lectures
+  de session (users, adhésions, chauffeur) en même temps que `getUser()` (qui fait foi : `user.id` = `sub` du cookie,
+  sinon aucune session), contrôle `session_is_super_admin` lancé en parallèle et lu après. `prefetch={false}` sur la
+  barre latérale, le logo, les lignes / onglets / pages de la liste des courses ; liens juridiques du bandeau en `<a>`.
+  Fiche course : course + données liées en un seul `Promise.all` ; liste centrale : règlement embarqué ; fiche admin
+  d'une organisation : organisation et état de connexion des membres dans le `Promise.all`. `public.chat_counts`
+  (compteurs du menu Messages, égaux à `chat_overview`) ; index `rides_org_open_pickup_idx` (partiel, non terminées),
+  `ride_offers_org_sent_idx`, `ride_events_org_id_idx` (création simple : `migrate.sh` = `psql -1`).
+  `server-fetch.ts` : IPv4 d'abord (une requête sur deux échouait sur un conteneur sans IPv6 dès qu'un AAAA existe).
+  Worker MapLibre sous `/vendor/maplibre/<version>/`, cache navigateur d'un an ; `KEEP_ALIVE_TIMEOUT=130000` (web,
+  au-dessus des 2 min de Caddy). Mesuré (build de prod, +10 ms par appel Supabase) : chargement de `/dashboard`
+  26 → 1 requête Next et 28 → 1 appel GoTrue, CPU Next 900 → 520 ms par « chargement + clic » ; TTFB −20 à −50 ms
+  (série d'appels 4-7 → 2-3) ; en ES256 aussi. Tests : `lib/proxy-auth.test.ts` (vrai auth-js, HS256 et ES256),
+  `lib/auth.test.ts`, `lib/server-fetch.test.ts`, `tests/db/perf-indexes.test.ts`.
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

@@ -160,8 +160,10 @@ jobs:
               # Carte (variables NEXT_PUBLIC_MAP_* vides, comme en production) : CSP, worker, adresse des tuiles
               curl -fsS -D - -o /dev/null http://127.0.0.1:3000/login | grep -i '^content-security-policy' | grep -q 'tiles.openfreemap.org' \
                 || { echo "✗ CSP sans serveur de tuiles : carte bloquée"; exit 1; }
-              curl -fsS -o /dev/null http://127.0.0.1:3000/vendor/maplibre/maplibre-gl-worker.mjs \
-                || { echo "✗ worker MapLibre absent de l'image"; exit 1; }
+              # Worker sous un chemin versionné (scripts/copy-maplibre.mjs), gardé un an par le navigateur
+              ML=$(docker exec web sh -c "ls /app/apps/web/public/vendor/maplibre")
+              curl -fsS -D - -o /dev/null "http://127.0.0.1:3000/vendor/maplibre/$ML/maplibre-gl-worker.mjs" | grep -qi '^cache-control: public, max-age=31536000, immutable' \
+                || { echo "✗ worker MapLibre absent de l'image (ou sans cache navigateur)"; exit 1; }
               docker exec web sh -c "grep -rqs 'tiles.openfreemap.org/planet' /app/apps/web/.next/static" \
                 || { echo "✗ adresse des tuiles absente du code navigateur"; exit 1; }
               docker logs web

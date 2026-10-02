@@ -11,11 +11,25 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/geo/cache", async () => await import("./geo/cache"));
 vi.mock("@/lib/hostname", async () => await import("./hostname"));
+vi.mock("@/lib/supabase/jwt", async () => await import("./supabase/jwt"));
 // Appels sortants : fetch global (simulé par le test)
 vi.mock("@/lib/server-fetch", () => ({ serverFetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) }));
 vi.mock("@supabase/ssr", () => ({
   createServerClient: (_url: string, _key: string, opts: { cookies: { setAll: (c: unknown[]) => void } }) => ({
     auth: {
+      // Cookie de session : jeton à clé asymétrique (vérifié sur place par getClaims, comme en production)
+      getSession: async () => ({
+        data: {
+          session: h.claims
+            ? {
+                access_token: [{ alg: "ES256", typ: "JWT", kid: "k1" }, h.claims]
+                  .map((p) => Buffer.from(JSON.stringify(p)).toString("base64url"))
+                  .join(".") + ".c2ln",
+              }
+            : null,
+        },
+        error: null,
+      }),
       // Clés asymétriques : le jeton est vérifié localement, sans interroger Auth
       getClaims: async () => ({ data: h.claims ? { claims: h.claims } : null, error: null }),
       getUser: async () => {

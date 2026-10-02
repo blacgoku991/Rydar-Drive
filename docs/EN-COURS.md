@@ -22,9 +22,16 @@ Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `202
 la file si le serveur mail est injoignable, relance à son retour), `20260924005900` clôture des planifiées jamais
 démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse,
 `20260924006200` interrupteur plateforme des mini-sites (coupés), `20260924006300` lien d'inscription des chauffeurs
-pour les flottes.
+pour les flottes, `20260924006500` index de performance + `chat_counts`.
 
 ## Depuis l'audit
+- **Lenteur (« le site est lent ») — volet serveur** : plus de rafale de préchargements à chaque page (26 → 1 requête
+  Next au chargement de `/dashboard`), plus d'appel à Auth dans le proxy pour un jeton HS256 (production : ES256 vérifié
+  sur place, inchangé), lectures de session en parallèle de `getUser()` (qui reste le contrôle à chaque rendu), cascades
+  supprimées (fiche course, liste centrale, fiche admin), compteur Messages léger (`chat_counts`), 3 index (migration
+  006500), IPv4 d'abord vers Supabase, worker de carte en cache, keep-alive Next au-dessus de celui de Caddy. Détail :
+  HISTORIQUE.md. Côté VPS (à faire par l'utilisateur, contrôles en lecture seule d'abord) : services Supabase
+  inutilisés (Studio, meta, imgproxy, functions, analytics), OSRM local, journal d'accès Caddy avec durées.
 - **Mini-sites coupés pour toute la plateforme (demande du propriétaire, migration 006200)** : jusqu'à réactivation par
   le super admin (Offres & limites, carte « Mini-sites de réservation », confirmation, journal d'audit). Coupé : menu
   « Mini-site » masqué, éditeur remplacé par « Les mini-sites de réservation sont momentanément désactivés par Rydar. »,

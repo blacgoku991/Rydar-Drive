@@ -58,7 +58,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between pl-5 pr-3">
-        <Link href={sections[0]?.items[0]?.href ?? "/"} onClick={onNavigate} title={subtitle}>
+        <Link href={sections[0]?.items[0]?.href ?? "/"} prefetch={false} onClick={onNavigate} title={subtitle}>
           <Logo size={24} />
         </Link>
         {headerAction}
@@ -102,6 +102,10 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      // Pas de préchargement : les pages du tableau de bord sont dynamiques (sans loading.tsx), un
+                      // préchargement ne contient aucune donnée mais passe par le proxy et occupe le serveur (une
+                      // vingtaine de requêtes par page affichée). Le clic reste une seule requête RSC.
+                      prefetch={false}
                       onClick={onNavigate}
                       className={cn(
                         "group relative flex h-8 items-center gap-2.5 rounded-lg px-3 text-[13.5px] transition-colors",

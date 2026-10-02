@@ -19,6 +19,18 @@ export async function loadThreadPage(supabase: Supa, orgId: string, thread: Chat
   return { messages: rows.slice(0, CHAT_PAGE_SIZE).reverse().map((r) => toChatMessage(r, now)), hasMore: rows.length > CHAT_PAGE_SIZE };
 }
 
+/**
+ * Compteurs du menu « Messages » : non-lus de l'utilisateur (tous fils) et messages signalés à traiter. Mêmes valeurs
+ * que chat_overview.unread_total / open_reports, sans la liste des fils (public.chat_counts, 20260924006500). null si la
+ * lecture échoue.
+ */
+export async function loadChatCounts(supabase: Supa, orgId: string): Promise<{ unread: number; openReports: number } | null> {
+  const { data, error } = await supabase.rpc("chat_counts", { p_org: orgId });
+  if (error || !data) return null;
+  const counts = data as { unread_total?: number; open_reports?: number };
+  return { unread: Number(counts.unread_total ?? 0), openReports: Number(counts.open_reports ?? 0) };
+}
+
 export async function loadChatOverview(supabase: Supa, orgId: string): Promise<ChatOverview | null> {
   const { data, error } = await supabase.rpc("chat_overview", { p_org: orgId });
   if (error || !data) return null;

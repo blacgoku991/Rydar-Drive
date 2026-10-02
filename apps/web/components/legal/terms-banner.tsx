@@ -5,7 +5,6 @@
 //    titre personnel CGU + politique de confidentialité ;
 //  - UserTermsBanner (tout membre, dispatcher compris) : CGU + politique de confidentialité à titre personnel.
 import { FileCheck2 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -53,10 +52,10 @@ export function TermsBanner({ orgName }: { orgName: string }) {
   return (
     <AcceptBanner accept={acceptOrgTerms}>
       J&apos;accepte, au nom de <span className="text-fg">{orgName}</span>, les{" "}
-      <Link href="/cgv" target="_blank" className={link}>conditions générales de vente</Link> et l&apos;
-      <Link href="/dpa" target="_blank" className={link}>accord de traitement des données (RGPD)</Link>, ainsi que les{" "}
-      <Link href="/cgu" target="_blank" className={link}>conditions d&apos;utilisation</Link> et la{" "}
-      <Link href="/confidentialite" target="_blank" className={link}>politique de confidentialité</Link>. Je confirme que la
+      <a href="/cgv" target="_blank" rel="noopener" className={link}>conditions générales de vente</a> et l&apos;
+      <a href="/dpa" target="_blank" rel="noopener" className={link}>accord de traitement des données (RGPD)</a>, ainsi que les{" "}
+      <a href="/cgu" target="_blank" rel="noopener" className={link}>conditions d&apos;utilisation</a> et la{" "}
+      <a href="/confidentialite" target="_blank" rel="noopener" className={link}>politique de confidentialité</a>. Je confirme que la
       centrale respecte ses obligations de transporteur (inscription VTC, déclaration de centrale de réservation le cas échéant).
     </AcceptBanner>
   );
@@ -66,8 +65,8 @@ export function TermsBanner({ orgName }: { orgName: string }) {
 export function UserTermsBanner() {
   return (
     <AcceptBanner accept={acceptUserTerms}>
-      J&apos;accepte les <Link href="/cgu" target="_blank" className={link}>conditions d&apos;utilisation</Link> et la{" "}
-      <Link href="/confidentialite" target="_blank" className={link}>politique de confidentialité</Link> de Rydar Drive.
+      J&apos;accepte les <a href="/cgu" target="_blank" rel="noopener" className={link}>conditions d&apos;utilisation</a> et la{" "}
+      <a href="/confidentialite" target="_blank" rel="noopener" className={link}>politique de confidentialité</a> de Rydar Drive.
     </AcceptBanner>
   );
 }

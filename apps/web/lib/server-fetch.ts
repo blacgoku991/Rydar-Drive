@@ -14,13 +14,20 @@ export const KEEP_ALIVE_MS = 60_000;
 /** Durée de mémorisation d'une adresse (changement d'adresse IP du serveur pris en compte en 5 min au plus). */
 export const DNS_CACHE_MS = 5 * 60_000;
 
-/** lookup : résolveur de remplacement (tests). */
+/**
+ * lookup : résolveur de remplacement (tests).
+ *
+ * affinity 4 : l'adresse IPv4 est toujours choisie quand le nom en a une, l'IPv6 seulement à défaut (AAAA seul). Par
+ * défaut, l'intercepteur alterne IPv4 / IPv6 d'une requête à l'autre dès qu'un AAAA existe : dans un conteneur sans
+ * IPv6 (Docker par défaut), une requête sur deux échouait alors (ENETUNREACH / EAFNOSUPPORT : ni repli ni nouvel
+ * essai, seuls ETIMEDOUT et ECONNREFUSED retentent l'autre famille, ce qui reste vrai ici).
+ */
 export function createServerDispatcher(options: { lookup?: DnsOptions["lookup"] } = {}) {
   return new Agent({
     keepAliveTimeout: KEEP_ALIVE_MS,
     keepAliveMaxTimeout: KEEP_ALIVE_MS,
     connect: { timeout: 10_000 },
-  }).compose(interceptors.dns({ maxTTL: DNS_CACHE_MS, ...(options.lookup ? { lookup: options.lookup } : {}) }));
+  }).compose(interceptors.dns({ maxTTL: DNS_CACHE_MS, affinity: 4, ...(options.lookup ? { lookup: options.lookup } : {}) }));
 }
 
 let dispatcher: ReturnType<typeof createServerDispatcher> | null = null;

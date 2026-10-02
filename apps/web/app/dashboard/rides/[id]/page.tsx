@@ -49,16 +49,22 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const ctx = await requireOrg();
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
 
-  const { data: ride } = await ctx.supabase.from("rides").select("*").eq("id", id).eq("organization_id", ctx.org.id).maybeSingle();
-  if (!ride) notFound();
-
   const centrale = ctx.org.dispatch_model === "centrale";
-  const [events, offers, drivers, alerts, settlement, rideDriver] = await Promise.all([
-    ctx.supabase.from("ride_events").select("id, category, level, type, message, actor_type, data, created_at").eq("ride_id", id).order("id"),
+  // Course et données liées en un seul aller-retour : toutes ne dépendent que de l'id de l'URL (filtrées aussi par
+  // centrale, sous RLS) ; rien n'est affiché si la course n'est pas celle de la centrale (notFound ci-dessous)
+  const [{ data: ride }, events, offers, drivers, alerts, settlement] = await Promise.all([
+    ctx.supabase.from("rides").select("*").eq("id", id).eq("organization_id", ctx.org.id).maybeSingle(),
+    ctx.supabase
+      .from("ride_events")
+      .select("id, category, level, type, message, actor_type, data, created_at")
+      .eq("ride_id", id)
+      .eq("organization_id", ctx.org.id)
+      .order("id"),
     ctx.supabase
       .from("ride_offers")
       .select("id, driver_id, status, mode, wave, radius_m, distance_m, sent_at, responded_at, expires_at, closed_reason")
       .eq("ride_id", id)
+      .eq("organization_id", ctx.org.id)
       .order("sent_at"),
     ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("organization_id", ctx.org.id).eq("status", "active"),
     // Alertes de suivi (retard, immobile, GPS muet, pas démarrée), les plus récentes d'abord
@@ -73,11 +79,14 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
     centrale
       ? ctx.supabase.from("ride_settlements").select("*").eq("ride_id", id).eq("organization_id", ctx.org.id).maybeSingle()
       : Promise.resolve({ data: null }),
-    // Chauffeur de la course même s'il n'est plus actif (suspendu, désactivé) : la liste ci-dessus ne garde que les actifs
-    ride.driver_id
-      ? ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("id", ride.driver_id).eq("organization_id", ctx.org.id).maybeSingle()
-      : Promise.resolve({ data: null }),
   ]);
+  if (!ride) notFound();
+  // Chauffeur de la course même s'il n'est plus actif (suspendu, désactivé) : la liste ci-dessus ne garde que les
+  // actifs ; lu seulement dans ce cas (rare)
+  const rideDriver =
+    ride.driver_id && !((drivers.data ?? []) as { id: string }[]).some((d) => d.id === ride.driver_id)
+      ? await ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("id", ride.driver_id).eq("organization_id", ctx.org.id).maybeSingle()
+      : { data: null };
 
   const driverRows = [...((drivers.data ?? []) as any[])];
   if (rideDriver.data && !driverRows.some((d) => d.id === ride.driver_id)) driverRows.push(rideDriver.data);
