@@ -85,8 +85,7 @@ function health(e: WebhookEndpoint, now: Date) {
 /**
  * Webhooks de la centrale (owner / admin) : `canManage` = l'offre inclut l'API (ajout, réactivation, test, nouvel
  * envoi) ; désactiver, supprimer ou changer le secret reste toujours possible. `deliveries` : derniers envois de
- * CHAQUE adresse, plus ses échecs et nouveaux essais plus anciens (« Renvoyer » toujours accessible), affichés adresse
- * par adresse. `serverNow` : heure du rendu serveur (temps relatifs identiques au serveur et à l'hydratation).
+ * CHAQUE adresse, plus ses 10 derniers échecs même plus anciens (« Renvoyer »), affichés adresse par adresse. `serverNow` : heure du rendu serveur (temps relatifs identiques au serveur et à l'hydratation).
  */
 export function WebhooksPanel({
   endpoints,

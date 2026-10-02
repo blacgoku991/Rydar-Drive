@@ -29,8 +29,8 @@ démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissem
   cours par adresse, tour de rôle entre centrales). Durcissement 006100 et suite de la revue : tests et renvois bornés
   (`WEBHOOK_TEST_PENDING` 409, `WEBHOOK_TEST_RATE_LIMITED` 429, 10/min/centrale, aussi en Redis côté web), ping jamais
   réessayé, désactivation automatique seulement après ≥ 50 échecs ET 3 jours sans succès (depuis la création si jamais
-  réussi), centrale suspendue = envois en pause ; dashboard : envois par adresse (échecs plus anciens et « Renvoyer »
-  toujours visibles), essais comptés réussite comprise, temps relatifs sans écart d'hydratation ; description sans
+  réussi), centrale suspendue = envois en pause ; dashboard : envois par adresse (10 derniers échecs, même anciens, avec
+  « Renvoyer »), essais comptés réussite comprise, temps relatifs sans écart d'hydratation ; description sans
   caractère de contrôle (NUL → 422, plus 500) ; exemples de vérification de signature (docs/API.md, onglet « Webhook »)
   qui contrôlent le format avant `timingSafeEqual`. Détails : ARCHITECTURE.md (« Webhooks sortants »), API.md.
 - Web : lien « Mot de passe oublié » (et invitation) du tableau de bord : après validation, `/auth/callback`

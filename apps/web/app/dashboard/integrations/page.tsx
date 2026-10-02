@@ -18,7 +18,11 @@ export const dynamic = "force-dynamic";
 const DELIVERY_SELECT =
   "id, endpoint_id, ride_id, event_type, occurred_at, status, attempts, next_attempt_at, last_status_code, last_error, delivered_at, created_at";
 
-/** Par adresse : ses 10 derniers envois, plus 10 envois en échec ou en attente d'un nouvel essai, même plus anciens. */
+/**
+ * Par adresse : ses 10 derniers envois, plus ses 10 derniers envois en ÉCHEC (« Renvoyer »), même plus anciens. Les
+ * envois qui attendent un nouvel essai restent « pending » jusqu'au dernier : les mêler aux échecs les cacherait
+ * derrière eux pendant une longue panne du destinataire, juste quand il faut les renvoyer.
+ */
 const RECENT_PER_ENDPOINT = 10;
 const FAILED_PER_ENDPOINT = 10;
 
@@ -27,7 +31,7 @@ type OrgCtx = Awaited<ReturnType<typeof requireOrg>>;
 /**
  * Webhooks et envois récents de CHAQUE adresse, lus par RLS (owner / admin) ; numéro de course ajouté pour
  * l'affichage. Une limite commune à la centrale cachait les échecs d'une adresse (et son bouton « Renvoyer ») derrière
- * les succès des autres : chaque adresse a donc ses envois, et celle qui a déjà échoué garde aussi ses échecs.
+ * les succès des autres : chaque adresse a donc ses envois, et celle qui a déjà échoué garde aussi ses derniers échecs.
  */
 async function loadWebhooks(ctx: OrgCtx): Promise<{ endpoints: WebhookEndpoint[]; deliveries: WebhookDeliveryRow[] }> {
   const res = await ctx.supabase
@@ -42,9 +46,9 @@ async function loadWebhooks(ctx: OrgCtx): Promise<{ endpoints: WebhookEndpoint[]
   const lists = await Promise.all(
     endpoints.flatMap((e) => [
       query(e.id).order("created_at", { ascending: false }).limit(RECENT_PER_ENDPOINT),
-      // Échecs et nouveaux essais : seulement pour une adresse qui a déjà échoué (aucun parcours inutile sinon)
+      // Échecs définitifs seulement (jamais « pending ») : pour une adresse qui a déjà échoué (aucun parcours inutile sinon)
       ...(e.last_failure_at
-        ? [query(e.id).in("status", ["failed", "pending"]).order("created_at", { ascending: false }).limit(FAILED_PER_ENDPOINT)]
+        ? [query(e.id).eq("status", "failed").order("created_at", { ascending: false }).limit(FAILED_PER_ENDPOINT)]
         : []),
     ]),
   );

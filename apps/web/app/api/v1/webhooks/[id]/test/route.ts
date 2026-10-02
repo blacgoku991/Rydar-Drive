@@ -9,7 +9,8 @@ const emptyBody = z.strictObject({});
 
 /**
  * POST /api/v1/webhooks/{id}/test — met en file un événement « ping » (data = {}) : 202 + identifiant de l'envoi.
- * 409 WEBHOOK_TEST_PENDING : un test de cette adresse attend encore son envoi ; 429 WEBHOOK_TEST_RATE_LIMITED
+ * 409 WEBHOOK_TEST_PENDING : le résultat du test précédent de cette adresse n'est pas connu (en file ou en cours
+ * d'envoi) ; 429 WEBHOOK_TEST_RATE_LIMITED
  * (+ Retry-After) : plus de 10 tests et renvois en une minute pour la centrale, toutes clés et dashboard confondus.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {

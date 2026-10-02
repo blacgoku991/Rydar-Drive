@@ -139,8 +139,8 @@ Rydar Drive prévient votre serveur à chaque changement de statut d'une course 
 
 ### Enregistrer une adresse
 
-- **Dashboard → Intégrations → Webhooks** (owner ou admin, offres avec l'API) : « Nouvelle adresse », choix des événements, puis le **secret de signature**, affiché **une seule fois** (bouton « Copier »). Pour chaque adresse : envoi de test, désactivation et réactivation, nouveau secret (l'ancien cesse aussitôt de signer), suppression. Les envois sont listés **adresse par adresse** : les 10 derniers de chaque adresse, plus ses envois en échec ou en attente d'un nouvel essai, même plus anciens (bouton **« Renvoyer »** toujours accessible), avec leur état, le code HTTP reçu, le nombre d'essais (l'essai réussi compris) et le prochain essai.
-- **Tests et renvois bornés** : un seul test (`ping`) en attente par adresse (`409 WEBHOOK_TEST_PENDING` tant qu'il n'est pas parti), et **10 tests et renvois par minute** au plus par centrale, dashboard et API confondus (`429 WEBHOOK_TEST_RATE_LIMITED`, avec `Retry-After`).
+- **Dashboard → Intégrations → Webhooks** (owner ou admin, offres avec l'API) : « Nouvelle adresse », choix des événements, puis le **secret de signature**, affiché **une seule fois** (bouton « Copier »). Pour chaque adresse : envoi de test, désactivation et réactivation, nouveau secret (l'ancien cesse aussitôt de signer), suppression. Les envois sont listés **adresse par adresse** : les 10 derniers de chaque adresse, plus ses **10 derniers envois en échec**, même plus anciens (bouton **« Renvoyer »**), avec leur état, le code HTTP reçu, le nombre d'essais (l'essai réussi compris) et le prochain essai.
+- **Tests et renvois bornés** : un seul test (`ping`) en attente par adresse (`409 WEBHOOK_TEST_PENDING` tant que son résultat n'est pas connu : en file ou en cours d'envoi), et **10 tests et renvois par minute** au plus par centrale, dashboard et API confondus (`429 WEBHOOK_TEST_RATE_LIMITED`, avec `Retry-After`).
 - Ou par l'API, avec une clé qui a la permission `webhooks:manage` (voir [Gérer les webhooks par l'API](#gérer-les-webhooks-par-lapi)).
 - **10 adresses** au plus par organisation. Adresse acceptée : `https://` obligatoire, **publique** (ni `localhost`, ni adresse IP privée, réservée ou de lien local, ni nom de réseau local comme `.local` ou `.internal`), sans identifiants (`https://user:mot-de-passe@…` refusé), 500 caractères au plus. Les redirections ne sont **pas** suivies.
 
@@ -276,7 +276,7 @@ http_response_code(204);
 ### Ordre et doublons
 
 - **Au moins une fois** : un événement peut arriver deux fois (par exemple si votre serveur a répondu après les 10 secondes). Dédoublonnez sur `id`.
-- **Un seul envoi à la fois par adresse**, le plus ancien dû d'abord : les événements d'une adresse partent dans l'ordre où ils se sont produits, et une adresse lente ne retarde ni vos autres adresses ni les autres centrales.
+- **Un seul envoi à la fois par adresse**, le plus ancien dû d'abord : les événements d'une adresse partent dans l'ordre où ils se sont produits, et une adresse lente n'occupe qu'une requête à la fois (tour de rôle entre centrales) : elle ne retarde presque pas vos autres adresses.
 - **Ordre non garanti pour autant** : un envoi en échec attend son nouvel essai sans bloquer les suivants, qui peuvent donc arriver avant lui (de même pour « Renvoyer »). Ne faites jamais reculer une course : comparez `data.ride.updated_at` à la dernière valeur enregistrée et ignorez un état plus ancien. Comme `data.ride` est l'état le plus récent au moment de l'envoi, fiez-vous à `data.ride.status` plutôt qu'au seul type d'événement.
 - **Répondez vite** (`2xx`) et traitez ensuite (file, tâche de fond) : un traitement long fait échouer l'envoi et provoque des doublons.
 
@@ -294,7 +294,7 @@ Permission `webhooks:manage` (jamais pour une clé « navigateur »). Mêmes aut
 | `GET /webhooks` | **200** `{ "data": [adresse…] }` |
 | `POST /webhooks` | **201** (nouvelle adresse) ou **200** (adresse déjà enregistrée) |
 | `DELETE /webhooks/{id}` | **204**, ou **404 `WEBHOOK_NOT_FOUND`** |
-| `POST /webhooks/{id}/test` | **202** `{ "data": { "delivery_id": "…" } }` : un `ping` part aussitôt ; **409 `WEBHOOK_DISABLED`** si l'adresse est désactivée ; **409 `WEBHOOK_TEST_PENDING`** si un test de cette adresse attend encore son envoi ; **429 `WEBHOOK_TEST_RATE_LIMITED`** (+ `Retry-After`) au-delà de 10 tests et renvois par minute pour la centrale (toutes clés et dashboard confondus) |
+| `POST /webhooks/{id}/test` | **202** `{ "data": { "delivery_id": "…" } }` : un `ping` part aussitôt ; **409 `WEBHOOK_DISABLED`** si l'adresse est désactivée ; **409 `WEBHOOK_TEST_PENDING`** tant que le résultat du test précédent de cette adresse n'est pas connu (en file ou en cours d'envoi) ; **429 `WEBHOOK_TEST_RATE_LIMITED`** (+ `Retry-After`) au-delà de 10 tests et renvois par minute pour la centrale (toutes clés et dashboard confondus) |
 
 Corps de `POST /webhooks` (tout champ inconnu est refusé en 422, `organization_id` en 403) :
 
