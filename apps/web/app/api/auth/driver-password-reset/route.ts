@@ -5,6 +5,7 @@ import { driverAppCors } from "@/lib/driver-app-cors";
 import { env } from "@/lib/env";
 import { rateLimitAll } from "@/lib/rate-limit";
 import { clientIp, ipBucket } from "@/lib/request";
+import { serverFetch } from "@/lib/server-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,7 @@ async function requestReset(req: Request): Promise<NextResponse> {
   after(async () => {
     const auth = createClient(env.supabaseUrl, env.supabaseAnonKey, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, flowType: "implicit" },
+      global: { fetch: serverFetch },
     });
     const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: `${env.appUrl}/auth/set-password?app=driver` });
     // Journal serveur seulement (SMTP absent ou refusé, limite Supabase…) : jamais renvoyé à l'app

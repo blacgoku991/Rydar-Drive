@@ -7,6 +7,7 @@ import { env } from "@/lib/env";
 import { lruCache } from "@/lib/geo/cache";
 import { computeNavRoute } from "@/lib/geo/routing";
 import { rateLimit } from "@/lib/rate-limit";
+import { serverFetch } from "@/lib/server-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,7 @@ async function driverUser(req: Request): Promise<string | null> {
   if (cached) return cached;
   const client = createClient(env.supabaseUrl, env.supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    global: { headers: { Authorization: `Bearer ${token}` } },
+    global: { headers: { Authorization: `Bearer ${token}` }, fetch: serverFetch },
   });
   const { data: user } = await client.auth.getUser(token);
   if (!user.user) return null;

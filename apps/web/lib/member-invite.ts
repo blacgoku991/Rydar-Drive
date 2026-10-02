@@ -8,6 +8,7 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { serverFetch } from "@/lib/server-fetch";
 
 /** Échappe \ % _ : ilike devient une égalité exacte insensible à la casse (aucun joker). */
 export const likeExact = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -25,6 +26,7 @@ export async function findUserIdByEmail(email: string): Promise<string | null> {
 export async function sendMemberInvitationEmail(email: string): Promise<boolean> {
   const auth = createClient(env.supabaseUrl, env.supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, flowType: "implicit" },
+    global: { fetch: serverFetch },
   });
   const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: `${env.appUrl}/auth/set-password` });
   // Journal serveur seulement (jamais l'adresse complète ni de jeton)

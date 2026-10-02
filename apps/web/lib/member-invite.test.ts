@@ -60,6 +60,7 @@ function fakeDb(name: string) {
 }
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/server-fetch", () => ({ serverFetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("@/lib/env", () => ({ env: { supabaseUrl: "https://supabase.test", supabaseAnonKey: "anon-key", appUrl: "https://app.rydar.test" } }));
 vi.mock("@/lib/audit", () => ({ audit: async (e: Record<string, unknown>) => void h.audits.push(e) }));

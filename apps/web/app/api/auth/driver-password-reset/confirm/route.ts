@@ -6,6 +6,7 @@ import { checkDriverAccount, DRIVER_LOGIN_WINDOW, driverLoginEmailKey, driverLog
 import { env } from "@/lib/env";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
 import { clientIp, ipBucket } from "@/lib/request";
+import { serverFetch } from "@/lib/server-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +73,7 @@ async function confirm(req: Request): Promise<NextResponse> {
 
   const auth = createClient(env.supabaseUrl, env.supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { fetch: serverFetch },
   });
   const { data, error } = await auth.auth.verifyOtp({ email, token: code, type: "recovery" });
   // Compte Auth banni : Supabase refuse AVANT de vérifier le code → même réponse qu'un code faux (aucun oracle

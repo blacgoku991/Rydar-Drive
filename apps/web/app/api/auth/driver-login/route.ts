@@ -9,6 +9,7 @@ import { env } from "@/lib/env";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
 import { ipBucket, ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { serverFetch } from "@/lib/server-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +59,10 @@ async function login(req: Request): Promise<NextResponse> {
     );
   }
 
-  const auth = createClient(env.supabaseUrl, env.supabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const auth = createClient(env.supabaseUrl, env.supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: serverFetch },
+  });
   const { data, error } = await auth.auth.signInWithPassword({ email, password });
   // Compte Auth banni : Supabase refuse AVANT de vérifier le mot de passe (user_banned, bon ou mauvais mot de passe)
   if (isAuthBanned(error)) return bannedAccount(email, password);
