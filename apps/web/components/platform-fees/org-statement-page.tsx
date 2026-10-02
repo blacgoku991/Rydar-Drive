@@ -25,7 +25,7 @@ export async function OrgStatementPage({ searchParams }: { searchParams: Promise
   const paths = platformFeesPaths(ctx.org.dispatch_model);
   const title = fleet ? "Relevé des frais Rydar" : "Relevé des frais plateforme";
   const back = (
-    <Link href={paths.account} className="inline-flex items-center gap-1 hover:text-fg">
+    <Link href={paths.account} prefetch={false} className="inline-flex items-center gap-1 hover:text-fg">
       <ArrowLeft className="size-3.5" /> {paths.back}
     </Link>
   );
@@ -117,6 +117,7 @@ export async function OrgStatementPage({ searchParams }: { searchParams: Promise
               <Link
                 key={m.month}
                 href={`${paths.statement}?mois=${m.month}`}
+                prefetch={false}
                 aria-current={active ? "page" : undefined}
                 scroll={false}
                 className={cn(

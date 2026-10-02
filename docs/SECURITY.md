@@ -51,8 +51,10 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 - **Contrôle de session du site** : `getUser()` (Auth) à chaque rendu de page, layout et route protégés (`lib/auth.ts`) ;
   les lectures de session partent en même temps mais ne servent que si Auth confirme le même compte que le cookie.
   `proxy.ts` ne fait qu'aiguiller vers `/login` et rafraîchir le jeton : signature vérifiée sur place pour un jeton
-  ES256 / RS256 (JWKS), sans appel à Auth pour un jeton HS256 (refusé ensuite au rendu, et par PostgREST) ; `/login`
-  confirme la session par `getUser()` avant de renvoyer vers le tableau de bord.
+  ES256 / RS256 (JWKS) ; tout autre jeton (HS256, alg none…) est vérifié par Auth dès que le JWKS publie une clé
+  asymétrique (production : jeton falsifié refusé dès le proxy), et aiguillé sans appel seulement si le JWKS est vide
+  (pile en HS256 seul : refusé ensuite au rendu, et par PostgREST) ; `/login` confirme la session par `getUser()` avant
+  de renvoyer vers le tableau de bord.
 - L'app chauffeur conserve sa session dans le trousseau sécurisé de l'appareil : SecureStore, avec chiffrement AES de la session complète.
 
 ## Clés API

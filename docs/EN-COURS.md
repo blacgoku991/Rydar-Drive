@@ -26,8 +26,9 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
 
 ## Depuis l'audit
 - **Lenteur (« le site est lent ») — volet serveur** : plus de rafale de préchargements à chaque page (26 → 1 requête
-  Next au chargement de `/dashboard`), plus d'appel à Auth dans le proxy pour un jeton HS256 (production : ES256 vérifié
-  sur place, inchangé), lectures de session en parallèle de `getUser()` (qui reste le contrôle à chaque rendu), cascades
+  Next au chargement de `/dashboard`), proxy : ES256 vérifié sur place (production, inchangé), jeton HS256 vérifié par
+  Auth seulement si le JWKS publie une clé asymétrique, lectures de session en parallèle de `getUser()` (qui reste le
+  contrôle à chaque rendu ; gain en production : un aller-retour Auth de moins par rendu, deux sur `/admin`), cascades
   supprimées (fiche course, liste centrale, fiche admin), compteur Messages léger (`chat_counts`), 3 index (migration
   006500), IPv4 d'abord vers Supabase, worker de carte en cache, keep-alive Next au-dessus de celui de Caddy. Détail :
   HISTORIQUE.md. Côté VPS (à faire par l'utilisateur, contrôles en lecture seule d'abord) : services Supabase

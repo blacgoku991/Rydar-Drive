@@ -2,13 +2,16 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // apps/web/proxy.ts avec le VRAI client @supabase/ssr / auth-js (seul le réseau est simulé) : aiguillage sans appel à
-// Auth pour les jetons HS256 (pile locale), vérification sur place des jetons à clé asymétrique (production : ES256 +
-// JWKS), getUser() gardé sur /login, rafraîchissement d'un jeton expiré toujours fait par le proxy.
+// Auth pour les jetons HS256 d'une pile en HS256 seul (JWKS vide : pile locale), vérification sur place des jetons à
+// clé asymétrique (production : ES256 + JWKS), jeton HS256 en production vérifié par Auth (refusé dès le proxy s'il est
+// falsifié), getUser() gardé sur /login, rafraîchissement d'un jeton expiré toujours fait par le proxy.
 
 const SUB = "11111111-1111-4111-8111-111111111111";
 const h = vi.hoisted(() => ({
   calls: [] as string[],
   jwks: [] as JsonWebKey[],
+  /** Statut HTTP du JWKS (500 : Auth injoignable) */
+  jwksStatus: 200,
   /** /auth/v1/user : session encore valide côté Auth ? */
   userOk: true,
   /** Réponse de /auth/v1/token (rafraîchissement) */
@@ -18,11 +21,14 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/geo/cache", async () => await import("./geo/cache"));
 vi.mock("@/lib/hostname", async () => await import("./hostname"));
 vi.mock("@/lib/supabase/jwt", async () => await import("./supabase/jwt"));
+vi.mock("@/lib/supabase/jwks", async () => await import("./supabase/jwks"));
 vi.mock("@/lib/server-fetch", () => ({
   serverFetch: async (input: RequestInfo | URL) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     h.calls.push(url.pathname);
-    if (url.pathname === "/auth/v1/.well-known/jwks.json") return Response.json({ keys: h.jwks });
+    if (url.pathname === "/auth/v1/.well-known/jwks.json") {
+      return h.jwksStatus === 200 ? Response.json({ keys: h.jwks }) : new Response("indisponible", { status: h.jwksStatus });
+    }
     if (url.pathname === "/auth/v1/user") {
       return h.userOk
         ? Response.json({ id: SUB, aud: "authenticated", role: "authenticated", email: "gerant@rydar.test" })
@@ -39,6 +45,7 @@ vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.rydar.app");
 vi.stubEnv("NEXT_PUBLIC_ROOT_DOMAIN", "rydar.app");
 
 const { proxy } = await import("../proxy");
+const { resetJwksCache } = await import("./supabase/jwks");
 
 const b64 = (v: unknown) => Buffer.from(typeof v === "string" ? v : JSON.stringify(v)).toString("base64url");
 const now = () => Math.floor(Date.now() / 1000);
@@ -65,21 +72,30 @@ function sessionCookie(accessToken: string, exp: number) {
 const visit = (path: string, cookie?: string) =>
   proxy(new NextRequest(`https://app.rydar.app${path}`, { headers: { host: "app.rydar.app", ...(cookie ? { cookie } : {}) } }));
 const location = (res: Response) => (res.headers.get("location") ? new URL(res.headers.get("location")!).pathname : null);
+const nextParam = (res: Response) => (res.headers.get("location") ? new URL(res.headers.get("location")!).searchParams.get("next") : null);
 const authCalls = (path: string) => h.calls.filter((c) => c === path).length;
 
 beforeEach(() => {
   h.calls.length = 0;
   h.jwks = [publicJwk];
+  h.jwksStatus = 200;
   h.userOk = true;
   h.refreshed = null;
+  resetJwksCache();
 });
 
-describe("proxy : jeton HS256 (vérifiable seulement par Auth)", () => {
-  it("pages protégées et préchargements : aucun appel à Auth, pas de redirection", async () => {
+describe("proxy : pile en HS256 seul (JWKS vide, pile locale)", () => {
+  beforeEach(() => {
+    h.jwks = [];
+  });
+
+  it("pages protégées et préchargements : aucun appel à /auth/v1/user, JWKS lu une fois, pas de redirection", async () => {
     const exp = now() + 3600;
     const cookie = sessionCookie(hsToken(claims(exp)), exp);
     for (let i = 0; i < 25; i++) expect(location(await visit("/dashboard/rides", cookie))).toBeNull();
-    expect(h.calls).toEqual([]);
+    expect(authCalls("/auth/v1/user")).toBe(0);
+    expect(authCalls("/auth/v1/.well-known/jwks.json")).toBe(1);
+    expect(h.calls.length).toBe(1);
   });
 
   it("/login connecté : UN appel à Auth (getUser qui fait foi), puis /dashboard", async () => {
@@ -105,6 +121,43 @@ describe("proxy : jeton HS256 (vérifiable seulement par Auth)", () => {
     expect(location(res)).toBeNull();
     expect(authCalls("/auth/v1/token")).toBe(1);
     expect(res.headers.get("set-cookie") ?? "").toMatch(/sb-supabase-auth-token=base64-/);
+  });
+});
+
+describe("proxy : jeton HS256 alors que le JWKS publie une clé ES256 (production)", () => {
+  it("jeton HS256 falsifié : refusé dès le proxy (Auth consulté), /login?next= gardé", async () => {
+    h.userOk = false;
+    const exp = now() + 3600;
+    const res = await visit("/dashboard/rides", sessionCookie(hsToken(claims(exp)), exp));
+    expect(location(res)).toBe("/login");
+    expect(nextParam(res)).toBe("/dashboard/rides");
+    expect(authCalls("/auth/v1/user")).toBe(1);
+  });
+
+  it("jeton sans algorithme (alg none) : refusé dès le proxy", async () => {
+    h.userOk = false;
+    const exp = now() + 3600;
+    const token = `${b64({ alg: "none", typ: "JWT" })}.${b64(claims(exp))}.`;
+    const res = await visit("/admin", sessionCookie(token, exp));
+    expect(location(res)).toBe("/login");
+    expect(nextParam(res)).toBe("/admin");
+  });
+
+  it("jeton HS256 légitime (émis avant une rotation des clés) : confirmé par Auth, pas de redirection", async () => {
+    const exp = now() + 3600;
+    const cookie = sessionCookie(hsToken(claims(exp)), exp);
+    for (let i = 0; i < 3; i++) expect(location(await visit("/dashboard", cookie))).toBeNull();
+    expect(authCalls("/auth/v1/user")).toBe(3);
+    expect(authCalls("/auth/v1/.well-known/jwks.json")).toBe(1);
+  });
+
+  it("JWKS illisible : prudence, le jeton HS256 est vérifié par Auth", async () => {
+    h.jwksStatus = 500;
+    h.userOk = false;
+    const exp = now() + 3600;
+    const res = await visit("/dashboard", sessionCookie(hsToken(claims(exp)), exp));
+    expect(location(res)).toBe("/login");
+    expect(authCalls("/auth/v1/user")).toBe(1);
   });
 });
 

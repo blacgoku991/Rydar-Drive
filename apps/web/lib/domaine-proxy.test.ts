@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/geo/cache", async () => await import("./geo/cache"));
 vi.mock("@/lib/hostname", async () => await import("./hostname"));
 vi.mock("@/lib/supabase/jwt", async () => await import("./supabase/jwt"));
+vi.mock("@/lib/supabase/jwks", async () => await import("./supabase/jwks"));
 // Appels sortants : fetch global (simulé par le test)
 vi.mock("@/lib/server-fetch", () => ({ serverFetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) }));
 vi.mock("@supabase/ssr", () => ({

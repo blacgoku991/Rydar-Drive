@@ -288,8 +288,9 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   terminée baissé puis remonté par un dispatcher, réglage pendant la fin de course, flotte → centrale sans règlement,
   menu, temps réel, relance) + `zeroPriceText`.
 - [x] **Lenteur, volet serveur / auth / base (10/2026, migration 006500)** : `proxy.ts` = `getSession()` (cookies,
-  rafraîchissement gardé) puis `getClaims(jeton)` seulement pour un jeton ES256/RS256 + kid (vérifié sur place, JWKS) ;
-  jeton HS256 = aiguillage sans appel à Auth (rejeté au rendu) ; `/login` garde `getUser()`. `lib/auth.ts` : lectures
+  rafraîchissement gardé) puis `getClaims(jeton)` pour un jeton ES256/RS256 + kid (vérifié sur place, JWKS) ; jeton
+  HS256 : aiguillage sans appel à Auth si le JWKS est vide (pile en HS256 seul, rejeté au rendu), sinon vérifié par
+  Auth (voir « après revue ») ; `/login` garde `getUser()`. `lib/auth.ts` : lectures
   de session (users, adhésions, chauffeur) en même temps que `getUser()` (qui fait foi : `user.id` = `sub` du cookie,
   sinon aucune session), contrôle `session_is_super_admin` lancé en parallèle et lu après. `prefetch={false}` sur la
   barre latérale, le logo, les lignes / onglets / pages de la liste des courses ; liens juridiques du bandeau en `<a>`.
@@ -300,9 +301,20 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   `server-fetch.ts` : IPv4 d'abord (une requête sur deux échouait sur un conteneur sans IPv6 dès qu'un AAAA existe).
   Worker MapLibre sous `/vendor/maplibre/<version>/`, cache navigateur d'un an ; `KEEP_ALIVE_TIMEOUT=130000` (web,
   au-dessus des 2 min de Caddy). Mesuré (build de prod, +10 ms par appel Supabase) : chargement de `/dashboard`
-  26 → 1 requête Next et 28 → 1 appel GoTrue, CPU Next 900 → 520 ms par « chargement + clic » ; TTFB −20 à −50 ms
-  (série d'appels 4-7 → 2-3) ; en ES256 aussi. Tests : `lib/proxy-auth.test.ts` (vrai auth-js, HS256 et ES256),
-  `lib/auth.test.ts`, `lib/server-fetch.test.ts`, `tests/db/perf-indexes.test.ts`.
+  26 → 1 requête Next et 28 → 1 appel GoTrue, CPU Next 900 → 520 ms par « chargement + clic ». TTFB : pile HS256,
+  −20 à −50 ms (série d'appels 4-7 → 2-3) ; production (ES256 : le proxy n'appelait déjà pas Auth), série 3-4 → 2,
+  soit UN aller-retour Auth de moins par rendu (deux sur `/admin`) : −10 à −28 ms à +10 ms par appel, −6 à −8 ms à
+  +3 ms (contre-mesure de la revue), en plus de la fin des préchargements. Tests : `lib/proxy-auth.test.ts` (vrai
+  auth-js, HS256 et ES256), `lib/auth.test.ts`, `lib/server-fetch.test.ts`, `tests/db/perf-indexes.test.ts`.
+  Après revue : jeton non asymétrique (HS256, alg none…) alors que le JWKS publie une clé asymétrique (production :
+  jeton d'avant une rotation des clés, ou falsifié) → `getClaims()` le fait vérifier par Auth, refusé dès le proxy
+  avec `?next=` (`lib/supabase/jwks.ts` : JWKS lu par processus, gardé 10 min ; illisible → vérification par Auth) ;
+  mesuré, JWKS ES256 simulé : jeton HS256 falsifié 4 → 1 appel, TTFB 38 → 19 ms ; jeton HS256 légitime (rotation
+  seulement) +1 appel Auth par requête, comme avant ; jeton ES256 inchangé (aucune lecture du JWKS en plus) ; pile
+  HS256 seule inchangée (mêmes appels ; TTFB −9 à +13 ms selon la passe, sans tendance). Ancien chemin du worker MapLibre
+  (`/vendor/maplibre/maplibre-gl-worker.mjs`) recopié tant que MapLibre reste en 6.11.2 (onglet ouvert pendant le
+  déploiement : 404 → 200). `prefetch={false}` aussi sur le relevé des frais (mois, retour, courses) : 15 → 1 requête
+  Next au chargement (14 préchargements → 0), CPU Next 360 → 240 ms. Branche fusionnée avec 006400 (frais des flottes).
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
