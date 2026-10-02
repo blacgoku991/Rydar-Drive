@@ -42,6 +42,7 @@ la centrale doit les frais plateforme à Rydar.
 - Formulaires web : `onSubmit={submitWith(fn)}`, jamais `<form action>` ; erreurs `fieldErrors` + `describeError`.
   Fichier `"use server"` : n'exporter que des fonctions async.
 - Tailwind v4 : classes custom = `@utility`. PG regex : répétition ≤ 255 (`{1,512}` interdit).
+- Web : relectures temps réel par `useLiveSync` (rien onglet caché) ; Intl via `dateTimeFormat`/`numberFormat` (shared), jamais `new Intl.*` en rendu.
 - IP client : toujours `ipFromHeaders` (`lib/request.ts`) + `rateLimitAll` ; jamais lire CF-Connecting-IP / X-Real-IP soi-même.
 - Export CSV : BOM UTF-8, « ; », cellule commençant par = + - @ tab CR préfixée d'une apostrophe (modèle
   `app/dashboard/settlements/rydar/export/route.ts`).

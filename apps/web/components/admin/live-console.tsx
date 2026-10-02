@@ -12,7 +12,7 @@ import { PRESENCE_COLOR, rideColor } from "@/components/map/map-theme";
 import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/input";
 import { Switch, Tooltip } from "@/components/ui/misc";
-import { useNow } from "@/hooks/use-now";
+import { useNow, useSharedNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
 import { LiveMap, type LiveMapDriver, type LiveMapFocus, type LiveMapHandle, type MapPadding } from "./live-map";
 import {
@@ -113,8 +113,12 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
   const [desktop, setDesktop] = useState(true);
   const [route, setRoute] = useState<{ rideId: string; coords: Coord[] | null } | null>(null);
   const mapRef = useRef<LiveMapHandle>(null);
-  const now = useNow(1000);
-  const serverNow = now != null ? now - skew : Date.parse(initial.serverTime);
+  // Horloge de l'écran : 15 s (fraîcheur des positions, minutes avant prise en charge) ; les âges affichés à la seconde
+  // (liste, fiches, « Actualisé il y a ») ont leur propre horloge commune, sans re-rendre toute la console.
+  const now = useNow(15_000);
+  const initialServerNow = useMemo(() => Date.parse(initial.serverTime), [initial.serverTime]);
+  const serverNow = now != null ? now - skew : initialServerNow;
+  const clock = useMemo(() => ({ skew, fallback: initialServerNow }), [skew, initialServerNow]);
 
   // ------------------------------------------------------------------ rafraîchissement toutes les 5 s (pause onglet caché)
   const inflight = useRef<AbortController | null>(null);
@@ -380,11 +384,6 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
     );
   };
 
-  const syncLabel = sync.error
-    ? sync.error
-    : sync.at && now
-      ? `Actualisé il y a ${formatAge(now - sync.at)} · toutes les 5 s`
-      : "Actualisation toutes les 5 s";
 
   // ------------------------------------------------------------------ panneau (latéral ou tiroir)
   // Bureau : seule la liste défile ; tiroir mobile : tout le panneau défile (fermeture : croix, Échap ou voile)
@@ -396,7 +395,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
           <div className="min-w-0 flex-1">
             <h1 className="text-[14px] font-semibold tracking-tight">Carte en direct</h1>
             <p className={cn("truncate text-[12px]", sync.error ? "text-amber" : "text-fg-muted")} aria-live="polite">
-              {syncLabel}
+              <SyncLabel sync={sync} />
             </p>
           </div>
           {inDrawer && (
@@ -598,7 +597,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                     </span>
                   </span>
                   <span className={cn("shrink-0 text-right text-[11.5px] tabular-nums", stale ? "text-amber" : "text-fg-muted")}>
-                    {d.location ? formatAge(serverNow - Date.parse(d.location.updated_at)) : "sans GPS"}
+                    {d.location ? <Age at={d.location.updated_at} clock={clock} /> : "sans GPS"}
                   </span>
                 </button>
               );
@@ -694,7 +693,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
               org={selectedOrg}
               ride={selectedRide}
               offer={offerByDriver[selectedDriver.id] ?? null}
-              serverNow={serverNow}
+              clock={clock}
               stale={isStale(selectedDriver)}
               onClose={() => setSelection(null)}
               onCenter={() => selectedDriver.location && mapRef.current?.flyTo(selectedDriver.location.lng, selectedDriver.location.lat, 15, mapPadding(desktop, true))}
@@ -711,7 +710,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
             <RideCard
               ride={selectedRide}
               org={selectedOrg}
-              serverNow={serverNow}
+              clock={clock}
               driver={selectedRide.driver_id ? snap.drivers.find((d) => d.id === selectedRide.driver_id) ?? null : null}
               offeredTo={(offeredByRide[selectedRide.id] ?? []).map((id) => snap.drivers.find((d) => d.id === id)).filter((d): d is AdminLiveDriver => !!d)}
               onClose={() => setSelection(null)}
@@ -808,12 +807,32 @@ function RideSummary({ ride, onClick, heading, note }: { ride: AdminLiveRide; on
   );
 }
 
+/** Heure du serveur (horloge du navigateur corrigée de l'écart mesuré) ; `fallback` : heure du rendu serveur. */
+type ServerClock = { skew: number; fallback: number };
+
+/** Heure du serveur, rafraîchie chaque seconde (horloge commune à tous les âges affichés). */
+function useServerNow({ skew, fallback }: ServerClock) {
+  return useSharedNow(1000, fallback + skew) - skew;
+}
+
+/** « 12 s », « 3 min » : âge d'une position à l'heure du serveur. */
+function Age({ at, clock }: { at: string; clock: ServerClock }) {
+  return <>{formatAge(useServerNow(clock) - Date.parse(at))}</>;
+}
+
+/** « Actualisé il y a 3 s · toutes les 5 s » (horloge du navigateur, comme l'heure de la dernière lecture). */
+function SyncLabel({ sync }: { sync: { at: number | null; error: string | null } }) {
+  const now = useSharedNow(1000, Number.NaN);
+  if (sync.error) return <>{sync.error}</>;
+  return <>{sync.at && !Number.isNaN(now) ? `Actualisé il y a ${formatAge(now - sync.at)} · toutes les 5 s` : "Actualisation toutes les 5 s"}</>;
+}
+
 function DriverCard({
   driver: d,
   org,
   ride,
   offer,
-  serverNow,
+  clock,
   stale,
   onClose,
   onCenter,
@@ -823,12 +842,13 @@ function DriverCard({
   org: AdminLiveOrg | undefined;
   ride: AdminLiveRide | null;
   offer: AdminLiveOffer | null;
-  serverNow: number;
+  clock: ServerClock;
   stale: boolean;
   onClose: () => void;
   onCenter: () => void;
   onShowRide: () => void;
 }) {
+  const serverNow = useServerNow(clock);
   const loc = d.location;
   const speedKmh = loc?.speed_mps != null && loc.speed_mps >= 0 ? Math.round(loc.speed_mps * 3.6) : null;
   const category = d.vehicle?.category ? VEHICLE_CATEGORY_META[d.vehicle.category as VehicleCategory]?.label ?? d.vehicle.category : null;
@@ -932,7 +952,7 @@ function RideCard({
   org,
   driver,
   offeredTo,
-  serverNow,
+  clock,
   onClose,
   onSelectDriver,
 }: {
@@ -940,10 +960,11 @@ function RideCard({
   org: AdminLiveOrg | undefined;
   driver: AdminLiveDriver | null;
   offeredTo: AdminLiveDriver[];
-  serverNow: number;
+  clock: ServerClock;
   onClose: () => void;
   onSelectDriver: (id: string) => void;
 }) {
+  const serverNow = useServerNow(clock);
   const inMin = Math.round((Date.parse(ride.pickup_at) - serverNow) / 60_000);
   const category = VEHICLE_CATEGORY_META[ride.vehicle_category as VehicleCategory]?.label ?? ride.vehicle_category;
   return (

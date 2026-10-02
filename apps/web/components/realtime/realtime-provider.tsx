@@ -1,11 +1,15 @@
 "use client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getBrowserClient } from "@/lib/supabase/client";
 
 type Handler = (payload: any) => void;
 export type RealtimeStatus = "connecting" | "live" | "offline";
-type Ctx = { on: (event: string, handler: Handler) => () => void; status: RealtimeStatus };
+/**
+ * `generation` : nombre d'abonnements réussis du canal (1 au premier « SUBSCRIBED »). Une valeur qui augmente ensuite
+ * signale un réabonnement après une coupure : des événements ont pu être perdus, les écrans se resynchronisent.
+ */
+type Ctx = { on: (event: string, handler: Handler) => () => void; status: RealtimeStatus; generation: number };
 
 const RealtimeContext = createContext<Ctx | null>(null);
 const EVENTS = [
@@ -26,6 +30,7 @@ const CENTRALE_EVENTS = ["settlement.updated", "driver.application", "driver.fla
 export function RealtimeProvider({ topic, children }: { topic: string; children: React.ReactNode }) {
   const handlers = useRef(new Map<string, Set<Handler>>());
   const [status, setStatus] = useState<RealtimeStatus>("connecting");
+  const [generation, setGeneration] = useState(0);
 
   useEffect(() => {
     const supabase = getBrowserClient();
@@ -43,8 +48,11 @@ export function RealtimeProvider({ topic, children }: { topic: string; children:
         });
       }
       ch.subscribe((s: string) => {
-        if (s === "SUBSCRIBED") setStatus("live");
-        else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT" || s === "CLOSED") setStatus("offline");
+        if (disposed) return;
+        if (s === "SUBSCRIBED") {
+          setStatus("live");
+          setGeneration((g) => g + 1);
+        } else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT" || s === "CLOSED") setStatus("offline");
       });
     })();
     const timeout = setTimeout(() => setStatus((s) => (s === "connecting" ? "offline" : s)), 8000);
@@ -64,19 +72,26 @@ export function RealtimeProvider({ topic, children }: { topic: string; children:
     };
   }, []);
 
-  return <RealtimeContext.Provider value={{ on, status }}>{children}</RealtimeContext.Provider>;
+  // Valeur stable : un rendu du fournisseur (router.refresh) ne réabonne pas tous les écouteurs
+  const value = useMemo(() => ({ on, status, generation }), [on, status, generation]);
+  return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
 }
 
 export function useRealtimeStatus(): RealtimeStatus {
   return useContext(RealtimeContext)?.status ?? "offline";
 }
 
+/** Nombre d'abonnements réussis du canal (0 tant qu'aucun ; augmente à chaque reconnexion). */
+export function useRealtimeGeneration(): number {
+  return useContext(RealtimeContext)?.generation ?? 0;
+}
+
 export function useRealtimeEvent(event: string, handler: Handler) {
-  const ctx = useContext(RealtimeContext);
+  const on = useContext(RealtimeContext)?.on;
   const ref = useRef(handler);
   ref.current = handler;
   useEffect(() => {
-    if (!ctx) return;
-    return ctx.on(event, (p) => ref.current(p));
-  }, [ctx, event]);
+    if (!on) return;
+    return on(event, (p) => ref.current(p));
+  }, [on, event]);
 }

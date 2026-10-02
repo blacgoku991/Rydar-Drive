@@ -1,12 +1,13 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
-import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
+import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
+import { useLiveSync } from "@/components/realtime/use-live-sync";
 
 /**
  * Rafraîchit la page serveur quand un événement temps réel concerne la ressource : la course `rideId`, ou le chauffeur
  * `driverId` (fiche chauffeur : « driver.updated » est diffusé pour CHAQUE chauffeur de la centrale, à chaque vague de
- * dispatch ou étape de course), sinon tout événement de la liste.
+ * dispatch ou étape de course), sinon tout événement de la liste. Onglet caché : un seul rafraîchissement au retour.
+ * Sans temps réel : sondage à délai croissant (pollMs → ×3 → … → 60 s), en pause onglet caché.
  */
 export function LiveRefresh({
   rideId,
@@ -20,12 +21,7 @@ export function LiveRefresh({
   pollMs?: number;
 }) {
   const router = useRouter();
-  const status = useRealtimeStatus();
-  const timer = useRef<number | null>(null);
-  const schedule = () => {
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => router.refresh(), 400);
-  };
+  const { schedule } = useLiveSync(() => router.refresh(), { pollMs, maxPollMs: 60_000, debounceMs: 400 });
   // liste fixe (règle des hooks) ; « settlement.updated » : règlement de la course (mode centrale)
   for (const ev of ["ride.updated", "ride.event", "offer.updated", "driver.updated", "ride.alert", "settlement.updated"]) {
     useRealtimeEvent(ev, (p: any) => {
@@ -37,10 +33,5 @@ export function LiveRefresh({
       if (!rideId || p?.ride_id === rideId || p?.id === rideId || p?.settlement?.ride_id === rideId) schedule();
     });
   }
-  useEffect(() => {
-    if (status === "live") return;
-    const id = window.setInterval(() => router.refresh(), pollMs);
-    return () => window.clearInterval(id);
-  }, [status, router, pollMs]);
   return null;
 }

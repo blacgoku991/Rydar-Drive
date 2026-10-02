@@ -25,6 +25,22 @@ démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissem
 pour les flottes.
 
 ## Depuis l'audit
+- **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour
+  de l'app)** : centre de commande « En direct » : positions GPS regroupées (au plus un rendu par seconde, rien onglet
+  caché), carte mise à jour seulement pour ce qui change (tracés et rayon redessinés si une position utile ou la course
+  change, une seule boucle d'animation, aucune réécriture sous le demi-pixel), courses ACCEPTÉES pour plus tard (> 2 h)
+  ni épinglées ni reliées au chauffeur (fin de la « toile d'araignée » ; visibles une fois sélectionnées), horloge de
+  l'écran à 15 s (heure, compte à rebours des vagues et « vu il y a » restent à la seconde dans de petits composants),
+  lignes mémorisées, indicateurs relus seulement sur changement de statut / prix / horaire / présence (2 s au plus),
+  instantané relu à la reconnexion du canal, au retour sur l'onglet et toutes les 2 min (au lieu de 45 s ; repli sans
+  temps réel 6 → 18 → 30 s, en pause onglet caché), tracés des courses hors instantané (chargés à la sélection,
+  `GET /api/dashboard/rides/[id]?route=1`, sauf client à bord). Formateurs Intl mémorisés (`@rydar/shared`). Fiche
+  course, fiche chauffeur, Réseau, Encaissements : `useLiveSync` (aucun rafraîchissement onglet caché, un seul au
+  retour ; repli seulement « hors ligne », délai croissant) ; liens de la barre latérale sans préchargement.
+  Encaissements : une seule ligne par règlement (même balisage carte / tableau), 100 lignes + « Afficher plus », liste
+  « à traiter » complète envoyée en version compacte (compteurs, WhatsApp), relecture à l'échéance d'une commission au
+  lieu de toutes les 2 min. Chauffeurs : tableau client alimenté par des lignes compactes. Console super admin : horloge
+  15 s, âges à la seconde. Mesures A/B : voir HISTORIQUE (« Volet navigateur »).
 - **Mini-sites coupés pour toute la plateforme (demande du propriétaire, migration 006200)** : jusqu'à réactivation par
   le super admin (Offres & limites, carte « Mini-sites de réservation », confirmation, journal d'audit). Coupé : menu
   « Mini-site » masqué, éditeur remplacé par « Les mini-sites de réservation sont momentanément désactivés par Rydar. »,

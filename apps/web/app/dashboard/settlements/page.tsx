@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { OrgPlatformCard } from "@/components/platform-fees/org-platform-card";
+import { SETTLEMENT_MAX, SETTLEMENT_PAGE, compactOpen, sortOpen } from "@/components/settlements/settlement-list";
 import { SettlementsView } from "@/components/settlements/settlements-view";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -44,11 +45,12 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
 
   const filter: OrgSettlementFilter = FILTERS.includes(sp.filter as OrgSettlementFilter) ? (sp.filter as OrgSettlementFilter) : "open";
   const driver = sp.driver && UUID.test(sp.driver) ? sp.driver : null;
-  const limit = Math.min(500, Math.max(100, Math.round(Number(sp.n) || 100)));
+  const limit = Math.min(SETTLEMENT_MAX, Math.max(SETTLEMENT_PAGE, Math.round(Number(sp.n) || SETTLEMENT_PAGE)));
   const orgId = ctx.org.id;
   const canManage = isAdminRole(ctx.role);
 
-  // « À traiter » (tous chauffeurs) sert aussi aux soldes, compteurs et messages WhatsApp : lu une fois.
+  // « À traiter » (tous chauffeurs) sert aussi aux compteurs et messages WhatsApp : lu une fois (500 au plus), envoyé au
+  // navigateur en version compacte ; seules les lignes affichées (100 par défaut, « Afficher plus ») sont complètes.
   // Frais plateforme dus à Rydar : owner / admin seulement (un dispatcher ne voit pas la carte).
   const [overview, open, filtered, platform] = await Promise.all([
     ctx.supabase.rpc("org_settlement_overview", { p_org: orgId }),
@@ -61,7 +63,9 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
   const platformData = (platform?.data ?? null) as OrgPlatformAccount | null;
   const serverNow = Date.now();
   const openItems = ((open.data as OrgSettlements | null)?.items ?? []);
-  const items = filtered ? ((filtered.data as OrgSettlements | null)?.items ?? []) : openItems;
+  // « À traiter » : les plus urgents d'abord (déclarés, contestés, en retard…), puis la page demandée
+  const items = filtered ? ((filtered.data as OrgSettlements | null)?.items ?? []) : sortOpen(openItems, serverNow).slice(0, limit);
+  const hasMore = filtered ? items.length >= limit && limit < SETTLEMENT_MAX : openItems.length > limit;
   const failed = overview.error || open.error || filtered?.error;
 
   return (
@@ -100,11 +104,12 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
           <SettlementsView
             key={`${filter}:${driver ?? ""}`}
             overview={overview.data as OrgSettlementOverview}
-            openItems={openItems}
+            openIndex={openItems.map(compactOpen)}
             items={items}
             filter={filter}
             driverId={driver}
-            limit={filter === "open" && !driver ? 500 : limit}
+            limit={limit}
+            hasMore={hasMore}
             orgName={ctx.org.name}
             timeZone={ctx.org.timezone || "Europe/Paris"}
             canManage={canManage}

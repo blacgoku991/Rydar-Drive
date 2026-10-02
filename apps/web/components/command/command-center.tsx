@@ -9,125 +9,19 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { toast } from "sonner";
 import { FleetPanel } from "@/components/command/fleet-panel";
 import { KpiStrip } from "@/components/command/kpi-strip";
+import { ON_BOARD, reducer } from "@/components/command/live-state";
 import { RideFocus } from "@/components/command/ride-focus";
 import { RideRow, SEARCHING, TERMINAL } from "@/components/command/ride-row";
 import { FleetMap, type FleetMapHandle } from "@/components/map/fleet-map";
 import { PRESENCE_COLOR, rideColor } from "@/components/map/map-theme";
 import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
+import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { NewRideSheet } from "@/components/rides/new-ride-sheet";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/misc";
 import { useNow } from "@/hooks/use-now";
-import type { LiveAlert, LiveDriver, LiveOffer, LiveReport, LiveRide, LiveSnapshot } from "@/lib/queries/live";
+import type { LiveAlert, LiveRide, LiveSnapshot } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
-
-// ---------------------------------------------------------------------------- état
-type State = {
-  drivers: Record<string, LiveDriver>;
-  rides: Record<string, LiveRide>;
-  offers: Record<string, LiveOffer>;
-  alerts: Record<string, LiveAlert>;
-  reports: Record<string, LiveReport>;
-  kpis: OrgKpis | null;
-};
-type Action =
-  | { type: "snapshot"; snapshot: LiveSnapshot }
-  | { type: "kpis"; kpis: OrgKpis }
-  | { type: "location"; payload: any }
-  | { type: "driver"; payload: any }
-  | { type: "ride"; payload: any }
-  | { type: "offer"; payload: any }
-  | { type: "alert"; payload: RideAlertBroadcast }
-  | { type: "report"; payload: ChatMessage }
-  | { type: "report-update"; payload: FleetReportUpdate };
-
-const byId = <T extends { id: string }>(list: T[]) => Object.fromEntries(list.map((x) => [x.id, x]));
-
-function reducer(state: State, action: Action): State {
-  switch (action.type) {
-    case "snapshot": {
-      // Une course reçue en temps réel pendant la requête est plus récente que l'instantané : on la garde
-      const rides = byId(action.snapshot.rides);
-      for (const [id, ride] of Object.entries(rides)) {
-        const cur = state.rides[id];
-        if (cur && Date.parse(cur.updated_at) > Date.parse(ride.updated_at)) rides[id] = cur;
-      }
-      return {
-        drivers: byId(action.snapshot.drivers),
-        rides,
-        offers: byId(action.snapshot.offers),
-        alerts: byId(action.snapshot.alerts ?? []),
-        reports: byId(action.snapshot.reports ?? []),
-        // Indicateurs indisponibles (lecture en échec) : on garde les derniers connus
-        kpis: action.snapshot.kpis ?? state.kpis,
-      };
-    }
-    case "kpis":
-      return { ...state, kpis: action.kpis };
-    case "location": {
-      const p = action.payload;
-      const d = state.drivers[p.driver_id];
-      if (!d) return state;
-      return {
-        ...state,
-        drivers: { ...state.drivers, [d.id]: { ...d, location: { lat: p.lat, lng: p.lng, heading: p.heading, speed_mps: p.speed, updated_at: p.updated_at } } },
-      };
-    }
-    case "driver": {
-      const p = action.payload;
-      const d = state.drivers[p.id];
-      if (!d) return state;
-      return { ...state, drivers: { ...state.drivers, [d.id]: { ...d, presence: p.presence, status: p.status, current_ride_id: p.current_ride_id } } };
-    }
-    case "ride": {
-      const p = { ...action.payload };
-      const prev = state.rides[p.id];
-      // Le tracé n'est diffusé qu'à la création / modification : on garde l'existant
-      if (p.route_polyline == null && prev?.route_polyline) delete p.route_polyline;
-      return { ...state, rides: { ...state.rides, [p.id]: { ...(prev ?? {}), ...p } as LiveRide } };
-    }
-    case "offer": {
-      const p = action.payload;
-      const offers = { ...state.offers };
-      if (p.status === "pending") offers[p.id] = { ...(offers[p.id] ?? {}), ...p };
-      else delete offers[p.id];
-      return { ...state, offers };
-    }
-    case "alert": {
-      const a = action.payload;
-      const alerts = { ...state.alerts };
-      if (a.status === "resolved") delete alerts[a.id];
-      else {
-        const { op: _op, ...rest } = a;
-        alerts[a.id] = { ...(alerts[a.id] ?? {}), ...rest } as LiveAlert;
-      }
-      return { ...state, alerts };
-    }
-    case "report": {
-      const m = action.payload;
-      if (!m.report_type || m.lat == null || m.lng == null || !m.expires_at) return state;
-      return {
-        ...state,
-        reports: {
-          ...state.reports,
-          [m.id]: {
-            id: m.id, report_type: m.report_type, body: m.body, lat: m.lat, lng: m.lng, expires_at: m.expires_at, confirmations: m.confirmations,
-            dismissals: m.dismissals, author_name: m.author_name, author_type: m.author_type, author_driver_id: m.author_driver_id, created_at: m.created_at,
-          },
-        },
-      };
-    }
-    case "report-update": {
-      const u = action.payload;
-      const prev = state.reports[u.id];
-      if (!prev) return state;
-      const reports = { ...state.reports };
-      if (!u.active) delete reports[u.id];
-      else reports[u.id] = { ...prev, expires_at: u.expires_at, confirmations: u.confirmations, dismissals: u.dismissals };
-      return { ...state, reports };
-    }
-  }
-}
 
 type FeedEvent = { id: number; message: string; level: string; created_at: string; ride_id: string | null; category: string };
 type Tab = "live" | "upcoming" | "alerts";
@@ -228,7 +122,10 @@ export function CommandCenter({
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [approach, setApproach] = useState<{ rideId: string; coordinates: Coord[]; durationS: number; from: { lat: number; lng: number } } | null>(null);
   const mapRef = useRef<FleetMapHandle>(null);
-  const now = useNow(1000) ?? Date.parse(initial.serverTime);
+  // Horloge de l'écran (listes, jour affiché, signalements expirés) : 15 s. Ce qui bouge à la seconde (heure, compte à
+  // rebours des vagues, « vu il y a ») a sa propre horloge, dans de petits composants.
+  const serverNow = useMemo(() => Date.parse(initial.serverTime), [initial.serverTime]);
+  const now = useNow(15_000) ?? serverNow;
   const realtime = useRealtimeStatus();
 
   // Échec (réseau, 503 si une lecture a échoué côté serveur) : l'état courant est conservé jusqu'au prochain essai
@@ -240,10 +137,12 @@ export function CommandCenter({
       /* réseau indisponible : prochain sondage */
     }
   }, []);
+  // Indicateurs : relus après un changement qui les concerne, au plus une fois toutes les 2 s
   const kpiTimer = useRef<number | null>(null);
   const refreshKpis = useCallback(() => {
-    if (kpiTimer.current) window.clearTimeout(kpiTimer.current);
+    if (kpiTimer.current) return;
     kpiTimer.current = window.setTimeout(async () => {
+      kpiTimer.current = null;
       try {
         const res = await fetch("/api/dashboard/live?kpis=1", { cache: "no-store" });
         if (res.ok) {
@@ -253,17 +152,52 @@ export function CommandCenter({
       } catch {
         /* réseau indisponible : prochaine mise à jour */
       }
-    }, 1200);
+    }, 2000);
+  }, []);
+  useEffect(() => () => {
+    if (kpiTimer.current) window.clearTimeout(kpiTimer.current);
   }, []);
 
-  useRealtimeEvent("driver.location", (p) => dispatch({ type: "location", payload: p }));
+  // Positions GPS regroupées : au plus un rendu par seconde (dernière position de chaque chauffeur), aucun tant que
+  // l'onglet est caché (appliquées à son retour)
+  const pendingLocations = useRef(new Map<string, any>());
+  const locationTimer = useRef<number | null>(null);
+  const flushLocations = useCallback(() => {
+    locationTimer.current = null;
+    if (document.visibilityState === "hidden" || !pendingLocations.current.size) return;
+    const payloads = [...pendingLocations.current.values()];
+    pendingLocations.current.clear();
+    dispatch({ type: "locations", payloads });
+  }, []);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") flushLocations();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (locationTimer.current) window.clearTimeout(locationTimer.current);
+    };
+  }, [flushLocations]);
+  useRealtimeEvent("driver.location", (p) => {
+    if (!p?.driver_id) return;
+    pendingLocations.current.set(p.driver_id, p);
+    if (locationTimer.current == null) locationTimer.current = window.setTimeout(flushLocations, 1000);
+  });
   useRealtimeEvent("driver.updated", (p) => {
-    if (!state.drivers[p.id]) void refresh();
-    else dispatch({ type: "driver", payload: p });
+    const prev = state.drivers[p.id];
+    if (!prev) void refresh();
+    else {
+      dispatch({ type: "driver", payload: p });
+      // Chauffeurs en ligne / libres (indicateurs)
+      if (prev.presence !== p.presence) refreshKpis();
+    }
   });
   useRealtimeEvent("ride.updated", (p) => {
+    const prev = state.rides[p.id];
     dispatch({ type: "ride", payload: p });
-    refreshKpis();
+    // Courses du jour, chiffre d'affaires, recherches en cours : seulement si statut, prix ou horaire changent
+    if (!prev || prev.status !== p.status || prev.price_cents !== p.price_cents || prev.pickup_at !== p.pickup_at) refreshKpis();
   });
   useRealtimeEvent("offer.updated", (p) => dispatch({ type: "offer", payload: p }));
   useRealtimeEvent("ride.event", (p) => {
@@ -274,12 +208,9 @@ export function CommandCenter({
   useRealtimeEvent("chat.message", (m: ChatMessage) => m?.report_type && dispatch({ type: "report", payload: m }));
   useRealtimeEvent("chat.report", (u: FleetReportUpdate) => u?.id && dispatch({ type: "report-update", payload: u }));
 
-  // Repli : synchronisation périodique si le temps réel n'est pas disponible
-  useEffect(() => {
-    const interval = realtime === "live" ? 45_000 : 6_000;
-    const id = window.setInterval(() => void refresh(), interval);
-    return () => window.clearInterval(id);
-  }, [realtime, refresh]);
+  // Instantané relu : à chaque reconnexion du canal, au retour sur l'onglet après plus d'une minute, toutes les 2 min en
+  // temps réel (filet de sécurité, onglet visible) ; sans temps réel, sondage 6 → 18 → 30 s, en pause onglet caché.
+  useLiveSync(() => void refresh(), { pollMs: 6000, maxPollMs: 30_000, livePollMs: 120_000, resyncAfterHiddenMs: 60_000 });
 
   // Raccourcis : N = nouvelle course, Échap = désélection
   useEffect(() => {
@@ -403,6 +334,8 @@ export function CommandCenter({
     else if (r.dropoff_lng != null && r.dropoff_lat != null) pts.push([r.dropoff_lng, r.dropoff_lat]);
     const d = r.driver_id ? state.drivers[r.driver_id] : null;
     if (d?.location) pts.push([d.location.lng, d.location.lat]);
+    // Tracé pas encore chargé : cadrage complété à son arrivée s'il déborde (effet ci-dessous)
+    pendingRouteFit.current = r.route_polyline === undefined ? { rideId: r.id, pts } : null;
     mapRef.current?.fitPoints(pts);
   };
   const selectDriver = (id: string | null) => {
@@ -415,6 +348,48 @@ export function CommandCenter({
     setSelectedReport(id);
     if (id) setSelectedDriver(null);
   };
+  // Fonctions stables pour les lignes mémorisées (liste des courses, flotte)
+  const selectHandlers = useRef({ selectRide, selectDriver });
+  selectHandlers.current = { selectRide, selectDriver };
+  const onRowSelect = useCallback((id: string) => selectHandlers.current.selectRide(id), []);
+  const onFleetSelect = useCallback((id: string) => selectHandlers.current.selectDriver(id), []);
+
+  // Tracé d'une course : absent de l'instantané (sauf client à bord), chargé quand il doit être dessiné
+  const pendingRouteFit = useRef<{ rideId: string; pts: Coord[] } | null>(null);
+  const routeRequests = useRef(new Map<string, number>());
+  const missingRoutes = useMemo(
+    () =>
+      Object.values(state.rides)
+        .filter((r) => r.route_polyline === undefined && (r.id === selectedRide || ON_BOARD.has(r.status)))
+        .map((r) => r.id)
+        .join(","),
+    [state.rides, selectedRide],
+  );
+  useEffect(() => {
+    if (!missingRoutes) return;
+    for (const id of missingRoutes.split(",")) {
+      const last = routeRequests.current.get(id);
+      if (last && Date.now() - last < 30_000) continue;
+      routeRequests.current.set(id, Date.now());
+      fetch(`/api/dashboard/rides/${id}?route=1`, { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((j: { route_polyline?: string | null } | null) => {
+          if (j) dispatch({ type: "route", id, polyline: j.route_polyline ?? null });
+        })
+        .catch(() => undefined);
+    }
+  }, [missingRoutes]);
+  useEffect(() => {
+    const fit = pendingRouteFit.current;
+    if (!ride || !fit || fit.rideId !== ride.id || ride.route_polyline === undefined) return;
+    pendingRouteFit.current = null;
+    if (!ride.route_polyline) return;
+    const line = decodePolyline(ride.route_polyline);
+    const lngs = fit.pts.map((p) => p[0]);
+    const lats = fit.pts.map((p) => p[1]);
+    const [w, e, s, n] = [Math.min(...lngs), Math.max(...lngs), Math.min(...lats), Math.max(...lats)];
+    if (line.some(([lng, lat]) => lng < w || lng > e || lat < s || lat > n)) mapRef.current?.fitPoints([...fit.pts, ...line]);
+  }, [ride]);
 
   // Ouverture d'une course / d'un signalement depuis une alerte (toast, cloche, notification) ou l'URL
   const selectRideRef = useRef(selectRide);
@@ -639,7 +614,7 @@ export function CommandCenter({
                     driver={r.driver_id ? state.drivers[r.driver_id] : undefined}
                     offers={offersByRide[r.id] ?? 0}
                     selected={false}
-                    onSelect={() => selectRide(r.id)}
+                    onSelect={onRowSelect}
                     now={now}
                     timeout={offerTimeout}
                     alert={alertByRide[r.id]}
@@ -653,7 +628,7 @@ export function CommandCenter({
 
       {/* Flotte (droite) */}
       <aside className="z-10 hidden min-h-0 xl:glass xl:absolute xl:bottom-3 xl:right-3 xl:top-[76px] xl:flex xl:w-[312px] xl:flex-col xl:rounded-2xl">
-        <FleetPanel drivers={drivers} rides={state.rides} selectedId={selectedDriver} onSelect={selectDriver} now={now} staleMs={locationMaxAgeS * 1000} className="flex-1" />
+        <FleetPanel drivers={drivers} rides={state.rides} selectedId={selectedDriver} onSelect={onFleetSelect} now={serverNow} staleMs={locationMaxAgeS * 1000} className="flex-1" />
       </aside>
 
       {/* Fiche chauffeur sélectionné */}

@@ -1,9 +1,11 @@
 "use client";
-import { DEFAULT_DISPATCH_RADII_M, RIDE_STATUS_META, formatDistance, formatPrice, formatTime, shortAddress, type RideStatus } from "@rydar/shared";
+import { DEFAULT_DISPATCH_RADII_M, RIDE_STATUS_META, dateTimeFormat, formatDistance, formatPrice, formatTime, shortAddress, type RideStatus } from "@rydar/shared";
 import { BellOff, CalendarClock } from "lucide-react";
+import { memo } from "react";
 import { ALERT_ICON, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
 import { FlightChip, pickupShiftMinutes } from "@/components/rides/flight-info";
 import { toneDot, toneText } from "@/components/ui/badge";
+import { useSharedNow } from "@/hooks/use-now";
 import type { LiveAlert, LiveDriver, LiveRide } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
 
@@ -11,7 +13,7 @@ export const SEARCHING = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED"]);
 export const TERMINAL = new Set(["COMPLETED", "CANCELLED", "NO_DRIVER_FOUND"]);
 
 const TZ = "Europe/Paris";
-const dayKey = (t: number) => new Intl.DateTimeFormat("fr-CA", { timeZone: TZ }).format(new Date(t));
+const dayKey = (t: number) => dateTimeFormat("fr-CA", { timeZone: TZ }).format(new Date(t));
 
 function dayLabel(iso: string, now: number) {
   const t = new Date(iso).getTime();
@@ -19,35 +21,48 @@ function dayLabel(iso: string, now: number) {
   if (k === dayKey(now)) return null;
   if (k === dayKey(now + 86_400_000)) return "Demain";
   if (k === dayKey(now - 86_400_000)) return "Hier";
-  return new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric", timeZone: TZ }).format(new Date(t));
+  return dateTimeFormat("fr-FR", { weekday: "short", day: "numeric", timeZone: TZ }).format(new Date(t));
 }
 
-/** Ligne de course : heure, trajet, statut en clair, prix — plus le vol suivi et l'alerte de suivi s'il y en a. */
-export function RideRow({
-  ride,
-  driver,
-  offers,
-  selected,
-  onSelect,
-  now,
-  timeout,
-  alert,
-}: {
+const remainingS = (nextDispatchAt: string, now: number) => Math.max(0, (new Date(nextDispatchAt).getTime() - now) / 1000);
+
+/** Secondes avant la vague suivante (« · 23 s ») : seule partie de la ligne rafraîchie chaque seconde. */
+function WaveCountdown({ at, fallbackNow }: { at: string; fallbackNow: number }) {
+  const remaining = remainingS(at, useSharedNow(1000, fallbackNow));
+  return remaining > 0 ? <>{` · ${Math.ceil(remaining)} s`}</> : null;
+}
+
+/** Barre de progression de la vague en cours (même horloge d'une seconde). */
+function WaveBar({ at, timeout, fallbackNow }: { at: string; timeout: number; fallbackNow: number }) {
+  const pct = Math.min(100, (remainingS(at, useSharedNow(1000, fallbackNow)) / timeout) * 100);
+  if (!(pct > 0)) return null;
+  return (
+    <span className="absolute inset-x-3 bottom-0 h-[2px] overflow-hidden rounded-full bg-white/[0.05]">
+      <span className="block h-full bg-amber transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+    </span>
+  );
+}
+
+type Props = {
   ride: LiveRide;
   driver?: LiveDriver;
   offers: number;
   selected: boolean;
-  onSelect: () => void;
+  /** Reçoit l'identifiant de la course (fonction stable : la ligne n'est re-rendue que si ses données changent). */
+  onSelect: (id: string) => void;
+  /** Horloge de la liste (jour affiché) ; le compte à rebours de la vague a sa propre horloge d'une seconde. */
   now: number;
   timeout: number;
   alert?: LiveAlert;
-}) {
+};
+
+/** Ligne de course : heure, trajet, statut en clair, prix — plus le vol suivi et l'alerte de suivi s'il y en a. */
+function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, alert }: Props) {
   const status = ride.status as RideStatus;
   const meta = RIDE_STATUS_META[status] ?? { label: status, tone: "neutral" as const };
   const searching = SEARCHING.has(status);
   const geo = ride.type === "instant" || ride.dispatch_mode === "geo";
-  const remaining = ride.next_dispatch_at ? Math.max(0, (new Date(ride.next_dispatch_at).getTime() - now) / 1000) : 0;
-  const pct = searching && geo ? Math.min(100, (remaining / timeout) * 100) : 0;
+  const countdown = searching && geo && ride.next_dispatch_at ? ride.next_dispatch_at : null;
   const day = dayLabel(ride.pickup_at, now);
   const shifted = pickupShiftMinutes(ride) != null;
   const openAlert = alert?.status === "open" ? alert : null;
@@ -57,7 +72,7 @@ export function RideRow({
   let detail: string | null = null;
   if (searching) {
     detail = geo
-      ? `${offers} offre${offers > 1 ? "s" : ""} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])}${remaining > 0 ? ` · ${Math.ceil(remaining)} s` : ""}`
+      ? `${offers} offre${offers > 1 ? "s" : ""} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])}`
       : `proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`;
   } else if (driver) {
     detail = `${driver.first_name} ${driver.last_name.charAt(0)}. · ${driver.vehicle?.plate ?? ""}`;
@@ -68,7 +83,7 @@ export function RideRow({
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={() => onSelect(ride.id)}
       className={cn(
         "group relative w-full overflow-hidden rounded-xl px-3 py-3 text-left transition-colors",
         selected ? "bg-white/[0.07]" : openAlert ? "bg-white/[0.025] hover:bg-white/[0.045]" : "hover:bg-white/[0.035]",
@@ -99,7 +114,12 @@ export function RideRow({
           <p className={cn("mt-1.5 flex items-center gap-1.5 text-[12px]", toneText[meta.tone])}>
             <span className={cn("size-1.5 shrink-0 rounded-full", toneDot[meta.tone], searching && "animate-breathe")} />
             <span className="shrink-0 font-medium">{meta.label}</span>
-            {detail && <span className="truncate text-fg-subtle">· {detail}</span>}
+            {detail && (
+              <span className="truncate text-fg-subtle">
+                · {detail}
+                {countdown && <WaveCountdown at={countdown} fallbackNow={now} />}
+              </span>
+            )}
           </p>
           {ride.flight_number && (
             <div className="mt-1.5 flex min-w-0">
@@ -122,11 +142,24 @@ export function RideRow({
           <p className="text-[11px] text-fg-subtle">#{ride.number}</p>
         </div>
       </div>
-      {pct > 0 && (
-        <span className="absolute inset-x-3 bottom-0 h-[2px] overflow-hidden rounded-full bg-white/[0.05]">
-          <span className="block h-full bg-amber transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
-        </span>
-      )}
+      {countdown && <WaveBar at={countdown} timeout={timeout} fallbackNow={now} />}
     </button>
   );
 }
+
+/** Le chauffeur n'est comparé que sur ce que la ligne affiche : un point GPS ne la re-rend pas. */
+const sameDriver = (a?: LiveDriver, b?: LiveDriver) =>
+  a === b || (!!a && !!b && a.first_name === b.first_name && a.last_name === b.last_name && a.vehicle?.plate === b.vehicle?.plate);
+
+export const RideRow = memo(
+  RideRowView,
+  (a, b) =>
+    a.ride === b.ride &&
+    sameDriver(a.driver, b.driver) &&
+    a.offers === b.offers &&
+    a.selected === b.selected &&
+    a.onSelect === b.onSelect &&
+    a.now === b.now &&
+    a.timeout === b.timeout &&
+    a.alert === b.alert,
+);

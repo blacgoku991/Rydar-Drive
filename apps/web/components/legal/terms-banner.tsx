@@ -53,10 +53,10 @@ export function TermsBanner({ orgName }: { orgName: string }) {
   return (
     <AcceptBanner accept={acceptOrgTerms}>
       J&apos;accepte, au nom de <span className="text-fg">{orgName}</span>, les{" "}
-      <Link href="/cgv" target="_blank" className={link}>conditions générales de vente</Link> et l&apos;
-      <Link href="/dpa" target="_blank" className={link}>accord de traitement des données (RGPD)</Link>, ainsi que les{" "}
-      <Link href="/cgu" target="_blank" className={link}>conditions d&apos;utilisation</Link> et la{" "}
-      <Link href="/confidentialite" target="_blank" className={link}>politique de confidentialité</Link>. Je confirme que la
+      <Link href="/cgv" target="_blank" prefetch={false} className={link}>conditions générales de vente</Link> et l&apos;
+      <Link href="/dpa" target="_blank" prefetch={false} className={link}>accord de traitement des données (RGPD)</Link>, ainsi que les{" "}
+      <Link href="/cgu" target="_blank" prefetch={false} className={link}>conditions d&apos;utilisation</Link> et la{" "}
+      <Link href="/confidentialite" target="_blank" prefetch={false} className={link}>politique de confidentialité</Link>. Je confirme que la
       centrale respecte ses obligations de transporteur (inscription VTC, déclaration de centrale de réservation le cas échéant).
     </AcceptBanner>
   );
@@ -66,8 +66,8 @@ export function TermsBanner({ orgName }: { orgName: string }) {
 export function UserTermsBanner() {
   return (
     <AcceptBanner accept={acceptUserTerms}>
-      J&apos;accepte les <Link href="/cgu" target="_blank" className={link}>conditions d&apos;utilisation</Link> et la{" "}
-      <Link href="/confidentialite" target="_blank" className={link}>politique de confidentialité</Link> de Rydar Drive.
+      J&apos;accepte les <Link href="/cgu" target="_blank" prefetch={false} className={link}>conditions d&apos;utilisation</Link> et la{" "}
+      <Link href="/confidentialite" target="_blank" prefetch={false} className={link}>politique de confidentialité</Link> de Rydar Drive.
     </AcceptBanner>
   );
 }

@@ -75,11 +75,25 @@ function useCentraleCounts(orgId: string, centrale: boolean, initial: CentraleCo
   };
   useRealtimeEvent("settlement.updated", () => centrale && reload());
   useRealtimeEvent("driver.application", reload);
-  // Une commission devient « en retard » à son échéance, sans événement : relecture régulière
+  // Une commission devient « en retard » à son échéance, sans événement : relecture régulière (onglet visible ;
+  // au retour sur l'onglet si un tour a été sauté)
   useEffect(() => {
     if (!centrale) return;
-    const id = window.setInterval(reload, 120_000);
-    return () => window.clearInterval(id);
+    let missed = false;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "hidden") missed = true;
+      else reload();
+    }, 120_000);
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible" || !missed) return;
+      missed = false;
+      reload();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [centrale, orgId]);
   return counts;
 }
