@@ -117,10 +117,12 @@ export async function createOrganization(
 
 /**
  * Modèle d'exploitation (flotte / centrale à commission) + frais plateforme d'un compte.
- * Retour au mode flotte : refusé s'il reste des règlements chauffeur ouverts ; le lien d'inscription est coupé par le
- * trigger SQL (organizations_dispatch_model_guard). Passage en centrale : répartition des courses non clôturées (SQL).
+ * Retour au mode flotte : refusé s'il reste des règlements chauffeur ouverts (trigger SQL
+ * organizations_dispatch_model_guard). Le lien d'inscription des chauffeurs est conservé dans les deux sens (code, état,
+ * validation automatique ; candidatures en attente inchangées, 20260924006300). Passage en centrale : répartition des
+ * courses non clôturées (SQL).
  */
-export async function updateDispatchModel(orgId: string, input: z.input<typeof dispatchModelSchema>): Promise<Result<{ joinDisabled: boolean }>> {
+export async function updateDispatchModel(orgId: string, input: z.input<typeof dispatchModelSchema>): Promise<Result> {
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
   const parsed = dispatchModelSchema.safeParse(input);
@@ -161,7 +163,6 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof d
   }
 
   const modelChanged = b.dispatch_model !== v.dispatchModel;
-  const joinDisabled = modelChanged && v.dispatchModel === "fleet" && b.join_enabled;
   await audit({
     organizationId: orgId,
     actorUserId: session.user.id,
@@ -173,13 +174,14 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof d
     metadata: {
       before: { dispatch_model: b.dispatch_model, platform_fee_percent: Number(b.platform_fee_percent), platform_fee_fixed_cents: b.platform_fee_fixed_cents },
       after: { dispatch_model: v.dispatchModel, platform_fee_percent: v.platformFeePercent, platform_fee_fixed_cents: v.platformFeeFixedCents },
-      join_link_disabled: joinDisabled,
+      // Lien d'inscription conservé tel quel lors d'un changement de modèle
+      join_link_enabled: b.join_enabled,
     },
   });
   revalidatePath(`/admin/organizations/${orgId}`);
   revalidatePath("/admin/organizations");
   revalidatePath("/admin/centrales");
-  return { ok: true, joinDisabled };
+  return { ok: true };
 }
 
 const accessSchema = z.object({

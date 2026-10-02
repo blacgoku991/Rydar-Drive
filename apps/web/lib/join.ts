@@ -1,4 +1,4 @@
-// Inscription publique d'un chauffeur par le lien d'une centrale, sans connexion : page /rejoindre/{code}
+// Inscription publique d'un chauffeur par le lien d'une centrale ou d'une flotte, sans connexion : page /rejoindre/{code}
 // (action serveur) et application chauffeur (POST /api/join/{code}) partagent cette logique.
 // Ordre : validation → limitation de débit → lien valide → identité bannie / doublon → compte Auth →
 // candidature (svc_driver_apply) ; échec de la candidature → le compte Auth créé est supprimé.

@@ -20,9 +20,18 @@ Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal 
 visite médicale, 005300 jetons d'activation, 005400 contre-audit SQL, 005500 dette avant suppression, 005600 offres.
 Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `20260924005800` état du mailer (pause de
 la file si le serveur mail est injoignable, relance à son retour), `20260924005900` clôture des planifiées jamais
-démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse.
+démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse,
+`20260924006300` lien d'inscription des chauffeurs pour les flottes.
 
 ## Depuis l'audit
+- **Lien d'inscription des chauffeurs pour les flottes** (retour du propriétaire : « je ne trouve plus l'onglet avec les
+  liens d'invitation à partager ») : l'onglet « Réseau » n'existait qu'en mode centrale. Désormais une flotte a l'entrée
+  « Inscriptions » (même page, juste sous « Chauffeurs », pastille des candidatures) et la page Chauffeurs un bouton
+  « Lien d'inscription » : créer / couper / régénérer le lien, validation automatique, copier, WhatsApp, Telegram,
+  candidatures (valider, refuser, reconsidérer), bannis. Page /rejoindre et app (JS seul → mise à jour EAS) sans mention
+  de commission pour une flotte ; candidat validé = chauffeur « confirmé » comme ceux créés par la flotte. Mêmes contrôles
+  qu'en centrale (bannis, débiteurs, limite de chauffeurs, rôles, jeton après activation). Changement de modèle par le
+  super admin : le lien n'est plus coupé (code, réglages et candidatures conservés). Migration `20260924006300`.
 - **Webhooks sortants (en cours : fusion, revue adverse, bout en bout avec RYDAR Privé)** : à chaque changement de
   statut d'une course, POST JSON signé (HMAC-SHA256) vers les adresses https de la centrale (offre avec l'API) ; gestion
   par Dashboard → Intégrations et `/api/v1/webhooks` ; envoi par le worker (garde SSRF, 9 essais sur ~46 h, un envoi en

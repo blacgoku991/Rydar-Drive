@@ -1,4 +1,5 @@
-// Mode centrale côté rattacheur : libellés et petits calculs d'affichage.
+// Mode centrale côté rattacheur : libellés et petits calculs d'affichage (textes du lien d'inscription selon le
+// modèle : join-copy.ts).
 // Module neutre (ni « use client » ni « server-only ») : importable par les pages serveur et les composants client.
 import type { FraudReport, IdentityKind, Tone } from "@rydar/shared";
 import { env } from "@/lib/env";
@@ -17,11 +18,6 @@ export const IDENTITY_ORDER: IdentityKind[] = ["phone", "email", "vtc_card", "dr
 /** URL publique du lien d'inscription. */
 export function joinUrl(code: string) {
   return `${env.appUrl.replace(/\/$/, "")}/rejoindre/${code}`;
-}
-
-/** Message prêt à coller dans un groupe WhatsApp / Telegram. */
-export function joinMessage(orgName: string, url: string) {
-  return `Rejoignez le réseau ${orgName} sur Rydar Drive : ${url}`;
 }
 
 /** Nom complet « Prénom Nom ». */

@@ -730,16 +730,17 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     if (e.action === "applied" || (e.action === "approved" && d.applied_at)) {
       // approved + applied_at : validation automatique à l'inscription (réglage de la centrale)
       const applied = e.action === "applied";
+      const fleet = centraleRef.current?.model !== "centrale";
       push({
         id: `app:${d.id}:${e.action}`,
         kind: "application",
         rideId: null,
-        title: applied ? `Nouvelle candidature : ${name}` : `${name} a rejoint la centrale`,
+        title: applied ? `Nouvelle candidature : ${name}` : `${name} ${fleet ? "a rejoint la flotte" : "a rejoint la centrale"}`,
         body: [`Chauffeur #${d.number}`, d.phone ? formatPhone(d.phone) : null, applied ? "via le lien d'inscription · à valider" : "validation automatique"]
           .filter(Boolean)
           .join(" · "),
         href: "/dashboard/network",
-        cta: applied ? "Voir la candidature" : "Voir le réseau",
+        cta: applied ? "Voir la candidature" : fleet ? "Voir les inscriptions" : "Voir le réseau",
       });
     } else {
       // validée ou refusée depuis le tableau de bord : la candidature est traitée

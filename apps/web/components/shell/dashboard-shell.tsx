@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
 import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-provider";
 import { CookieNotice } from "@/components/legal/cookie-notice";
+import { joinNavLabel } from "@/components/network/join-copy";
 import { OrgPlatformBanner } from "@/components/platform-fees/org-platform-banner";
 import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
@@ -33,7 +34,7 @@ type ShellProps = {
   pendingDocuments?: number;
   /** Modèle d'exploitation + réglages d'encaissement (mode centrale) */
   centrale: CentraleInfo;
-  /** Mode centrale : règlements à confirmer / en retard, candidatures en attente (null en mode flotte) */
+  /** Candidatures en attente (les deux modèles) ; mode centrale : règlements à confirmer / en retard */
   centraleCounts?: CentraleCounts | null;
   /** Bandeau au-dessus du contenu (conditions à accepter) */
   topBanner?: React.ReactNode;
@@ -54,28 +55,30 @@ export function DashboardShell(props: ShellProps) {
   );
 }
 
-/** Compteurs « Encaissements » / « Réseau » : valeur serveur, relue après chaque événement du mode centrale. */
-function useCentraleCounts(orgId: string, enabled: boolean, initial: CentraleCounts | null | undefined) {
+/**
+ * Compteurs « Encaissements » (centrale) et « Réseau » / « Inscriptions » (candidatures, les deux modèles) : valeur
+ * serveur, relue après chaque événement.
+ */
+function useCentraleCounts(orgId: string, centrale: boolean, initial: CentraleCounts | null | undefined) {
   const [counts, setCounts] = useState<CentraleCounts>(initial ?? EMPTY_CENTRALE_COUNTS);
   useEffect(() => setCounts(initial ?? EMPTY_CENTRALE_COUNTS), [initial]);
   const timer = useRef<number | null>(null);
   const reload = () => {
-    if (!enabled) return;
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      fetchCentraleCounts(getBrowserClient(), orgId)
+      fetchCentraleCounts(getBrowserClient(), orgId, { settlements: centrale })
         .then(setCounts)
         .catch(() => undefined);
     }, 600);
   };
-  useRealtimeEvent("settlement.updated", reload);
+  useRealtimeEvent("settlement.updated", () => centrale && reload());
   useRealtimeEvent("driver.application", reload);
   // Une commission devient « en retard » à son échéance, sans événement : relecture régulière
   useEffect(() => {
-    if (!enabled) return;
+    if (!centrale) return;
     const id = window.setInterval(reload, 120_000);
     return () => window.clearInterval(id);
-  }, [enabled, orgId]);
+  }, [centrale, orgId]);
   return counts;
 }
 
@@ -152,18 +155,16 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
           badgeTone: "amber",
           badgeLabel: `${pendingDocuments} document${pendingDocuments > 1 ? "s" : ""} à valider`,
         },
-        ...(isCentrale
-          ? [
-              {
-                href: "/dashboard/network",
-                label: "Réseau",
-                icon: "network" as const,
-                badge: counts.applications,
-                badgeTone: "brand" as const,
-                badgeLabel: plural(counts.applications, "candidature en attente", "candidatures en attente"),
-              },
-            ]
-          : []),
+        // Lien d'inscription + candidatures : « Réseau » en centrale, « Inscriptions » en flotte (même page), juste
+        // sous « Chauffeurs », avec le nombre de candidatures à traiter
+        {
+          href: "/dashboard/network",
+          label: joinNavLabel(centrale.model),
+          icon: isCentrale ? "network" : "userPlus",
+          badge: counts.applications,
+          badgeTone: "brand",
+          badgeLabel: plural(counts.applications, "candidature en attente", "candidatures en attente"),
+        },
         { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
       ],
     },

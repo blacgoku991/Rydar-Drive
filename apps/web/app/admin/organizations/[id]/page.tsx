@@ -125,7 +125,8 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
                 feeFixedCents={Number(org.platform_fee_fixed_cents ?? 0)}
                 joinEnabled={!!org.join_enabled}
               />
-              {model === "centrale" && (
+              {/* Lien d'inscription des chauffeurs : flotte comme centrale (20260924006300) */}
+              {(model === "centrale" || org.join_code) && (
                 <div className="grid gap-3 rounded-xl border border-line bg-white/[0.015] p-4 text-[12.5px] sm:grid-cols-3">
                   <div>
                     <p className="text-fg-subtle">Lien d&apos;inscription</p>

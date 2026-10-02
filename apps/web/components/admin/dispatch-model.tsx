@@ -135,7 +135,7 @@ export function DispatchModelForm({
       if (!res.ok) return void toast.error(res.error);
       setConfirm(false);
       toast.success(value !== model ? `Modèle : ${DISPATCH_MODEL_META[value].label}` : "Frais plateforme enregistrés", {
-        description: res.joinDisabled ? "Le lien d'inscription des chauffeurs a été coupé." : undefined,
+        description: value !== model && joinEnabled ? "Le lien d'inscription des chauffeurs reste actif." : undefined,
       });
       router.refresh();
     }));
@@ -151,7 +151,8 @@ export function DispatchModelForm({
       {toFleet && (
         <p className="flex items-start gap-2 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          Retour au mode flotte : le lien d&apos;inscription des chauffeurs sera coupé{joinEnabled ? " (il est actif actuellement)" : ""}. Les chauffeurs déjà inscrits restent rattachés.
+          Retour au mode flotte{" "}: plus de commission ni de règlement sur les nouvelles courses. Le lien d&apos;inscription des chauffeurs est
+          conservé{joinEnabled ? " (actif)" : ""}, sans mention de commission{" "}; les chauffeurs déjà inscrits restent rattachés.
         </p>
       )}
       <div className="flex items-center justify-end gap-2">
@@ -177,7 +178,10 @@ export function DispatchModelForm({
       <Dialog open={confirm} onOpenChange={setConfirm}>
         <DialogContent title="Repasser en mode flotte ?" description="Le compte redevient une flotte classique : plus de répartition part chauffeur / commission sur les nouvelles courses.">
           <ul className="space-y-2 text-[13px] text-fg-muted">
-            <li className="flex gap-2"><span className="text-amber">•</span> Le lien d&apos;inscription /rejoindre est coupé immédiatement.</li>
+            <li className="flex gap-2">
+              <span className="text-amber">•</span> Le lien d&apos;inscription /rejoindre est conservé (même adresse, mêmes réglages){" "}: la page
+              s&apos;adapte à la flotte et les candidatures en attente restent à valider dans «{" "}Inscriptions{" "}».
+            </li>
             <li className="flex gap-2"><span className="text-amber">•</span> Les chauffeurs et règlements existants sont conservés.</li>
             <li className="flex gap-2"><span className="text-amber">•</span> Vous pourrez repasser en centrale à tout moment.</li>
           </ul>

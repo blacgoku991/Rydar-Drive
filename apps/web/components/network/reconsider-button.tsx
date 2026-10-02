@@ -1,6 +1,7 @@
 "use client";
-// Candidature refusée (par la centrale, ou d'office : appareil déjà utilisé par un chauffeur banni) :
-// la centrale peut changer d'avis et valider le chauffeur (niveau « Nouveau »).
+// Candidature refusée (par l'organisation, ou d'office : appareil déjà utilisé par un chauffeur banni) :
+// l'organisation peut changer d'avis et valider le chauffeur (centrale : niveau « Nouveau » ; flotte : « confirmé »).
+import type { DispatchModel } from "@rydar/shared";
 import { RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
@@ -9,13 +10,17 @@ import { approveApplication } from "@/app/dashboard/network/actions";
 import { Button } from "@/components/ui/button";
 import { runAction } from "@/lib/run-action";
 
-export function ReconsiderButton({ driverId, name }: { driverId: string; name: string }) {
+export function ReconsiderButton({ driverId, name, model }: { driverId: string; name: string; model: DispatchModel }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const fleet = model !== "centrale";
   const reconsider = () => {
-    if (!window.confirm(`Reconsidérer la candidature de ${name} ? Le chauffeur est validé au niveau « Nouveau » (courses plafonnées).`)) return;
+    const question = fleet
+      ? `Reconsidérer la candidature de ${name} ? Le chauffeur est validé et reçoit vos courses.`
+      : `Reconsidérer la candidature de ${name} ? Le chauffeur est validé au niveau « Nouveau » (courses plafonnées).`;
+    if (!window.confirm(question)) return;
     start(() => runAction(async () => {
-      const res = await approveApplication(driverId, "new");
+      const res = await approveApplication(driverId, fleet ? "trusted" : "new");
       if (!res.ok) {
         toast.error(res.error);
         return;

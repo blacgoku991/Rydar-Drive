@@ -543,9 +543,10 @@ describe("Bannissement définitif", () => {
 
 // -----------------------------------------------------------------------------
 describe("Inscription par lien (/rejoindre/{code})", () => {
-  it("lien réservé aux centrales, candidature en attente, documents avant validation, validation / refus", async () => {
-    const fleet = await createOrg("Flotte Sans Lien");
-    expect((await rpc(fleet.ownerId, "set_join_link", [fleet.id, true, false, null])).code).toBe("CENTRALE_ONLY");
+  it("lien d'une centrale (flottes aussi : fleet-join.test.ts), candidature en attente, documents avant validation, validation / refus", async () => {
+    // Depuis 20260924006300, une flotte a aussi son lien (plus de CENTRALE_ONLY)
+    const fleet = await createOrg("Flotte Avec Lien");
+    expect(await rpc(fleet.ownerId, "set_join_link", [fleet.id, true, false, null])).toMatchObject({ ok: true, code: "UPDATED", dispatch_model: "fleet" });
     const org = await centrale("Centrale Recrute");
     const dispatcher = await createMember(org, "dispatcher");
     expect((await expectPgError(rpc(dispatcher, "set_join_link", [org.id, true, false, null]))).code).toBe("42501");
@@ -626,7 +627,7 @@ describe("Inscription par lien (/rejoindre/{code})", () => {
     expect((await rpc(u, "driver_account_state")).state).toBe("active");
   });
 
-  it("validation automatique, identité bannie refusée, lien coupé au retour en mode flotte", async () => {
+  it("validation automatique, identité bannie refusée, lien conservé au retour en mode flotte", async () => {
     const org = await centrale("Centrale Auto");
     const link = await rpc(org.ownerId, "set_join_link", [org.id, true, false, true]);
     expect(link.join_auto_approve).toBe(true);
@@ -647,9 +648,10 @@ describe("Inscription par lien (/rejoindre/{code})", () => {
     expect(refused).toMatchObject({ ok: false, code: "IDENTITY_BANNED" });
     expect(await sql(`select id from public.drivers where user_id = $1`, [u2])).toHaveLength(0);
 
+    // 20260924006300 : le changement de modèle ne coupe plus le lien (code, état et validation automatique conservés)
     await sql(`update public.organizations set dispatch_model = 'fleet' where id = $1`, [org.id]);
-    const [o] = await sql(`select join_enabled from public.organizations where id = $1`, [org.id]);
-    expect(o.join_enabled).toBe(false);
-    expect((await svc("svc_join_info", [link.join_code])).code).toBe("JOIN_LINK_INVALID");
+    const [o] = await sql(`select join_code, join_enabled, join_auto_approve from public.organizations where id = $1`, [org.id]);
+    expect(o).toEqual({ join_code: link.join_code, join_enabled: true, join_auto_approve: true });
+    expect(await svc("svc_join_info", [link.join_code])).toMatchObject({ ok: true, dispatch_model: "fleet", auto_approve: true });
   });
 });

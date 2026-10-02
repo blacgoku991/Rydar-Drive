@@ -245,6 +245,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
                   candidate={{ id: d.id, first_name: d.first_name, last_name: d.last_name, missing: docView.missing as DocumentType[] }}
                   newDriverMaxPriceCents={settings?.new_driver_max_price_cents ?? null}
                   trustAfterRides={settings?.trust_after_rides ?? null}
+                  model={centrale ? "centrale" : "fleet"}
                 />
               </div>
             )}

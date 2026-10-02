@@ -89,6 +89,7 @@ la centrale doit les frais plateforme à Rydar.
   proposés seulement s'ils sont renseignés ; relances app / WhatsApp / les deux (`reminder_channels`), WhatsApp impossible → app.
   Après « Pas reçu » (`disputed_at`), une redéclaration ne débloque plus ; un « déclaré » compte dans le plafond après 72 h.
   Dette ouverte + suppression de compte → empreintes gardées (`private.debtor_identities`) : candidature jamais auto-validée.
+- Lien /rejoindre : flotte ET centrale (006300, menu « Inscriptions » / « Réseau », textes `network/join-copy.ts`), jamais coupé par un changement de modèle.
 - Frais plateforme : dus dès la fin de course (même si le règlement chauffeur est annulé/contesté), registre immuable
   `platform_fee_entries` (changement = correction delta ; BAISSE `pending` jusqu'à validation super admin), paiements FIFO.
 - Temps réel : `realtime.send` topics `org:{id}` (lu par TOUT membre, dispatcher compris : rien qu'un dispatcher ne lirait pas via

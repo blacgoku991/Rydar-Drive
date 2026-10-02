@@ -1,6 +1,7 @@
-// Inscription d'un chauffeur par le lien d'une centrale : https://DOMAINE/rejoindre/{code} (lien universel)
-// ou rydardrive://rejoindre/{code}. Le serveur applique les mêmes contrôles que la page web
-// (bannis, doublons, limitation de débit), puis le chauffeur est connecté et rattaché à la centrale.
+// Inscription d'un chauffeur par le lien d'une centrale ou d'une flotte : https://DOMAINE/rejoindre/{code} (lien
+// universel) ou rydardrive://rejoindre/{code}. Le serveur applique les mêmes contrôles que la page web
+// (bannis, doublons, limitation de débit), puis le chauffeur est connecté et rattaché à l'organisation.
+// Textes selon le modèle renvoyé par le serveur (JS seul : mise à jour EAS).
 // Champs identiques à ceux de la connexion : libellé au-dessus, cadre de 56 px, bordure lime au focus.
 import { Ionicons } from "@expo/vector-icons";
 import { VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, type VehicleCategory } from "@rydar/shared";
@@ -207,14 +208,18 @@ export default function JoinScreen() {
                     {org.city ? `${org.city} · ` : ""}
                     {centrale.autoApprove
                       ? "Votre compte est actif dès l'inscription."
-                      : "La centrale valide votre profil, puis vous recevez les courses."}
+                      : centrale.model === "fleet"
+                        ? `${org.name} valide votre profil, puis vous recevez les courses.`
+                        : "La centrale valide votre profil, puis vous recevez les courses."}
                   </Text>
                 </View>
 
                 {ready && session ? (
                   <View style={styles.card}>
                     <Text style={styles.lead}>
-                      {frTypo("Vous êtes déjà connecté à un compte chauffeur. Pour vous inscrire dans cette centrale, déconnectez-vous d'abord.")}
+                      {frTypo(
+                        `Vous êtes déjà connecté à un compte chauffeur. Pour vous inscrire ${centrale.model === "fleet" ? `chez ${org.name}` : "dans cette centrale"}, déconnectez-vous d'abord.`,
+                      )}
                     </Text>
                     <BigButton title="Se déconnecter" variant="secondary" height={control.md} onPress={() => void signOut()} />
                   </View>

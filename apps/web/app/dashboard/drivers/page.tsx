@@ -2,7 +2,7 @@ import {
   DRIVER_STATUS_META, VEHICLE_CATEGORY_META, formatPercent, formatPhone, formatPrice, formatRelative,
   type DriverStatus, type OrgDocumentAlerts, type VehicleCategory,
 } from "@rydar/shared";
-import { Search, Users } from "lucide-react";
+import { Link2, Search, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DocumentAlertsCard } from "@/components/drivers/document-alerts";
@@ -11,6 +11,7 @@ import { FleetOverviewMap } from "@/components/drivers/fleet-overview-map";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
 import { PresenceBadge } from "@/components/rides/status";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Avatar, EmptyState } from "@/components/ui/misc";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
@@ -66,7 +67,17 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
         eyebrow="Flotte"
         title="Chauffeurs"
         description="Comptes chauffeurs, véhicules, présence temps réel et performance sur 30 jours."
-        actions={isAdminRole(ctx.role) ? <DriverFormSheet /> : undefined}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {/* Lien d'inscription à partager (flotte : « Inscriptions », centrale : « Réseau ») */}
+            <Button variant="secondary" asChild>
+              <Link href="/dashboard/network">
+                <Link2 /> Lien d&apos;inscription
+              </Link>
+            </Button>
+            {isAdminRole(ctx.role) && <DriverFormSheet />}
+          </div>
+        }
       />
       <PageBody className="space-y-6">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">

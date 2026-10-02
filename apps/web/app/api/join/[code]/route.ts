@@ -4,7 +4,8 @@ import { applyWithJoinLink, loadJoinInfo } from "@/lib/join";
 import { rateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
 
-// Inscription d'un chauffeur depuis l'application, par le lien d'une centrale (même logique que /rejoindre/{code}).
+// Inscription d'un chauffeur depuis l'application, par le lien d'une centrale ou d'une flotte (même logique que
+// /rejoindre/{code}).
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -24,7 +25,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ code: st
   }
   const o = info.organization;
   return NextResponse.json(
-    { ok: true, autoApprove: !!info.auto_approve, organization: { name: o.name, logoUrl: o.logo_url, brandColor: o.brand_color, city: o.city, phone: o.phone } },
+    {
+      ok: true,
+      autoApprove: !!info.auto_approve,
+      // Flotte ou centrale (20260924006300) : l'app adapte ses textes ; une ancienne app ignore le champ
+      model: info.dispatch_model ?? "centrale",
+      organization: { name: o.name, logoUrl: o.logo_url, brandColor: o.brand_color, city: o.city, phone: o.phone },
+    },
     { headers },
   );
 }
