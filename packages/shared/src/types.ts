@@ -3,6 +3,7 @@ import type {
   DriverPresence, DriverStatus, OfferStatus, OrgRole, OrgStatus, PaymentMethod, RideSource, RideStatus, RideType,
   VehicleCategory,
 } from "./domain";
+import type { DriverDeletionNetworkDebt, DriverHomeNetwork, SettlementNetworkInfo } from "./network";
 
 export type Uuid = string;
 export type Iso = string;
@@ -914,4 +915,24 @@ export interface AdminCentraleOverview {
   };
   reports_open: number;
   platform_bans: number;
+}
+
+// -----------------------------------------------------------------------------
+// Réseau partagé (contrats : network.ts) — champs ajoutés aux réponses existantes
+// -----------------------------------------------------------------------------
+/** private.settlement_json : ligne réseau (network_driver_org_id non NULL, driver_id NULL) vue par A ; null sinon. */
+export interface Settlement {
+  network?: SettlementNetworkInfo | null;
+}
+/** driver_home().network : dettes et versements partenaires, lisibilité du réseau. */
+export interface DriverHome {
+  network?: DriverHomeNetwork | null;
+}
+/** driver_deletion_debt().network : dettes envers les organisations partenaires (une par créancière). */
+export interface DriverDeletionDebt {
+  network?: DriverDeletionNetworkDebt[];
+}
+/** driver_earnings().recent : course partenaire → nom de l'organisation qui l'a confiée (net = termes figés). */
+export interface EarningsRide {
+  network_giver?: string | null;
 }

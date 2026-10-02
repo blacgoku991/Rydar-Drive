@@ -258,6 +258,31 @@ export const ERROR_MESSAGES: Record<string, string> = {
   WEBHOOK_TEST_RATE_LIMITED: "Trop de tests et de renvois de webhooks en une minute (10 au plus par centrale) : réessayez dans un instant.",
   // Interrupteur plateforme des mini-sites (20260924006200)
   BOOKING_SITES_DISABLED: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
+  // Réseau partagé (20260924006600 à 20260924007000 ; liste : NETWORK_ERROR_CODES de network.ts)
+  NETWORK_DISABLED: "Le réseau partagé est momentanément désactivé par Rydar.",
+  NETWORK_SUSPENDED: "Réseau partagé suspendu par Rydar pour votre organisation : contactez Rydar.",
+  NETWORK_TERMS_REQUIRED: "Acceptez la convention du réseau partagé pour l'activer.",
+  NETWORK_TERMS_OUTDATED: "La convention du réseau partagé a changé : lisez et acceptez la nouvelle version.",
+  NETWORK_VTC_REGISTRATION_REQUIRED:
+    "N° d'inscription au registre des exploitants VTC manquant : complétez-le avant d'activer le réseau partagé.",
+  NETWORK_PAYMENT_METHODS_REQUIRED:
+    "Partage actif : proposez un lien de paiement ou un virement (RIB) aux chauffeurs partenaires, les espèces restent possibles en plus.",
+  NETWORK_INSURANCE_REQUIRED: "Confirmez que votre assurance couvre les courses faites pour d'autres organisations.",
+  NETWORK_RIDE_LOCKED: "Course confiée à un partenaire : retirez-la-lui pour la modifier.",
+  NETWORK_CLOSE_NOT_ALLOWED:
+    "Clôture impossible : réservée à une course en cours dont le chauffeur partenaire n'est plus actif ou sans position depuis 30 min.",
+  NETWORK_CONTEST_EXPIRED: "Délai dépassé : une course partagée se conteste dans les 7 jours qui suivent sa fin.",
+  NETWORK_SETTLEMENT_ACTION_FORBIDDEN:
+    "Action impossible sur un règlement du réseau partagé : un versement dû à un chauffeur partenaire ne s'annule pas (contestez la course).",
+  NETWORK_CONSENT_REQUIRED: "Activez « Courses du réseau partagé » et acceptez ses conditions dans votre profil.",
+  NETWORK_PAYOUT_ON_HOLD: "Versement retenu : course à vérifier (validez-la, ou attendez 72 h après sa fin).",
+  NETWORK_DISPUTE_NOT_ALLOWED: "Contestation impossible pour ce règlement (déjà contesté, ou rien à contester).",
+  OFFER_CHANGED: "La course a été modifiée : elle vous sera reproposée si elle est encore disponible.",
+  DRIVER_BUSY_AT_TIME: "Créneau déjà pris : une autre course de ce chauffeur chevauche celle-ci.",
+  DRIVER_HAS_NETWORK_OBLIGATIONS:
+    "Ce chauffeur a une course ou un règlement en cours avec une organisation partenaire : archivez-le au lieu de le supprimer.",
+  PAYOUT_DETAILS_INVALID: "Coordonnées bancaires invalides : vérifiez le titulaire, l'IBAN et le BIC.",
+  PAYOUT_DETAILS_IN_USE: "Un versement vous est encore dû : modifiez vos coordonnées bancaires au lieu de les supprimer.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */
