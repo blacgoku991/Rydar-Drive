@@ -139,7 +139,8 @@ Rydar Drive prévient votre serveur à chaque changement de statut d'une course 
 
 ### Enregistrer une adresse
 
-- **Dashboard → Intégrations → Webhooks** (owner ou admin, offres avec l'API) : « Nouvelle adresse », choix des événements, puis le **secret de signature**, affiché **une seule fois** (bouton « Copier »). Pour chaque adresse : envoi de test, désactivation et réactivation, nouveau secret (l'ancien cesse aussitôt de signer), suppression. Les 20 derniers envois sont listés avec leur état, le code HTTP reçu, le nombre d'essais, le prochain essai et un bouton **« Renvoyer »**.
+- **Dashboard → Intégrations → Webhooks** (owner ou admin, offres avec l'API) : « Nouvelle adresse », choix des événements, puis le **secret de signature**, affiché **une seule fois** (bouton « Copier »). Pour chaque adresse : envoi de test, désactivation et réactivation, nouveau secret (l'ancien cesse aussitôt de signer), suppression. Les envois sont listés **adresse par adresse** : les 10 derniers de chaque adresse, plus ses envois en échec ou en attente d'un nouvel essai, même plus anciens (bouton **« Renvoyer »** toujours accessible), avec leur état, le code HTTP reçu, le nombre d'essais (l'essai réussi compris) et le prochain essai.
+- **Tests et renvois bornés** : un seul test (`ping`) en attente par adresse (`409 WEBHOOK_TEST_PENDING` tant qu'il n'est pas parti), et **10 tests et renvois par minute** au plus par centrale, dashboard et API confondus (`429 WEBHOOK_TEST_RATE_LIMITED`, avec `Retry-After`).
 - Ou par l'API, avec une clé qui a la permission `webhooks:manage` (voir [Gérer les webhooks par l'API](#gérer-les-webhooks-par-lapi)).
 - **10 adresses** au plus par organisation. Adresse acceptée : `https://` obligatoire, **publique** (ni `localhost`, ni adresse IP privée, réservée ou de lien local, ni nom de réseau local comme `.local` ou `.internal`), sans identifiants (`https://user:mot-de-passe@…` refusé), 500 caractères au plus. Les redirections ne sont **pas** suivies.
 
@@ -211,7 +212,7 @@ X-Rydar-Signature: v1=5d1c0f…e94a
 `X-Rydar-Signature` vaut `v1=` suivi du **HMAC-SHA256** (hexadécimal, minuscules) du texte `<X-Rydar-Timestamp>.<corps brut>`, avec le secret de l'adresse. Le serveur qui reçoit doit :
 
 1. lire le **corps brut**, avant tout `JSON.parse` (un JSON re-sérialisé ne donne pas la même signature) ;
-2. calculer la signature attendue et la comparer **en temps constant** ;
+2. vérifier le **format** de l'en-tête (`v1=` suivi de 64 caractères hexadécimaux) **avant** de comparer : en Node.js, `timingSafeEqual` lève une exception si les deux valeurs n'ont pas la même longueur en octets, et un en-tête forgé (caractère accentué, par exemple) suffirait à faire planter le serveur ; puis calculer la signature attendue et la comparer **en temps constant** ;
 3. refuser un `X-Rydar-Timestamp` à plus de **5 minutes** de son horloge (dans le passé comme dans le futur). L'horodatage est celui de **cet** essai : un envoi réessayé des heures plus tard porte un horodatage et une signature neufs ;
 4. répondre `401` si la vérification échoue, `2xx` sinon.
 
@@ -224,18 +225,24 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 const app = express();
 // Corps brut obligatoire : pas de express.json() sur cette route
 app.post("/api/rydar/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  const raw = req.body.toString("utf8");
-  const ts = req.get("X-Rydar-Timestamp") ?? "";
-  const sig = req.get("X-Rydar-Signature") ?? "";
-  const expected = "v1=" + createHmac("sha256", process.env.RYDAR_WEBHOOK_SECRET).update(`${ts}.${raw}`).digest("hex");
-  const fresh = /^\d+$/.test(ts) && Math.abs(Date.now() / 1000 - Number(ts)) <= 300;
-  const valid = sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-  if (!fresh || !valid) return res.sendStatus(401);
+  // Express 4 n'attrape pas les erreurs d'une fonction async : sans try/catch, une exception peut arrêter le processus
+  try {
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+    const ts = req.get("X-Rydar-Timestamp") ?? "";
+    const sig = req.get("X-Rydar-Signature") ?? "";
+    const expected = "v1=" + createHmac("sha256", process.env.RYDAR_WEBHOOK_SECRET).update(`${ts}.${raw}`).digest("hex");
+    const fresh = /^\d+$/.test(ts) && Math.abs(Date.now() / 1000 - Number(ts)) <= 300;
+    // Format contrôlé AVANT timingSafeEqual (exception si les longueurs en octets diffèrent)
+    const valid = /^v1=[0-9a-f]{64}$/.test(sig) && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+    if (!fresh || !valid) return res.sendStatus(401);
 
-  const event = JSON.parse(raw);
-  if (await alreadyProcessed(event.id)) return res.sendStatus(200); // doublon : déjà traité
-  await enqueue(event); // traitement asynchrone : répondre vite
-  res.sendStatus(204);
+    const event = JSON.parse(raw);
+    if (await alreadyProcessed(event.id)) return res.sendStatus(200); // doublon : déjà traité
+    await enqueue(event); // traitement asynchrone : répondre vite
+    res.sendStatus(204);
+  } catch {
+    res.sendStatus(500); // Rydar Drive réessaiera plus tard
+  }
 });
 ```
 
@@ -261,14 +268,16 @@ http_response_code(204);
 ### Nouveaux essais et désactivation
 
 - **Succès** = réponse `2xx` en moins de **10 secondes** (le corps de la réponse est ignoré). Tout le reste est un échec : délai dépassé, erreur réseau ou TLS, redirection `3xx`, `4xx`, `5xx`.
-- Après un échec, nouvel essai au bout de **1 min, 5 min, 15 min, 1 h, 3 h, 6 h, 12 h puis 24 h** : 9 essais en tout sur environ 46 heures. L'envoi passe ensuite « en échec » ; « Renvoyer » (dashboard) le remet en file, compteur à zéro.
-- **Désactivation automatique** : après 50 échecs consécutifs **et** aucun succès depuis 3 jours, l'adresse est désactivée (motif affiché dans le dashboard) et ses envois en attente passent en échec. Réactivez-la depuis le dashboard, ou renvoyez `POST /webhooks` avec la même adresse.
+- Après un échec, nouvel essai au bout de **1 min, 5 min, 15 min, 1 h, 3 h, 6 h, 12 h puis 24 h** : 9 essais en tout sur environ 46 heures. L'envoi passe ensuite « en échec » ; « Renvoyer » (dashboard) le remet en file, compteur à zéro. Un test (`ping`) n'est **jamais** réessayé : en échec dès le premier échec, un autre test est possible aussitôt.
+- **Désactivation automatique** : seulement après **au moins 50 échecs consécutifs ET aucun envoi réussi depuis 3 jours** ; pour une adresse qui n'a encore jamais réussi, ces 3 jours sont comptés depuis sa création (un serveur pas encore déployé ou un secret mal recopié laisse donc 3 jours pour corriger). L'adresse est alors désactivée (motif affiché dans le dashboard) et ses envois en attente passent en échec. Réactivez-la depuis le dashboard, ou renvoyez `POST /webhooks` avec la même adresse.
+- **Centrale suspendue ou archivée** : envois **en pause** (aucun nouvel événement enregistré ; les envois déjà en file y restent, repris à la réactivation). Une offre qui n'inclut plus l'API n'enregistre plus d'événement ; les envois déjà en file partent normalement.
 - Historique des envois : 30 jours (45 jours au plus pour un envoi resté en file).
 
 ### Ordre et doublons
 
 - **Au moins une fois** : un événement peut arriver deux fois (par exemple si votre serveur a répondu après les 10 secondes). Dédoublonnez sur `id`.
-- **Ordre non garanti** : nouveaux essais et envois en parallèle peuvent inverser deux événements. Ne faites jamais reculer une course : comparez `data.ride.updated_at` à la dernière valeur enregistrée et ignorez un état plus ancien. Comme `data.ride` est l'état le plus récent au moment de l'envoi, fiez-vous à `data.ride.status` plutôt qu'au seul type d'événement.
+- **Un seul envoi à la fois par adresse**, le plus ancien dû d'abord : les événements d'une adresse partent dans l'ordre où ils se sont produits, et une adresse lente ne retarde ni vos autres adresses ni les autres centrales.
+- **Ordre non garanti pour autant** : un envoi en échec attend son nouvel essai sans bloquer les suivants, qui peuvent donc arriver avant lui (de même pour « Renvoyer »). Ne faites jamais reculer une course : comparez `data.ride.updated_at` à la dernière valeur enregistrée et ignorez un état plus ancien. Comme `data.ride` est l'état le plus récent au moment de l'envoi, fiez-vous à `data.ride.status` plutôt qu'au seul type d'événement.
 - **Répondez vite** (`2xx`) et traitez ensuite (file, tâche de fond) : un traitement long fait échouer l'envoi et provoque des doublons.
 
 ### Sécurité
@@ -285,14 +294,14 @@ Permission `webhooks:manage` (jamais pour une clé « navigateur »). Mêmes aut
 | `GET /webhooks` | **200** `{ "data": [adresse…] }` |
 | `POST /webhooks` | **201** (nouvelle adresse) ou **200** (adresse déjà enregistrée) |
 | `DELETE /webhooks/{id}` | **204**, ou **404 `WEBHOOK_NOT_FOUND`** |
-| `POST /webhooks/{id}/test` | **202** `{ "data": { "delivery_id": "…" } }` : un `ping` part aussitôt ; **409 `WEBHOOK_DISABLED`** si l'adresse est désactivée |
+| `POST /webhooks/{id}/test` | **202** `{ "data": { "delivery_id": "…" } }` : un `ping` part aussitôt ; **409 `WEBHOOK_DISABLED`** si l'adresse est désactivée ; **409 `WEBHOOK_TEST_PENDING`** si un test de cette adresse attend encore son envoi ; **429 `WEBHOOK_TEST_RATE_LIMITED`** (+ `Retry-After`) au-delà de 10 tests et renvois par minute pour la centrale (toutes clés et dashboard confondus) |
 
 Corps de `POST /webhooks` (tout champ inconnu est refusé en 422, `organization_id` en 403) :
 
 | Champ | Détail |
 | --- | --- |
 | `url` | obligatoire, voir les règles plus haut (`WEBHOOK_INVALID_URL`) |
-| `description` | facultatif, 120 caractères au plus |
+| `description` | facultatif, 120 caractères au plus ; retours à la ligne, tabulations et caractères de contrôle remplacés par une espace |
 | `events` | facultatif : liste de types ; absent ou vide = tous (`WEBHOOK_INVALID_EVENTS` pour un type inconnu) |
 | `secret` | facultatif : 32 à 200 caractères `A-Z a-z 0-9 _ . -` (`WEBHOOK_INVALID_SECRET`). Absent : Rydar génère `whsec_…` et le renvoie **une seule fois** |
 
@@ -319,7 +328,7 @@ Réponse **201** :
 
 **Même adresse déjà enregistrée** : **200**, `"created": false`, `"secret": null`. La description et les événements sont remplacés, l'adresse est réactivée (compteur d'échecs remis à zéro) et le secret n'est changé que si `secret` est fourni. Un serveur peut donc s'enregistrer lui-même à chaque déploiement, avec son propre secret (tiré de sa configuration), sans que personne ne copie de secret : c'est ce que fait RYDAR Privé.
 
-Les erreurs suivent le format commun : `422 VALIDATION_ERROR` (champ inconnu, plusieurs champs invalides), `422 WEBHOOK_INVALID_URL` / `WEBHOOK_INVALID_EVENTS` / `WEBHOOK_INVALID_SECRET`, `409 WEBHOOK_LIMIT` (10 adresses), `404 WEBHOOK_NOT_FOUND`, `409 WEBHOOK_DISABLED`.
+Les erreurs suivent le format commun : `422 VALIDATION_ERROR` (champ inconnu, plusieurs champs invalides), `422 WEBHOOK_INVALID_URL` / `WEBHOOK_INVALID_EVENTS` / `WEBHOOK_INVALID_SECRET`, `409 WEBHOOK_LIMIT` (10 adresses), `404 WEBHOOK_NOT_FOUND`, `409 WEBHOOK_DISABLED`, `409 WEBHOOK_TEST_PENDING`, `429 WEBHOOK_TEST_RATE_LIMITED`.
 
 ## Mini-site de réservation (sans code)
 

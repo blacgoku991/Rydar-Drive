@@ -8,7 +8,7 @@ import { isAdminRole } from "@/lib/auth";
 import { serverEnv } from "@/lib/env";
 import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { UUID_RE, webhookRpc, type WebhookRpc } from "@/lib/webhooks";
+import { UUID_RE, webhookRpc, webhookTestRpc, type WebhookRpc } from "@/lib/webhooks";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -150,7 +150,12 @@ async function webhookCtx(needApi: boolean): Promise<{ ok: true; ctx: NonNullabl
 async function runWebhookRpc(fn: WebhookRpc, needApi: boolean, args: Record<string, unknown>): Promise<Result<{ data: Record<string, any> }>> {
   const c = await webhookCtx(needApi);
   if (!c.ok) return { ok: false, error: c.error };
-  const res = await webhookRpc(fn, c.ctx.org.id, { type: "user", id: c.ctx.user.id }, args);
+  const actor = { type: "user" as const, id: c.ctx.user.id };
+  // Tests et renvois : même plafond par centrale que l'API (10 par minute), revérifié en base
+  const res =
+    fn === "svc_webhook_ping" || fn === "svc_webhook_redeliver"
+      ? await webhookTestRpc(fn, c.ctx.org.id, actor, args)
+      : await webhookRpc(fn, c.ctx.org.id, actor, args);
   if (!res.ok) return { ok: false, error: res.message };
   revalidatePath("/dashboard/integrations");
   return { ok: true, data: res.data };
@@ -192,14 +197,17 @@ export async function rotateWebhookSecret(id: string): Promise<Result<{ secret: 
   return typeof secret === "string" && secret ? { ok: true, secret } : { ok: false, error: "Secret non renouvelé. Réessayez." };
 }
 
-/** Envoi de test (événement « ping ») : part dans les secondes qui suivent, résultat dans « Derniers envois ». */
+/**
+ * Envoi de test (événement « ping ») : part dans les secondes qui suivent, résultat dans « Derniers envois ». Refusé
+ * tant qu'un test de cette adresse attend son envoi, et au-delà de 10 tests et renvois par minute pour la centrale.
+ */
 export async function testWebhook(id: string): Promise<Result> {
   if (!UUID_RE.test(id)) return { ok: false, error: NOT_FOUND };
   const res = await runWebhookRpc("svc_webhook_ping", true, { p_id: id });
   return res.ok ? { ok: true } : res;
 }
 
-/** Renvoie un envoi livré ou en échec (nouvelle tentative immédiate, compteur remis à zéro). */
+/** Renvoie un envoi livré ou en échec (nouvelle tentative immédiate, compteur remis à zéro) ; même plafond que les tests. */
 export async function redeliverWebhook(deliveryId: string): Promise<Result> {
   if (!UUID_RE.test(deliveryId)) return { ok: false, error: ERROR_MESSAGES.WEBHOOK_DELIVERY_NOT_FOUND };
   const res = await runWebhookRpc("svc_webhook_redeliver", true, { p_delivery_id: deliveryId });

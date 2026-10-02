@@ -217,6 +217,17 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   GRANT par colonne d'`organizations`, invitations prouvées par e-mail (`accept_member_invitations`, `jwt_issued_after`,
   `users.super_admin_since`), comptes partagés intouchables, `runAction`, `safe-next`, `hostname`, `zoned-time`,
   `login-limits`, budget géo par consommateur (`lib/geo/budget.ts`), `verify-full` pour la base.
+- [x] **Webhooks sortants (10/2026, migrations 006000 puis 006100 durcissement)** : tables `webhook_endpoints` (10 par
+  centrale, RLS owner/admin), `webhook_endpoint_secrets` (service role SEUL), `webhook_deliveries` (sans charge utile) ;
+  triggers sur `rides` (`private.queue_ride_webhooks`) + `NOTIFY rydar_webhooks` ; worker `src/webhooks*`
+  (`private.claim_webhook_deliveries` : un envoi en cours par adresse, tour de rôle entre centrales, centrale suspendue
+  en pause ; `private.complete_webhook_delivery` : 9 essais, ping jamais réessayé, désactivation après ≥ 50 échecs ET
+  3 jours sans succès, comptés depuis la création si jamais réussi ; `private.purge_webhook_deliveries` 30/45 j ;
+  garde SSRF, signature HMAC) ; RPC service role `svc_webhook_upsert|delete|set_enabled|rotate_secret|ping|redeliver`
+  (acteur revérifié, audit_logs ; tests et renvois : `WEBHOOK_TEST_PENDING` 409, `WEBHOOK_TEST_RATE_LIMITED` 429,
+  10/min/centrale, aussi en Redis côté web) ; API v1 `/api/v1/webhooks` (permission `webhooks:manage`) ; Dashboard →
+  Intégrations (`components/dashboard-webhooks.tsx`, envois par adresse). `publicRide` (`@rydar/shared`) partagé API v1
+  / worker : toute colonne ajoutée va dans `PUBLIC_RIDE_SELECT` ET `private.webhook_ride_json`. Contrat : docs/API.md.
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
@@ -243,3 +254,6 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   annulées 6 h après l'heure, via private.housekeeping). 005800 : mailer private.report_mailer_status(jsonb) (table public.mailer_status, lecture super
   admin), private.release_emails(ids) (lot rendu sans essai compté), private.requeue_waiting_emails() (relance au retour
   du serveur mail et au démarrage).
+- Webhooks sortants (006000, 006100) : service role svc_webhook_upsert/delete/set_enabled/rotate_secret/ping/redeliver ;
+  worker private.claim_webhook_deliveries(n), private.complete_webhook_delivery(id, ok, code, erreur),
+  private.purge_webhook_deliveries() (toutes les heures) ; LISTEN rydar_webhooks.

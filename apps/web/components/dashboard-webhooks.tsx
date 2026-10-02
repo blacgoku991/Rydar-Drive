@@ -14,7 +14,7 @@ import {
 } from "@rydar/shared";
 import { Plus, RotateCcwKey, Send, ShieldAlert, Trash2, Webhook } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { Fragment, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   createWebhook,
@@ -30,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
+import { useNow } from "@/hooks/use-now";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
@@ -47,6 +48,7 @@ export type WebhookDeliveryRow = {
   last_status_code: number | null;
   last_error: string | null;
   delivered_at: string | null;
+  created_at: string;
 };
 
 const NB = String.fromCharCode(0xa0); // espace insécable (avant : ; ! ? et dans « »)
@@ -61,11 +63,19 @@ function hostOf(url: string | undefined) {
   }
 }
 
-/** « Succès il y a 3 min · Échec il y a 2 h » : la dernière erreur n'est montrée que si l'échec est le plus récent. */
-function health(e: WebhookEndpoint) {
+/** Tentatives d'envoi : `attempts` ne compte que les échecs (un succès ne le change pas), la réussie est ajoutée. */
+function deliveryTries(d: Pick<WebhookDeliveryRow, "attempts" | "status">): number {
+  return d.attempts + (d.status === "delivered" ? 1 : 0);
+}
+
+/**
+ * « Succès il y a 3 min · Échec il y a 2 h » : la dernière erreur n'est montrée que si l'échec est le plus récent.
+ * `now` : heure du rendu serveur, puis horloge du navigateur après le montage (aucun écart d'hydratation).
+ */
+function health(e: WebhookEndpoint, now: Date) {
   const parts: string[] = [];
-  if (e.last_success_at) parts.push(`Dernier succès ${formatRelative(e.last_success_at)}`);
-  if (e.last_failure_at) parts.push(`dernier échec ${formatRelative(e.last_failure_at)}`);
+  if (e.last_success_at) parts.push(`Dernier succès ${formatRelative(e.last_success_at, now)}`);
+  if (e.last_failure_at) parts.push(`dernier échec ${formatRelative(e.last_failure_at, now)}`);
   if (!parts.length) return { text: "Aucun envoi pour le moment", error: null };
   const failing = !!e.last_failure_at && (!e.last_success_at || Date.parse(e.last_failure_at) > Date.parse(e.last_success_at));
   const text = parts.join(" · ");
@@ -74,18 +84,22 @@ function health(e: WebhookEndpoint) {
 
 /**
  * Webhooks de la centrale (owner / admin) : `canManage` = l'offre inclut l'API (ajout, réactivation, test, nouvel
- * envoi) ; désactiver, supprimer ou changer le secret reste toujours possible.
+ * envoi) ; désactiver, supprimer ou changer le secret reste toujours possible. `deliveries` : derniers envois de
+ * CHAQUE adresse, plus ses échecs et nouveaux essais plus anciens (« Renvoyer » toujours accessible), affichés adresse
+ * par adresse. `serverNow` : heure du rendu serveur (temps relatifs identiques au serveur et à l'hydratation).
  */
 export function WebhooksPanel({
   endpoints,
   deliveries,
   canManage,
   timezone,
+  serverNow,
 }: {
   endpoints: WebhookEndpoint[];
   deliveries: WebhookDeliveryRow[];
   canManage: boolean;
   timezone: string;
+  serverNow: number;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -99,6 +113,22 @@ export function WebhooksPanel({
   const full = endpoints.length >= WEBHOOK_MAX_ENDPOINTS;
   const urls = new Map(endpoints.map((e) => [e.id, e.url]));
   const loading = (key: string) => pending && busy === key;
+  const now = new Date(useNow(30_000) ?? serverNow);
+  /** Envois regroupés par adresse (dans l'ordre des adresses), du plus récent au plus ancien. */
+  const groups = useMemo(() => {
+    const byEndpoint = new Map<string, WebhookDeliveryRow[]>();
+    for (const d of deliveries) {
+      const rows = byEndpoint.get(d.endpoint_id);
+      if (rows) rows.push(d);
+      else byEndpoint.set(d.endpoint_id, [d]);
+    }
+    return endpoints
+      .map((endpoint) => ({
+        endpoint,
+        rows: [...(byEndpoint.get(endpoint.id) ?? [])].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)),
+      }))
+      .filter((g) => g.rows.length > 0);
+  }, [endpoints, deliveries]);
 
   /** Action serveur : bouton concerné en chargement ; `fn` renvoie un message d'erreur (toast) ou rien (page rafraîchie). */
   function run(key: string, fn: () => Promise<string | void>) {
@@ -146,6 +176,58 @@ export function WebhooksPanel({
 
   const toggleEvent = (ev: WebhookEvent) => setEvents((cur) => (cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]));
 
+  function renderDelivery(d: WebhookDeliveryRow) {
+    const meta = WEBHOOK_DELIVERY_STATUS_META[d.status] ?? { label: d.status, tone: "neutral" as const };
+    const retry = d.status === "delivered" || d.status === "failed";
+    const tries = deliveryTries(d);
+    return (
+      <div key={d.id} className="px-4 py-2.5 text-[12.5px]">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <span className="num w-32 shrink-0 text-fg-subtle">{formatRideDate(d.occurred_at, timezone)}</span>
+          <div className="min-w-[180px] flex-1">
+            <p className="text-fg">
+              {webhookEventLabel(d.event_type)}
+              {d.ride_number != null && <span className="text-fg-muted"> · course n°&nbsp;{d.ride_number}</span>}
+            </p>
+            <p className="mono truncate text-[11.5px] text-fg-subtle">{d.event_type}</p>
+          </div>
+          <Badge tone={meta.tone}>{meta.label}</Badge>
+          <span className="num w-12 text-right text-fg-muted" title="Code HTTP de la dernière réponse">
+            {d.last_status_code ?? "—"}
+          </span>
+          <span className="num w-20 text-right text-fg-muted" title="Tentatives d'envoi, réussie comprise">
+            {tries}&nbsp;essai{tries > 1 ? "s" : ""}
+          </span>
+          <div className="flex w-40 justify-end text-right text-fg-muted">
+            {d.status === "pending" ? (
+              d.attempts > 0 ? `Nouvel essai ${formatRelative(d.next_attempt_at, now)}` : "En file d'envoi"
+            ) : d.status === "sending" ? (
+              "Envoi en cours"
+            ) : retry && canManage && urls.has(d.endpoint_id) ? (
+              <Button
+                variant="outline"
+                size="xs"
+                loading={loading(`redeliver:${d.id}`)}
+                onClick={() =>
+                  run(`redeliver:${d.id}`, async () => {
+                    const res = await redeliverWebhook(d.id);
+                    if (!res.ok) return res.error;
+                    toast.success("Nouvel envoi programmé");
+                  })
+                }
+              >
+                Renvoyer
+              </Button>
+            ) : d.delivered_at ? (
+              formatRelative(d.delivered_at, now)
+            ) : null}
+          </div>
+        </div>
+        {d.last_error && d.status !== "delivered" && <p className="mono mt-1 truncate text-[11.5px] text-fg-muted">{d.last_error}</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -176,7 +258,7 @@ export function WebhooksPanel({
           </div>
         )}
         {endpoints.map((e) => {
-          const h = health(e);
+          const h = health(e, now);
           return (
             <div key={e.id} className="flex flex-wrap items-start gap-4 px-4 py-3.5">
               <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.02]">
@@ -250,63 +332,26 @@ export function WebhooksPanel({
       </div>
 
       <div className="space-y-2">
-        <p className="text-[12.5px] font-medium text-fg-muted">Derniers envois</p>
+        <p className="text-[12.5px] font-medium text-fg-muted">
+          Derniers envois <span className="font-normal text-fg-subtle">· par adresse, échecs plus anciens compris</span>
+        </p>
         <div className="divide-y divide-line/70 rounded-xl border border-line">
-          {deliveries.length === 0 && (
+          {groups.length === 0 && (
             <p className="px-4 py-5 text-[13px] text-fg-subtle">
               Aucun envoi pour le moment. Le bouton d&apos;essai envoie un événement «&nbsp;ping&nbsp;» à l&apos;adresse choisie.
             </p>
           )}
-          {deliveries.map((d) => {
-            const meta = WEBHOOK_DELIVERY_STATUS_META[d.status] ?? { label: d.status, tone: "neutral" as const };
-            const retry = d.status === "delivered" || d.status === "failed";
+          {groups.map(({ endpoint, rows }) => {
+            const failed = rows.filter((d) => d.status === "failed").length;
             return (
-              <div key={d.id} className="px-4 py-2.5 text-[12.5px]">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                  <span className="num w-32 shrink-0 text-fg-subtle">{formatRideDate(d.occurred_at, timezone)}</span>
-                  <div className="min-w-[180px] flex-1">
-                    <p className="text-fg">
-                      {webhookEventLabel(d.event_type)}
-                      {d.ride_number != null && <span className="text-fg-muted"> · course n°&nbsp;{d.ride_number}</span>}
-                    </p>
-                    <p className="mono truncate text-[11.5px] text-fg-subtle">
-                      {d.event_type} → {hostOf(urls.get(d.endpoint_id))}
-                    </p>
-                  </div>
-                  <Badge tone={meta.tone}>{meta.label}</Badge>
-                  <span className="num w-12 text-right text-fg-muted" title="Code HTTP de la dernière réponse">
-                    {d.last_status_code ?? "—"}
-                  </span>
-                  <span className="num w-20 text-right text-fg-muted">
-                    {d.attempts}&nbsp;essai{d.attempts > 1 ? "s" : ""}
-                  </span>
-                  <div className="flex w-40 justify-end text-right text-fg-muted">
-                    {d.status === "pending" ? (
-                      d.attempts > 0 ? `Nouvel essai ${formatRelative(d.next_attempt_at)}` : "En file d'envoi"
-                    ) : d.status === "sending" ? (
-                      "Envoi en cours"
-                    ) : retry && canManage && urls.has(d.endpoint_id) ? (
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        loading={loading(`redeliver:${d.id}`)}
-                        onClick={() =>
-                          run(`redeliver:${d.id}`, async () => {
-                            const res = await redeliverWebhook(d.id);
-                            if (!res.ok) return res.error;
-                            toast.success("Nouvel envoi programmé");
-                          })
-                        }
-                      >
-                        Renvoyer
-                      </Button>
-                    ) : d.delivered_at ? (
-                      formatRelative(d.delivered_at)
-                    ) : null}
-                  </div>
+              <Fragment key={endpoint.id}>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-white/[0.02] px-4 py-2 text-[12px]">
+                  <Webhook className={cn("size-3.5 shrink-0", endpoint.enabled ? "text-brand" : "text-fg-subtle")} />
+                  <span className="mono min-w-0 flex-1 truncate text-fg">{hostOf(endpoint.url)}</span>
+                  {failed > 0 && <span className="text-red">{failed}&nbsp;en échec</span>}
                 </div>
-                {d.last_error && d.status !== "delivered" && <p className="mono mt-1 truncate text-[11.5px] text-fg-muted">{d.last_error}</p>}
-              </div>
+                {rows.map((d) => renderDelivery(d))}
+              </Fragment>
             );
           })}
         </div>
