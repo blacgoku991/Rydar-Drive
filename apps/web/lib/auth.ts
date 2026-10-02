@@ -3,6 +3,7 @@ import type { DispatchModel, OrgRole } from "@rydar/shared";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import { jwtSub } from "@/lib/supabase/jwt";
 import { createClient } from "@/lib/supabase/server";
 
 export const ORG_COOKIE = "rd_org";
@@ -21,22 +22,43 @@ export type OrgSummary = {
 
 export type SessionContext = Awaited<ReturnType<typeof loadSession>>;
 
-async function loadSession() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+/** Client Supabase de la requête (session de l'utilisateur, RLS) : partagé par la session et le contrôle Super Admin. */
+const requestClient = cache(createClient);
 
-  const [{ data: profile, error: profileError }, { data: memberships, error: membershipsError }, { data: driver }] = await Promise.all([
-    supabase.from("users").select("id, email, full_name, avatar_url, is_super_admin, last_active_org_id").eq("id", user.id).maybeSingle(),
+async function loadSession() {
+  const supabase = await requestClient();
+  // Utilisateur annoncé par le cookie de session (déjà rafraîchi par le proxy ; aucun appel réseau sinon) : les lectures
+  // de session partent EN MÊME TEMPS que getUser() au lieu d'attendre sa réponse (un aller-retour Auth de moins).
+  // getUser() reste le contrôle qui fait foi (session révoquée, compte supprimé) : rien n'est renvoyé s'il échoue ou
+  // désigne un autre compte. Les lectures sont faites sous RLS avec le même jeton (signature vérifiée par PostgREST).
+  // Ce parallélisme suppose le client serveur d'auth-js sans verrou (lock nul par défaut) : passer un `lock` au client
+  // remettrait les lectures en série, sans erreur visible.
+  const {
+    data: { session: cookieSession },
+  } = await supabase.auth.getSession();
+  const sub = jwtSub(cookieSession?.access_token);
+  if (!sub) return null;
+
+  const [
+    {
+      data: { user },
+    },
+    { data: profile, error: profileError },
+    { data: memberships, error: membershipsError },
+    { data: driver },
+  ] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.from("users").select("id, email, full_name, avatar_url, is_super_admin, last_active_org_id").eq("id", sub).maybeSingle(),
     supabase
       .from("organization_users")
       .select("organization_id, role, organization:organizations(id, name, slug, status, logo_url, timezone, plan_id, dispatch_model)")
-      .eq("user_id", user.id)
+      .eq("user_id", sub)
       .eq("status", "active"),
-    supabase.from("drivers").select("id, first_name").eq("user_id", user.id).maybeSingle(),
+    supabase.from("drivers").select("id, first_name").eq("user_id", sub).maybeSingle(),
   ]);
+  // Contrôle qui fait foi AVANT toute autre décision : jeton falsifié, expiré ou session révoquée → /login (et non la
+  // page d'erreur que donnerait le refus des lectures par PostgREST)
+  if (!user || user.id !== sub) return null;
   // Base ou API injoignable : page d'erreur (« Réessayer »), jamais « Aucun espace associé » ni perte du rôle super admin
   if (profileError || membershipsError) {
     throw new Error(`Session illisible : ${(profileError ?? membershipsError)!.message}`);
@@ -69,20 +91,22 @@ export async function requireUser() {
  * promotion l'ouvre, jamais celui d'un tiers qui aurait créé le compte avec cette adresse (valable jusqu'à 1 h).
  */
 const superAdminToken = cache(async () => {
-  const session = await getSession();
-  if (!session) return false;
-  const { data, error } = await session.supabase.rpc("session_is_super_admin");
+  const { data, error } = await (await requestClient()).rpc("session_is_super_admin");
   if (error) throw new Error(`Contrôle du rôle Super Admin impossible : ${error.message}`);
   return data === true;
 });
 
 export async function requireSuperAdmin() {
+  // Lancé en même temps que la session (même jeton, contrôlé en base) ; son résultat n'est lu qu'après getUser() et
+  // la vérification du rôle ci-dessous
+  const token = superAdminToken();
+  token.catch(() => undefined); // redirection avant lecture : pas de rejet non géré
   const session = await requireUser();
   if (!session.profile.is_super_admin) redirect("/dashboard");
   // Même règle que la base : jeton antérieur à la promotion → page sans espace (bouton « Se déconnecter », puis
   // reconnexion). Pas /login ni /dashboard : le proxy renvoie une session valide de /login vers /dashboard, qui
   // renvoie un Super Admin sans centrale vers /admin (boucle).
-  if (!(await superAdminToken())) redirect("/no-access");
+  if (!(await token)) redirect("/no-access");
   return session;
 }
 

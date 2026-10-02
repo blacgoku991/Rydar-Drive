@@ -27,7 +27,8 @@ export function useMapLibre({
     (async () => {
       const lib = await import("maplibre-gl");
       if (disposed || !containerRef.current) return;
-      lib.setWorkerUrl("/vendor/maplibre/maplibre-gl-worker.mjs");
+      // Copie versionnée (scripts/copy-maplibre.mjs), gardée un an par le navigateur (next.config.ts)
+      lib.setWorkerUrl(`/vendor/maplibre/${lib.getVersion()}/maplibre-gl-worker.mjs`);
       libRef.current = lib;
       const map = new lib.Map({
         container: containerRef.current,

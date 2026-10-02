@@ -2,6 +2,7 @@ import type { SettlementMethod } from "@rydar/shared";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
 import { TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
+import { loadChatCounts } from "@/app/dashboard/messages/queries";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { LEGAL_VERSION } from "@/lib/legal";
@@ -11,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const ctx = await requireOrg();
   const centrale = ctx.org.dispatch_model === "centrale";
   const admin = isAdminRole(ctx.role);
-  const [{ count }, { data: chat }, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees] = await Promise.all([
+  const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees] = await Promise.all([
     ctx.supabase
       .from("rides")
       .select("id", { count: "exact", head: true })
@@ -19,7 +20,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       .eq("status", "NO_DRIVER_FOUND")
       .gte("pickup_at", new Date(Date.now() - 6 * 3600_000).toISOString()),
     // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus, et messages signalés à traiter
-    ctx.supabase.rpc("chat_overview", { p_org: ctx.org.id }),
+    // (comptages seuls : la liste des fils n'est lue que par la page Messages)
+    loadChatCounts(ctx.supabase, ctx.org.id),
     // Compteur « Chauffeurs » : documents déposés à valider (candidats exclus, comme la page Chauffeurs)
     countPendingDocuments(ctx.supabase, ctx.org.id),
     // « Réseau » (centrale) / « Inscriptions » (flotte) : candidatures en attente ; mode centrale : « Encaissements »
@@ -75,8 +77,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       orgs={ctx.memberships.map((m) => ({ id: m.org.id, name: m.org.name, role: m.role }))}
       user={{ id: ctx.user.id, name: ctx.profile.full_name ?? ctx.profile.email, email: ctx.profile.email }}
       alerts={count ?? 0}
-      unreadMessages={Number((chat as { unread_total?: number } | null)?.unread_total ?? 0)}
-      openReports={Number((chat as { open_reports?: number } | null)?.open_reports ?? 0)}
+      unreadMessages={chat?.unread ?? 0}
+      openReports={chat?.openReports ?? 0}
       pendingDocuments={pendingDocs ?? 0}
       centrale={{
         model: ctx.org.dispatch_model ?? "fleet",

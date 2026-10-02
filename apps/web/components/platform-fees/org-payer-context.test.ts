@@ -11,6 +11,7 @@ vi.mock("next/headers", () => ({
   cookies: async () => ({ get: (name: string) => (name === "rd_org" && h.cookie ? { value: h.cookie } : undefined) }),
 }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
+vi.mock("@/lib/supabase/jwt", async () => await import("../../lib/supabase/jwt"));
 vi.mock("@/lib/auth", async () => ({ ...(await import("../../lib/auth")), getSession: async () => h.session }));
 
 const { getPayerContext } = await import("./org-payer-context");

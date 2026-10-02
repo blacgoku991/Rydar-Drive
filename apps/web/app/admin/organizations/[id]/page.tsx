@@ -46,30 +46,41 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const session = await requireSuperAdmin();
   const db = session.supabase;
-  // Colonnes réservées au serveur (motif de suspension, limites, relance Rydar : GRANT par colonne, 20260924004300) :
-  // lecture seule par le client admin, après requireSuperAdmin
-  const { data: org } = await createAdminClient().from("organizations").select("*").eq("id", id).maybeSingle();
-  if (!org) notFound();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const [kpis, plans, subscription, drivers, errors, notifications, members, keys, applications, banned, platform] = await Promise.all([
+  // Membres puis état de connexion de leurs comptes (Auth, service role) : enchaînés DANS le Promise.all, en parallèle
+  // des autres lectures. Promise.resolve : une seule requête (chaque .then d'une requête PostgREST la relancerait).
+  const membersP = Promise.resolve(
+    db
+      .from("organization_users")
+      .select("id, user_id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)")
+      .eq("organization_id", id),
+  );
+  const memberLocksP = membersP.then((r) =>
+    memberLoginLocks([...new Set(((r.data ?? []) as { user_id: string | null }[]).map((m) => m.user_id as string).filter(Boolean))]),
+  );
+  const [{ data: org }, kpis, plans, subscription, drivers, errors, notifications, members, locks, keys, applications, banned, platform] = await Promise.all([
+    // Colonnes réservées au serveur (motif de suspension, limites, relance Rydar : GRANT par colonne, 20260924004300) :
+    // lecture seule par le client admin, après requireSuperAdmin
+    createAdminClient().from("organizations").select("*").eq("id", id).maybeSingle(),
     db.rpc("org_kpis", { p_org: id }),
     db.from("plans").select("id, name, limits").order("sort_order"),
     db.from("subscriptions").select("*").eq("organization_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     db.from("drivers").select("id, first_name, last_name, number, presence, status, location:driver_locations(updated_at)").eq("organization_id", id).neq("presence", "offline").order("number"),
     db.from("ride_events").select("id, level, message, created_at").eq("organization_id", id).in("level", ["warning", "error"]).gte("created_at", since).order("id", { ascending: false }).limit(20),
     db.from("notifications").select("id, type, title, status, last_error, created_at").eq("organization_id", id).order("created_at", { ascending: false }).limit(12),
-    db.from("organization_users").select("id, user_id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)").eq("organization_id", id),
+    membersP,
+    memberLocksP,
     db.from("api_keys").select("id", { count: "exact", head: true }).eq("organization_id", id).is("revoked_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("application_status", "pending").is("banned_at", null).is("deleted_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).not("banned_at", "is", null),
     // Frais plateforme dus à Rydar (centrale, flotte avec des frais par course, ou historique)
     db.rpc("admin_platform_account", { p_org: id }),
   ]);
+  if (!org) notFound();
   const k = (kpis.data ?? {}) as any;
   const status = org.status as OrgStatus;
   const model = (org.dispatch_model ?? "fleet") as DispatchModel;
   const memberRows = (members.data ?? []) as any[];
-  const locks = await memberLoginLocks([...new Set(memberRows.map((m) => m.user_id as string).filter(Boolean))]);
   const accessMembers = memberRows.map(
     ({ user_id, ...m }) =>
       ({

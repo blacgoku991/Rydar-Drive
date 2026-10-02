@@ -62,6 +62,10 @@ services:
       # Le site n'envoie rien lui-même : il met les e-mails en file (public.email_outbox), le service mailer les envoie
       CONTACT_NOTIFY_EMAIL: ${CONTACT_NOTIFY_EMAIL:-}
       WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-}
+      # Connexions inactives gardées par Next 130 s (5 s par défaut), plus longtemps que par Caddy (2 min) : c'est
+      # toujours Caddy qui ferme le premier, jamais de 502 sur une action (POST) envoyée sur une connexion que Node
+      # était en train de fermer
+      KEEP_ALIVE_TIMEOUT: "130000"
     depends_on:
       - redis
 

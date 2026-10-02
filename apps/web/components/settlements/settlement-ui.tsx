@@ -3,7 +3,7 @@
 // et les décisions de la centrale — Reçu / Versé, Pas reçu, Annuler la dette, Rouvrir, Relancer.
 // Utilisés par la page Encaissements, la fiche course, le panneau du command center et les alertes.
 import {
-  SETTLEMENT_METHOD_META, SETTLEMENT_STATUS_META, formatPrice, settlementPaymentLink, settlementRequestMessage, settlementStatusLabel,
+  SETTLEMENT_METHOD_META, SETTLEMENT_STATUS_META, dateTimeFormat, formatPrice, settlementPaymentLink, settlementRequestMessage, settlementStatusLabel,
   whatsappLink, type Settlement, type SettlementMethod, type Tone,
 } from "@rydar/shared";
 import {
@@ -63,7 +63,7 @@ export function parseDriverLabel(label: string | null | undefined) {
 
 /** Référence d'un règlement groupé, identique à l'app chauffeur (driver_settlements) : « CH12-2509 ». */
 export function batchReference(driverNumber: number, timeZone: string, now = new Date()) {
-  const parts = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", timeZone }).formatToParts(now);
+  const parts = dateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", timeZone }).formatToParts(now);
   const v = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
   return `CH${driverNumber}-${v("day")}${v("month")}`;
 }

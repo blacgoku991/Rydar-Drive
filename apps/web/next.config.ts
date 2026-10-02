@@ -55,6 +55,12 @@ const nextConfig: NextConfig = {
         headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
       },
       {
+        // Worker MapLibre, copié sous un chemin versionné (scripts/copy-maplibre.mjs) : gardé un an par le navigateur,
+        // au lieu de deux revalidations l'une après l'autre (worker puis module partagé) à chaque carte ouverte
+        source: "/vendor/maplibre/:version(\\d+\\.\\d+\\.\\d+[^/]*)/:file*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+      {
         source: "/((?!book|embed).*)",
         headers: [...baseHeaders, { key: "X-Frame-Options", value: "DENY" }, { key: "Content-Security-Policy", value: csp("'none'") }],
       },

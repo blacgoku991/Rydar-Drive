@@ -22,9 +22,17 @@ Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `202
 la file si le serveur mail est injoignable, relance à son retour), `20260924005900` clôture des planifiées jamais
 démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse,
 `20260924006200` interrupteur plateforme des mini-sites (coupés), `20260924006300` lien d'inscription des chauffeurs
-pour les flottes, `20260924006400` frais Rydar des flottes.
+pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` index de performance + `chat_counts`.
 
 ## Depuis l'audit
+- **Lenteur (« le site est lent ») — volet serveur** : plus de rafale de préchargements à chaque page (26 → 1 requête
+  Next au chargement de `/dashboard`), proxy : ES256 vérifié sur place (production, inchangé), jeton HS256 vérifié par
+  Auth seulement si le JWKS publie une clé asymétrique, lectures de session en parallèle de `getUser()` (qui reste le
+  contrôle à chaque rendu ; gain en production : un aller-retour Auth de moins par rendu, deux sur `/admin`), cascades
+  supprimées (fiche course, liste centrale, fiche admin), compteur Messages léger (`chat_counts`), 3 index (migration
+  006500), IPv4 d'abord vers Supabase, worker de carte en cache, keep-alive Next au-dessus de celui de Caddy. Détail :
+  HISTORIQUE.md. Côté VPS (à faire par l'utilisateur, contrôles en lecture seule d'abord) : services Supabase
+  inutilisés (Studio, meta, imgproxy, functions, analytics), OSRM local, journal d'accès Caddy avec durées.
 - **Frais Rydar aussi pour les flottes** (propriétaire : « un abonnement de 49,99 € et 2 € de commission sur chaque
   course ») : le super admin règle % et / ou € par course pour une flotte comme pour une centrale (fiche du rattacheur,
   création). Dus par la flotte dès la fin de chaque course ; sans prix, seuls les frais fixes ; taux figés à la fin de
@@ -45,6 +53,29 @@ pour les flottes, `20260924006400` frais Rydar des flottes.
   l'avertissement du super admin) ; (2) `/tarifs` et `pricing.tsx` ne parlent encore de frais par course que pour les
   centrales ; (3) modèle WhatsApp neutre à faire approuver (WHATSAPP.md). Ensuite seulement : régler les frais de chaque
   flotte (ex. 2 €) — seules les courses terminées après le réglage sont facturées.
+- **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour
+  de l'app)** : centre de commande « En direct » : positions GPS regroupées (au plus un rendu par seconde, rien onglet
+  caché), carte mise à jour seulement pour ce qui change (tracés et rayon redessinés si une position utile ou la course
+  change, une seule boucle d'animation, aucune réécriture sous le demi-pixel), courses ACCEPTÉES pour plus tard (> 2 h)
+  ni épinglées ni reliées au chauffeur (fin de la « toile d'araignée » ; visibles une fois sélectionnées), horloge de
+  l'écran à 15 s (heure, compte à rebours des vagues et « vu il y a » restent à la seconde dans de petits composants),
+  lignes mémorisées, indicateurs relus seulement sur changement de statut / prix / horaire / présence (2 s au plus),
+  instantané relu à la reconnexion du canal, au retour sur l'onglet et toutes les 2 min (au lieu de 45 s ; repli sans
+  temps réel 6 → 18 → 30 s, en pause onglet caché), tracés des courses hors instantané (chargés à la sélection,
+  `GET /api/dashboard/rides/[id]?route=1`, sauf client à bord). Formateurs Intl mémorisés (`@rydar/shared`). Fiche
+  course, fiche chauffeur, Réseau, Encaissements : `useLiveSync` (aucun rafraîchissement onglet caché, un seul au
+  retour ; repli seulement « hors ligne », délai croissant) ; liens de la barre latérale sans préchargement.
+  Encaissements : une seule ligne par règlement (même balisage carte / tableau), 100 lignes + « Afficher plus », liste
+  « à traiter » complète envoyée en version compacte (compteurs, WhatsApp), relecture à l'échéance d'une commission au
+  lieu de toutes les 2 min. Chauffeurs : tableau client alimenté par des lignes compactes. Console super admin : horloge
+  15 s, âges à la seconde. Mesures A/B : voir HISTORIQUE (« Volet navigateur »).
+  Après revue : fiche d'une course non close relue au plus toutes les 30 s sans temps réel (60 s sinon) ;
+  Encaissements relus toutes les 5 min même en temps réel (diffusion perdue) ; ligne cochée sortie des 100 premières
+  après une relecture gardée cochée (bloc « Sélection conservée ») tant qu'elle reste ouverte et inchangée ; course en
+  alerte ouverte épinglée même au-delà de 2 h ; liens des fiches course et Encaissements sans préchargement (il
+  repartait à chaque relecture). **À vérifier en production avant fusion** : le témoin « temps réel » du centre de
+  commande doit être vert (sinon les écrans vivent sur le repli, plus espacé qu'avant). **À la fusion des volets** : si
+  un `app/dashboard/loading.tsx` arrive, rendre leur préchargement aux liens de la barre latérale.
 - **Mini-sites coupés pour toute la plateforme (demande du propriétaire, migration 006200)** : jusqu'à réactivation par
   le super admin (Offres & limites, carte « Mini-sites de réservation », confirmation, journal d'audit). Coupé : menu
   « Mini-site » masqué, éditeur remplacé par « Les mini-sites de réservation sont momentanément désactivés par Rydar. »,

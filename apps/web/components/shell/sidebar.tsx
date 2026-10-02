@@ -58,7 +58,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between pl-5 pr-3">
-        <Link href={sections[0]?.items[0]?.href ?? "/"} onClick={onNavigate} title={subtitle}>
+        <Link href={sections[0]?.items[0]?.href ?? "/"} prefetch={false} onClick={onNavigate} title={subtitle}>
           <Logo size={24} />
         </Link>
         {headerAction}
@@ -100,8 +100,12 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
                 const active = item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <li key={item.href}>
+                    {/* Sans préchargement : chaque lien visible relançait le rendu (et l'authentification) de sa page.
+                        Si un app/dashboard/loading.tsx est ajouté, revenir au préchargement par défaut (squelette
+                        instantané). */}
                     <Link
                       href={item.href}
+                      prefetch={false}
                       onClick={onNavigate}
                       className={cn(
                         "group relative flex h-8 items-center gap-2.5 rounded-lg px-3 text-[13.5px] transition-colors",

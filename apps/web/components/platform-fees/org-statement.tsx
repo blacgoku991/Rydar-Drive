@@ -75,7 +75,7 @@ function RideCell({ e, currency }: { e: PlatformEntry; currency: string }) {
   return (
     <div className="min-w-0">
       <p className="flex items-baseline gap-2 text-[13px]">
-        <Link href={`/dashboard/rides/${r.id}`} className="mono font-semibold text-fg hover:text-brand">
+        <Link href={`/dashboard/rides/${r.id}`} prefetch={false} className="mono font-semibold text-fg hover:text-brand">
           #{r.number}
         </Link>
         <span className="mono text-fg">{formatPrice(r.price_cents, currency)}</span>
