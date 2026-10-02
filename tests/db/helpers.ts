@@ -61,6 +61,14 @@ export async function createAuthUser(email: string, fullName: string): Promise<s
   return id;
 }
 
+/**
+ * Interrupteur plateforme des mini-sites (migration 20260924006200 : coupé). Un fichier qui l'allume le recoupe dans
+ * son afterAll : chaque fichier démarre avec l'état laissé par les migrations.
+ */
+export async function setBookingSitesEnabled(enabled: boolean) {
+  await sql("update public.platform_settings set booking_sites_enabled = $1 where id", [enabled]);
+}
+
 let planId: string | undefined;
 export async function unlimitedPlan(): Promise<string> {
   if (planId) return planId;

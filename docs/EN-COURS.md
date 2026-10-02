@@ -20,9 +20,16 @@ Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal 
 visite médicale, 005300 jetons d'activation, 005400 contre-audit SQL, 005500 dette avant suppression, 005600 offres.
 Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `20260924005800` état du mailer (pause de
 la file si le serveur mail est injoignable, relance à son retour), `20260924005900` clôture des planifiées jamais
-démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse.
+démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse,
+`20260924006200` interrupteur plateforme des mini-sites (coupés).
 
 ## Depuis l'audit
+- **Mini-sites coupés pour toute la plateforme (demande du propriétaire, migration 006200)** : jusqu'à réactivation par
+  le super admin (Offres & limites, carte « Mini-sites de réservation », confirmation, journal d'audit). Coupé : menu
+  « Mini-site » masqué, éditeur remplacé par « Les mini-sites de réservation sont momentanément désactivés par Rydar. »,
+  `/book/{slug}`, sous-domaines, domaines personnalisés, devis et réservations refusés (web ET base :
+  `BOOKING_SITES_DISABLED`), aucun nouveau certificat. Réglages de chaque centrale conservés (rien n'est réécrit). API v1,
+  dashboard, app chauffeur, RYDAR Privé inchangés. Serveur (migration + web), pas de mise à jour de l'app.
 - **Webhooks sortants (en cours : fusion, revue adverse, bout en bout avec RYDAR Privé)** : à chaque changement de
   statut d'une course, POST JSON signé (HMAC-SHA256) vers les adresses https de la centrale (offre avec l'API) ; gestion
   par Dashboard → Intégrations et `/api/v1/webhooks` ; envoi par le worker (garde SSRF, 9 essais sur ~46 h, un envoi en

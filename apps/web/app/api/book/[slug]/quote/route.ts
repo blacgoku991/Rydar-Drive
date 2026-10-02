@@ -1,6 +1,7 @@
 import { estimatePrice, matchFixedFare, vehicleCategorySchema, type PricingRule } from "@rydar/shared";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { coordinateProblem, orgAnchor } from "@/lib/geo/anchor";
 import { computeRoute } from "@/lib/geo/routing";
 import { rateLimitAll } from "@/lib/rate-limit";
@@ -25,6 +26,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     { key: `bookquote:day:${ip}`, limit: 600, windowSec: 86_400 },
   ]);
   if (!limit.ok) return NextResponse.json({ error: "Trop de requêtes" }, { status: 429 });
+  // Mini-sites coupés par la plateforme (super admin) : aucun devis
+  if (!(await bookingSitesEnabled())) return NextResponse.json({ error: "Indisponible" }, { status: 404 });
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Requête invalide" }, { status: 422 });
   const v = parsed.data;

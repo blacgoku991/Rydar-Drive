@@ -99,6 +99,14 @@ Architecture cible :
 | `DRIVER_APP_ORIGINS` | (optionnel) origines autorisées à appeler les routes de l'app chauffeur (`/api/auth/driver-login`, `/api/auth/driver-password-reset…`) depuis un navigateur |
 | `CONTACT_NOTIFY_EMAIL` | (optionnel) destinataire des demandes du formulaire de contact ; vide = e-mail de `/admin/legal`, puis `LEGAL_EMAIL`. Le site met les e-mails en file, le service `mailer` les envoie (§ 3, « E-mails : formulaire de contact ») |
 
+### Mini-sites : interrupteur de la plateforme
+
+Depuis la migration 006200, les mini-sites sont **coupés pour toutes les centrales et flottes** : menu « Mini-site »
+masqué, `/book/{slug}` en 404, sous-domaines et domaines personnalisés non servis, aucun nouveau certificat
+(`/api/tls/allowed`), devis et réservations refusés (la base aussi : `BOOKING_SITES_DISABLED`). Les réglages de
+chaque centrale sont conservés. Réactivation (et nouvelle coupure) : Super admin → **Offres & limites**, carte
+« Mini-sites de réservation » (journal d'audit). Le tableau de bord, l'API v1 et l'app chauffeur ne sont pas concernés.
+
 ### Mini-sites : sous-domaines réservés
 
 Depuis la migration 004900, les noms de la plateforme (`admin`, `support`, `api`, `www`…, tout nom commençant par

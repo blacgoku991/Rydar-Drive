@@ -1,7 +1,8 @@
-import { formatPrice } from "@rydar/shared";
+import { formatPrice, formatRelative } from "@rydar/shared";
 import { Check, X } from "lucide-react";
 import type { Metadata } from "next";
 import { PlanEditor } from "@/components/admin/admin-widgets";
+import { BookingSitesSwitchCard } from "@/components/admin/booking-sites-switch";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { requireSuperAdmin } from "@/lib/auth";
@@ -17,16 +18,26 @@ const ROWS: [string, string][] = [
 
 export default async function PlansPage() {
   const session = await requireSuperAdmin();
-  const [{ data: plans }, { data: counts }] = await Promise.all([
+  const [{ data: plans }, { data: counts }, { data: platform }, sites] = await Promise.all([
     session.supabase.from("plans").select("*").order("sort_order"),
     session.supabase.from("organizations").select("plan_id").neq("status", "archived"),
+    // Interrupteur plateforme des mini-sites (lecture RLS du super admin) ; absent = coupé, comme la base
+    session.supabase.from("platform_settings").select("booking_sites_enabled, updated_at").maybeSingle(),
+    // Mini-sites activés par leur centrale (réglage conservé pendant une coupure)
+    session.supabase.from("booking_sites").select("organization_id", { count: "exact", head: true }).eq("enabled", true),
   ]);
+  const switchState = (platform ?? null) as { booking_sites_enabled: boolean; updated_at: string } | null;
   const usage = new Map<string, number>();
   for (const c of counts ?? []) usage.set(c.plan_id, (usage.get(c.plan_id) ?? 0) + 1);
   return (
     <>
       <PageHeader eyebrow="Plateforme" title="Offres & limites" description="Les limites sont appliquées en base (triggers) : impossible de les contourner côté client." actions={<PlanEditor plan={null} />} />
       <PageBody>
+        <BookingSitesSwitchCard
+          enabled={switchState?.booking_sites_enabled === true}
+          configured={sites.error ? null : (sites.count ?? 0)}
+          updatedLabel={switchState?.updated_at ? formatRelative(switchState.updated_at) : null}
+        />
         <div className="grid gap-4 lg:grid-cols-3">
           {(plans ?? []).map((p: any) => (
             <div key={p.id} className={`surface rounded-2xl p-6 ${p.highlighted ? "border-brand/40" : ""}`}>

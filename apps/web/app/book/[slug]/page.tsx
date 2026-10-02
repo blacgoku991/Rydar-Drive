@@ -6,12 +6,15 @@ import { BookingForm } from "@/components/booking/booking-form";
 import { RadarMark } from "@/components/brand/logo";
 import { LegalLinks } from "@/components/legal/legal-links";
 import { getSession } from "@/lib/auth";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { publicAnchor } from "@/lib/geo/anchor";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
 async function load(slug: string) {
+  // Mini-sites coupés par la plateforme (super admin) : introuvables partout, aperçu compris
+  if (!(await bookingSitesEnabled())) return null;
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")

@@ -1,11 +1,15 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RESERVED_SUBDOMAINS } from "../../packages/shared/src/schemas";
-import { as, createOrg, expectPgError, pool, sql } from "./helpers";
+import { as, createOrg, expectPgError, pool, setBookingSitesEnabled, sql } from "./helpers";
 
 // Audit « public » (migration 004900) : sous-domaines réservés à la plateforme et mini-site / domaine
 // personnalisé coupés quand l'offre ne les inclut plus.
 
+// Mini-sites servis pendant ce fichier (interrupteur plateforme, migration 20260924006200 : coupé par défaut)
+beforeAll(() => setBookingSitesEnabled(true));
+
 afterAll(async () => {
+  await setBookingSitesEnabled(false);
   await pool.end();
 });
 

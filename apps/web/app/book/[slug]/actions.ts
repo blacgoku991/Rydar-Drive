@@ -1,6 +1,7 @@
 "use server";
 import { bookingRequestSchema, estimatePrice, fieldErrors, haversine, matchFixedFare, type BookingRequest, type PricingRule } from "@rydar/shared";
 import { z } from "zod";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { geocodeOne } from "@/lib/geocode";
 import { coordinateProblem, orgAnchor } from "@/lib/geo/anchor";
 import { computeRoute } from "@/lib/geo/routing";
@@ -11,6 +12,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 type Result = { ok: true; number: number } | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 const TOO_MANY = "Trop de demandes. Réessayez dans quelques minutes ou appelez-nous.";
+const UNAVAILABLE = "Réservation en ligne indisponible.";
 /** Destination géocodée à plus de cette distance des coordonnées reçues : prix laissé à la centrale. */
 const DROPOFF_MISMATCH_M = 2_000;
 /** Réservation au plus 400 jours à l'avance (trigger rides_before_insert : PICKUP_TOO_FAR). */
@@ -25,6 +27,8 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
     { key: `booking:ipday:${ip}`, limit: 20, windowSec: 86_400 },
   ]);
   if (!byIp.ok) return { ok: false, error: TOO_MANY };
+  // Mini-sites coupés par la plateforme (la base refuse aussi la course : BOOKING_SITES_DISABLED)
+  if (!(await bookingSitesEnabled())) return { ok: false, error: UNAVAILABLE };
 
   const parsed = bookingRequestSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Merci de vérifier le formulaire.", fieldErrors: fieldErrors(parsed.error) };
@@ -38,7 +42,7 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
     .eq("slug", slug)
     .maybeSingle();
   const site = org && ((Array.isArray((org as any).booking) ? (org as any).booking[0] : (org as any).booking) as { enabled: boolean; vehicle_categories: string[] } | null);
-  if (!org || (org as any).status !== "active" || !site?.enabled) return { ok: false, error: "Réservation en ligne indisponible." };
+  if (!org || (org as any).status !== "active" || !site?.enabled) return { ok: false, error: UNAVAILABLE };
   if (!site.vehicle_categories.includes(v.vehicleCategory)) return { ok: false, error: "Catégorie non proposée." };
 
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt;

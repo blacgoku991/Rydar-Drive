@@ -14,10 +14,13 @@ const h = vi.hoisted(() => ({
   userUpdateError: null as PgError | null,
   userUpdates: 0,
   audits: [] as { action: string; metadata?: Record<string, unknown> }[],
+  /** Interrupteur plateforme des mini-sites (platform_settings, migration 20260924006200) */
+  bookingSites: true,
 }));
 
 vi.mock("@/lib/audit", () => ({ audit: async (e: { action: string; metadata?: Record<string, unknown> }) => void h.audits.push(e) }));
 vi.mock("@/lib/auth", () => ({ isAdminRole: (r: string) => r === "owner" || r === "admin" }));
+vi.mock("@/lib/booking-sites", () => ({ bookingSitesEnabled: async () => h.bookingSites }));
 vi.mock("@/lib/env", () => ({ env: { rootDomain: "rydar.app", appUrl: "https://app.rydar.app" } }));
 vi.mock("@/lib/errors", async () => await import("./errors"));
 vi.mock("@/lib/org-context", () => ({ getOrgContext: async () => h.ctx }));
@@ -98,6 +101,30 @@ beforeEach(() => {
   h.userUpdateError = null;
   h.userUpdates = 0;
   h.audits = [];
+  h.bookingSites = true;
+});
+
+describe("mini-sites coupés par la plateforme (super admin)", () => {
+  it("enregistrement et vérification du domaine refusés avant toute lecture ou écriture, message clair", async () => {
+    h.bookingSites = false;
+    h.resolveTxt = async () => {
+      throw new Error("aucune résolution DNS attendue");
+    };
+    const message = "Les mini-sites de réservation sont momentanément désactivés par Rydar.";
+    expect(await updateBookingSite(form({ title: "Autre titre" }))).toEqual({ ok: false, error: message });
+    expect(await verifyCustomDomain()).toEqual({ ok: false, error: message });
+    expect(h.userUpdates).toBe(0);
+    expect(site()).toEqual({ organization_id: ORG, subdomain: "centrale-a", custom_domain: "mon-a.fr", custom_domain_verified_at: null });
+    expect(h.audits).toHaveLength(0);
+  });
+
+  it("coupure survenue entre le contrôle et l'écriture : refus de la base traduit (BOOKING_SITES_DISABLED)", async () => {
+    h.userUpdateError = { code: "55000", message: "BOOKING_SITES_DISABLED: les mini-sites de réservation sont désactivés par la plateforme" };
+    expect(await updateBookingSite(form())).toEqual({
+      ok: false,
+      error: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
+    });
+  });
 });
 
 describe("verifyCustomDomain : vérification atomique", () => {

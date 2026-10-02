@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/audit", () => ({ audit: async (e: { action: string }) => void h.audits.push(e) }));
 vi.mock("@/lib/auth", () => ({ isAdminRole: (r: string) => r === "owner" || r === "admin" }));
+// Interrupteur plateforme des mini-sites allumé (coupure : domaine-booking-site.test.ts)
+vi.mock("@/lib/booking-sites", () => ({ bookingSitesEnabled: async () => true }));
 vi.mock("@/lib/env", () => ({ env: { rootDomain: "rydar.app", appUrl: "https://app.rydar.app" } }));
 vi.mock("@/lib/errors", async () => await import("./errors"));
 vi.mock("@/lib/org-context", () => ({ getOrgContext: async () => h.ctx }));

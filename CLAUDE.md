@@ -100,6 +100,7 @@ la centrale doit les frais plateforme à Rydar.
   accusé de réception au contenu fixe) ; le mailer envoie.
 - Suppression de compte chauffeur : `svc_delete_driver_account` (mig 004000) + file `private.account_deletions` (worker 5 min,
   besoin de SUPABASE_URL/SERVICE_ROLE_KEY) ; fiche supprimée figée (DRIVER_DELETED) ; outil /admin/suppressions.
+- Mini-sites : interrupteur plateforme `booking_sites_enabled()` (coupé par 006200, /admin/plans) ; réglages des centrales intacts.
 - Messagerie flotte modérée (004100) ; registre des frais `on delete restrict` (004200) : une centrale avec frais s'archive.
 - Bannissement plateforme : les fiches d'AUTRES centrales partageant une identité ne sont bannies que si le super admin les coche
   (`admin_fraud_report_matches`) ; justificatif « Visite médicale » plus déposable (aucune donnée de santé collectée).

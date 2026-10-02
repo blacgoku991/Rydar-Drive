@@ -94,6 +94,10 @@ insert into public.organization_users (organization_id, user_id, role) values
   ('10000000-0000-4000-a000-00000000000b', '00000000-0000-4000-a000-000000000003', 'owner')
 on conflict do nothing;
 
+-- Démo locale : mini-sites servis (en production, coupés par la migration 20260924006200 jusqu'à leur réactivation
+-- par le super admin, Offres & limites)
+update public.platform_settings set booking_sites_enabled = true where id;
+
 update public.booking_sites set
   enabled = true,
   title = 'Élite Chauffeurs Paris',

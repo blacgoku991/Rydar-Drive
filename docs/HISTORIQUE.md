@@ -228,6 +228,18 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   10/min/centrale, aussi en Redis côté web) ; API v1 `/api/v1/webhooks` (permission `webhooks:manage`) ; Dashboard →
   Intégrations (`components/dashboard-webhooks.tsx`, envois par adresse). `publicRide` (`@rydar/shared`) partagé API v1
   / worker : toute colonne ajoutée va dans `PUBLIC_RIDE_SELECT` ET `private.webhook_ride_json`. Contrat : docs/API.md.
+- [x] **Interrupteur plateforme des mini-sites (10/2026, migration 006200, COUPÉ par la migration)** : table une ligne
+  `platform_settings.booking_sites_enabled` (RLS super admin, aucune écriture client), lecture `booking_sites_enabled()`
+  (authenticated, service role ; absent = coupé), écriture `svc_set_booking_sites_enabled(p_actor, bool)` (service role,
+  acteur revérifié, audit_logs `platform.booking_sites_enabled|disabled`). Coupé : `resolve_booking_host` → null
+  (ni réécriture ni certificat), trigger `rides_booking_sites_switch` (course `booking_site` refusée, sauf seed en
+  bypass), trigger `booking_sites_platform_switch` (client : aucune modification ; service role/base : jamais
+  d'activation ni de vérification, réductions de l'offre acceptées) → `BOOKING_SITES_DISABLED`. Web :
+  `lib/booking-sites.ts` (cache React, erreur = coupé) ; menu « Mini-site » masqué (layout → `DashboardShell`), éditeur
+  remplacé par une explication, actions refusées, `/book/{slug}` 404, devis 404, `submitBooking` refusé,
+  `/api/tls/allowed` 404 ; carte « Mini-sites de réservation » sur `/admin/plans` (confirmation). Réglages des centrales
+  jamais touchés. Seed : interrupteur allumé (démo locale). Tests : `tests/db/booking-sites-switch.test.ts`,
+  `lib/tls-allowed.test.ts`, `domaine-booking-site.test.ts`, `booking-public.test.ts`.
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

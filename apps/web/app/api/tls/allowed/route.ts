@@ -1,7 +1,9 @@
 // Caddy (certificats HTTPS « à la demande ») : un certificat n'est émis que pour un domaine connu —
 // la plateforme, ou le sous-domaine / domaine personnalisé d'un mini-site actif. Évite qu'un domaine
-// quelconque pointé vers le serveur ne déclenche des émissions de certificats.
+// quelconque pointé vers le serveur ne déclenche des émissions de certificats. Mini-sites coupés par la plateforme
+// (super admin) : plus aucun nouveau certificat pour leurs hôtes (resolve_booking_host le refuse aussi).
 import { NextResponse } from "next/server";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { env } from "@/lib/env";
 import { isValidHostname } from "@/lib/hostname";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -17,6 +19,7 @@ export async function GET(req: Request) {
   if (domain === appHost || domain === env.rootDomain || domain === `www.${env.rootDomain}`) {
     return new NextResponse(null, { status: 200 });
   }
+  if (!(await bookingSitesEnabled())) return new NextResponse(null, { status: 404 });
   const { data, error } = await createAdminClient().rpc("resolve_booking_host", { p_host: domain, p_root_domain: env.rootDomain });
   if (error) return new NextResponse(null, { status: 503 });
   return new NextResponse(null, { status: data ? 200 : 404 });

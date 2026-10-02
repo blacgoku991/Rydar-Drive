@@ -39,6 +39,8 @@ type ShellProps = {
   topBanner?: React.ReactNode;
   /** Compte super admin aussi membre de la centrale : lien vers l'espace plateforme (/admin, droits revérifiés là-bas) */
   superAdmin?: boolean;
+  /** Mini-sites servis par la plateforme (interrupteur du super admin) : sinon, entrée « Mini-site » masquée */
+  bookingSites?: boolean;
 };
 
 export function DashboardShell(props: ShellProps) {
@@ -81,7 +83,7 @@ function useCentraleCounts(orgId: string, enabled: boolean, initial: CentraleCou
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
-function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin }: ShellProps) {
+function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin, bookingSites }: ShellProps) {
   const router = useRouter();
   const [, start] = useTransition();
   const { unread, openReports } = useChatUnread();
@@ -172,7 +174,7 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
       title: "Canaux",
       items: [
         { href: "/dashboard/integrations", label: "API & site web", icon: "key" },
-        { href: "/dashboard/booking-site", label: "Mini-site", icon: "globe" },
+        ...(bookingSites ? [{ href: "/dashboard/booking-site", label: "Mini-site", icon: "globe" as const }] : []),
       ],
     },
     { title: "Organisation", items: [{ href: "/dashboard/settings", label: "Réglages", icon: "settings" }] },

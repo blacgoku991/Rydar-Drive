@@ -6,12 +6,16 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { isAdminRole } from "@/lib/auth";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { env } from "@/lib/env";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result = { ok: true } | { ok: false; error: string };
+
+/** Mini-sites coupés par la plateforme (super admin) : réglages figés, la base refuse aussi (BOOKING_SITES_DISABLED). */
+const SWITCHED_OFF = (): Result => ({ ok: false, error: humanizeError("BOOKING_SITES_DISABLED") });
 
 /** Domaine racine de Rydar, ses sous-domaines ou l'hôte de l'application : jamais un domaine personnalisé. */
 function isPlatformDomain(domain: string) {
@@ -36,6 +40,7 @@ export async function domainToken(orgId: string) {
 export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>): Promise<Result> {
   const ctx = await getOrgContext();
   if (!ctx || !isAdminRole(ctx.role)) return { ok: false, error: "Réservé aux administrateurs." };
+  if (!(await bookingSitesEnabled())) return SWITCHED_OFF();
   // Nom réservé refusé seulement s'il CHANGE (comme le trigger SQL) : un sous-domaine réservé pris avant la règle
   // n'empêche pas d'enregistrer les autres réglages
   const { data: current, error: readError } = await ctx.supabase
@@ -68,6 +73,7 @@ export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>
 export async function verifyCustomDomain(): Promise<Result> {
   const ctx = await getOrgContext();
   if (!ctx || !isAdminRole(ctx.role)) return { ok: false, error: "Réservé aux administrateurs." };
+  if (!(await bookingSitesEnabled())) return SWITCHED_OFF();
   const { data: site } = await ctx.supabase.from("booking_sites").select("custom_domain").eq("organization_id", ctx.org.id).single();
   const domain = site?.custom_domain as string | null;
   if (!domain) return { ok: false, error: "Aucun domaine personnalisé." };

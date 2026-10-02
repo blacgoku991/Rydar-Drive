@@ -17,7 +17,13 @@ const h = vi.hoisted(() => ({
   inserts: [] as Row[],
   counts: new Map<string, number>(),
   limits: [] as { key: string; limit: number; windowSec: number }[],
+  /** Interrupteur plateforme des mini-sites (platform_settings, migration 20260924006200) */
+  bookingSites: true,
+  /** Tables lues par l'action ou la route (aucune quand les mini-sites sont coupés) */
+  reads: [] as string[],
 }));
+
+vi.mock("@/lib/booking-sites", () => ({ bookingSitesEnabled: async () => h.bookingSites }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ "x-forwarded-for": h.ip }) }));
@@ -55,6 +61,7 @@ vi.mock("@/lib/geo/routing", async () => {
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     from(table: string) {
+      h.reads.push(table);
       let op = "select";
       let payload: Row | null = null;
       const result = () => {
@@ -119,6 +126,34 @@ beforeEach(() => {
   h.inserts = [];
   h.counts.clear();
   h.limits = [];
+  h.bookingSites = true;
+  h.reads = [];
+});
+
+describe("mini-sites coupés par la plateforme (super admin)", () => {
+  it("réservation refusée : ni lecture de la centrale ni course créée (la base refuse aussi : BOOKING_SITES_DISABLED)", async () => {
+    h.bookingSites = false;
+    const res = await submitBooking("centrale-b", booking());
+    expect(res).toEqual({ ok: false, error: "Réservation en ligne indisponible." });
+    expect(h.inserts).toHaveLength(0);
+    expect(h.reads).toEqual([]);
+    // Limites par IP comptées avant (une rafale reste freinée), plafonds du téléphone et de la centrale intacts
+    expect(h.limits.map((l) => l.key)).toEqual(["booking:ip:203.0.113.10", "booking:ipday:203.0.113.10"]);
+  });
+
+  it("devis refusé (404) : aucun itinéraire ni tarif lus", async () => {
+    h.bookingSites = false;
+    const res = await quote(
+      new Request("https://b.test/api/book/centrale-b/quote", {
+        method: "POST",
+        body: JSON.stringify({ pickup: PARIS_GARE_DE_LYON, dropoff: PARIS_OPERA, category: "standard" }),
+      }),
+      { params: Promise.resolve({ slug: "centrale-b" }) },
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Indisponible" });
+    expect(h.reads).toEqual([]);
+  });
 });
 
 describe("submitBooking : limites et pot de miel", () => {

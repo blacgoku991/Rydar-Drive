@@ -1,13 +1,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
-import { as, createOrg, expectPgError, pool, sql } from "./helpers";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { as, createOrg, expectPgError, pool, setBookingSitesEnabled, sql } from "./helpers";
 
 // Contre-audit « web_api » (web_public#6, sql3#2) : un mini-site dont le sous-domaine EXISTANT est réservé (pris avant
 // la migration 004900) enregistre ses autres réglages — le trigger ne refuse qu'un CHANGEMENT de sous-domaine —, et la
 // requête de contrôle documentée dans docs/DEPLOYMENT.md (« Mini-sites ») repère ces sous-domaines en production.
 
+// Mini-sites servis pendant ce fichier (interrupteur plateforme, migration 20260924006200 : coupé par défaut)
+beforeAll(() => setBookingSitesEnabled(true));
+
 afterAll(async () => {
+  await setBookingSitesEnabled(false);
   await pool.end();
 });
 

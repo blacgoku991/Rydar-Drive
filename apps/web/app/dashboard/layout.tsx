@@ -3,6 +3,7 @@ import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
 import { TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { LEGAL_VERSION } from "@/lib/legal";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
 
@@ -10,7 +11,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const ctx = await requireOrg();
   const centrale = ctx.org.dispatch_model === "centrale";
   const admin = isAdminRole(ctx.role);
-  const [{ count }, { data: chat }, pendingDocs, centraleCounts, centraleSettings, terms, userTerms] = await Promise.all([
+  const [{ count }, { data: chat }, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites] = await Promise.all([
     ctx.supabase
       .from("rides")
       .select("id", { count: "exact", head: true })
@@ -48,6 +49,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       .eq("user_id", ctx.user.id)
       .eq("version", LEGAL_VERSION)
       .in("document", ["cgu", "privacy"]),
+    // Menu « Mini-site » : masqué tant que les mini-sites sont coupés par la plateforme (super admin)
+    bookingSitesEnabled(),
   ]);
   // Un seul bandeau à la fois : celui de la centrale (owner / admin, CGU et politique comprises) d'abord
   const orgTermsDue = admin && !!terms && !terms.error && (terms.count ?? 0) === 0;
@@ -86,6 +89,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       centraleCounts={centraleCounts}
       topBanner={orgTermsDue ? <TermsBanner orgName={ctx.org.name} /> : userTermsDue ? <UserTermsBanner /> : null}
       superAdmin={ctx.profile.is_super_admin === true}
+      bookingSites={bookingSites}
     >
       {children}
     </DashboardShell>

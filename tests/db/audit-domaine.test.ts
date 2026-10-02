@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
-import { as, createOrg, expectPgError, pool, sql } from "./helpers";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { as, createOrg, expectPgError, pool, setBookingSitesEnabled, sql } from "./helpers";
 
 // Audit « domaine » (migration 20260924005000) : résolution des hôtes de mini-site, unicité des domaines
 // personnalisés vérifiés, fréquence des changements de sous-domaine.
 
+// Mini-sites servis pendant ce fichier (interrupteur plateforme, migration 20260924006200 : coupé par défaut)
+beforeAll(() => setBookingSitesEnabled(true));
+
 afterAll(async () => {
+  await setBookingSitesEnabled(false);
   await pool.end();
 });
 

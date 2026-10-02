@@ -1,7 +1,11 @@
-import { afterAll, describe, expect, it } from "vitest";
-import { as, createDriver, createOrg, expectPgError, pool, sql } from "./helpers";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { as, createDriver, createOrg, expectPgError, pool, setBookingSitesEnabled, sql } from "./helpers";
+
+// Mini-sites servis pendant ce fichier (interrupteur plateforme, migration 20260924006200 : coupé par défaut)
+beforeAll(() => setBookingSitesEnabled(true));
 
 afterAll(async () => {
+  await setBookingSitesEnabled(false);
   await pool.end();
 });
 

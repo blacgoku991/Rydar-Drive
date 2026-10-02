@@ -62,6 +62,8 @@ vi.mock("@/lib/geocode", async () => await import("../geocode"));
 vi.mock("@/lib/geo/budget", async () => await import("./budget"));
 vi.mock("@/lib/geo/routing", async () => await import("./routing"));
 vi.mock("@/lib/geo/anchor", () => ({ orgAnchor: async () => null, coordinateProblem: () => null }));
+// Devis du mini-site : interrupteur plateforme allumé (coupure : booking-public.test.ts)
+vi.mock("@/lib/booking-sites", () => ({ bookingSitesEnabled: async () => true }));
 vi.mock("@/lib/org-context", () => ({ getOrgContext: async () => ({ org: { id: h.org }, user: { id: `user-${h.org}` } }) }));
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({

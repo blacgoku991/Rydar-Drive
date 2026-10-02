@@ -256,6 +256,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Tests et renvois bornés (20260924006100)
   WEBHOOK_TEST_PENDING: "Un test de ce webhook est déjà en cours d'envoi : attendez son résultat avant d'en relancer un.",
   WEBHOOK_TEST_RATE_LIMITED: "Trop de tests et de renvois de webhooks en une minute (10 au plus par centrale) : réessayez dans un instant.",
+  // Interrupteur plateforme des mini-sites (20260924006200)
+  BOOKING_SITES_DISABLED: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */
