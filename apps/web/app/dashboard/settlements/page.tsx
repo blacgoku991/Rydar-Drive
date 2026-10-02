@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { OrgPlatformCard } from "@/components/platform-fees/org-platform-card";
+import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { SettlementsView } from "@/components/settlements/settlements-view";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -35,6 +36,16 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
               icon={<HandCoins />}
               title="Réservé au mode centrale"
               description={`Votre compte fonctionne en ${DISPATCH_MODEL_META.fleet.short.toLowerCase()} : vos chauffeurs font partie de votre société, il n'y a pas de commission à encaisser. Le mode « ${DISPATCH_MODEL_META.centrale.label} » est activé par l'équipe Rydar.`}
+              action={
+                // Frais dus à Rydar par une flotte : page « Frais Rydar » (owner / admin)
+                isAdminRole(ctx.role) ? (
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={platformFeesPaths("fleet").page}>
+                      <Landmark /> Frais Rydar
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
             />
           </Card>
         </PageBody>

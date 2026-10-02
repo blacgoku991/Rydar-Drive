@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
 
 const RULES = [
   "Les frais d'une course sont dus par la centrale dès la fin de la course, que le chauffeur l'ait payée ou non.",
+  "Flotte : % du prix (0 sans prix) + frais fixes, dus dès la fin de chaque course, au taux en vigueur à ce moment-là.",
   "Seuls les paiements que vous confirmez comptent ; le montant reçu peut différer du montant déclaré.",
   "Une baisse de prix après la course ne réduit les frais qu'après votre accord.",
   "Échéance : fin du cycle (mois ou semaine) + délai ; les paiements soldent les frais les plus anciens d'abord.",
@@ -45,7 +46,7 @@ export default async function PlatformFeesPage() {
       <PageHeader
         eyebrow="Plateforme"
         title="Frais plateforme"
-        description="Ce que les centrales doivent reverser à Rydar : frais de chaque course terminée, paiements déclarés à confirmer, retards et relances."
+        description="Ce que les centrales et les flottes doivent reverser à Rydar : frais de chaque course terminée, paiements déclarés à confirmer, retards et relances."
         actions={
           <Button asChild variant="secondary" size="sm">
             <Link href="/admin/centrales">
@@ -77,7 +78,7 @@ export default async function PlatformFeesPage() {
                       .slice(0, 2)
                       .map((r) => r.name)
                       .join(", ")}${overdueRows.length > 2 ? "…" : ""}`
-                  : "aucune centrale en retard"
+                  : "aucun compte en retard"
               }
               icon={<AlarmClock />}
             />
@@ -101,12 +102,12 @@ export default async function PlatformFeesPage() {
               label="Encaissé non reversé"
               value={formatPrice(t.held_by_centrales_cents)}
               tone={t.held_by_centrales_cents > 0 ? "amber" : undefined}
-              sub="déjà entre les mains des centrales"
+              sub="déjà entre les mains des centrales et flottes"
               icon={<Banknote />}
             />
             <Metric label="Chez les chauffeurs" value={formatPrice(t.with_drivers_cents)} sub="règlements pas encore encaissés" icon={<Users />} />
             <Metric
-              label="Centrales bloquées"
+              label="Comptes bloqués"
               value={formatNumber(t.blocked_count)}
               tone={t.blocked_count ? "red" : undefined}
               sub={t.blocked_count ? "création de courses refusée" : "aucun blocage"}
@@ -124,7 +125,7 @@ export default async function PlatformFeesPage() {
 
         <Card className="overflow-hidden">
           <CardHeader
-            title="Centrales"
+            title="Centrales et flottes"
             icon={<Network />}
             description="Triées par montant échu puis par solde. Solde = frais comptabilisés − paiements reçus. Cliquez une ligne pour le détail et le relevé."
           />
@@ -138,7 +139,7 @@ export default async function PlatformFeesPage() {
               <PlatformWhatsAppCard row={(whatsapp ?? null) as WhatsAppRow | null} />
             </div>
             <Card>
-              <CardHeader title="Règles" description="Appliquées par la base de données, pour chaque centrale." />
+              <CardHeader title="Règles" description="Appliquées par la base de données, pour chaque centrale et chaque flotte." />
               <CardBody className="pt-4">
                 <ul className="space-y-2.5">
                   {RULES.map((r) => (

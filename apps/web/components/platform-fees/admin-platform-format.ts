@@ -114,13 +114,30 @@ export type PlatformMonthStats = PlatformAccount["month"] & { cancelled_onboard_
 /** Courses annulées après la prise en charge du client (0 si le compte ne le fournit pas). */
 export const cancelledOnboard = (a: Pick<PlatformAccount, "month">) => (a.month as PlatformMonthStats | undefined)?.cancelled_onboard_rides ?? 0;
 
+/**
+ * Courses « à surveiller » du mois (private.platform_account.month.zero_price_rides) : centrale → à 0 €, sans prix ou
+ * frais plafonnés au prix (frais nuls ou réduits) ; flotte → courses sans prix (ou à 0 €) dont seule la part en % est
+ * perdue, le fixe restant dû (la base ne compte que celles dont les taux figés ont une part en %).
+ */
+export function zeroPriceText(n: number, model: PlatformAccount["dispatch_model"] | null | undefined, short = false) {
+  const s = n > 1 ? "s" : "";
+  if (model === "fleet") {
+    return short
+      ? `${n} course${s} sans prix (part en\u00a0% non due)`
+      : `${n} course${s} terminée${s} sans prix ou à 0\u00a0€\u00a0: la part en\u00a0% du prix n'est pas due (les frais fixes restent dus)`;
+  }
+  return short
+    ? `${n} course${s} à prix nul ou symbolique`
+    : `${n} course${s} terminée${s} à 0 €, sans prix ou à un prix symbolique (frais nuls ou plafonnés au prix)`;
+}
+
 /** Signaux du mois : « 2 courses à prix nul ou symbolique · 3 annulées après attribution (dont 1 client à bord) ». */
-export function monthSignals(a: Pick<PlatformAccount, "month">) {
+export function monthSignals(a: Pick<PlatformAccount, "month" | "dispatch_model">) {
   const parts: string[] = [];
   const z = a.month?.zero_price_rides ?? 0;
   const c = a.month?.cancelled_assigned_rides ?? 0;
   const b = cancelledOnboard(a);
-  if (z) parts.push(`${z} course${z > 1 ? "s" : ""} à prix nul ou symbolique`);
+  if (z) parts.push(zeroPriceText(z, a.dispatch_model, true));
   if (c) parts.push(`${c} annulée${c > 1 ? "s" : ""} après attribution${b ? ` (dont ${b} client à bord)` : ""}`);
   return parts.join(" · ");
 }
@@ -136,14 +153,16 @@ export function csvText(v: string | null | undefined) {
   return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Ventilation des frais comptabilisés : d'où vient l'argent (courses) + ajustements / courses supprimées. */
+/** Ventilation des frais comptabilisés : d'où vient l'argent (courses) + ajustements / courses supprimées. Flotte : ses
+ *  courses sont encaissées par elle-même (aucun règlement chauffeur). */
 export function originParts(a: PlatformAccount) {
   const other = a.posted_cents - a.collected_by_centrale_cents - a.with_drivers_cents - a.waived_by_centrale_cents;
+  const fleet = a.dispatch_model === "fleet";
   return [
     {
       key: "collected",
-      label: "Encaissé par la centrale",
-      hint: "Course payée à la centrale ou commission reçue du chauffeur",
+      label: fleet ? "Encaissé par la flotte" : "Encaissé par la centrale",
+      hint: fleet ? "Courses de la flotte (et, en centrale, courses payées à la centrale ou commissions reçues)" : "Course payée à la centrale ou commission reçue du chauffeur",
       cents: a.collected_by_centrale_cents,
       bar: "bg-blue",
       text: "text-blue",
@@ -177,8 +196,9 @@ export function entryKindLabel(e: Pick<PlatformEntry, "kind" | "amount_cents">) 
   return PLATFORM_ENTRY_KIND_META[e.kind].label;
 }
 
-/** Statut du règlement chauffeur d'une course (sens déduit de l'encaissement). */
+/** Statut du règlement chauffeur d'une course (sens déduit de l'encaissement) ; course terminée en flotte : « Flotte ». */
 export function rideSettlementLabel(ride: NonNullable<PlatformEntry["ride"]>) {
+  if (ride.fleet_fee && !ride.settlement_status) return "Flotte";
   if (!ride.settlement_status) return null;
   const direction = ride.payment_method === "cash" || ride.payment_method === "card" ? "driver_owes" : "centrale_owes";
   return settlementStatusLabel(ride.settlement_status as SettlementStatus, direction);

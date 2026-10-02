@@ -1,13 +1,14 @@
 "use client";
 // Super admin : modèle d'exploitation d'un compte (option 1 Flotte / option 2 Centrale à commission)
-// et frais plateforme prélevés sur chaque course d'une centrale.
-import { DISPATCH_MODEL_META, formatPrice, type DispatchModel } from "@rydar/shared";
+// et frais plateforme Rydar dus sur chaque course terminée, dans les deux modèles (20260924006400) :
+// centrale → prélevés sur le prix (plafonnés au prix) ; flotte → % du prix (0 sans prix) + fixe, facturés à la flotte.
+import { DISPATCH_MODEL_META, fleetPlatformFee, formatPrice, type DispatchModel } from "@rydar/shared";
 import { AlertTriangle, Check, Network, Truck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { updateDispatchModel } from "@/app/admin/actions";
-import { centsToInput, eurosToCents, parsePercent, percentToInput, platformFee, readFees } from "@/components/admin/fees";
+import { CGV_COVERS_FLEET_FEES, centsToInput, eurosToCents, parsePercent, percentToInput, platformFee, readFees } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
@@ -59,6 +60,7 @@ export function DispatchModelPicker({ value, onChange, disabled }: { value: Disp
 }
 
 export function FeeFields({
+  model,
   percent,
   fixed,
   onPercent,
@@ -66,6 +68,7 @@ export function FeeFields({
   errors,
   disabled,
 }: {
+  model: DispatchModel;
   percent: string;
   fixed: string;
   onPercent: (v: string) => void;
@@ -75,7 +78,8 @@ export function FeeFields({
 }) {
   const p = parsePercent(percent);
   const f = eurosToCents(fixed);
-  const example = Number.isFinite(p) && Number.isFinite(f) ? platformFee(5900, p, f) : null;
+  const valid = Number.isFinite(p) && Number.isFinite(f);
+  const example = valid ? (model === "fleet" ? fleetPlatformFee(5900, p, f) : platformFee(5900, p, f)) : null;
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-3">
@@ -92,13 +96,41 @@ export function FeeFields({
           </div>
         </Field>
       </div>
-      {example != null && (
-        <p className="text-[12px] text-fg-subtle">
-          Exemple : course à <span className="num text-fg-muted">59 €</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> de frais plateforme, déduits avant la part chauffeur et la commission.
+      {example != null &&
+        (model === "fleet" ? (
+          <p className="text-[12px] text-fg-muted">
+            Exemple&nbsp;: course à <span className="num">59 €</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> dus par la flotte à Rydar
+            {f > 0 && p > 0 ? (
+              <>
+                &nbsp;; course sans prix&nbsp;: <span className="num font-medium text-fg">{formatPrice(f)}</span> (frais fixes seuls)
+              </>
+            ) : null}
+            .
+          </p>
+        ) : (
+          <p className="text-[12px] text-fg-subtle">
+            Exemple : course à <span className="num text-fg-muted">59 €</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> de frais plateforme, déduits avant la part chauffeur et la commission.
+          </p>
+        ))}
+      {model === "fleet" && !CGV_COVERS_FLEET_FEES && (
+        <p role="note" className="flex items-start gap-2 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span>
+            CGV à mettre à jour avant de facturer une flotte{"\u00a0"}: l&apos;article 5 ne prévoit encore les frais par course que pour les
+            centrales (prélevés sur le prix, plafonnés). Publiez d&apos;abord la nouvelle version (flotte{"\u00a0"}: % du prix + frais fixes
+            facturés à la flotte, fixes dus même sans prix), acceptée par la flotte, puis réglez ses frais ici.
+          </span>
         </p>
       )}
     </div>
   );
+}
+
+/** Règle des frais Rydar selon le modèle (affichée sous le titre des champs). */
+export function feeRule(model: DispatchModel) {
+  return model === "fleet"
+    ? "Dus par la flotte à Rydar pour chaque course terminée (frais fixes même sans prix), en plus de l'abonnement. Un changement s'applique aux courses terminées après lui."
+    : "Prélevés sur le prix de chaque course terminée (jamais plus que le prix), avant la part chauffeur et la commission. Dus par la centrale à Rydar.";
 }
 
 /** Fiche organisation : choix du modèle + frais, avec confirmation d'un retour au mode flotte. */
@@ -144,10 +176,10 @@ export function DispatchModelForm({
   return (
     <div className="space-y-5">
       <DispatchModelPicker value={value} onChange={setValue} disabled={pending} />
-      <div className={cn("rounded-xl border border-line bg-white/[0.015] p-4 transition-opacity", value === "fleet" && "opacity-60")}>
-        <p className="mb-3 text-[13px] font-medium text-fg">Frais plateforme Rydar</p>
-        <FeeFields percent={percent} fixed={fixed} onPercent={setPercent} onFixed={setFixed} errors={errors} disabled={pending || value === "fleet"} />
-        {value === "fleet" && <p className="mt-2 text-[12px] text-fg-subtle">Sans effet en mode flotte : aucune répartition n&apos;est calculée.</p>}
+      <div className="rounded-xl border border-line bg-white/[0.015] p-4">
+        <p className="mb-1 text-[13px] font-medium text-fg">Frais plateforme Rydar</p>
+        <p className="mb-3 text-[12px] text-fg-muted">{feeRule(value)}</p>
+        <FeeFields model={value} percent={percent} fixed={fixed} onPercent={setPercent} onFixed={setFixed} errors={errors} disabled={pending} />
       </div>
       {toFleet && (
         <p className="flex items-start gap-2 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">
@@ -191,6 +223,9 @@ export function DispatchModelForm({
               s&apos;adapte à la flotte et les candidatures en attente restent à valider dans «{" "}Inscriptions{" "}».
             </li>
             <li className="flex gap-2"><span className="text-amber">•</span> Les chauffeurs et règlements existants sont conservés.</li>
+            <li className="flex gap-2">
+              <span className="text-amber">•</span> Frais Rydar&nbsp;: ceux réglés ci-dessus s&apos;appliquent aux courses terminées en flotte&nbsp;; les frais déjà dus restent dus.
+            </li>
             <li className="flex gap-2"><span className="text-amber">•</span> Vous pourrez repasser en centrale à tout moment.</li>
           </ul>
           <div className="mt-6 flex justify-end gap-2">

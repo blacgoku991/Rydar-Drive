@@ -12,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const ctx = await requireOrg();
   const centrale = ctx.org.dispatch_model === "centrale";
   const admin = isAdminRole(ctx.role);
-  const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites] = await Promise.all([
+  const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees] = await Promise.all([
     ctx.supabase
       .from("rides")
       .select("id", { count: "exact", head: true })
@@ -54,6 +54,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
       .in("document", ["cgu", "privacy"]),
     // Menu « Mini-site » : masqué tant que les mini-sites sont coupés par la plateforme (super admin)
     bookingSitesEnabled(),
+    // Flotte : frais Rydar par course réglés par le super admin (ou historique) → entrée « Frais Rydar » (owner / admin).
+    // Le seul booléen (org_platform_fees_enabled) : le compte complet n'est calculé que par le bandeau et la page
+    !centrale && admin ? ctx.supabase.rpc("org_platform_fees_enabled", { p_org: ctx.org.id }) : Promise.resolve(null),
   ]);
   // Un seul bandeau à la fois : celui de la centrale (owner / admin, CGU et politique comprises) d'abord
   const orgTermsDue = admin && !!terms && !terms.error && (terms.count ?? 0) === 0;
@@ -93,6 +96,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       topBanner={orgTermsDue ? <TermsBanner orgName={ctx.org.name} /> : userTermsDue ? <UserTermsBanner /> : null}
       superAdmin={ctx.profile.is_super_admin === true}
       bookingSites={bookingSites}
+      rydarFees={fleetFees?.data === true}
     >
       {children}
     </DashboardShell>

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createOrganization, savePlan, setOrganizationStatus, updateOrganizationPlan } from "@/app/admin/actions";
-import { DispatchModelPicker, FeeFields } from "@/components/admin/dispatch-model";
+import { DispatchModelPicker, FeeFields, feeRule } from "@/components/admin/dispatch-model";
 import { readFees } from "@/components/admin/fees";
 import { Columns, DataTable } from "@/components/charts/charts";
 import { Button } from "@/components/ui/button";
@@ -51,7 +51,8 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
           onSubmit={submitWith((f) =>
             start(() => runAction(async () => {
               const g = (k: string) => String(f.get(k) ?? "");
-              const fees = model === "centrale" ? readFees(feePercent, feeFixed) : readFees("0", "0");
+              // Frais Rydar par course : flotte comme centrale (20260924006400)
+              const fees = readFees(feePercent, feeFixed);
               if (!fees.valid) return void setFeeErrors(fees.errors);
               setFeeErrors({});
               setErrors({});
@@ -105,11 +106,11 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
           <div className="space-y-3">
             <p className="text-[13px] font-medium text-fg-muted">Modèle d&apos;exploitation</p>
             <DispatchModelPicker value={model} onChange={setModel} disabled={pending} />
-            {model === "centrale" && (
-              <div className="rounded-xl border border-line bg-white/[0.02] p-4">
-                <FeeFields percent={feePercent} fixed={feeFixed} onPercent={setFeePercent} onFixed={setFeeFixed} errors={feeErrors} disabled={pending} />
-              </div>
-            )}
+            <div className="rounded-xl border border-line bg-white/[0.02] p-4">
+              <p className="mb-1 text-[13px] font-medium text-fg">Frais plateforme Rydar</p>
+              <p className="mb-3 text-[12px] text-fg-muted">{feeRule(model)}</p>
+              <FeeFields model={model} percent={feePercent} fixed={feeFixed} onPercent={setFeePercent} onFixed={setFeeFixed} errors={feeErrors} disabled={pending} />
+            </div>
           </div>
           <div className="grid gap-4 rounded-xl border border-line bg-white/[0.02] p-4 sm:grid-cols-2">
             <p className="text-[13px] font-medium text-fg-muted sm:col-span-2">Compte propriétaire</p>

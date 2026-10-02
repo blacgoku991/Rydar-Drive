@@ -484,3 +484,23 @@ describe("documents légaux : version acceptée (CGU, confidentialité, règles 
     expect(legalVersionAccepted("2000-01-01")).toBe(false);
   });
 });
+
+describe("frais Rydar des flottes (miroir de private.fleet_platform_fee)", () => {
+  it("% du prix (0 sans prix) + fixe, sans plafond au prix", async () => {
+    const { fleetPlatformFee, isFleetFeeRide } = await import("./platform-fees");
+    expect(fleetPlatformFee(5900, 10, 0)).toBe(590);
+    expect(fleetPlatformFee(5900, 0, 200)).toBe(200);
+    expect(fleetPlatformFee(100, 5, 200)).toBe(205); // au-dessus du prix : facturés à la flotte, pas prélevés
+    expect(fleetPlatformFee(null, 10, 200)).toBe(200);
+    expect(fleetPlatformFee(undefined, 10, 0)).toBe(0);
+    expect(fleetPlatformFee(1234, 2.5, 0)).toBe(31);
+    expect(fleetPlatformFee(-500, 10, 200)).toBe(200);
+    expect(fleetPlatformFee(100_000_000, 50, 100_000)).toBe(10_000_000);
+
+    const ride = { id: "r", number: 1, price_cents: 5000, payment_method: "cash" as const, completed_at: null, pickup: null, dropoff: null };
+    expect(isFleetFeeRide({ ...ride, settlement_status: null, fleet_fee: { percent: 0, fixed_cents: 200 } })).toBe(true);
+    expect(isFleetFeeRide({ ...ride, settlement_status: "paid", fleet_fee: { percent: 0, fixed_cents: 200 } })).toBe(false);
+    expect(isFleetFeeRide({ ...ride, settlement_status: null, fleet_fee: null })).toBe(false);
+    expect(isFleetFeeRide(null)).toBe(false);
+  });
+});

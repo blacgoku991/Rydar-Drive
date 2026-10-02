@@ -1,4 +1,4 @@
-// Frais plateforme Rydar (mode centrale) : saisie, affichage, calcul.
+// Frais plateforme Rydar (centrale et flotte) : saisie, affichage, calcul (flotte : fleetPlatformFee de @rydar/shared).
 // Module neutre (ni « use client » ni « server-only ») : utilisable par les pages serveur et les formulaires.
 import { formatNumber, formatPrice } from "@rydar/shared";
 
@@ -19,7 +19,15 @@ export function parsePercent(value: string): number {
 export const centsToInput = (cents: number) => (cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2).replace(".", ","));
 export const percentToInput = (p: number) => String(Number(p)).replace(".", ",");
 
-/** Frais plateforme d'une course (miroir de private.compute_ride_split). */
+/**
+ * Les CGV en vigueur (article 5, version LEGAL_VERSION) couvrent-elles les frais par course des FLOTTES ? Non : elles
+ * ne prévoient encore que ceux des centrales (prélevés sur le prix, plafonnés). Tant que c'est false, le super admin
+ * voit un avertissement à côté des champs de frais d'une flotte. Passer à true avec la nouvelle version des CGV
+ * (article 5 réécrit + LEGAL_VERSION montée : nouvelle acceptation, cf. docs/EN-COURS.md).
+ */
+export const CGV_COVERS_FLEET_FEES = false;
+
+/** Frais plateforme d'une course de CENTRALE (miroir de private.compute_ride_split : plafonnés au prix). */
 export function platformFee(priceCents: number, percent: number, fixedCents: number) {
   return Math.min(priceCents, Math.round((priceCents * percent) / 100) + fixedCents);
 }

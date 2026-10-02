@@ -39,6 +39,10 @@ Bonjour, les frais plateforme Rydar Drive de {{1}} s'élèvent à {{2}} (échéa
 
 Exemple de variables : `NovaLink`, `182,40 €`, `05/10/2026`.
 
+Flottes (migration 006400) : la relance part de la même façon ; dans leur tableau de bord, les frais sont sous
+« Frais Rydar » (la page Encaissements d'une flotte y renvoie). Pour un texte neutre, faire approuver un modèle du même
+format (3 variables) qui dit « tableau de bord, rubrique Frais Rydar / Encaissements » et l'indiquer dans la carte WhatsApp.
+
 Un modèle portant un autre nom peut être utilisé : il faut alors l'indiquer dans la carte WhatsApp. Il doit garder le **même nombre de variables, dans le même ordre**.
 
 ## Obligations

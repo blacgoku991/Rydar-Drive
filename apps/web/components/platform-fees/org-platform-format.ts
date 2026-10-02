@@ -1,5 +1,5 @@
-// Frais plateforme (côté centrale) : textes et formats purs (utilisables côté serveur comme côté client).
-import { PLATFORM_PAYMENT_METHOD_META, formatPrice, type PlatformAccount, type PlatformPaymentMethod } from "@rydar/shared";
+// Frais plateforme (côté centrale ou flotte) : textes et formats purs (utilisables côté serveur comme côté client).
+import { PLATFORM_PAYMENT_METHOD_META, formatPrice, type PlatformAccount, type PlatformPaymentMethod, type PlatformStatement } from "@rydar/shared";
 
 export const platformMethodLabel = (m: string | null | undefined) => PLATFORM_PAYMENT_METHOD_META[(m ?? "other") as PlatformPaymentMethod]?.label ?? "Autre";
 
@@ -110,12 +110,20 @@ const PAYOUT_STATUS: Record<string, { text: string; tone: "green" | "amber" | "r
   disputed: { text: "Payée à la centrale · versement contesté", tone: "green" },
 };
 
-/** « Commission encaissée », « Commission annulée · frais dus », « Payée à la centrale · part à verser »… */
-export function rideSettlementText(ride: { payment_method: string; settlement_status: string | null } | null) {
+/** « Commission encaissée », « Commission annulée · frais dus », « Payée à la centrale · part à verser »… ; course de
+ *  flotte (taux figés, aucun règlement chauffeur) : « Course de la flotte ». */
+export function rideSettlementText(
+  ride: { payment_method: string; settlement_status: string | null; fleet_fee?: { percent: number; fixed_cents: number } | null } | null,
+) {
   if (!ride) return null;
+  if (ride.fleet_fee && !ride.settlement_status) return { text: "Course de la flotte", tone: "neutral" as const };
   const s = ride.settlement_status ?? "";
   if (ride.payment_method === "cash" || ride.payment_method === "card") {
     return COMMISSION_STATUS[s] ?? { text: "Commission : aucun règlement", tone: "neutral" as const };
   }
   return PAYOUT_STATUS[s] ?? { text: "Payée à la centrale", tone: "green" as const };
 }
+
+/** Colonne « Règlement chauffeur » du relevé : centrale, ou flotte dont une course a un règlement (ancien passage en centrale). */
+export const showSettlementColumn = (s: Pick<PlatformStatement, "organization" | "entries">) =>
+  s.organization.dispatch_model !== "fleet" || s.entries.some((e) => !!e.ride?.settlement_status);

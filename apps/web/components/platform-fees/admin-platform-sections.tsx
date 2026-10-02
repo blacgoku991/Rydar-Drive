@@ -140,7 +140,7 @@ export function PendingReductions({ entries, orgName, timeZone = "Europe/Paris" 
         description={
           entries.length
             ? `Prix corrigé à la baisse après la course : ${formatPrice(-total)} de frais en moins si vous acceptez tout. Tant que vous n'avez pas décidé, les frais initiaux restent dus.`
-            : "Quand une centrale baisse le prix d'une course terminée, la baisse de frais attend votre accord ici."
+            : "Quand une centrale ou une flotte baisse le prix d'une course terminée, la baisse de frais attend votre accord ici."
         }
         action={entries.length ? <Badge tone="amber">{entries.length} en attente</Badge> : undefined}
       />
@@ -193,7 +193,7 @@ function BalanceCell({ cents, currency }: { cents: number; currency: string }) {
   return (
     <span
       className={cn("mono", cents > 0 ? "text-fg" : cents < 0 ? "text-green" : "text-fg-subtle")}
-      title={cents < 0 ? "Avance en faveur de la centrale" : undefined}
+      title={cents < 0 ? "Avance en faveur de l'organisation" : undefined}
     >
       {formatPrice(cents, currency)}
     </span>
@@ -252,8 +252,8 @@ export function CentralesTable({ rows }: { rows: AdminPlatformRow[] }) {
     return (
       <EmptyState
         icon={<CircleDollarSign />}
-        title="Aucune centrale"
-        description="Les frais plateforme apparaissent dès qu'un rattacheur passe en « Option 2 — Centrale » et termine des courses."
+        title="Aucun compte"
+        description="Les frais plateforme apparaissent dès qu'un rattacheur passe en « Option 2 — Centrale », ou qu'une flotte a des frais Rydar par course (fiche du rattacheur)."
         action={
           <Link href="/admin/centrales" className="text-[13px] font-medium text-brand hover:underline">
             Voir les centrales
@@ -310,14 +310,14 @@ export function CentralesTable({ rows }: { rows: AdminPlatformRow[] }) {
         <Table>
           <THead>
             <tr>
-              <TH>Centrale</TH>
+              <TH>Centrale / flotte</TH>
               <TH className="text-right">Solde</TH>
               <TH className="text-right">Échu</TH>
               <TH>En retard</TH>
               <TH className="text-right">Déclaré</TH>
               <TH
                 className="text-right"
-                title="Frais encaissés par la centrale (course payée à la centrale ou commission reçue du chauffeur) et pas encore reversés à Rydar"
+                title="Frais encaissés par l'organisation (course de flotte, course payée à la centrale ou commission reçue du chauffeur) et pas encore reversés à Rydar"
               >
                 Encaissé non reversé
               </TH>
@@ -441,7 +441,7 @@ export function OriginBreakdown({ account: a }: { account: PlatformAccount }) {
       <CardHeader
         title="D'où vient l'argent"
         icon={<HandCoins />}
-        description={`${formatPrice(a.posted_cents, a.currency)} de frais comptabilisés depuis le début, tous dus par la centrale.`}
+        description={`${formatPrice(a.posted_cents, a.currency)} de frais comptabilisés depuis le début, tous dus par ${a.dispatch_model === "fleet" ? "la flotte" : "la centrale"}.`}
       />
       <div className="space-y-4 p-5">
         <div className="flex h-2.5 gap-[2px] overflow-hidden rounded-full bg-white/[0.06]" aria-hidden>
@@ -471,7 +471,7 @@ export function OriginBreakdown({ account: a }: { account: PlatformAccount }) {
         <div className="border-t border-line pt-2">
           <MoneyLine label="Reçu par Rydar" value={formatPrice(a.received_cents, a.currency)} tone="green" />
           <MoneyLine
-            label="Encaissé par la centrale, pas encore reversé"
+            label={a.dispatch_model === "fleet" ? "Encaissé par la flotte, pas encore reversé" : "Encaissé par la centrale, pas encore reversé"}
             hint="Argent déjà entre ses mains"
             value={formatPrice(a.held_by_centrale_cents, a.currency)}
             tone={a.held_by_centrale_cents > 0 ? "amber" : undefined}
@@ -624,7 +624,7 @@ export function StatementView({ statement: s, months, basePath }: { statement: P
       <CardHeader
         title={`Relevé · ${capitalize(monthLabel(s.month))}`}
         icon={<CircleDollarSign />}
-        description="Chaque course, correction, avoir et paiement du mois (fuseau de la centrale)."
+        description="Chaque course, correction, avoir et paiement du mois (fuseau de l'organisation)."
         className="flex-wrap"
         action={
           <div className="flex flex-wrap items-center gap-2">

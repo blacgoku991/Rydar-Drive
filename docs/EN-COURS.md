@@ -22,7 +22,7 @@ Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `202
 la file si le serveur mail est injoignable, relance à son retour), `20260924005900` clôture des planifiées jamais
 démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse,
 `20260924006200` interrupteur plateforme des mini-sites (coupés), `20260924006300` lien d'inscription des chauffeurs
-pour les flottes, `20260924006500` index de performance + `chat_counts`.
+pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` index de performance + `chat_counts`.
 
 ## Depuis l'audit
 - **Lenteur (« le site est lent ») — volet serveur** : plus de rafale de préchargements à chaque page (26 → 1 requête
@@ -32,6 +32,26 @@ pour les flottes, `20260924006500` index de performance + `chat_counts`.
   006500), IPv4 d'abord vers Supabase, worker de carte en cache, keep-alive Next au-dessus de celui de Caddy. Détail :
   HISTORIQUE.md. Côté VPS (à faire par l'utilisateur, contrôles en lecture seule d'abord) : services Supabase
   inutilisés (Studio, meta, imgproxy, functions, analytics), OSRM local, journal d'accès Caddy avec durées.
+- **Frais Rydar aussi pour les flottes** (propriétaire : « un abonnement de 49,99 € et 2 € de commission sur chaque
+  course ») : le super admin règle % et / ou € par course pour une flotte comme pour une centrale (fiche du rattacheur,
+  création). Dus par la flotte dès la fin de chaque course ; sans prix, seuls les frais fixes ; taux figés à la fin de
+  la course (un changement ne vaut que pour les courses terminées après lui) ; prix corrigé = correction (baisse à
+  valider par le super admin) ; course annulée = rien ; changement de modèle sans double frais ni frais perdus. Flotte :
+  entrée « Frais Rydar » (owner / admin) avec solde, échéance, « J'ai payé », paiements et relevé ; bandeau d'échéance ;
+  `/admin/frais` liste les flottes. Chauffeurs : rien ne change. Taux restés d'un ancien passage en centrale remis à 0.
+  Serveur (migration `20260924006400` + web), pas de mise à jour de l'app. Détails : SECURITY.md (Frais plateforme),
+  ARCHITECTURE.md § 13. Après revue : menu lu par un booléen léger (`org_platform_fees_enabled`), frais / modèle
+  changés → tableau de bord relu en direct + alerte « Rydar a mis à jour vos frais par course », bandeau et alertes
+  « Frais Rydar » pour une flotte, relance du super admin au nom de « la flotte », signal « courses sans prix » juste
+  pour une flotte (part en % perdue seulement), tests de tous les chemins (fin côté serveur, prix corrigé par un
+  dispatcher, réglage pendant la fin de course, flotte → centrale sans règlement).
+  **À faire AVANT d'activer des frais sur une flotte** (propriétaire) : (1) réécrire l'article 5 des CGV (`/cgv` :
+  aujourd'hui « Frais plateforme (modèle centrale) … dans la limite du prix ») et l'article 3 (flotte : % du prix + frais
+  fixes facturés à la flotte, fixes dus même sans prix, sans plafond), puis monter `LEGAL_VERSION` (nouvelle acceptation
+  par les organisations ET les chauffeurs) et passer `CGV_COVERS_FLEET_FEES` à true (`components/admin/fees.ts`, retire
+  l'avertissement du super admin) ; (2) `/tarifs` et `pricing.tsx` ne parlent encore de frais par course que pour les
+  centrales ; (3) modèle WhatsApp neutre à faire approuver (WHATSAPP.md). Ensuite seulement : régler les frais de chaque
+  flotte (ex. 2 €) — seules les courses terminées après le réglage sont facturées.
 - **Mini-sites coupés pour toute la plateforme (demande du propriétaire, migration 006200)** : jusqu'à réactivation par
   le super admin (Offres & limites, carte « Mini-sites de réservation », confirmation, journal d'audit). Coupé : menu
   « Mini-site » masqué, éditeur remplacé par « Les mini-sites de réservation sont momentanément désactivés par Rydar. »,

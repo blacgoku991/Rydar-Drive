@@ -1,8 +1,10 @@
 import type { OrgSettings } from "@rydar/shared";
-import { HandCoins } from "lucide-react";
+import { HandCoins, Landmark } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
+import { feeTermsText } from "@/components/platform-fees/org-platform-format";
+import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { BillingPanel } from "@/components/settings/billing-panel";
 import { DispatchSettingsForm, OrganizationForm, PricingEditor, TeamPanel } from "@/components/settings/settings-forms";
 import { CentraleSettingsForm, type CentraleSettingsRow } from "@/components/settlements/centrale-settings-form";
@@ -116,15 +118,43 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     }
     content = <TeamPanel members={members} isOwner={ctx.role === "owner"} canInvite={admin} />;
   } else {
-    const [{ data: plans }, { data: usage }, { data: subscription }, { data: invoices }, sitesOn] = await Promise.all([
+    const [{ data: plans }, { data: usage }, { data: subscription }, { data: invoices }, sitesOn, fees] = await Promise.all([
       ctx.supabase.from("plans").select("*").eq("is_active", true).eq("is_public", true).order("sort_order"),
       ctx.supabase.rpc("org_usage", { p_org: orgId }),
       ctx.supabase.from("subscriptions").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
       ctx.supabase.from("invoices").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(12),
       // Interrupteur plateforme des mini-sites : coupé = mini-site signalé indisponible quelle que soit l'offre
       bookingSitesEnabled(),
+      // Flotte : frais Rydar par course en plus de l'abonnement (owner / admin : renvoi vers « Frais Rydar »)
+      !centrale && admin
+        ? ctx.supabase.from("organizations").select("platform_fee_percent, platform_fee_fixed_cents, currency").eq("id", orgId).single()
+        : Promise.resolve(null),
     ]);
-    content = <BillingPanel plans={plans ?? []} currentPlanId={ctx.org.plan_id} usage={usage} subscription={subscription} invoices={invoices ?? []} isOwner={ctx.role === "owner"} bookingSitesEnabled={sitesOn} />;
+    const fee = (fees?.data ?? null) as { platform_fee_percent: number; platform_fee_fixed_cents: number; currency: string } | null;
+    const perRide = !!fee && (Number(fee.platform_fee_percent) > 0 || Number(fee.platform_fee_fixed_cents) > 0);
+    content = (
+      <div className="space-y-6">
+        {perRide && fee && (
+          <Link
+            href={platformFeesPaths("fleet").page}
+            className="surface flex items-center gap-3 rounded-xl px-5 py-4 transition-colors hover:border-line-strong hover:bg-ink-700"
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted">
+              <Landmark className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[14px] font-semibold tracking-tight">Frais Rydar par course</span>
+              <span className="block text-[12.5px] text-fg-muted">
+                En plus de l&apos;abonnement{"\u00a0"}: {feeTermsText({ fee_percent: Number(fee.platform_fee_percent), fee_fixed_cents: Number(fee.platform_fee_fixed_cents), currency: fee.currency || "EUR" })}.
+                Solde, échéance et paiements dans «{"\u00a0"}Frais Rydar{"\u00a0"}».
+              </span>
+            </span>
+            <span className="shrink-0 text-[13px] text-brand">Ouvrir →</span>
+          </Link>
+        )}
+        <BillingPanel plans={plans ?? []} currentPlanId={ctx.org.plan_id} usage={usage} subscription={subscription} invoices={invoices ?? []} isOwner={ctx.role === "owner"} bookingSitesEnabled={sitesOn} />
+      </div>
+    );
   }
 
   return (

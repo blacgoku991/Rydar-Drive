@@ -27,7 +27,7 @@ Toutes les tables métier portent `organization_id`. Les relations entre tables 
 | Suivi & échanges | `ride_alerts` (alertes de suivi), `chat_messages` (fils direct / flotte, signalements géolocalisés), `chat_reads` (accusés de lecture), `chat_report_votes` |
 | Modération | `chat_message_reports` (messages du fil flotte signalés), `chat_blocks` (auteurs masqués par un chauffeur) |
 | Centrale à commission | `ride_settlements` (règlement de chaque course terminée), `banned_identities` (identités bannies, hachées), `fraud_reports` (signalements au super admin) |
-| Frais plateforme | `platform_billing` (coordonnées de paiement de Rydar), `platform_fee_entries` (registre immuable), `platform_payments` |
+| Frais plateforme | `platform_billing` (coordonnées de paiement de Rydar), `platform_fee_entries` (registre immuable), `platform_payments`, `private.fleet_fee_basis` (taux figés des courses de flotte) |
 | WhatsApp | `org_whatsapp`, `platform_whatsapp` (configuration), `org_whatsapp_secrets`, `platform_whatsapp_secrets` (jetons, service role seul) |
 | Légal | `platform_legal` (éditeur, hébergeurs), `legal_acceptances` (preuves d'acceptation, ajout seul) |
 | Suppressions | `private.account_deletions` (file : dossier des justificatifs et compte de connexion à supprimer) |
@@ -177,6 +177,25 @@ Depuis l'app (`POST /api/driver/delete-account`) ou, pour une demande reçue par
 ### 12. Documents légaux (migration 003900)
 
 `platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). La version en vigueur est `LEGAL_VERSION` (`@rydar/shared`), commune au site et à l'app. Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
+
+### 13. Frais Rydar (centrales et flottes, migrations 003000, 003100, 006400)
+
+Chaque course terminée doit des frais à Rydar (super admin : % du prix + fixe, `organizations.platform_fee_percent` /
+`platform_fee_fixed_cents`), en plus de l'abonnement. Trigger `rides_e_platform_fee` → `private.sync_platform_fee` :
+une écriture `ride` puis des corrections en delta dans `platform_fee_entries` (immuable ; baisse `pending` jusqu'à
+l'accord du super admin). **Centrale** : frais pris dans la répartition du prix (`rides.platform_fee_cents`, plafonnés au
+prix, rien sans prix). **Flotte** : frais = arrondi(prix × % / 100) + fixe, sans prix = fixe seul, taux figés à la fin de
+la course dans `private.fleet_fee_basis` ; `rides.platform_fee_cents` reste vide. Le modèle à la fin de course décide
+(règlement chauffeur présent → règle centrale). Course terminée en flotte : ses taux figés restent la règle tant
+qu'aucun règlement chauffeur n'existe, même après un passage en centrale (ex. centrale à 0 % de commission et 0 € de
+frais, ou course sans chauffeur : la correction d'un prix suit les taux figés, même si `rides.platform_fee_cents` vaut
+0). Écrans : centrale → carte en tête de « Encaissements » ; flotte → menu « Frais Rydar » (`/dashboard/rydar`, relevé
+`/dashboard/rydar/releve`), activé par `private.platform_fees_enabled` (centrale, flotte avec des frais, ou historique ;
+le layout ne lit que le booléen `org_platform_fees_enabled`) ; super admin → `/admin/frais` (centrales et flottes).
+Frais ou modèle changés → `platform.updated` (`rates` / `model`, trigger `organizations_platform_rates_broadcast`) : le
+tableau de bord ouvert se relit sans rechargement. Paiements
+(`platform_payments`) : déclarés par l'organisation, confirmés par le super admin, soldent les échéances les plus
+anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création de courses refusée après N jours de retard).
 
 ## Temps réel
 
