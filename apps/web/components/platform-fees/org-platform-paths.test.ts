@@ -8,12 +8,14 @@ describe("platformFeesPaths : où régler les frais Rydar selon le modèle", () 
       page: "/dashboard/settlements",
       statement: "/dashboard/settlements/rydar",
       back: "Encaissements",
+      label: "Frais plateforme",
     });
     expect(platformFeesPaths("fleet")).toEqual({
       account: "/dashboard/rydar",
       page: "/dashboard/rydar",
       statement: "/dashboard/rydar/releve",
       back: "Frais Rydar",
+      label: "Frais Rydar",
     });
     // Modèle inconnu (ancienne session) : flotte, le modèle par défaut
     expect(platformFeesPaths(undefined).page).toBe("/dashboard/rydar");

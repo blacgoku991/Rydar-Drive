@@ -14,12 +14,20 @@ export type PlatformFeesPaths = {
   statement: string;
   /** Libellé du lien retour du relevé */
   back: string;
+  /** Nom des frais dans le bandeau et les alertes : « Frais plateforme » (centrale), « Frais Rydar » (flotte, comme le menu) */
+  label: string;
 };
 
 export function platformFeesPaths(model: DispatchModel | null | undefined): PlatformFeesPaths {
   return model === "centrale"
-    ? { account: "/dashboard/settlements#frais-plateforme", page: "/dashboard/settlements", statement: "/dashboard/settlements/rydar", back: "Encaissements" }
-    : { account: "/dashboard/rydar", page: "/dashboard/rydar", statement: "/dashboard/rydar/releve", back: "Frais Rydar" };
+    ? {
+        account: "/dashboard/settlements#frais-plateforme",
+        page: "/dashboard/settlements",
+        statement: "/dashboard/settlements/rydar",
+        back: "Encaissements",
+        label: "Frais plateforme",
+      }
+    : { account: "/dashboard/rydar", page: "/dashboard/rydar", statement: "/dashboard/rydar/releve", back: "Frais Rydar", label: "Frais Rydar" };
 }
 
 /** Export CSV du relevé (même route pour les deux modèles : org_platform_statement contrôle le rôle). */

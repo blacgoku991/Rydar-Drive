@@ -219,7 +219,11 @@ export interface AdminPlatformAccount {
 export interface PlatformEvent {
   action:
     | "fee" | "reduction_pending" | "reduction_approved" | "reduction_rejected" | "adjusted"
-    | "declared" | "cancelled" | "confirmed" | "rejected" | "reopened" | "reminded" | "terms";
+    | "declared" | "cancelled" | "confirmed" | "rejected" | "reopened" | "reminded" | "terms"
+    /** Frais par course changés par le super admin (20260924006400) */
+    | "rates"
+    /** Modèle d'exploitation changé par le super admin (20260924006400) : le tableau de bord se relit */
+    | "model";
   organization_id: Uuid;
   /** Identifiants seulement : le canal org:{id} est lisible par tous les membres (dispatchers compris) */
   payment_id?: Uuid;
@@ -228,6 +232,8 @@ export interface PlatformEvent {
   payment?: PlatformPayment;
   entry?: PlatformEntry;
   note?: string | null;
+  /** « rates » : nouveaux frais par course (relus par org_platform_account) */
+  terms?: Pick<PlatformAccount, "fee_percent" | "fee_fixed_cents" | "currency">;
 }
 
 // -----------------------------------------------------------------------------

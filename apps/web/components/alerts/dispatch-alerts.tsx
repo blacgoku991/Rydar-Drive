@@ -28,6 +28,7 @@ import { toast } from "sonner";
 import { redispatchRide } from "@/app/dashboard/rides/actions";
 import { confirmSettlements } from "@/app/dashboard/settlements/actions";
 import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
+import { feeTermsText } from "@/components/platform-fees/org-platform-format";
 import { isPlatformFeesPath, platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useCentrale, type CentraleInfo } from "@/components/settlements/centrale-context";
@@ -208,7 +209,9 @@ const firstName = (name: string | null | undefined) => (name ?? "").trim().split
 const PLATFORM_METHOD_LABEL: Record<string, string> = { transfer: "virement", link: "lien de paiement", cash: "espèces", card: "carte", other: "autre moyen" };
 
 /** Actions de Rydar signalées à la centrale (pas les frais de chaque course, ni ses propres déclarations). */
-const PLATFORM_ALERT_ACTIONS = new Set<string>(["confirmed", "rejected", "reopened", "reminded", "adjusted", "reduction_approved", "reduction_rejected", "terms"]);
+const PLATFORM_ALERT_ACTIONS = new Set<string>([
+  "confirmed", "rejected", "reopened", "reminded", "adjusted", "reduction_approved", "reduction_rejected", "terms", "rates",
+]);
 
 /** Alerte « frais plateforme » (null : rien à signaler, ex. frais d'une course terminée, action de la centrale elle-même). */
 function platformAlert(e: PlatformEvent): Pick<AlertItem, "id" | "title" | "body" | "level"> | null {
@@ -285,6 +288,15 @@ function platformAlert(e: PlatformEvent): Pick<AlertItem, "id" | "title" | "body
         level: "info",
         title: "Rydar a mis à jour vos conditions de règlement",
         body: "Échéance ou délai des frais plateforme modifiés : consultez votre compte.",
+      };
+    case "rates":
+      // Frais par course changés par le super admin (20260924006400) : courses terminées à partir de maintenant
+      if (!e.terms) return null;
+      return {
+        id: `pf:rates:${new Date().toISOString().slice(0, 16)}`,
+        level: "info",
+        title: "Rydar a mis à jour vos frais par course",
+        body: `Désormais\u00a0: ${feeTermsText(e.terms)}. Les courses déjà terminées gardent leurs frais.`,
       };
     default:
       // fee (chaque course terminée), declared / cancelled (action de la centrale), reduction_pending (sa propre correction)
@@ -789,9 +801,12 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
           payment: e.payment_id ? acc.payments.find((x) => x.id === e.payment_id) : undefined,
           entry: e.entry_id ? acc.entries.find((x) => x.id === e.entry_id) : undefined,
           note: e.action === "reminded" ? acc.account.reminder_note : undefined,
+          terms: e.action === "rates" ? acc.account : undefined,
         };
         const alert = platformAlert(full);
-        if (alert) push({ ...alert, kind: "platform", rideId: null, href: platformFeesPaths(org.model).account, cta: "Frais plateforme" });
+        // « Frais plateforme » (centrale, Encaissements) ou « Frais Rydar » (flotte, son menu)
+        const paths = platformFeesPaths(acc.organization.dispatch_model ?? org.model);
+        if (alert) push({ ...alert, kind: "platform", rideId: null, href: paths.account, cta: paths.label });
       }, () => undefined);
   });
 

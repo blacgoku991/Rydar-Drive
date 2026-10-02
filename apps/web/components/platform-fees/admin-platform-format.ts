@@ -114,13 +114,30 @@ export type PlatformMonthStats = PlatformAccount["month"] & { cancelled_onboard_
 /** Courses annulées après la prise en charge du client (0 si le compte ne le fournit pas). */
 export const cancelledOnboard = (a: Pick<PlatformAccount, "month">) => (a.month as PlatformMonthStats | undefined)?.cancelled_onboard_rides ?? 0;
 
+/**
+ * Courses « à surveiller » du mois (private.platform_account.month.zero_price_rides) : centrale → à 0 €, sans prix ou
+ * frais plafonnés au prix (frais nuls ou réduits) ; flotte → courses sans prix (ou à 0 €) dont seule la part en % est
+ * perdue, le fixe restant dû (la base ne compte que celles dont les taux figés ont une part en %).
+ */
+export function zeroPriceText(n: number, model: PlatformAccount["dispatch_model"] | null | undefined, short = false) {
+  const s = n > 1 ? "s" : "";
+  if (model === "fleet") {
+    return short
+      ? `${n} course${s} sans prix (part en\u00a0% non due)`
+      : `${n} course${s} terminée${s} sans prix ou à 0\u00a0€\u00a0: la part en\u00a0% du prix n'est pas due (les frais fixes restent dus)`;
+  }
+  return short
+    ? `${n} course${s} à prix nul ou symbolique`
+    : `${n} course${s} terminée${s} à 0 €, sans prix ou à un prix symbolique (frais nuls ou plafonnés au prix)`;
+}
+
 /** Signaux du mois : « 2 courses à prix nul ou symbolique · 3 annulées après attribution (dont 1 client à bord) ». */
-export function monthSignals(a: Pick<PlatformAccount, "month">) {
+export function monthSignals(a: Pick<PlatformAccount, "month" | "dispatch_model">) {
   const parts: string[] = [];
   const z = a.month?.zero_price_rides ?? 0;
   const c = a.month?.cancelled_assigned_rides ?? 0;
   const b = cancelledOnboard(a);
-  if (z) parts.push(`${z} course${z > 1 ? "s" : ""} à prix nul ou symbolique`);
+  if (z) parts.push(zeroPriceText(z, a.dispatch_model, true));
   if (c) parts.push(`${c} annulée${c > 1 ? "s" : ""} après attribution${b ? ` (dont ${b} client à bord)` : ""}`);
   return parts.join(" · ");
 }

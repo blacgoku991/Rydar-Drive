@@ -1,5 +1,5 @@
 "use client";
-// Super admin, compte d'une centrale : paiement reçu directement, avoir / frais ajoutés, relance, conditions.
+// Super admin, compte d'une centrale ou d'une flotte : paiement reçu directement, avoir / frais ajoutés, relance, conditions.
 import { PLATFORM_CYCLE_META, formatPrice, formatTime, type PlatformAccount, type PlatformBillingCycle, type PlatformPaymentMethod } from "@rydar/shared";
 import { BellRing, CalendarClock, Check, HandCoins, Minus, Plus, Scale } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -19,7 +19,11 @@ type Errors = Record<string, string>;
 type AccountLite = Pick<
   PlatformAccount,
   "balance_cents" | "due_cents" | "currency" | "reference" | "reminded_at" | "reminder_note" | "declared_cents" | "overdue_since" | "days_overdue"
+  | "dispatch_model"
 >;
+
+/** « flotte » / « centrale » (textes des dialogues ; modèle inconnu : centrale, comme avant les frais des flottes). */
+const who = (a: Pick<PlatformAccount, "dispatch_model">) => (a.dispatch_model === "fleet" ? "flotte" : "centrale");
 
 /** Aujourd'hui (AAAA-MM-JJ) dans le fuseau donné. */
 function today(timeZone: string) {
@@ -164,7 +168,7 @@ function AdjustDialog({
       <DialogContent
         size="sm"
         title="Avoir ou frais ajoutés"
-        description={`Écriture manuelle sur le compte de ${orgName}, visible par la centrale avec son motif.`}
+        description={`Écriture manuelle sur le compte de ${orgName}, visible par la ${who(account)} avec son motif.`}
       >
         <form
           noValidate
@@ -179,7 +183,7 @@ function AdjustDialog({
           <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Type d'écriture">
             {(
               [
-                { v: "credit", label: "Avoir", hint: "en faveur de la centrale", icon: Minus },
+                { v: "credit", label: "Avoir", hint: `en faveur de la ${who(account)}`, icon: Minus },
                 { v: "charge", label: "Frais ajoutés", hint: "dus à Rydar", icon: Plus },
               ] as const
             ).map((o) => {
@@ -275,7 +279,7 @@ function RemindDialog({
     setWa(null);
     setViaWhatsApp(false);
     let live = true;
-    // Relance WhatsApp possible ? (numéro de Rydar relié, téléphone du propriétaire ou de la centrale)
+    // Relance WhatsApp possible ? (numéro de Rydar relié, téléphone du propriétaire ou de l'organisation)
     void platformWhatsAppTarget(orgId).then((t) => {
       if (!live) return;
       setWa(t);
@@ -295,7 +299,7 @@ function RemindDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         size="sm"
-        title="Relancer la centrale"
+        title={`Relancer la ${who(account)}`}
         description={`Un rappel s'affiche dans le tableau de bord de ${orgName} (une relance par heure au plus).`}
       >
         <div className="mb-4 flex items-center justify-between gap-3 rounded-xl bg-white/[0.035] px-3.5 py-3">
@@ -350,10 +354,10 @@ function RemindDialog({
                 {wa == null
                   ? "Vérification…"
                   : waOk
-                    ? `Au ${wa.source === "owner" ? "propriétaire" : "numéro de la centrale"}${wa.name ? ` (${wa.name})` : ""} : ${wa.to_display}. Modèle validé par Meta, sans votre message.`
+                    ? `Au ${wa.source === "owner" ? "propriétaire" : `numéro de la ${who(account)}`}${wa.name ? ` (${wa.name})` : ""} : ${wa.to_display}. Modèle validé par Meta, sans votre message.`
                     : wa.reason === "NOT_CONFIGURED"
                       ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
-                      : "Aucun numéro valide pour le propriétaire ni pour la centrale."}
+                      : `Aucun numéro valide pour le propriétaire ni pour la ${who(account)}.`}
               </span>
             </span>
             <Switch checked={viaWhatsApp && waOk} onCheckedChange={setViaWhatsApp} disabled={!waOk} aria-label="Envoyer aussi par WhatsApp" />

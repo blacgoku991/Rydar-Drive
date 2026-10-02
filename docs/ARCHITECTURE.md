@@ -186,9 +186,14 @@ une écriture `ride` puis des corrections en delta dans `platform_fee_entries` (
 l'accord du super admin). **Centrale** : frais pris dans la répartition du prix (`rides.platform_fee_cents`, plafonnés au
 prix, rien sans prix). **Flotte** : frais = arrondi(prix × % / 100) + fixe, sans prix = fixe seul, taux figés à la fin de
 la course dans `private.fleet_fee_basis` ; `rides.platform_fee_cents` reste vide. Le modèle à la fin de course décide
-(règlement chauffeur présent → règle centrale). Écrans : centrale → carte en tête de « Encaissements » ; flotte → menu
-« Frais Rydar » (`/dashboard/rydar`, relevé `/dashboard/rydar/releve`), activé par `private.platform_fees_enabled`
-(centrale, flotte avec des frais, ou historique) ; super admin → `/admin/frais` (centrales et flottes). Paiements
+(règlement chauffeur présent → règle centrale). Course terminée en flotte : ses taux figés restent la règle tant
+qu'aucun règlement chauffeur n'existe, même après un passage en centrale (ex. centrale à 0 % de commission et 0 € de
+frais, ou course sans chauffeur : la correction d'un prix suit les taux figés, même si `rides.platform_fee_cents` vaut
+0). Écrans : centrale → carte en tête de « Encaissements » ; flotte → menu « Frais Rydar » (`/dashboard/rydar`, relevé
+`/dashboard/rydar/releve`), activé par `private.platform_fees_enabled` (centrale, flotte avec des frais, ou historique ;
+le layout ne lit que le booléen `org_platform_fees_enabled`) ; super admin → `/admin/frais` (centrales et flottes).
+Frais ou modèle changés → `platform.updated` (`rates` / `model`, trigger `organizations_platform_rates_broadcast`) : le
+tableau de bord ouvert se relit sans rechargement. Paiements
 (`platform_payments`) : déclarés par l'organisation, confirmés par le super admin, soldent les échéances les plus
 anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création de courses refusée après N jours de retard).
 

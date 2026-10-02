@@ -122,8 +122,18 @@ Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domain
 - **Flottes** (migration 006400) : mêmes règles, frais = % du prix (0 sans prix) + fixe, dus par la flotte ; taux figés à
   la fin de la course (`private.fleet_fee_basis`, aucun droit client ni service role) : un changement de réglage ne
   touche jamais une course déjà terminée. Le modèle à la fin de course décide (règle centrale dès qu'un règlement
-  chauffeur existe), toujours par delta : ni double frais ni frais perdus au changement de modèle.
-  `rides.platform_fee_cents` reste vide en flotte : aucun chauffeur de flotte ne voit les frais Rydar.
+  chauffeur existe), toujours par delta : ni double frais ni frais perdus au changement de modèle. Course terminée en
+  flotte : ses taux figés restent la règle tant qu'aucun règlement chauffeur n'existe, même après un passage en
+  centrale (centrale à 0 % / 0 €, course sans chauffeur). `rides.platform_fee_cents` reste vide en flotte : aucun
+  chauffeur de flotte ne voit les frais Rydar.
+- Taux (`platform_fee_percent` / `platform_fee_fixed_cents`) **lisibles par tous les membres**, dispatchers compris
+  (décision 006400) : ce sont les conditions de l'organisation, pas des montants dus, et les retirer du GRANT par
+  colonne casserait tout `select('*')` sur `organizations`. Compte, écritures, paiements, relevé et menu
+  (`org_platform_fees_enabled`) restent réservés à l'owner / admin.
+- **CGV** : l'article 5 en vigueur ne couvre encore que les frais des centrales (prélevés sur le prix, plafonnés). Avant
+  de régler des frais sur une flotte : réécrire l'article (flotte : % + fixe facturés à la flotte, fixe dû sans prix) et
+  monter `LEGAL_VERSION` ; d'ici là, avertissement à côté des champs (`CGV_COVERS_FLEET_FEES = false`,
+  `components/admin/fees.ts`).
 - **Registre immuable** : aucune écriture ne se modifie ni ne se supprime (trigger `platform_entry_guard`, même en service
   role) ; tout changement de frais est une nouvelle écriture de correction. Registre et paiements ne partent pas non plus
   avec la centrale : clés étrangères en `on delete restrict` (migration 004200), une centrale qui en a s'archive. Une **baisse** (prix corrigé après la course)

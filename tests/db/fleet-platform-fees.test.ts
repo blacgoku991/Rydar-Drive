@@ -181,6 +181,15 @@ describe("Frais Rydar des flottes : dus par la flotte dès la fin de la course",
     await setPrice(org, ride.id, null);
     expect((await sql(`select amount_cents from public.platform_fee_entries where ride_id = $1 and status = 'pending'`, [ride.id]))[0].amount_cents).toBe(-300);
 
+    // Signal « à surveiller » du super admin : courses sans prix dont la part en % est perdue (le fixe reste dû)
+    const sansPrix = await completedRide(org, d, null);
+    expect(await sumOf(sansPrix.id)).toBe(200);
+    expect((await account(org)).month.zero_price_rides).toBe(2); // celle-ci + la première, dont le prix a été retiré
+    const fixedOnly = await fleet("Flotte Fixe Sans Prix", { fixed: 200 });
+    const df = await driverIn(fixedOnly);
+    await completedRide(fixedOnly, df, null);
+    expect((await account(fixedOnly)).month.zero_price_rides).toBe(0); // fixe seul : rien de perdu sans prix
+
     // % seul et course sans prix : rien à la fin ; le prix fixé plus tard crée l'écriture, sans échéance rétroactive
     const pctOnly = await fleet("Flotte Pourcent Sans Prix", { percent: 10 });
     const d2 = await driverIn(pctOnly);
@@ -378,9 +387,16 @@ describe("Frais Rydar des flottes : paiements, échéances, droits", () => {
     expect(ov.organizations.find((o: any) => o.id === org.id)).toMatchObject({ dispatch_model: "fleet", balance_cents: 100 });
     const detail = await rpc(sa, "admin_platform_account", [org.id, null]);
     expect(detail).toMatchObject({ organization: { dispatch_model: "fleet" }, account: { balance_cents: 100 } });
-    // Relance du super admin : affichée à la flotte
-    expect((await svc("svc_platform_remind", [org.id, sa, "Merci de régler"])).code).toBe("REMINDED");
+    // Relance du super admin : affichée à la flotte (messages au nom de la flotte, pas de « la centrale »)
+    expect(await svc("svc_platform_remind", [org.id, sa, "Merci de régler"])).toMatchObject({
+      code: "REMINDED", message: "Relance affichée à la flotte.",
+    });
     expect(await account(org)).toMatchObject({ reminder_note: "Merci de régler" });
+    const empty = await fleet("Flotte Rien À Régler", { fixed: 200 });
+    expect(await svc("svc_platform_remind", [empty.id, sa, null])).toMatchObject({ code: "NOTHING_DUE", message: "Rien à régler pour cette flotte." });
+    const centrale = await createOrg("Centrale Rien À Régler");
+    await setModel(centrale, "centrale", { percent: 0, fixed: 200 });
+    expect((await svc("svc_platform_remind", [centrale.id, sa, null])).message).toBe("Rien à régler pour cette centrale.");
   });
 
   it("flotte avec frais réglés mais aucune course : écran ouvert et listée chez le super admin", async () => {
@@ -438,5 +454,142 @@ describe("Frais Rydar des flottes : paiements, échéances, droits", () => {
     expect(await calc(0, 10, 200)).toBe(200);
     expect(await calc(-500, 10, 200)).toBe(200);
     expect(await calc(100_000_000, 50, 100_000)).toBe(10_000_000);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("Frais Rydar des flottes : tous les chemins de fin de course et de correction", () => {
+  it("fin de course hors app chauffeur : statut fermé au tableau de bord ; import / support (service role) → mêmes frais", async () => {
+    const org = await fleet("Flotte Fin Serveur", { percent: 10, fixed: 200 });
+    const d = await driverIn(org);
+    const dispatcher = await createMember(org, "dispatcher");
+    const ride = await createRideAsOwner(org, { price_cents: 4000, payment_method: "cash" });
+    await advance(d, ride.id, "IN_PROGRESS");
+    // Aucun rôle du tableau de bord ne termine une course (statut réservé au chauffeur, driver_update_ride_status)
+    for (const sub of [org.ownerId, dispatcher]) {
+      const denied = await expectPgError(as({ sub }, (q) => q(`update public.rides set status = 'COMPLETED' where id = $1`, [ride.id])));
+      expect(denied.code).toBe("42501");
+    }
+    expect(await entriesOf(ride.id)).toHaveLength(0);
+    // Fin écrite côté serveur (reprise, support) : même trigger, mêmes taux figés, mêmes frais
+    await as({ role: "service_role" }, (q) =>
+      q(`update public.rides set status = 'COMPLETED', completed_at = now() where id = $1`, [ride.id]));
+    expect(await entriesOf(ride.id)).toEqual([{ kind: "ride", amount_cents: 600, status: "posted" }]);
+    expect(await basisOf(ride.id)).toEqual({ percent: 10, fixed: 200 });
+  });
+
+  it("dispatcher : baisse du prix d'une course terminée (en attente) puis hausse (baisse remplacée, hausse comptée)", async () => {
+    const org = await fleet("Flotte Dispatcher Prix", { percent: 10, fixed: 200 });
+    const d = await driverIn(org);
+    const dispatcher = await createMember(org, "dispatcher");
+    const ride = await completedRide(org, d, 5000);
+    expect(await sumOf(ride.id)).toBe(700);
+    const byDispatcher = (price: number) =>
+      as({ sub: dispatcher }, (q) => q(`update public.rides set price_cents = $2 where id = $1`, [ride.id, price]));
+
+    await byDispatcher(3000); // 5 € : baisse de 2 € en attente du super admin
+    expect(await entriesOf(ride.id)).toEqual([
+      { kind: "ride", amount_cents: 700, status: "posted" },
+      { kind: "correction", amount_cents: -200, status: "pending" },
+    ]);
+    expect(await account(org)).toMatchObject({ balance_cents: 700, pending_reductions_count: 1 });
+
+    await byDispatcher(6000); // 8 € : la baisse est remplacée (jamais comptée deux fois), +1 € compté tout de suite
+    expect(await entriesOf(ride.id)).toEqual([
+      { kind: "ride", amount_cents: 700, status: "posted" },
+      { kind: "correction", amount_cents: -200, status: "rejected" },
+      { kind: "correction", amount_cents: 100, status: "posted" },
+    ]);
+    const [superseded] = await sql(
+      `select review_note, reviewed_by from public.platform_fee_entries where ride_id = $1 and status = 'rejected'`, [ride.id]);
+    expect(superseded).toEqual({ review_note: "Remplacée : le prix de la course a de nouveau été modifié", reviewed_by: null });
+    expect(await account(org)).toMatchObject({ balance_cents: 800, pending_reductions_count: 0 });
+    // Le dispatcher ne voit toujours ni le compte ni les écritures
+    expect((await expectPgError(rpc(dispatcher, "org_platform_account", [org.id]))).code).toBe("42501");
+  });
+
+  it("réglage changé PENDANT la fin de course : taux validés au moment de la fin (jamais un réglage non enregistré)", async () => {
+    const org = await fleet("Flotte Chevauchement", { fixed: 200 });
+    const d = await driverIn(org);
+    const d2 = await driverIn(org);
+    const ride = await createRideAsOwner(org, { price_cents: 5000, payment_method: "cash" });
+    await advance(d, ride.id, "IN_PROGRESS");
+    const ride2 = await createRideAsOwner(org, { price_cents: 5000, payment_method: "cash" });
+    await advance(d2, ride2.id, "IN_PROGRESS");
+
+    // Le super admin passe à 10 % + 3 € ; la course se termine avant l'enregistrement : anciens taux (2 €)
+    await as({ role: "service_role" }, async (q) => {
+      await q(`update public.organizations set platform_fee_percent = 10, platform_fee_fixed_cents = 300 where id = $1`, [org.id]);
+      await continueTo(d, ride.id, "COMPLETED", "IN_PROGRESS"); // autre connexion, sans attendre ce réglage
+    });
+    expect(await entriesOf(ride.id)).toEqual([{ kind: "ride", amount_cents: 200, status: "posted" }]);
+    expect(await basisOf(ride.id)).toEqual({ percent: 0, fixed: 200 });
+    // Fin après l'enregistrement : nouveaux taux (5 € + 3 €)
+    await continueTo(d2, ride2.id, "COMPLETED", "IN_PROGRESS");
+    expect(await entriesOf(ride2.id)).toEqual([{ kind: "ride", amount_cents: 800, status: "posted" }]);
+  });
+
+  it("course terminée en flotte, corrigée après un passage en centrale SANS règlement chauffeur : ses taux figés restent la règle", async () => {
+    // Centrale à 0 % de commission et 0 € de frais : répartition nulle, aucun règlement chauffeur créé
+    const org = await fleet("Flotte Puis Centrale Nulle", { percent: 10, fixed: 200 }, {
+      driver_commission_percent: 0, settlement_methods: "{link,cash,transfer}",
+    });
+    const d = await driverIn(org);
+    const ride = await completedRide(org, d, 7000);
+    expect(await sumOf(ride.id)).toBe(900);
+    await setModel(org, "centrale", { percent: 0, fixed: 0 });
+    await setPrice(org, ride.id, 8000);
+    expect(await sql(`select id from public.ride_settlements where ride_id = $1`, [ride.id])).toHaveLength(0);
+    expect((await sql(`select platform_fee_cents from public.rides where id = $1`, [ride.id]))[0].platform_fee_cents).toBe(0);
+    // Taux figés de la course (10 % + 2 €) : 10 € → +1 €, pas la répartition de la centrale (0 €)
+    expect(await entriesOf(ride.id)).toEqual([
+      { kind: "ride", amount_cents: 900, status: "posted" },
+      { kind: "correction", amount_cents: 100, status: "posted" },
+    ]);
+    // Une nouvelle course terminée en centrale suit la règle centrale (0 € de frais : aucune écriture)
+    const r2 = await createRideAsOwner(org, { price_cents: 5000, payment_method: "cash" });
+    await advance(d, r2.id);
+    expect(await entriesOf(r2.id)).toHaveLength(0);
+    expect(await basisOf(r2.id)).toBeNull();
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("Frais Rydar des flottes : menu et temps réel", () => {
+  it("org_platform_fees_enabled : le seul booléen du menu, owner / admin seulement", async () => {
+    const org = await fleet("Flotte Menu", { fixed: 200 });
+    const free = await fleet("Flotte Menu Sans Frais");
+    const centrale = await createOrg("Centrale Menu");
+    await setModel(centrale, "centrale", { percent: 0, fixed: 0 });
+    const admin = await createMember(org, "admin");
+    const dispatcher = await createMember(org, "dispatcher");
+    const d = await driverIn(org);
+    const enabled = async (sub: string, o: Org) => (await rpc(sub, "org_platform_fees_enabled", [o.id])) as unknown as boolean;
+
+    expect(await enabled(org.ownerId, org)).toBe(true);
+    expect(await enabled(admin, org)).toBe(true);
+    expect(await enabled(dispatcher, org)).toBe(false);
+    expect(await enabled(d.userId, org)).toBe(false);
+    expect(await enabled(free.ownerId, org)).toBe(false);
+    expect(await enabled(free.ownerId, free)).toBe(false);
+    expect(await enabled(centrale.ownerId, centrale)).toBe(true);
+    // Anonyme : fonction fermée
+    const anon = await expectPgError(as({ role: "anon" }, (q) => q(`select public.org_platform_fees_enabled($1)`, [org.id])));
+    expect(anon.code).toBe("42501");
+  });
+
+  it("frais ou modèle changés par le super admin : « platform.updated » (rates / model), identifiants seulement", async () => {
+    const org = await fleet("Flotte Temps Réel");
+    const events = async () =>
+      (await sql(`select payload from realtime.messages where topic = $1 and event = 'platform.updated' order by id`, [`org:${org.id}`]))
+        .map((m: any) => m.payload);
+    expect(await events()).toEqual([]);
+    await setFees(org, 0, 200);
+    await setFees(org, 0, 200); // inchangé : rien
+    await setModel(org, "centrale");
+    expect(await events()).toEqual([
+      { action: "rates", organization_id: org.id },
+      { action: "model", organization_id: org.id },
+    ]);
   });
 });

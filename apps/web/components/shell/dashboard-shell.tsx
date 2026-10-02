@@ -1,4 +1,5 @@
 "use client";
+import type { PlatformEvent } from "@rydar/shared";
 import { useRouter } from "next/navigation";
 import { AlertDialog as A } from "radix-ui";
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -43,7 +44,7 @@ type ShellProps = {
   superAdmin?: boolean;
   /** Mini-sites servis par la plateforme (interrupteur du super admin) : sinon, entrée « Mini-site » masquée */
   bookingSites?: boolean;
-  /** Flotte avec des frais Rydar (owner / admin, org_platform_status) : entrée « Frais Rydar » + bandeau d'échéance */
+  /** Flotte avec des frais Rydar (owner / admin, org_platform_fees_enabled) : entrée « Frais Rydar » + bandeau d'échéance */
   rydarFees?: boolean;
 };
 
@@ -101,6 +102,14 @@ function ShellBody({
   // Frais dus à Rydar : centrale → carte d'« Encaissements » ; flotte avec des frais → entrée « Frais Rydar »
   const feePaths = platformFeesPaths(centrale.model);
   const fleetFees = !isCentrale && isAdmin && !!rydarFees;
+  // Frais par course (« rates ») ou modèle (« model ») changés par le super admin : le layout relit l'entrée « Frais
+  // Rydar », le bandeau et les menus du modèle, sans rechargement complet (événement rare, identifiants seulement)
+  const ratesTimer = useRef<number | null>(null);
+  useRealtimeEvent("platform.updated", (e: PlatformEvent) => {
+    if ((e?.action !== "rates" && e?.action !== "model") || (e.organization_id && e.organization_id !== org.id)) return;
+    if (ratesTimer.current) window.clearTimeout(ratesTimer.current);
+    ratesTimer.current = window.setTimeout(() => router.refresh(), 800);
+  });
   // Documents à valider : valeur serveur, relue après chaque dépôt / validation / refus (un incrément local compterait
   // aussi les pièces des candidats, que la page Chauffeurs n'affiche pas) et quand une candidature est traitée
   const [pendingDocuments, setPendingDocuments] = useState(pendingInitial ?? 0);

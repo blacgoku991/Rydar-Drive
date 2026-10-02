@@ -24,11 +24,18 @@
 --     centrale reprend la main (les frais suivent ce que le chauffeur verse à la centrale) — par correction en delta :
 --     jamais de double frais, jamais de frais perdus (une baisse attend le super admin) ;
 --   • courses terminées avant cette migration : jamais facturées en flotte (aucune base) ;
+--   • taux figés = règle de la course tant qu'aucun règlement chauffeur n'existe : une course terminée en flotte
+--     puis corrigée après un passage en centrale SANS règlement (aucun chauffeur, ou répartition à 0 % de commission
+--     et 0 € de frais) garde ses taux de flotte, même si rides.platform_fee_cents vaut alors 0 ;
 --   • rides.platform_fee_cents reste NULL en flotte : l'app chauffeur (select * sur rides) n'affiche jamais de frais
 --     Rydar à un chauffeur de flotte.
 -- Écrans : « Frais Rydar » (owner / admin) et compte super admin activés pour une flotte dès que des frais sont
--- réglés, ou qu'elle a un historique (private.platform_fees_enabled) ; le compte, le relevé et l'écriture disent si
--- la course relève de la flotte (dispatch_model, ride.fleet_fee).
+-- réglés, ou qu'elle a un historique (private.platform_fees_enabled ; menu : public.org_platform_fees_enabled, le
+-- seul booléen) ; le compte, le relevé et l'écriture disent si la course relève de la flotte (dispatch_model,
+-- ride.fleet_fee) ; frais ou modèle changés → « platform.updated » (action « rates ») ; relance du super admin :
+-- « la flotte » / « la centrale ». Les taux restent lisibles par tous les membres (GRANT par colonne de
+-- organizations, nécessaire au select('*')) : ce sont les conditions de l'organisation, pas des montants dus ;
+-- compte, écritures et paiements restent réservés à l'owner / admin.
 -- Flottes existantes : des taux restés d'un ancien passage en centrale (« sans effet en mode flotte » jusqu'ici)
 -- sont remis à 0 (journalisé) : aucune facturation surprise, le super admin règle ceux des flottes.
 -- =============================================================================
@@ -195,7 +202,8 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Dernière définition : 20260924004400_audit_argent.sql
 -- Ajouts : frais d'une course de flotte (base figée, sans règlement chauffeur) = « encaissé par l'organisation »
--- (la flotte encaisse elle-même ses courses : jamais « chez les chauffeurs ») ; clé dispatch_model.
+-- (la flotte encaisse elle-même ses courses : jamais « chez les chauffeurs ») ; clé dispatch_model ;
+-- month.zero_price_rides d'une flotte = courses sans prix dont la part en % est perdue (centrale : inchangé).
 create or replace function private.platform_account(p_org uuid)
 returns jsonb
 language plpgsql
@@ -238,9 +246,17 @@ begin
       count(*) filter (where e.kind = 'ride') as rides,
       (select coalesce(sum(p.received_cents), 0) from public.platform_payments p
         where p.organization_id = p_org and p.status = 'confirmed' and p.reviewed_at >= v_month) as received,
-      (select count(*) from public.rides r where r.organization_id = p_org and r.status = 'COMPLETED'
+      -- Courses « à surveiller » : centrale → à 0 €, sans prix ou frais plafonnés au prix (inchangé) ; course de
+      -- flotte → sans prix (ou à 0 €) alors que ses taux figés ont une part en % : seule cette part est perdue (le fixe
+      -- reste dû). Course d'une flotte sans base (aucun frais à sa fin) : rien n'était dû, rien à surveiller.
+      (select count(*) from public.rides r
+        left join private.fleet_fee_basis fb on fb.ride_id = r.id
+          and not exists (select 1 from public.ride_settlements x where x.ride_id = r.id)
+        where r.organization_id = p_org and r.status = 'COMPLETED'
         and r.completed_at >= v_month
-        and (coalesce(r.price_cents, 0) = 0 or r.platform_fee_cents >= r.price_cents)) as zero_price,
+        and case when fb.ride_id is not null then coalesce(r.price_cents, 0) = 0 and fb.fee_percent > 0
+                 when o.dispatch_model = 'fleet' then false
+                 else (coalesce(r.price_cents, 0) = 0 or r.platform_fee_cents >= r.price_cents) end) as zero_price,
       (select count(*) from public.rides r where r.organization_id = p_org and r.status = 'CANCELLED'
         and r.driver_id is not null and r.updated_at >= v_month) as cancelled_assigned,
       -- Sous-ensemble du précédent (chauffeur attribué, updated_at >= cancelled_at)
@@ -496,6 +512,98 @@ begin
 end;
 $$;
 
+-- Menu « Frais Rydar » d'une flotte (layout du tableau de bord, à chaque rendu) : le seul booléen, sans calculer le
+-- compte (private.platform_account = plusieurs agrégats). Mêmes conditions d'accès que org_platform_status : false
+-- pour un dispatcher, un chauffeur, un non-membre ou un jeton émis avant l'activation de l'adhésion.
+create or replace function public.org_platform_fees_enabled(p_org uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p_org is not null
+     and exists (
+       select 1
+       from public.organization_users ou
+       join public.organizations o on o.id = ou.organization_id
+       where ou.organization_id = p_org and ou.user_id = auth.uid() and ou.status = 'active'
+         and private.jwt_issued_after(ou.activated_at)
+         and ou.role in ('owner', 'admin') and o.status in ('active', 'suspended'))
+     and private.platform_fees_enabled(p_org);
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Relance du super admin : messages selon le modèle (« la flotte » / « la centrale »)
+-- -----------------------------------------------------------------------------
+-- Dernière définition : 20260924003700_whatsapp_reminders.sql. Seul changement : les messages nomment la flotte ou la
+-- centrale selon dispatch_model (codes, contrôles, limite d'une relance par heure et envoi WhatsApp inchangés).
+create or replace function public.svc_platform_remind(p_org uuid, p_actor uuid, p_note text default null, p_whatsapp boolean default false)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  o public.organizations;
+  v_note text := left(nullif(btrim(coalesce(p_note, '')), ''), 300);
+  v_account jsonb;
+  v_target jsonb;
+  v_amount bigint;
+  v_date timestamptz;
+  v_who text;
+begin
+  perform private.assert_platform_actor(p_actor);
+  select * into o from public.organizations where id = p_org for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Organisation introuvable.');
+  end if;
+  v_who := case when o.dispatch_model = 'fleet' then 'flotte' else 'centrale' end;
+  if o.platform_reminded_at > now() - interval '1 hour' then
+    return jsonb_build_object('ok', false, 'code', 'RATE_LIMITED', 'message', 'Relance déjà envoyée il y a moins d''une heure.');
+  end if;
+  v_account := private.platform_account(p_org);
+  if (v_account ->> 'balance_cents')::bigint <= 0 then
+    return jsonb_build_object('ok', false, 'code', 'NOTHING_DUE', 'message', format('Rien à régler pour cette %s.', v_who));
+  end if;
+  if coalesce(p_whatsapp, false) then
+    if not private.whatsapp_ready('platform', null) then
+      return jsonb_build_object('ok', false, 'code', 'WHATSAPP_NOT_CONFIGURED',
+        'message', 'WhatsApp de Rydar non configuré : renseignez le numéro dans Frais plateforme › WhatsApp.');
+    end if;
+    v_target := private.platform_whatsapp_target(p_org);
+    if v_target ->> 'to' is null then
+      return jsonb_build_object('ok', false, 'code', 'NO_PHONE',
+        'message', format('Aucun numéro valide pour le propriétaire ni pour la %s.', v_who));
+    end if;
+  end if;
+
+  perform private.set_actor('super_admin', p_actor);
+  update public.organizations set platform_reminded_at = now(), platform_reminder_note = v_note where id = p_org;
+
+  if v_target is not null then
+    v_amount := case when (v_account ->> 'due_cents')::bigint > 0 then (v_account ->> 'due_cents')::bigint
+                     else (v_account ->> 'balance_cents')::bigint end;
+    v_date := coalesce((v_account ->> 'overdue_since')::timestamptz, (v_account ->> 'next_due_at')::timestamptz);
+    perform private.queue_whatsapp(p_org, null, (v_target ->> 'user_id')::uuid, 'platform', v_target ->> 'to',
+      'platform_fee_reminder', 'RELANCE FRAIS PLATEFORME',
+      format('%s à régler à Rydar Drive', private.fmt_eur(v_amount::integer)),
+      array[o.name, private.fmt_eur(v_amount::integer),
+            coalesce(to_char(v_date at time zone o.timezone, 'DD/MM/YYYY'), 'à réception')]);
+  end if;
+
+  insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+  values (p_org, 'super_admin', p_actor, 'platform_fee.reminded', 'organizations', p_org::text, 'info',
+    jsonb_build_object('balance_cents', v_account -> 'balance_cents', 'due_cents', v_account -> 'due_cents', 'note', v_note,
+      'whatsapp', v_target is not null, 'whatsapp_to', private.wa_mask(v_target ->> 'to')));
+  perform private.broadcast_platform(p_org, 'reminded', jsonb_build_object('note', v_note));
+  return jsonb_build_object('ok', true, 'code', 'REMINDED', 'whatsapp', v_target is not null,
+    'message', case when v_target is not null
+      then format('Relance affichée à la %s et envoyée par WhatsApp (%s).', v_who, private.wa_mask(v_target ->> 'to'))
+      else format('Relance affichée à la %s.', v_who) end);
+end;
+$$;
+
 -- -----------------------------------------------------------------------------
 -- Super admin : vue d'ensemble (centrales ET flottes avec des frais)
 -- -----------------------------------------------------------------------------
@@ -592,13 +700,46 @@ update public.organizations
  where dispatch_model = 'fleet' and (platform_fee_percent <> 0 or platform_fee_fixed_cents <> 0);
 
 -- -----------------------------------------------------------------------------
+-- Temps réel : frais par course (action « rates ») ou modèle (« model ») changés par le super admin →
+-- « platform.updated » (identifiants seulement) : le tableau de bord ouvert relit son layout (entrée « Frais Rydar »,
+-- bandeau, menus du modèle) sans rechargement complet ; « rates » = aussi une alerte aux owner / admin. Créé APRÈS la
+-- remise à 0 ci-dessus (rien à annoncer pendant la migration).
+-- -----------------------------------------------------------------------------
+create or replace function private.organizations_platform_rates_broadcast()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform private.broadcast_platform(new.id,
+    case when old.dispatch_model is distinct from new.dispatch_model then 'model' else 'rates' end);
+  return null;
+end;
+$$;
+
+drop trigger if exists organizations_platform_rates_broadcast on public.organizations;
+create trigger organizations_platform_rates_broadcast
+  after update of dispatch_model, platform_fee_percent, platform_fee_fixed_cents on public.organizations
+  for each row
+  when (old.dispatch_model is distinct from new.dispatch_model
+        or old.platform_fee_percent is distinct from new.platform_fee_percent
+        or old.platform_fee_fixed_cents is distinct from new.platform_fee_fixed_cents)
+  execute function private.organizations_platform_rates_broadcast();
+
+-- -----------------------------------------------------------------------------
 -- Droits d'exécution (deny-by-default, cf. 20260924000900) — fonctions redéfinies : droits conservés
 -- -----------------------------------------------------------------------------
 revoke execute on function
   private.fleet_platform_fee(integer, numeric, integer),
-  private.platform_fees_enabled(uuid)
+  private.platform_fees_enabled(uuid),
+  private.organizations_platform_rates_broadcast()
 from public, anon, authenticated;
 grant execute on function
   private.fleet_platform_fee(integer, numeric, integer),
-  private.platform_fees_enabled(uuid)
+  private.platform_fees_enabled(uuid),
+  private.organizations_platform_rates_broadcast()
 to service_role;
+
+-- Tableau de bord (owner / admin, contrôle dans la fonction)
+revoke execute on function public.org_platform_fees_enabled(uuid) from public, anon;
+grant execute on function public.org_platform_fees_enabled(uuid) to authenticated, service_role;

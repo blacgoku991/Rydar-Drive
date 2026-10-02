@@ -1,6 +1,6 @@
 import type { PlatformAccount } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
-import { csvText, monthSignals, originParts, rideSettlementLabel } from "./admin-platform-format";
+import { csvText, monthSignals, originParts, rideSettlementLabel, zeroPriceText } from "./admin-platform-format";
 
 describe("csvText : cellule CSV d'un texte libre (export super admin des frais)", () => {
   it("un retour chariot isolé ne coupe pas la ligne et ne fait pas passer de formule", () => {
@@ -33,6 +33,18 @@ describe("monthSignals : indicateurs du mois (super admin)", () => {
       monthSignals({ month: { ...month, zero_price_rides: 0, cancelled_assigned_rides: 3, cancelled_onboard_rides: 1 } as never }),
     ).toBe("3 annulées après attribution (dont 1 client à bord)");
     expect(monthSignals({ month: { ...month, zero_price_rides: 0, cancelled_assigned_rides: 0 } })).toBe("");
+  });
+
+  it("flotte : courses sans prix = seule la part en % est perdue (jamais « frais nuls ou plafonnés »)", () => {
+    expect(monthSignals({ dispatch_model: "fleet", month: { ...month, zero_price_rides: 3, cancelled_assigned_rides: 0 } })).toBe(
+      "3 courses sans prix (part en % non due)",
+    );
+    expect(monthSignals({ dispatch_model: "centrale", month: { ...month, zero_price_rides: 1, cancelled_assigned_rides: 0 } })).toBe(
+      "1 course à prix nul ou symbolique",
+    );
+    expect(zeroPriceText(1, "fleet")).toBe("1 course terminée sans prix ou à 0 € : la part en % du prix n'est pas due (les frais fixes restent dus)");
+    expect(zeroPriceText(2, "centrale")).toMatch(/plafonnés au prix/);
+    expect(zeroPriceText(2, undefined)).toMatch(/plafonnés au prix/);
   });
 });
 

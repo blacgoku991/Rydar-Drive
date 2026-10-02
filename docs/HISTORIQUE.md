@@ -277,6 +277,16 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   chemins par modèle `components/platform-fees/org-platform-paths.ts`. Tests : `tests/db/fleet-platform-fees.test.ts`
   (10), `org-platform-paths.test.ts`, `org-platform-format.test.ts`, `admin-platform-format.test.ts`, `shared.test.ts`
   (`fleetPlatformFee`).
+  Après revue (même migration, non poussée) : `public.org_platform_fees_enabled` (booléen léger du menu, owner / admin)
+  au lieu de `org_platform_status` dans le layout ; trigger `organizations_platform_rates_broadcast` (frais / modèle
+  changés → `platform.updated` `rates` / `model` : layout relu, alerte « Rydar a mis à jour vos frais par course ») ;
+  `svc_platform_remind` redéfinie (messages « la flotte » / « la centrale ») ; `month.zero_price_rides` d'une flotte =
+  courses sans prix dont la part en % est perdue (centrale inchangée) ; bandeau et alertes « Frais Rydar » en flotte,
+  dialogues du super admin au nom de la flotte ; avertissement CGV à côté des champs de frais d'une flotte
+  (`CGV_COVERS_FLEET_FEES`) ; `/admin/frais` revalidé après un changement de frais ; taux lisibles par les dispatchers
+  (décision documentée, SECURITY.md). Tests : 16 dans `fleet-platform-fees.test.ts` (fin côté serveur, prix d'une course
+  terminée baissé puis remonté par un dispatcher, réglage pendant la fin de course, flotte → centrale sans règlement,
+  menu, temps réel, relance) + `zeroPriceText`.
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
@@ -293,7 +303,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
   ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application (aussi en flotte, 006300), admin_centrale_overview ;
   service role : svc_join_info, svc_identity_check, svc_driver_apply, svc_platform_ban/unban/dismiss_report.
-- Frais plateforme (centrale, et flotte avec des frais depuis 006400) : org_platform_status, org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
+- Frais plateforme (centrale, et flotte avec des frais depuis 006400) : org_platform_status, org_platform_fees_enabled (menu, 006400), org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
   super admin admin_platform_overview, admin_platform_account ; service role svc_platform_confirm/reject/reopen/record_payment,
   svc_platform_adjust, svc_platform_review_entry, svc_platform_remind, svc_platform_terms, svc_platform_billing_update.
 - Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.watch_driver_gps() (app fermée → hors ligne), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.

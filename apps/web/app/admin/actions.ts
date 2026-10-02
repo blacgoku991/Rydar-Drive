@@ -181,6 +181,10 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof d
   revalidatePath(`/admin/organizations/${orgId}`);
   revalidatePath("/admin/organizations");
   revalidatePath("/admin/centrales");
+  // Frais Rydar (centrales ET flottes) : vue d'ensemble et compte relus ; le tableau de bord de l'organisation est
+  // prévenu par la base (trigger organizations_platform_rates_broadcast : « platform.updated », rates / model)
+  revalidatePath("/admin/frais");
+  revalidatePath(`/admin/frais/${orgId}`);
   return { ok: true };
 }
 

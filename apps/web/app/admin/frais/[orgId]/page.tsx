@@ -16,7 +16,7 @@ import { notFound } from "next/navigation";
 import { formatPlatformFee } from "@/components/admin/fees";
 import { PageBody } from "@/components/layout/page-header";
 import { AccountActions, TermsForm } from "@/components/platform-fees/admin-account-actions";
-import { MONTH_RE, ago, cancelledOnboard, formatDay, lastMonths, monthKey, overdueInfo } from "@/components/platform-fees/admin-platform-format";
+import { MONTH_RE, ago, cancelledOnboard, formatDay, lastMonths, monthKey, overdueInfo, zeroPriceText } from "@/components/platform-fees/admin-platform-format";
 import { PlatformLive } from "@/components/platform-fees/admin-platform-live";
 import { Metric } from "@/components/platform-fees/admin-platform-metric";
 import { OriginBreakdown, PaymentsHistory, PaymentsToConfirm, PendingReductions, StatementView } from "@/components/platform-fees/admin-platform-sections";
@@ -48,7 +48,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
   const tz = org.timezone || "Europe/Paris";
   const cur = a.currency;
 
-  // Baisses en attente de cette centrale (toutes périodes confondues)
+  // Baisses en attente de cette organisation (toutes périodes confondues)
   let pending: PlatformEntry[] = [];
   if (a.pending_reductions_count > 0) {
     const { data: overview } = await session.supabase.rpc("admin_platform_overview");
@@ -153,9 +153,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
           <p className="rounded-xl border border-amber/25 bg-amber/[0.06] px-4 py-3 text-[12.5px] text-fg-muted">
             <span className="font-medium text-amber">À surveiller ce mois-ci&nbsp;:</span>{" "}
             {[
-              a.month.zero_price_rides
-                ? `${a.month.zero_price_rides} course${a.month.zero_price_rides > 1 ? "s" : ""} terminée${a.month.zero_price_rides > 1 ? "s" : ""} à 0 €, sans prix ou à un prix symbolique (frais nuls ou plafonnés au prix)`
-                : null,
+              a.month.zero_price_rides ? zeroPriceText(a.month.zero_price_rides, org.dispatch_model) : null,
               a.month.cancelled_assigned_rides
                 ? `${a.month.cancelled_assigned_rides} course${a.month.cancelled_assigned_rides > 1 ? "s" : ""} annulée${a.month.cancelled_assigned_rides > 1 ? "s" : ""} après attribution à un chauffeur${
                     onboard ? `, dont ${onboard} après la prise en charge du client (aucun frais)` : ""

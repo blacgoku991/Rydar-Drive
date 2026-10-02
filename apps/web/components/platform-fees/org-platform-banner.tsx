@@ -1,6 +1,6 @@
 "use client";
-// Bandeau « Frais plateforme » du tableau de bord (owner / admin ; centrale, ou flotte avec des frais Rydar), lu via
-// org_platform_status :
+// Bandeau « Frais plateforme » (centrale) / « Frais Rydar » (flotte avec des frais Rydar) du tableau de bord (owner /
+// admin), lu via org_platform_status :
 //  • rouge : montant en retard (non couvert par une déclaration) ou création de courses suspendue — non fermable ;
 //  • ambre : échéance dans moins de 3 jours ;
 //  • bleu discret : relance récente de Rydar, ou paiement déclaré qui couvre le retard (en attente de Rydar).
@@ -26,9 +26,11 @@ function dayMonth(iso: string, timeZone: string) {
   return new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone }).format(new Date(iso));
 }
 
-/** État du bandeau (null : rien à afficher). */
-export function platformBanner(a: PlatformAccount, now: number, timeZone: string): BannerState | null {
+/** État du bandeau (null : rien à afficher). `label` : « Frais plateforme » (centrale) ou « Frais Rydar » (flotte, comme
+ *  son menu). */
+export function platformBanner(a: PlatformAccount, now: number, timeZone: string, label = "Frais plateforme"): BannerState | null {
   const cur = a.currency || "EUR";
+  const noun = label.charAt(0).toLowerCase() + label.slice(1);
   const reminded = isRecentReminder(a, now);
   const reminder = reminded ? ` · relance de Rydar ${ago(a.reminded_at, now)}` : "";
   const uncovered = a.due_cents - a.declared_cents;
@@ -40,7 +42,7 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       key: `blocked:${a.due_cents}`,
       icon: <Lock />,
       title: "Création de courses suspendue par Rydar",
-      detail: `${formatPrice(a.due_cents, cur)} de frais plateforme en retard depuis ${days(a.days_overdue)}.`,
+      detail: `${formatPrice(a.due_cents, cur)} de ${noun} en retard depuis ${days(a.days_overdue)}.`,
     };
   }
   if (a.due_cents > 0 && a.overdue_since && uncovered > 0) {
@@ -49,7 +51,7 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       tone: "red",
       key: `overdue:${a.due_cents}`,
       icon: <AlertTriangle />,
-      title: "Frais plateforme en retard",
+      title: `${label} en retard`,
       detail:
         `${formatPrice(uncovered, cur)} à reverser à Rydar${a.days_overdue > 0 ? ` depuis ${days(a.days_overdue)}` : ""}` +
         (left != null && left > 0 ? ` · création de courses suspendue dans ${days(left)} sans règlement` : "") +
@@ -74,7 +76,7 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       tone: "amber",
       key: `soon:${a.next_due_at}:${toPay}`,
       icon: <Clock3 />,
-      title: "Frais plateforme à régler",
+      title: `${label} à régler`,
       detail: `${formatPrice(toPay, cur)} à reverser à Rydar au plus tard le ${dayMonth(a.next_due_at, timeZone)}${reminder}.`,
     };
   }
@@ -84,7 +86,7 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       key: `reminded:${a.reminded_at}`,
       icon: <BellRing />,
       title: `Rydar vous relance`,
-      detail: a.reminder_note ? `« ${a.reminder_note} »` :`${formatPrice(a.balance_cents, cur)} de frais plateforme à régler.`,
+      detail: a.reminder_note ? `« ${a.reminder_note} »` : `${formatPrice(a.balance_cents, cur)} de ${noun} à régler.`,
     };
   }
   return null;
@@ -105,8 +107,8 @@ export function OrgPlatformBanner({
   orgId: string;
   timeZone: string;
   enabled: boolean;
-  /** Où régler : « Encaissements » (centrale) ou « Frais Rydar » (flotte) */
-  paths: Pick<PlatformFeesPaths, "account" | "page">;
+  /** Où régler : « Encaissements » (centrale) ou « Frais Rydar » (flotte), et nom des frais */
+  paths: Pick<PlatformFeesPaths, "account" | "page" | "label">;
 }) {
   const pathname = usePathname();
   const [account, setAccount] = useState<PlatformAccount | null>(null);
@@ -146,7 +148,7 @@ export function OrgPlatformBanner({
   });
 
   if (!enabled || !account || !now) return null;
-  const state = platformBanner(account, now, timeZone);
+  const state = platformBanner(account, now, timeZone, paths.label);
   if (!state) return null;
   const dismissible = state.tone !== "red";
   if (dismissible && hidden === state.key) return null;
