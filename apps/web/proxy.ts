@@ -42,6 +42,12 @@ async function resolveBookingSlug(host: string): Promise<string | null> {
 const PROTECTED = ["/dashboard", "/admin"];
 /** Pages légales de la plateforme : servies telles quelles sur les mini-sites (liens du mini-site et du bandeau cookies). */
 const LEGAL_PATHS = new Set(["/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte"]);
+/**
+ * Hôte de mini-site sans mini-site servi (désactivé par sa centrale, centrale suspendue, mini-sites coupés par la
+ * plateforme, Supabase injoignable) : chemin qu'aucune route ne sert (dossier « _ » privé de l'App Router) → page 404
+ * neutre (app/not-found.tsx), jamais le site de la plateforme ni /login sous le domaine d'une centrale.
+ */
+const UNSERVED_HOST_PATH = "/_mini-site-indisponible";
 
 export async function proxy(request: NextRequest) {
   const host = (request.headers.get("host") ?? "").split(":")[0]!.toLowerCase();
@@ -57,11 +63,11 @@ export async function proxy(request: NextRequest) {
     !LEGAL_PATHS.has(pathname)
   ) {
     const slug = await resolveBookingSlug(bookingHost);
-    if (slug) {
-      const url = request.nextUrl.clone();
-      url.pathname = `/book/${slug}${pathname === "/" ? "" : pathname}`;
-      return NextResponse.rewrite(url);
-    }
+    const url = request.nextUrl.clone();
+    url.pathname = slug ? `/book/${slug}${pathname === "/" ? "" : pathname}` : UNSERVED_HOST_PATH;
+    // Aucun mini-site servi : 404 neutre, sans session ni cookie posé sur ce domaine
+    if (!slug) url.search = "";
+    return NextResponse.rewrite(url);
   }
 
   // 2) Session Supabase (rafraîchissement des cookies) + protection des espaces

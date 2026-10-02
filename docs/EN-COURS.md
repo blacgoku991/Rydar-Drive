@@ -30,6 +30,8 @@ démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissem
   `/book/{slug}`, sous-domaines, domaines personnalisés, devis et réservations refusés (web ET base :
   `BOOKING_SITES_DISABLED`), aucun nouveau certificat. Réglages de chaque centrale conservés (rien n'est réécrit). API v1,
   dashboard, app chauffeur, RYDAR Privé inchangés. Serveur (migration + web), pas de mise à jour de l'app.
+  Hôte de mini-site non servi = 404 neutre (`proxy.ts`), « momentanément indisponible » sur /tarifs et l'Abonnement.
+  À CONFIRMER avec le propriétaire avant push (coupure immédiate de tous les mini-sites à la migration).
 - **Webhooks sortants (en cours : fusion, revue adverse, bout en bout avec RYDAR Privé)** : à chaque changement de
   statut d'une course, POST JSON signé (HMAC-SHA256) vers les adresses https de la centrale (offre avec l'API) ; gestion
   par Dashboard → Intégrations et `/api/v1/webhooks` ; envoi par le worker (garde SSRF, 9 essais sur ~46 h, un envoi en

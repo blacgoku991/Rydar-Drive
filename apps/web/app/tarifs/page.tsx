@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/marketing/page-header";
 import { PlanCards, PlanCardsSkeleton, PlatformFeeNote, PricingFacts, type PublicPlan } from "@/components/marketing/pricing";
 import { marketingMetadata } from "@/components/marketing/seo";
 import { fr } from "@/components/marketing/typo";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = marketingMetadata({
@@ -41,9 +42,23 @@ async function loadPlans(): Promise<PublicPlan[]> {
   }
 }
 
-/** Offres lues en base : rendues dans leur propre frontière Suspense, le reste de la page part sans les attendre. */
+/**
+ * Offres lues en base : rendues dans leur propre frontière Suspense, le reste de la page part sans les attendre.
+ * Mini-sites coupés par la plateforme (super admin) : signalé sous les offres, qui peuvent l'inclure.
+ */
 async function Plans() {
-  return <PlanCards plans={await loadPlans()} />;
+  const plans = await loadPlans();
+  const sitesOff = plans.length > 0 && !(await bookingSitesEnabled());
+  return (
+    <>
+      <PlanCards plans={plans} />
+      {sitesOff && (
+        <p className="mx-auto mt-6 max-w-2xl text-center text-[13px] leading-relaxed text-amber">
+          {fr("Le mini-site de réservation est momentanément indisponible, quelle que soit l'offre. Les autres services ne sont pas concernés.")}
+        </p>
+      )}
+    </>
+  );
 }
 
 export default function PricingPage() {

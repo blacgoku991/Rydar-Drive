@@ -49,6 +49,8 @@ const { proxy } = await import("../proxy");
 const visit = (host: string, path = "/") => proxy(new NextRequest(`http://web:3000${path}`, { headers: { host } }));
 const rpcCalls = (host: string) => calls.filter((c) => c.host === host).length;
 const rewrittenTo = (res: Response) => res.headers.get("x-middleware-rewrite");
+/** Chemin qu'aucune route ne sert : page 404 neutre (app/not-found.tsx). */
+const UNSERVED = "/_mini-site-indisponible";
 
 beforeEach(() => {
   h.claims = null;
@@ -87,13 +89,13 @@ describe("proxy.ts : hôtes des mini-sites", () => {
     expect(new URL(rewrittenTo(res)!).pathname).toBe("/book/premier");
   });
 
-  it("échec transitoire (Supabase indisponible, erreur réseau) : jamais mis en cache", async () => {
+  it("échec transitoire (Supabase indisponible, erreur réseau) : 404 neutre, jamais mis en cache", async () => {
     rpc.set("panne.exemple-vtc.fr", async () => new Response("indisponible", { status: 503 }));
-    expect(rewrittenTo(await visit("panne.exemple-vtc.fr"))).toBeNull();
+    expect(new URL(rewrittenTo(await visit("panne.exemple-vtc.fr"))!).pathname).toBe(UNSERVED);
     rpc.set("panne.exemple-vtc.fr", async () => {
       throw new TypeError("fetch failed");
     });
-    expect(rewrittenTo(await visit("panne.exemple-vtc.fr"))).toBeNull();
+    expect(new URL(rewrittenTo(await visit("panne.exemple-vtc.fr"))!).pathname).toBe(UNSERVED);
     rpc.set("panne.exemple-vtc.fr", async () => Response.json("revenu"));
     const res = await visit("panne.exemple-vtc.fr");
     expect(rpcCalls("panne.exemple-vtc.fr")).toBe(3);
@@ -112,6 +114,39 @@ describe("proxy.ts : hôtes des mini-sites", () => {
     const res = await visit("bientot.exemple-vtc.fr");
     expect(rpcCalls("bientot.exemple-vtc.fr")).toBe(2);
     expect(new URL(rewrittenTo(res)!).pathname).toBe("/book/bientot");
+  });
+});
+
+describe("proxy.ts : hôte de mini-site sans mini-site servi", () => {
+  // Mini-site désactivé par sa centrale, centrale suspendue ou mini-sites coupés par la plateforme : resolve_booking_host
+  // renvoie null. Le domaine de la centrale (certificat déjà émis) ne sert jamais le site de la plateforme ni /login.
+  it("accueil, /login, /dashboard, /tarifs : 404 neutre, sans redirection ni cookie de session sur ce domaine", async () => {
+    h.claims = { sub: "11111111-1111-4111-8111-111111111111" };
+    h.user = { id: "11111111-1111-4111-8111-111111111111" };
+    for (const path of ["/", "/login", "/dashboard/rides", "/tarifs?offre=pro", "/reserver"]) {
+      const res = await visit("coupe.exemple-vtc.fr", path);
+      const target = new URL(rewrittenTo(res)!);
+      expect(target.pathname).toBe(UNSERVED);
+      expect(target.search).toBe("");
+      expect(res.headers.get("location")).toBeNull();
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    // Sous-domaine de la plateforme dont le mini-site est coupé : idem
+    expect(new URL(rewrittenTo(await visit("coupe.rydar.app", "/login"))!).pathname).toBe(UNSERVED);
+  });
+
+  it("chemins jamais réécrits (API, /book, /rejoindre, pages légales) : inchangés", async () => {
+    for (const path of ["/api/book/elite/quote", "/book/elite", "/rejoindre/ABC123", "/cgu"]) {
+      expect(rewrittenTo(await visit("coupe.exemple-vtc.fr", path))).toBeNull();
+    }
+  });
+
+  it("hôtes de la plateforme : jamais concernés (aucune résolution)", async () => {
+    const before = calls.length;
+    for (const host of ["app.rydar.app", "rydar.app", "www.rydar.app", "localhost:3000", "127.0.0.1:3000"]) {
+      expect(rewrittenTo(await visit(host, "/"))).toBeNull();
+    }
+    expect(calls.length).toBe(before);
   });
 });
 

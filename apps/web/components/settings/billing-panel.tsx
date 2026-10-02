@@ -1,5 +1,5 @@
 "use client";
-import { formatDate, formatPrice } from "@rydar/shared";
+import { ERROR_MESSAGES, formatDate, formatPrice } from "@rydar/shared";
 import { Check, CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -27,7 +27,9 @@ function Meter({ label, used, max }: { label: string; used: number; max: number 
   );
 }
 
-export function BillingPanel({ plans, currentPlanId, usage, subscription, invoices, isOwner }: { plans: any[]; currentPlanId: string | null; usage: any; subscription: any; invoices: any[]; isOwner: boolean }) {
+/** `bookingSitesEnabled` : interrupteur plateforme des mini-sites (super admin) ; coupé = mini-site et domaine personnalisé
+ *  signalés indisponibles, quelle que soit l'offre. */
+export function BillingPanel({ plans, currentPlanId, usage, subscription, invoices, isOwner, bookingSitesEnabled }: { plans: any[]; currentPlanId: string | null; usage: any; subscription: any; invoices: any[]; isOwner: boolean; bookingSitesEnabled: boolean }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [interval, setInterval] = useState<"month" | "year">("month");
   const call = async (url: string, body?: unknown) => {
@@ -54,15 +56,27 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
             <Meter label="Courses ce mois-ci" used={usage?.rides_this_month ?? 0} max={limits.max_rides_per_month} />
             <Meter label="Administrateurs" used={usage?.admins ?? 0} max={limits.max_admins} />
             <div className="flex flex-wrap gap-2 pt-1">
-              {[
-                ["API de réservation", limits.api_access],
-                ["Mini-site", limits.booking_site],
-                ["Domaine personnalisé", limits.custom_domain],
-                ["Statistiques avancées", limits.advanced_stats],
-              ].map(([l, on]) => (
-                <Badge key={String(l)} tone={on ? "green" : "neutral"}>{String(l)}</Badge>
-              ))}
+              {(
+                [
+                  ["API de réservation", limits.api_access, false],
+                  ["Mini-site", limits.booking_site, true],
+                  ["Domaine personnalisé", limits.custom_domain, true],
+                  ["Statistiques avancées", limits.advanced_stats, false],
+                ] as [string, unknown, boolean][]
+              ).map(([l, on, site]) =>
+                on && site && !bookingSitesEnabled ? (
+                  <Badge key={l} tone="amber">{l} · indisponible</Badge>
+                ) : (
+                  <Badge key={l} tone={on ? "green" : "neutral"}>{l}</Badge>
+                ),
+              )}
             </div>
+            {!bookingSitesEnabled && (
+              <p className="text-[12.5px] leading-relaxed text-fg-muted">
+                {ERROR_MESSAGES.BOOKING_SITES_DISABLED} Vos réglages sont conservés&nbsp;; les réservations par le tableau de
+                bord et par l&apos;API ne sont pas concernées.
+              </p>
+            )}
           </CardBody>
         </Card>
         <Card>
@@ -92,6 +106,9 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
           ))}
         </div>
       </div>
+      {!bookingSitesEnabled && (
+        <p className="-mt-2 text-[12.5px] text-fg-muted">Mini-site de réservation momentanément indisponible, quelle que soit l&apos;offre.</p>
+      )}
       <div className="grid gap-4 lg:grid-cols-3">
         {plans.map((p) => {
           const current = p.id === currentPlanId;

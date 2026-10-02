@@ -11,7 +11,11 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { runAction } from "@/lib/run-action";
 
-/** `updatedLabel` : date du dernier changement, mise en forme côté serveur (aucun écart d'hydratation). */
+/**
+ * `configured` : centrales ACTIVES dont le mini-site est activé (servi quand l'interrupteur est allumé ; centrales
+ * suspendues ou archivées exclues), null si la lecture a échoué. `updatedLabel` : date du dernier changement, mise en
+ * forme côté serveur (aucun écart d'hydratation).
+ */
 export function BookingSitesSwitchCard({ enabled, configured, updatedLabel }: { enabled: boolean; configured: number | null; updatedLabel: string | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -46,8 +50,8 @@ export function BookingSitesSwitchCard({ enabled, configured, updatedLabel }: { 
           ) : (
             <p>
               Menu « Mini-site » masqué partout, pages de réservation, sous-domaines et domaines personnalisés hors ligne. Les
-              réglages de chaque centrale sont conservés{sites ? <> (mini-site activé chez <span className="num text-fg">{sites}</span>)</> : null}
-              {" "}et reviennent tels quels à la réactivation.
+              réglages de chaque centrale sont conservés et reviennent tels quels à la réactivation
+              {configured ? <>&nbsp;: mini-site de nouveau en ligne chez <span className="num text-fg">{sites}</span>.</> : "."}
             </p>
           )}
           {updatedLabel && <p className="text-[12px] text-fg-subtle">Dernier changement {updatedLabel}</p>}

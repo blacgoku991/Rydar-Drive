@@ -240,6 +240,10 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   `/api/tls/allowed` 404 ; carte « Mini-sites de réservation » sur `/admin/plans` (confirmation). Réglages des centrales
   jamais touchés. Seed : interrupteur allumé (démo locale). Tests : `tests/db/booking-sites-switch.test.ts`,
   `lib/tls-allowed.test.ts`, `domaine-booking-site.test.ts`, `booking-public.test.ts`.
+  Après revue : `proxy.ts` → hôte de mini-site non résolu (coupé, désactivé, centrale suspendue, Supabase injoignable)
+  réécrit vers `/_mini-site-indisponible` = 404 neutre (plus jamais l'accueil ni `/login` de la plateforme sous le
+  domaine d'une centrale) ; « indisponible » sur `/tarifs`, l'onglet Abonnement et `/admin/plans` (« · coupé ») ;
+  compteur de la carte limité aux centrales actives ; test DB de la rétrogradation en service role.
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

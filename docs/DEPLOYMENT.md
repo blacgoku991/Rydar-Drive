@@ -106,6 +106,8 @@ masqué, `/book/{slug}` en 404, sous-domaines et domaines personnalisés non ser
 (`/api/tls/allowed`), devis et réservations refusés (la base aussi : `BOOKING_SITES_DISABLED`). Les réglages de
 chaque centrale sont conservés. Réactivation (et nouvelle coupure) : Super admin → **Offres & limites**, carte
 « Mini-sites de réservation » (journal d'audit). Le tableau de bord, l'API v1 et l'app chauffeur ne sont pas concernés.
+Un sous-domaine ou domaine personnalisé déjà certifié affiche alors une page 404 neutre (`proxy.ts`), jamais le site
+ni la connexion de la plateforme.
 
 ### Mini-sites : sous-domaines réservés
 

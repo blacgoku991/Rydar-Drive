@@ -15,6 +15,8 @@ const ROWS: [string, string][] = [
   ["api_access", "API de réservation"], ["booking_site", "Mini-site"], ["custom_domain", "Domaine personnalisé"],
   ["advanced_stats", "Statistiques avancées"], ["history_days", "Historique (jours)"],
 ];
+/** Lignes servies seulement quand les mini-sites sont activés par la plateforme. */
+const SITE_ROWS = new Set(["booking_site", "custom_domain"]);
 
 export default async function PlansPage() {
   const session = await requireSuperAdmin();
@@ -23,10 +25,16 @@ export default async function PlansPage() {
     session.supabase.from("organizations").select("plan_id").neq("status", "archived"),
     // Interrupteur plateforme des mini-sites (lecture RLS du super admin) ; absent = coupé, comme la base
     session.supabase.from("platform_settings").select("booking_sites_enabled, updated_at").maybeSingle(),
-    // Mini-sites activés par leur centrale (réglage conservé pendant une coupure)
-    session.supabase.from("booking_sites").select("organization_id", { count: "exact", head: true }).eq("enabled", true),
+    // Mini-sites activés par une centrale ACTIVE (réglage conservé pendant une coupure) : seuls ceux-là sont servis
+    // (resolve_booking_host, /book) ; centrales suspendues ou archivées non comptées
+    session.supabase
+      .from("booking_sites")
+      .select("organization_id, org:organizations!inner(status)", { count: "exact", head: true })
+      .eq("enabled", true)
+      .eq("org.status", "active"),
   ]);
   const switchState = (platform ?? null) as { booking_sites_enabled: boolean; updated_at: string } | null;
+  const sitesOff = switchState?.booking_sites_enabled !== true;
   const usage = new Map<string, number>();
   for (const c of counts ?? []) usage.set(c.plan_id, (usage.get(c.plan_id) ?? 0) + 1);
   return (
@@ -34,7 +42,7 @@ export default async function PlansPage() {
       <PageHeader eyebrow="Plateforme" title="Offres & limites" description="Les limites sont appliquées en base (triggers) : impossible de les contourner côté client." actions={<PlanEditor plan={null} />} />
       <PageBody>
         <BookingSitesSwitchCard
-          enabled={switchState?.booking_sites_enabled === true}
+          enabled={!sitesOff}
           configured={sites.error ? null : (sites.count ?? 0)}
           updatedLabel={switchState?.updated_at ? formatRelative(switchState.updated_at) : null}
         />
@@ -59,7 +67,11 @@ export default async function PlansPage() {
                   const v = p.limits?.[k];
                   return (
                     <li key={k} className="flex items-center justify-between text-[13px]">
-                      <span className="text-fg-muted">{label}</span>
+                      <span className="text-fg-muted">
+                        {label}
+                        {/* Interrupteur plateforme coupé : inclus dans l'offre mais servi nulle part */}
+                        {sitesOff && SITE_ROWS.has(k) && <span className="text-amber"> · coupé</span>}
+                      </span>
                       {typeof v === "boolean" ? (v ? <Check className="size-4 text-brand" /> : <X className="size-4 text-fg-subtle" />) : <span className="num">{v ?? "∞"}</span>}
                     </li>
                   );

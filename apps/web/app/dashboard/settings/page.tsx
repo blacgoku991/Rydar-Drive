@@ -9,6 +9,7 @@ import { CentraleSettingsForm, type CentraleSettingsRow } from "@/components/set
 import { ReminderSettings } from "@/components/settlements/reminder-settings";
 import type { WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cn } from "@/lib/utils";
 
@@ -115,13 +116,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     }
     content = <TeamPanel members={members} isOwner={ctx.role === "owner"} canInvite={admin} />;
   } else {
-    const [{ data: plans }, { data: usage }, { data: subscription }, { data: invoices }] = await Promise.all([
+    const [{ data: plans }, { data: usage }, { data: subscription }, { data: invoices }, sitesOn] = await Promise.all([
       ctx.supabase.from("plans").select("*").eq("is_active", true).eq("is_public", true).order("sort_order"),
       ctx.supabase.rpc("org_usage", { p_org: orgId }),
       ctx.supabase.from("subscriptions").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
       ctx.supabase.from("invoices").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(12),
+      // Interrupteur plateforme des mini-sites : coupé = mini-site signalé indisponible quelle que soit l'offre
+      bookingSitesEnabled(),
     ]);
-    content = <BillingPanel plans={plans ?? []} currentPlanId={ctx.org.plan_id} usage={usage} subscription={subscription} invoices={invoices ?? []} isOwner={ctx.role === "owner"} />;
+    content = <BillingPanel plans={plans ?? []} currentPlanId={ctx.org.plan_id} usage={usage} subscription={subscription} invoices={invoices ?? []} isOwner={ctx.role === "owner"} bookingSitesEnabled={sitesOn} />;
   }
 
   return (

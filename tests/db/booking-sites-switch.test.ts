@@ -163,6 +163,44 @@ describe("coupé : mini-sites hors ligne, réglages conservés", () => {
   });
 });
 
+describe("coupé : rétrogradation par le service role (webhook Stripe, action super admin)", () => {
+  // auth.role() = 'service_role' (JWT du client service role) : réductions acceptées, jamais d'activation
+  it("offre sans mini-site (limits_override puis plan_id) : site coupé et domaine dévérifié, sans BOOKING_SITES_DISABLED", async () => {
+    const org = await createOrg("Switch Retro Service");
+    const { subdomain, domain } = await publishedSite(org);
+    await as({ role: "service_role" }, (q) =>
+      q(`update public.organizations set limits_override = '{"booking_site":false,"custom_domain":false}' where id = $1`, [org.id]),
+    );
+    expect(await siteRow(org.id)).toMatchObject({ enabled: false, custom_domain_verified_at: null, subdomain, custom_domain: domain, title: "Titre" });
+
+    // Changement d'offre (webhook Stripe : plan_id) vers une offre sans mini-site ni domaine personnalisé
+    const other = await createOrg("Switch Retro Offre");
+    await publishedSite(other);
+    const [plan] = await sql(
+      `insert into public.plans (code, name, limits) values ($1, 'Sans mini-site', '{"booking_site":false,"custom_domain":false}') returning id`,
+      [`sans_site_${randomUUID().slice(0, 8)}`],
+    );
+    await as({ role: "service_role" }, (q) => q("update public.organizations set plan_id = $2 where id = $1", [other.id, plan.id]));
+    expect(await siteRow(other.id)).toMatchObject({ enabled: false, custom_domain_verified_at: null });
+
+    // Réduction directe acceptée ; réactivation et vérification de domaine refusées tant que c'est coupé
+    const third = await createOrg("Switch Retro Direct");
+    await publishedSite(third);
+    const [row] = await as({ role: "service_role" }, (q) =>
+      q("update public.booking_sites set enabled = false where organization_id = $1 returning enabled", [third.id]),
+    );
+    expect(row).toEqual({ enabled: false });
+    for (const statement of [
+      "update public.booking_sites set enabled = true where organization_id = $1",
+      "update public.booking_sites set custom_domain_verified_at = now() + interval '1 second' where organization_id = $1",
+    ]) {
+      const e = await expectPgError(as({ role: "service_role" }, (q) => q(statement, [third.id])));
+      expect(e.message).toMatch(/^BOOKING_SITES_DISABLED/);
+    }
+    expect(await switchState()).toBe(false);
+  });
+});
+
 describe("droits : seul le super admin règle l'interrupteur", () => {
   it("clients : ni lecture de la table, ni écriture, ni appel de svc_set_booking_sites_enabled", async () => {
     const org = await createOrg("Switch Droits");
