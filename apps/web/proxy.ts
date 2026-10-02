@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { lruCache } from "@/lib/geo/cache";
 import { bookingHostKey } from "@/lib/hostname";
+import { serverFetch } from "@/lib/server-fetch";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
@@ -19,7 +20,7 @@ async function resolveBookingSlug(host: string): Promise<string | null> {
   const cached = hostCache.get(host);
   if (cached && cached.expires > Date.now()) return cached.slug;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/resolve_booking_host`, {
+    const res = await serverFetch(`${SUPABASE_URL}/rest/v1/rpc/resolve_booking_host`, {
       method: "POST",
       // apikey seul : rôle anon pour une ancienne clé JWT comme pour une clé publishable (sb_publishable_…, pas un JWT)
       headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
@@ -68,6 +69,8 @@ export async function proxy(request: NextRequest) {
   if (!SUPABASE_URL || !SUPABASE_KEY) return response;
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_KEY, {
+    // Connexions gardées ouvertes et DNS mémorisé : le proxy passe à chaque page (lib/server-fetch.ts)
+    global: { fetch: serverFetch },
     cookies: {
       getAll() {
         return request.cookies.getAll();

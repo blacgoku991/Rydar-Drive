@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/geo/cache", async () => await import("./geo/cache"));
 vi.mock("@/lib/hostname", async () => await import("./hostname"));
+// Appels sortants : fetch global (simulé par le test)
+vi.mock("@/lib/server-fetch", () => ({ serverFetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) }));
 vi.mock("@supabase/ssr", () => ({
   createServerClient: (_url: string, _key: string, opts: { cookies: { setAll: (c: unknown[]) => void } }) => ({
     auth: {

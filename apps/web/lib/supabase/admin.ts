@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env, serverEnv } from "@/lib/env";
+import { serverFetch } from "@/lib/server-fetch";
 
 let admin: SupabaseClient<any, any, any> | null = null;
 
@@ -14,7 +15,7 @@ export function createAdminClient(): SupabaseClient<any, any, any> {
   if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY manquante");
   admin = createClient(env.supabaseUrl, key, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { "x-rydar-client": "web-server" } },
+    global: { headers: { "x-rydar-client": "web-server" }, fetch: serverFetch },
   });
   return admin;
 }

@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/server-fetch", () => ({ serverFetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => h.admin }));
 vi.mock("@/lib/env", () => ({ env: { supabaseUrl: "https://supabase.test", supabaseAnonKey: "anon-key" } }));
 vi.mock("@/lib/rate-limit", () => {
