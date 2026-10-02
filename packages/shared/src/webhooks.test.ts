@@ -145,6 +145,12 @@ describe("webhookUpsertSchema (POST /api/v1/webhooks, dashboard)", () => {
     expect(webhookUpsertSchema.safeParse({ url, secret: `${"a".repeat(32)}/` }).success).toBe(false);
   });
 
+  it("description : caractères de contrôle (NUL compris) remplacés par une espace, comme en base", () => {
+    expect(webhookUpsertSchema.parse({ url, description: "a\u0000b" }).description).toBe("a b");
+    expect(webhookUpsertSchema.parse({ url, description: " Site\t\r\n de réservation\u0085 " }).description).toBe("Site de réservation");
+    expect(webhookUpsertSchema.parse({ url, description: "\u0000\u0007 " }).description).toBeNull();
+  });
+
   it("description de 120 caractères au plus ; champ inconnu refusé", () => {
     expect(webhookUpsertSchema.safeParse({ url, description: "x".repeat(120) }).success).toBe(true);
     expect(webhookUpsertSchema.safeParse({ url, description: "x".repeat(121) }).success).toBe(false);

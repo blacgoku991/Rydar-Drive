@@ -164,6 +164,7 @@ docker build -f apps/worker/Dockerfile -t rydar-worker .
 docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/postgres \
            -e SUPABASE_URL=https://<ref>.supabase.co \
            -e SUPABASE_SERVICE_ROLE_KEY=… \
+           -e APP_URL=https://app.mon-domaine.fr \
            -e EXPO_ACCESS_TOKEN=… rydar-worker
 ```
 
@@ -171,6 +172,8 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 | --- | --- |
 | `DATABASE_URL` | **Requise.** Connexion à la base (voir ci-dessous) |
 | `SUPABASE_URL` (à défaut `NEXT_PUBLIC_SUPABASE_URL`), `SUPABASE_SERVICE_ROLE_KEY` (ou `SUPABASE_SECRET_KEY`) | **Requises en production.** API Storage et administration d'Auth, avec la clé service role : le worker termine les suppressions de compte chauffeur restées inachevées (dossier des justificatifs, compte de connexion). Sans elles, il écrit l'erreur `account deletions cannot be completed` au démarrage, puis toutes les heures tant que la file n'est pas vide, et `/admin/suppressions` affiche ces suppressions « en retard ». Le kit VPS les transmet (`deploy/docker-compose.yml`) |
+| `APP_URL` (à défaut `NEXT_PUBLIC_APP_URL`) | **Requise pour les webhooks sortants** : URL publique du site, utilisée pour le lien `data.ride.links.self` de chaque événement (comme l'API v1). Absente : liens vers `http://localhost:3000`, avec un simple avertissement au démarrage (`webhooks: APP_URL missing`, et seulement si `NODE_ENV=production`). Le kit VPS la transmet (`https://DOMAIN`) |
+| `WEBHOOK_ALLOW_PRIVATE_URLS` | `1` : adresses de webhook internes et `http://` acceptées par le worker. **Tests et développement seulement, jamais en production** (requêtes forgées vers le réseau interne : SSRF). Avertissement au démarrage quand elle est active |
 | `DATABASE_SSLMODE`, `DATABASE_CA_FILE` | Chiffrement de la connexion à la base, prioritaire sur le `sslmode` de `DATABASE_URL` : `verify-full` (certificat du serveur vérifié avec la racine `DATABASE_CA_FILE`), `no-verify` (repli) ou `disable` (base locale seulement : Supabase auto-hébergé). Vide : `DATABASE_URL` telle quelle. Voir « Connexion chiffrée à la base » |
 | `EXPO_ACCESS_TOKEN` | Pushs par Expo (voir « Pushs » plus bas). **Recommandé en production**, avec l'option Expo *Enhanced Security for Push Notifications* : sans elle, quiconque connaît le jeton push d'un téléphone peut lui envoyer une notification affichée comme venant de Rydar Drive. `FCM_*` / `APNS_*` pour un envoi direct (`APNS_PRODUCTION=false` : serveur sandbox d'Apple) |
 | `WHATSAPP_API_VERSION` | Facultative ([WHATSAPP.md](WHATSAPP.md)). Aucun jeton WhatsApp dans l'environnement : ils sont en base, lisibles par le seul service role |
@@ -181,13 +184,14 @@ docker run -e DATABASE_URL=postgresql://postgres:…@db.<ref>.supabase.co:5432/p
 
 Le kit VPS (`deploy/docker-compose.yml`) ne transmet au conteneur que les variables qu'il liste ; les autres (`*_MS`,
 `NOTIFICATION_BATCH`, `WHATSAPP_BATCH`, `HEALTH_PORT`, `FLIGHT_BATCH`, `FLIGHT_CONCURRENCY`, `FLIGHT_TIMEOUT_MS`,
-`FLIGHT_CACHE_MS`, `FLIGHT_MOCK_DELAYS`, `PUSH_DRY_RUN`) y gardent leur valeur par défaut, même ajoutées à `deploy/.env`.
+`FLIGHT_CACHE_MS`, `FLIGHT_MOCK_DELAYS`, `PUSH_DRY_RUN`, `WEBHOOK_ALLOW_PRIVATE_URLS`) y gardent leur valeur par défaut,
+même ajoutées à `deploy/.env`.
 
 - `DATABASE_URL` doit être une **connexion directe** (port 5432) et non le pooler transactionnel : le worker utilise `LISTEN/NOTIFY`.
 - Vous pouvez lancer plusieurs instances : les tâches sont réparties par `FOR UPDATE SKIP LOCKED` ou protégées par un verrou SQL.
 - Le simulateur de flotte (`pnpm --filter @rydar/worker simulate`, développement et recette) n'est pas dans l'image et refuse
   de démarrer si `NODE_ENV=production` (sauf `SIM_ALLOW_PRODUCTION=1`, sur une base jetable) : il agit au nom de vrais chauffeurs.
-- Healthcheck : `GET :8080/` (`HEALTH_PORT`) renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`, `settlements`, `deletions`). `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ». `deletions.enabled` vaut `false` sans l'API Supabase ; `deletions.waiting` compte alors les suppressions bloquées.
+- Healthcheck : `GET :8080/` (`HEALTH_PORT`) renvoie `{"healthy":true,…}` avec l'état de chaque tâche (`flights`, `watch`, `documents`, `settlements`, `deletions`, `webhooks`). `webhooks` : dernier passage (`lastRunAt`), envois pris, livrés et en échec depuis le démarrage, dernière erreur. `healthy` ne dépend que du tick du dispatch : une panne du fournisseur de vols ne rend pas le worker « malade ». `deletions.enabled` vaut `false` sans l'API Supabase ; `deletions.waiting` compte alors les suppressions bloquées.
 - Au démarrage, le journal indique `"accountDeletions":"on"` (ou `off: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing`).
 
 Tâches périodiques :
@@ -196,6 +200,8 @@ Tâches périodiques :
 | --- | --- | --- |
 | `private.dispatch_tick()` | 2 s (`DISPATCH_TICK_MS`) | vagues, délais des offres, bascule des planifiées |
 | notifications (outbox) | `LISTEN` + 3 s (`NOTIFICATION_POLL_MS`) | envoi des pushs, accusés Expo toutes les 5 s ; relances WhatsApp (`private.claim_whatsapp`, [WHATSAPP.md](WHATSAPP.md)) |
+| webhooks sortants | `LISTEN rydar_webhooks` + 5 s | envois des centrales (`private.claim_webhook_deliveries` puis `private.complete_webhook_delivery`) : un seul envoi en cours par adresse, tour de rôle entre centrales, centrale suspendue ou archivée en pause ; garde SSRF (adresse résolue vérifiée), signature HMAC, réponse en 10 s, nouveaux essais et désactivation automatique ([API.md](API.md#webhooks)) |
+| `private.purge_webhook_deliveries()` | 1 h | historique des envois de webhooks : 30 jours (45 jours au plus pour un envoi resté en file) |
 | `private.housekeeping()` | 5 min (`HOUSEKEEPING_MS`) | courses planifiées acceptées jamais démarrées : annulées « Non effectuée » 6 h après l'heure de prise en charge (`private.expire_unstarted_rides`, compteur `rides_expired`) ; durées de conservation (§ 6) : positions, messages, notifications, journaux (celui de Supabase Auth une fois par heure), adresses IP, courses, bannissements (`private.purge_expired_bans`) ; un échec de la purge des courses, des bannissements ou du journal Auth est renvoyé dans `errors` (journal `housekeeping incomplete`, niveau warn) sans bloquer le reste ; ne met jamais un chauffeur hors ligne |
 | `private.purge_contact_data()` | 5 min (juste après la précédente) | formulaire de contact : demandes de plus de 3 ans, demandes indésirables de plus de 30 jours, e-mails sans demande (e-mails de test) de plus d'un an, une fois envoyés ou en échec (journal `contact data purged`). Appel séparé : son échec (warn) ne touche pas au ménage ; avant sa migration (005700), un seul avertissement, sans erreur |
 | `private.watch_rides()` | 30 s (`WATCH_RIDES_MS`) | alertes chauffeur en retard, immobile, GPS muet, course non démarrée |

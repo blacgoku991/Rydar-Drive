@@ -227,9 +227,13 @@ export const webhookEventsSchema = z
   .nullish()
   .transform((v) => [...new Set(v ?? [])]);
 
+/**
+ * Description : espaces et caractères de contrôle (dont NUL, illisible par PostgreSQL → erreur 500 sinon) remplacés
+ * par une espace, comme la normalisation de svc_webhook_upsert, avant la limite de longueur.
+ */
 const webhookDescriptionSchema = z
   .string()
-  .trim()
+  .overwrite((v) => v.replace(/[\s\u0000-\u001f\u007f-\u009f]+/gu, " ").trim())
   .max(WEBHOOK_DESCRIPTION_MAX)
   .nullish()
   .transform((v) => v || null);

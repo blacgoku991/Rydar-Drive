@@ -8,7 +8,7 @@ Rydar Drive repose sur un principe : **la base de données est l'arbitre**. Isol
 | --- | --- | --- |
 | **PostgreSQL / Supabase** | Données, RLS, moteur de dispatch, temps réel, outbox des notifications | PostgreSQL 16, PostGIS 3, Supabase Auth, Realtime (broadcast), Storage |
 | **apps/web** | Dashboard rattacheur, Super Admin, API publique v1, mini-site de réservation, facturation | Next.js 16 (App Router, `proxy.ts`), React 19, Tailwind v4, Radix, MapLibre GL, Recharts, @supabase/ssr, Stripe |
-| **apps/worker** | Tick du dispatch (expirations, vagues suivantes, escalades), envoi des pushs et des relances WhatsApp, ménage (durées de conservation), reprise des suppressions de compte chauffeur | Node 22, `pg` (LISTEN/NOTIFY, `FOR UPDATE SKIP LOCKED`), Expo Push, FCM HTTP v1, APNs HTTP/2, API WhatsApp Cloud, API Storage et Auth de Supabase (clé service role) |
+| **apps/worker** | Tick du dispatch (expirations, vagues suivantes, escalades), envoi des pushs et des relances WhatsApp, webhooks sortants des centrales (garde SSRF, signature, nouveaux essais), ménage (durées de conservation), reprise des suppressions de compte chauffeur | Node 22, `pg` (LISTEN/NOTIFY, `FOR UPDATE SKIP LOCKED`), Expo Push, FCM HTTP v1, APNs HTTP/2, API WhatsApp Cloud, API Storage et Auth de Supabase (clé service role) |
 | **mailer** (même image, `dist/mailer.js`) | E-mails du formulaire de contact : lit la file `email_outbox` (`private.claim_emails`, réveil `LISTEN rydar_emails`) et l'envoie au serveur mail du VPS (SMTP `127.0.0.1:25`, réseau de l'hôte), réessais espacés puis échec visible dans `/admin/contacts` | Node 22, `pg`, nodemailer |
 | **apps/driver** | Application chauffeur : EN LIGNE / HORS LIGNE, GPS, offres, cycle de course | Expo SDK 57, React Native 0.86, expo-router, expo-location (tâche de fond), expo-notifications, react-native-maps |
 | **packages/shared** | Vocabulaire commun : statuts, transitions, catégories, schémas zod (messages FR), formatage | TypeScript, zod 4 |
@@ -23,7 +23,7 @@ Toutes les tables métier portent `organization_id`. Les relations entre tables 
 | Utilisateurs | `users` (miroir de `auth.users`), `organization_users` (rôles `owner` / `admin` / `dispatcher`) |
 | Flotte | `drivers`, `vehicles`, `driver_documents`, `driver_devices`, `push_tokens`, `driver_locations` (dernière position, `geography` + GiST), `driver_location_history` |
 | Courses | `rides`, `ride_offers`, `ride_assignments`, `ride_events` (timeline + journal du dispatch), `ride_status_history`, `pricing_rules` |
-| Intégrations | `api_keys` (métadonnées), `api_key_secrets` (hash HMAC, service role uniquement), `api_logs`, `notifications` (outbox) |
+| Intégrations | `api_keys` (métadonnées), `api_key_secrets` (hash HMAC, service role uniquement), `api_logs`, `notifications` (outbox), `webhook_endpoints` (adresses), `webhook_endpoint_secrets` (secrets de signature, service role seul), `webhook_deliveries` (file des envois, sans charge utile) |
 | Suivi & échanges | `ride_alerts` (alertes de suivi), `chat_messages` (fils direct / flotte, signalements géolocalisés), `chat_reads` (accusés de lecture), `chat_report_votes` |
 | Modération | `chat_message_reports` (messages du fil flotte signalés), `chat_blocks` (auteurs masqués par un chauffeur) |
 | Centrale à commission | `ride_settlements` (règlement de chaque course terminée), `banned_identities` (identités bannies, hachées), `fraud_reports` (signalements au super admin) |
@@ -201,6 +201,33 @@ Les notifications sont insérées dans `notifications` **dans la même transacti
 Côté app chauffeur, l'offre s'affiche aussi par Realtime quand l'app est ouverte : le push n'est qu'un canal parmi d'autres.
 
 Les relances WhatsApp passent par la même file (canal `whatsapp`) : `private.claim_whatsapp` réserve un lot avec les identifiants de l'expéditeur (jetons lus dans les tables `*_whatsapp_secrets`, service role seul), le worker envoie un modèle approuvé par l'API WhatsApp Cloud de Meta et `private.complete_whatsapp` termine l'envoi ; un échec définitif repasse par l'application ([WHATSAPP.md](WHATSAPP.md)).
+
+## Webhooks sortants (migrations 006000, 006100)
+
+Chaque centrale (offre avec l'API) peut enregistrer jusqu'à 10 adresses https qui reçoivent les changements de statut de
+ses courses ; contrat public dans [API.md](API.md#webhooks).
+
+1. **Détection en base** : les triggers `rides_f_webhooks_insert` / `rides_f_webhooks_update` (`private.queue_ride_webhooks`)
+   insèrent une ligne de `webhook_deliveries` par adresse abonnée, dans la transaction de la course (type, statut avant et
+   après, `occurred_at`), puis `pg_notify('rydar_webhooks')`. Aucune charge utile n'est stockée. Centrale suspendue ou
+   archivée, ou offre sans l'API : aucun événement enregistré.
+2. **Prise** (`private.claim_webhook_deliveries`, `SKIP LOCKED`, bail de 2 min) : un seul envoi en cours par adresse (le
+   plus ancien dû d'abord), tour de rôle entre centrales ; les envois d'une centrale suspendue ou archivée restent en
+   file. La ligne renvoyée porte l'adresse, le secret (`webhook_endpoint_secrets`) et l'état ACTUEL de la course
+   (`private.webhook_ride_json`, mêmes colonnes que `PUBLIC_RIDE_SELECT` de l'API v1 : `publicRide` de `@rydar/shared`
+   sert aux deux, toute colonne ajoutée l'est des deux côtés).
+3. **Envoi** (worker, `apps/worker/src/webhooks*`) : garde SSRF (nom résolu, refus si une seule adresse est privée,
+   connexion à l'adresse vérifiée), corps signé HMAC-SHA256 (`X-Rydar-Signature`), réponse 2xx attendue en 10 s, aucune
+   redirection suivie.
+4. **Compte rendu** (`private.complete_webhook_delivery`) : succès, ou nouvel essai (1 min → 24 h, 9 essais ; un `ping`
+   n'est jamais réessayé) ; désactivation automatique après au moins 50 échecs consécutifs ET aucun envoi réussi depuis
+   3 jours (depuis la création pour une adresse qui n'a jamais réussi).
+5. **Purge** (`private.purge_webhook_deliveries`, toutes les heures) : 30 jours, 45 au plus pour un envoi resté en file.
+
+Gestion : API v1 (`/api/v1/webhooks`, permission `webhooks:manage`) et Dashboard → Intégrations (owner / admin), toutes
+deux par les RPC `svc_webhook_*` (service role) qui revérifient l'appartenance à la centrale et écrivent `audit_logs`.
+Tests et renvois bornés : un `ping` en attente par adresse (`WEBHOOK_TEST_PENDING`), 10 par minute et par centrale
+(`WEBHOOK_TEST_RATE_LIMITED`, aussi compté côté web dans Redis).
 
 ## Géolocalisation chauffeur
 

@@ -259,4 +259,30 @@ describe("DELETE /webhooks/{id} et POST /webhooks/{id}/test", () => {
     const extra = await test.POST(req(`/webhooks/${HOOK_ID}/test`, { method: "POST", body: { force: true } }), params(HOOK_ID));
     expect(extra.status).toBe(422);
   });
+
+  it("test : 409 WEBHOOK_TEST_PENDING tant que le test précédent n'a pas de résultat", async () => {
+    h.rpcResult = { ok: false, code: "WEBHOOK_TEST_PENDING" };
+    const res = await test.POST(req(`/webhooks/${HOOK_ID}/test`, { method: "POST" }), params(HOOK_ID));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe("WEBHOOK_TEST_PENDING");
+    expect(res.headers.get("Retry-After")).toBeNull();
+  });
+
+  it("test : 429 WEBHOOK_TEST_RATE_LIMITED + Retry-After (Redis au 11e appel, ou refus SQL)", async () => {
+    h.rpcResult = { ok: true, delivery_id: "66666666-6666-4666-8666-666666666666" };
+    for (let i = 0; i < 10; i++) {
+      expect((await test.POST(req(`/webhooks/${HOOK_ID}/test`, { method: "POST" }), params(HOOK_ID))).status).toBe(202);
+    }
+    const limited = await test.POST(req(`/webhooks/${HOOK_ID}/test`, { method: "POST" }), params(HOOK_ID));
+    expect(limited.status).toBe(429);
+    expect((await limited.json()).error.code).toBe("WEBHOOK_TEST_RATE_LIMITED");
+    expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(h.rpcs).toHaveLength(10);
+
+    h.counts.delete(`webhook-test:${ORG}`);
+    h.rpcResult = { ok: false, code: "WEBHOOK_TEST_RATE_LIMITED" };
+    const sql = await test.POST(req(`/webhooks/${HOOK_ID}/test`, { method: "POST" }), params(HOOK_ID));
+    expect(sql.status).toBe(429);
+    expect(Number(sql.headers.get("Retry-After"))).toBeGreaterThan(0);
+  });
 });

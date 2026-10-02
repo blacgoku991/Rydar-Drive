@@ -16,25 +16,54 @@ export const metadata: Metadata = { title: "API & site web" };
 export const dynamic = "force-dynamic";
 
 const DELIVERY_SELECT =
-  "id, endpoint_id, ride_id, event_type, occurred_at, status, attempts, next_attempt_at, last_status_code, last_error, delivered_at";
+  "id, endpoint_id, ride_id, event_type, occurred_at, status, attempts, next_attempt_at, last_status_code, last_error, delivered_at, created_at";
+
+/**
+ * Par adresse : ses 10 derniers envois, plus ses 10 derniers envois en ÉCHEC (« Renvoyer »), même plus anciens. Les
+ * envois qui attendent un nouvel essai restent « pending » jusqu'au dernier : les mêler aux échecs les cacherait
+ * derrière eux pendant une longue panne du destinataire, juste quand il faut les renvoyer.
+ */
+const RECENT_PER_ENDPOINT = 10;
+const FAILED_PER_ENDPOINT = 10;
 
 type OrgCtx = Awaited<ReturnType<typeof requireOrg>>;
 
-/** Webhooks et 20 derniers envois, lus par RLS (owner / admin) ; numéro de course ajouté pour l'affichage. */
+/**
+ * Webhooks et envois récents de CHAQUE adresse, lus par RLS (owner / admin) ; numéro de course ajouté pour
+ * l'affichage. Une limite commune à la centrale cachait les échecs d'une adresse (et son bouton « Renvoyer ») derrière
+ * les succès des autres : chaque adresse a donc ses envois, et celle qui a déjà échoué garde aussi ses derniers échecs.
+ */
 async function loadWebhooks(ctx: OrgCtx): Promise<{ endpoints: WebhookEndpoint[]; deliveries: WebhookDeliveryRow[] }> {
-  const [endpoints, deliveries] = await Promise.all([
-    ctx.supabase.from("webhook_endpoints").select(WEBHOOK_ENDPOINT_SELECT).eq("organization_id", ctx.org.id).order("created_at", { ascending: true }),
-    ctx.supabase.from("webhook_deliveries").select(DELIVERY_SELECT).eq("organization_id", ctx.org.id).order("created_at", { ascending: false }).limit(20),
-  ]);
-  if (endpoints.error || deliveries.error) console.error("[integrations] webhooks illisibles", endpoints.error?.message ?? deliveries.error?.message);
-  const rows = (deliveries.data ?? []) as unknown as Omit<WebhookDeliveryRow, "ride_number">[];
+  const res = await ctx.supabase
+    .from("webhook_endpoints")
+    .select(WEBHOOK_ENDPOINT_SELECT)
+    .eq("organization_id", ctx.org.id)
+    .order("created_at", { ascending: true });
+  if (res.error) console.error("[integrations] webhooks illisibles", res.error.message);
+  const endpoints = (res.data ?? []) as unknown as WebhookEndpoint[];
+  const query = (endpointId: string) =>
+    ctx.supabase.from("webhook_deliveries").select(DELIVERY_SELECT).eq("organization_id", ctx.org.id).eq("endpoint_id", endpointId);
+  const lists = await Promise.all(
+    endpoints.flatMap((e) => [
+      query(e.id).order("created_at", { ascending: false }).limit(RECENT_PER_ENDPOINT),
+      // Échecs définitifs seulement (jamais « pending ») : pour une adresse qui a déjà échoué (aucun parcours inutile sinon)
+      ...(e.last_failure_at
+        ? [query(e.id).eq("status", "failed").order("created_at", { ascending: false }).limit(FAILED_PER_ENDPOINT)]
+        : []),
+    ]),
+  );
+  const failed = lists.find((l) => l.error);
+  if (failed?.error) console.error("[integrations] envois de webhooks illisibles", failed.error.message);
+  const byId = new Map<string, Omit<WebhookDeliveryRow, "ride_number">>();
+  for (const l of lists) for (const d of (l.data ?? []) as unknown as Omit<WebhookDeliveryRow, "ride_number">[]) byId.set(d.id, d);
+  const rows = [...byId.values()];
   const rideIds = [...new Set(rows.map((d) => d.ride_id).filter((id): id is string => !!id))];
   const { data: rides } = rideIds.length
     ? await ctx.supabase.from("rides").select("id, number").eq("organization_id", ctx.org.id).in("id", rideIds)
     : { data: [] as { id: string; number: number }[] };
   const numbers = new Map((rides ?? []).map((r: { id: string; number: number }) => [r.id, r.number]));
   return {
-    endpoints: (endpoints.data ?? []) as unknown as WebhookEndpoint[],
+    endpoints,
     deliveries: rows.map((d) => ({ ...d, ride_number: d.ride_id ? (numbers.get(d.ride_id) ?? null) : null })),
   };
 }
@@ -57,6 +86,8 @@ export default async function IntegrationsPage() {
     admin ? loadWebhooks(ctx) : Promise.resolve({ endpoints: [], deliveries: [] }),
   ]);
   const apiEnabled = Boolean((usage as any)?.limits?.api_access);
+  // Heure du rendu : temps relatifs des webhooks identiques au serveur et à l'hydratation
+  const serverNow = Date.now();
   const base = `${env.appUrl}/api/v1`;
 
   const curl = `curl -X POST ${base}/rides \\
@@ -115,10 +146,10 @@ export async function POST(req) {
   const ts = req.headers.get("x-rydar-timestamp") ?? "";
   const sig = req.headers.get("x-rydar-signature") ?? "";
   const expected = "v1=" + createHmac("sha256", process.env.RYDAR_WEBHOOK_SECRET).update(\`\${ts}.\${raw}\`).digest("hex");
-  const fresh = Math.abs(Date.now() / 1000 - Number(ts)) <= 300; // 5 minutes
-  if (!fresh || sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
-    return new Response("Signature invalide", { status: 401 });
-  }
+  const fresh = /^\\d+$/.test(ts) && Math.abs(Date.now() / 1000 - Number(ts)) <= 300; // 5 minutes
+  // Format contrôlé AVANT timingSafeEqual (exception si les longueurs en octets diffèrent : en-tête forgé)
+  const valid = /^v1=[0-9a-f]{64}$/.test(sig) && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  if (!fresh || !valid) return new Response("Signature invalide", { status: 401 });
   const event = JSON.parse(raw); // { id, type: "ride.completed", created_at, data: { ride, status, previous_status } }
   // Dédoublonnez sur event.id ; ne faites jamais reculer une course (data.ride.updated_at)
   return new Response(null, { status: 204 }); // répondre vite (2xx en moins de 10 s)
@@ -191,7 +222,13 @@ export async function POST(req) {
           />
           <CardBody>
             {admin ? (
-              <WebhooksPanel endpoints={webhooks.endpoints} deliveries={webhooks.deliveries} canManage={apiEnabled} timezone={ctx.org.timezone} />
+              <WebhooksPanel
+                endpoints={webhooks.endpoints}
+                deliveries={webhooks.deliveries}
+                canManage={apiEnabled}
+                timezone={ctx.org.timezone}
+                serverNow={serverNow}
+              />
             ) : (
               <p className="text-[13px] text-fg-subtle">Réservé aux administrateurs.</p>
             )}
