@@ -56,6 +56,24 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 - Permissions par clé, date d'expiration, révocation immédiate, débit par minute propre à chaque clé (Redis) ; les requêtes non authentifiées (clé absente, inconnue ou invalide) sont limitées par IP (IPv6 regroupée par /64), et leurs échecs journalisés dans une limite fixe. Une clé d'idempotence rejouée par une autre clé renvoie 409 (`IDEMPOTENCY_KEY_CONFLICT`), jamais la course d'une autre intégration. Une clé avec des origines autorisées (clé « navigateur », lisible par tout visiteur) ne sert qu'à créer une course, depuis une origine listée (`ORIGIN_NOT_ALLOWED`), avec le prix et le paiement fixés par la centrale ([API.md](API.md)).
 - Chaque requête est journalisée (`api_logs`) : clé, statut, durée, code d'erreur, IP.
 
+## Webhooks sortants
+
+- Adresses (`webhook_endpoints`) et envois (`webhook_deliveries`) : RLS, lecture par owner / admin de la centrale ;
+  aucune écriture client : RPC `svc_webhook_*` réservées au service role (appartenance à la centrale revérifiée en base,
+  action inscrite dans `audit_logs`), appelées par l'API v1 (permission `webhooks:manage`, refusée aux clés
+  « navigateur », sans en-têtes CORS) ou par les actions serveur du dashboard après contrôle du rôle owner / admin.
+- Secrets de signature : table `webhook_endpoint_secrets`, aucun droit pour `anon` ni `authenticated` ; affichés une
+  seule fois (création, renouvellement), jamais renvoyés ensuite ni journalisés ; lus par le seul worker.
+- Chaque envoi est signé : `X-Rydar-Signature: v1=<HMAC-SHA256(secret, "<horodatage>.<corps brut>")>`, horodatage de
+  l'essai (le destinataire refuse au-delà de 5 minutes et dédoublonne sur l'identifiant de l'envoi).
+- SSRF : adresse `https://` publique seulement (validation zod côté web, revérifiée en base) ; avant chaque envoi, le
+  worker résout le nom, refuse si une seule adresse est privée, de boucle locale, de lien local, CGNAT, ULA,
+  multidiffusion ou non spécifiée (formes IPv4 dans IPv6 comprises), se connecte à l'adresse vérifiée (pas de DNS
+  rebinding), ne suit aucune redirection, coupe à 10 s et ne lit que 2 Ko de réponse. Exception de test seulement :
+  `WEBHOOK_ALLOW_PRIVATE_URLS=1`.
+- Minimisation : aucune charge utile conservée (l'état de la course est lu au moment de l'envoi), aucune donnée client
+  (nom, téléphone, e-mail) envoyée ; historique purgé après 30 jours.
+
 ## Secrets et navigateur
 
 - Le navigateur ne reçoit que l'URL Supabase et la clé **publique** (anon). Les clés service role, Stripe, FCM, APNs et le poivre des clés API restent sur le serveur ou dans le worker.

@@ -381,7 +381,15 @@ export function bookingSiteSchemaFor(currentSubdomain: string | null | undefined
 /** Sans sous-domaine enregistré : tout nom réservé est refusé. */
 export const bookingSiteSchema = bookingSiteSchemaFor(null);
 
-export const API_SCOPES = ["rides:create", "rides:read", "rides:cancel"] as const;
+export const API_SCOPES = ["rides:create", "rides:read", "rides:cancel", "webhooks:manage"] as const;
+export type ApiScope = (typeof API_SCOPES)[number];
+/** Libellés des permissions (Dashboard → Intégrations). */
+export const API_SCOPE_LABELS: Record<ApiScope, string> = {
+  "rides:create": "Créer des courses",
+  "rides:read": "Lire le statut",
+  "rides:cancel": "Annuler",
+  "webhooks:manage": "Webhooks",
+};
 /** Seule portée permise à une clé « navigateur » (origines autorisées) : la clé est lisible par tout visiteur du site. */
 export const BROWSER_KEY_SCOPES = ["rides:create"] as const;
 export const apiKeyCreateSchema = z

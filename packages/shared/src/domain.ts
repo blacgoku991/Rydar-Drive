@@ -244,6 +244,15 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Formulaire de contact du site vitrine (20260924005700)
   CONTACT_BUSY: "Trop de demandes de contact en ce moment : réessayez un peu plus tard.",
   CONTACT_INVALID: "Demande de contact invalide : vérifiez les champs du formulaire.",
+  // Webhooks sortants (20260924006000)
+  WEBHOOK_INVALID_URL:
+    "Adresse invalide : https:// obligatoire, adresse publique (ni localhost ni réseau privé), sans identifiants, 500 caractères au plus.",
+  WEBHOOK_INVALID_EVENTS: "Événement inconnu : choisissez parmi les événements proposés.",
+  WEBHOOK_INVALID_SECRET: "Secret invalide : 32 à 200 caractères (lettres, chiffres, _ . -).",
+  WEBHOOK_LIMIT: "10 webhooks au plus par organisation : supprimez-en un avant d'en ajouter un autre.",
+  WEBHOOK_NOT_FOUND: "Webhook introuvable.",
+  WEBHOOK_DISABLED: "Webhook désactivé : réactivez-le avant de l'essayer.",
+  WEBHOOK_DELIVERY_NOT_FOUND: "Envoi introuvable.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */

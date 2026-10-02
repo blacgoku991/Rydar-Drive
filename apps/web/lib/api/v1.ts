@@ -175,6 +175,8 @@ export async function handle(
     ctx = await authenticate(req, scope);
     const res = await fn(ctx);
     await logRequest(req, ctx, res.status, undefined, res.rideId);
+    // 204 : aucun corps (Response refuse un corps JSON avec ce statut)
+    if (res.status === 204) return new NextResponse(null, { status: 204, headers: baseHeaders(ctx) });
     return NextResponse.json(res.body, { status: res.status, headers: baseHeaders(ctx) });
   } catch (error) {
     let e =

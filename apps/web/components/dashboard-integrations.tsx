@@ -1,5 +1,5 @@
 "use client";
-import { API_SCOPES, BROWSER_KEY_SCOPES, formatRelative } from "@rydar/shared";
+import { API_SCOPE_LABELS, API_SCOPES, BROWSER_KEY_SCOPES, formatRelative } from "@rydar/shared";
 import { Check, Copy, KeyRound, Plus, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -26,11 +26,7 @@ export type ApiKeyRow = {
   revoked_at: string | null;
 };
 
-const SCOPE_LABELS: Record<string, string> = {
-  "rides:create": "Créer des courses",
-  "rides:read": "Lire le statut",
-  "rides:cancel": "Annuler",
-};
+const SCOPE_LABELS: Record<string, string> = API_SCOPE_LABELS;
 
 export function CopyButton({ value, label = "Copier" }: { value: string; label?: string }) {
   const [done, setDone] = useState(false);
@@ -176,7 +172,14 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
             <Field label="Nom">
               <Input name="name" required placeholder="Site web — formulaire de réservation" />
             </Field>
-            <Field label="Permissions" hint={browserKey ? "Clé utilisée depuis le navigateur : création de courses uniquement." : undefined}>
+            <Field
+              label="Permissions"
+              hint={
+                browserKey
+                  ? "Clé utilisée depuis le navigateur : création de courses uniquement."
+                  : "« Webhooks » : votre serveur enregistre lui-même l'adresse qui reçoit les changements de statut des courses (POST /api/v1/webhooks)."
+              }
+            >
               <div className="flex flex-wrap gap-2">
                 {API_SCOPES.map((s) => (
                   <button

@@ -1,7 +1,8 @@
-import { formatTime } from "@rydar/shared";
-import { Activity, BookOpen, Code2, KeyRound } from "lucide-react";
+import { formatTime, type WebhookEndpoint } from "@rydar/shared";
+import { Activity, BookOpen, Code2, KeyRound, Webhook } from "lucide-react";
 import type { Metadata } from "next";
 import { ApiKeysPanel, type ApiKeyRow } from "@/components/dashboard-integrations";
+import { WebhooksPanel, type WebhookDeliveryRow } from "@/components/dashboard-webhooks";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -9,14 +10,39 @@ import { CodeBlock } from "@/components/ui/code-block";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { WEBHOOK_ENDPOINT_SELECT } from "@/lib/webhooks";
 
 export const metadata: Metadata = { title: "API & site web" };
 export const dynamic = "force-dynamic";
 
+const DELIVERY_SELECT =
+  "id, endpoint_id, ride_id, event_type, occurred_at, status, attempts, next_attempt_at, last_status_code, last_error, delivered_at";
+
+type OrgCtx = Awaited<ReturnType<typeof requireOrg>>;
+
+/** Webhooks et 20 derniers envois, lus par RLS (owner / admin) ; numéro de course ajouté pour l'affichage. */
+async function loadWebhooks(ctx: OrgCtx): Promise<{ endpoints: WebhookEndpoint[]; deliveries: WebhookDeliveryRow[] }> {
+  const [endpoints, deliveries] = await Promise.all([
+    ctx.supabase.from("webhook_endpoints").select(WEBHOOK_ENDPOINT_SELECT).eq("organization_id", ctx.org.id).order("created_at", { ascending: true }),
+    ctx.supabase.from("webhook_deliveries").select(DELIVERY_SELECT).eq("organization_id", ctx.org.id).order("created_at", { ascending: false }).limit(20),
+  ]);
+  if (endpoints.error || deliveries.error) console.error("[integrations] webhooks illisibles", endpoints.error?.message ?? deliveries.error?.message);
+  const rows = (deliveries.data ?? []) as unknown as Omit<WebhookDeliveryRow, "ride_number">[];
+  const rideIds = [...new Set(rows.map((d) => d.ride_id).filter((id): id is string => !!id))];
+  const { data: rides } = rideIds.length
+    ? await ctx.supabase.from("rides").select("id, number").eq("organization_id", ctx.org.id).in("id", rideIds)
+    : { data: [] as { id: string; number: number }[] };
+  const numbers = new Map((rides ?? []).map((r: { id: string; number: number }) => [r.id, r.number]));
+  return {
+    endpoints: (endpoints.data ?? []) as unknown as WebhookEndpoint[],
+    deliveries: rows.map((d) => ({ ...d, ride_number: d.ride_id ? (numbers.get(d.ride_id) ?? null) : null })),
+  };
+}
+
 export default async function IntegrationsPage() {
   const ctx = await requireOrg();
   const admin = isAdminRole(ctx.role);
-  const [{ data: keys }, { data: logs }, { data: usage }] = await Promise.all([
+  const [{ data: keys }, { data: logs }, { data: usage }, webhooks] = await Promise.all([
     admin
       ? ctx.supabase
           .from("api_keys")
@@ -28,6 +54,7 @@ export default async function IntegrationsPage() {
       ? ctx.supabase.from("api_logs").select("id, method, path, status_code, latency_ms, ip, error_code, created_at").eq("organization_id", ctx.org.id).order("id", { ascending: false }).limit(40)
       : Promise.resolve({ data: [] }),
     ctx.supabase.rpc("org_usage", { p_org: ctx.org.id }),
+    admin ? loadWebhooks(ctx) : Promise.resolve({ endpoints: [], deliveries: [] }),
   ]);
   const apiEnabled = Boolean((usage as any)?.limits?.api_access);
   const base = `${env.appUrl}/api/v1`;
@@ -80,6 +107,23 @@ $response = json_decode(curl_exec($ch), true); // ['data' => ['id' => …, 'numb
 });
 const { data } = await res.json(); // data.status : "SEARCHING_DRIVER" | "OFFERED" | …`;
 
+  const webhook = `// Réception d'un webhook Rydar Drive (route Next.js) : signature vérifiée sur le corps BRUT
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+export async function POST(req) {
+  const raw = await req.text();
+  const ts = req.headers.get("x-rydar-timestamp") ?? "";
+  const sig = req.headers.get("x-rydar-signature") ?? "";
+  const expected = "v1=" + createHmac("sha256", process.env.RYDAR_WEBHOOK_SECRET).update(\`\${ts}.\${raw}\`).digest("hex");
+  const fresh = Math.abs(Date.now() / 1000 - Number(ts)) <= 300; // 5 minutes
+  if (!fresh || sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+    return new Response("Signature invalide", { status: 401 });
+  }
+  const event = JSON.parse(raw); // { id, type: "ride.completed", created_at, data: { ride, status, previous_status } }
+  // Dédoublonnez sur event.id ; ne faites jamais reculer une course (data.ride.updated_at)
+  return new Response(null, { status: 204 }); // répondre vite (2xx en moins de 10 s)
+}`;
+
   const response = `HTTP/1.1 201 Created
 {
   "data": {
@@ -118,9 +162,11 @@ const { data } = await res.json(); // data.status : "SEARCHING_DRIVER" | "OFFERE
                 ["GET", "/rides?external_reference=…", "Retrouver une réservation"],
                 ["POST", "/rides/{id}/cancel", "Annuler (avant prise en charge)"],
                 ["GET", "/ping", "Vérifier la clé"],
+                ["POST", "/webhooks", "Enregistrer l'adresse qui reçoit les événements (permission Webhooks)"],
+                ["DELETE", "/webhooks/{id}", "Supprimer une adresse de webhook"],
               ].map(([m, p, d]) => (
-                <div key={p} className="flex items-start gap-3">
-                  <span className={`num w-12 shrink-0 rounded-md px-1.5 py-0.5 text-center text-[10.5px] font-semibold ${m === "POST" ? "bg-brand/12 text-brand" : "bg-blue/12 text-blue"}`}>{m}</span>
+                <div key={`${m} ${p}`} className="flex items-start gap-3">
+                  <span className={`num w-14 shrink-0 rounded-md px-1.5 py-0.5 text-center text-[10.5px] font-semibold ${m === "POST" ? "bg-brand/12 text-brand" : m === "DELETE" ? "bg-red/12 text-red" : "bg-blue/12 text-blue"}`}>{m}</span>
                   <div>
                     <p className="num text-fg">{p}</p>
                     <p className="text-[12px] text-fg-subtle">{d}</p>
@@ -138,6 +184,21 @@ const { data } = await res.json(); // data.status : "SEARCHING_DRIVER" | "OFFERE
         </div>
 
         <Card>
+          <CardHeader
+            title="Webhooks"
+            icon={<Webhook />}
+            description="Votre serveur est prévenu à chaque changement de statut d'une course (requête signée, nouveaux essais automatiques)."
+          />
+          <CardBody>
+            {admin ? (
+              <WebhooksPanel endpoints={webhooks.endpoints} deliveries={webhooks.deliveries} canManage={apiEnabled} timezone={ctx.org.timezone} />
+            ) : (
+              <p className="text-[13px] text-fg-subtle">Réservé aux administrateurs.</p>
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
           <CardHeader title="Exemples d'intégration" icon={<Code2 />} description="Appelez l'API depuis votre serveur : la clé ne doit jamais apparaître dans le navigateur." />
           <CardBody>
             <Tabs defaultValue="curl">
@@ -146,11 +207,13 @@ const { data } = await res.json(); // data.status : "SEARCHING_DRIVER" | "OFFERE
                 <TabsTrigger value="php">PHP / WordPress</TabsTrigger>
                 <TabsTrigger value="node">Node.js</TabsTrigger>
                 <TabsTrigger value="response">Réponse</TabsTrigger>
+                <TabsTrigger value="webhook">Webhook</TabsTrigger>
               </TabsList>
               <TabsContent value="curl" className="mt-4"><CodeBlock code={curl} language="bash" /></TabsContent>
               <TabsContent value="php" className="mt-4"><CodeBlock code={php} language="php" /></TabsContent>
               <TabsContent value="node" className="mt-4"><CodeBlock code={node} language="javascript" /></TabsContent>
               <TabsContent value="response" className="mt-4"><CodeBlock code={response} language="http" /></TabsContent>
+              <TabsContent value="webhook" className="mt-4"><CodeBlock code={webhook} language="javascript" /></TabsContent>
             </Tabs>
           </CardBody>
         </Card>
