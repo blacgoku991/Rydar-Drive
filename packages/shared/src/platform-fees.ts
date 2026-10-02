@@ -1,7 +1,9 @@
-// Frais plateforme : reversement des centrales à Rydar (super admin).
-// Les règles d'argent sont appliquées en base (migration 20260924003000_platform_fees) :
+// Frais plateforme (« Frais Rydar ») : reversement des centrales ET des flottes à Rydar (super admin).
+// Les règles d'argent sont appliquées en base (migrations 20260924003000_platform_fees, 20260924006400_fleet_platform_fees) :
 // frais dus dès la fin de la course, registre immuable, baisses validées par le super admin,
 // solde = frais comptabilisés − paiements CONFIRMÉS par le super admin. Ce module les présente.
+// Centrale : frais prélevés sur le prix (plafonnés au prix, rien sans prix). Flotte : % du prix (0 sans prix) + fixe,
+// facturés à la flotte, taux figés à la fin de chaque course (fleetPlatformFee).
 import { z } from "zod";
 import { isValidIban } from "./format";
 import type { Iso, Uuid } from "./types";
@@ -15,9 +17,11 @@ export type PlatformEntryKind = "ride" | "correction" | "adjustment";
 export type PlatformEntryStatus = "posted" | "pending" | "rejected";
 export type PlatformBillingCycle = "weekly" | "monthly";
 
-/** private.platform_account : compte d'une centrale envers Rydar (montants en centimes). */
+/** private.platform_account : compte d'une centrale ou d'une flotte envers Rydar (montants en centimes). */
 export interface PlatformAccount {
   organization_id: Uuid;
+  /** Modèle actuel de l'organisation (20260924006400) */
+  dispatch_model?: "fleet" | "centrale";
   currency: string;
   /** Référence à indiquer sur le virement (RYD-…) */
   reference: string;
@@ -45,7 +49,7 @@ export interface PlatformAccount {
   posted_cents: number;
   received_cents: number;
   last_payment_at: Iso | null;
-  /** Frais déjà encaissés par la centrale (course payée à la centrale ou règlement chauffeur confirmé) */
+  /** Frais déjà encaissés par l'organisation (course de flotte, course payée à la centrale ou règlement chauffeur confirmé) */
   collected_by_centrale_cents: number;
   /** Frais encore chez les chauffeurs (règlement à régler, déclaré ou contesté) */
   with_drivers_cents: number;
@@ -117,6 +121,8 @@ export interface PlatformEntry {
     pickup: string | null;
     dropoff: string | null;
     settlement_status: string | null;
+    /** Course terminée en mode flotte : taux figés à la fin de la course (null : règle centrale) */
+    fleet_fee?: { percent: number; fixed_cents: number } | null;
   } | null;
   /** Vue super admin uniquement */
   organization_name?: string;
@@ -137,12 +143,12 @@ export interface PlatformPayInfo {
 /** RPC org_platform_status(p_org) : bandeau du tableau de bord (owner / admin). */
 export type OrgPlatformStatus = { enabled: false } | { enabled: true; account: PlatformAccount };
 
-/** RPC org_platform_account(p_org) : carte « Frais plateforme » de la page Encaissements. */
+/** RPC org_platform_account(p_org) : carte « Frais plateforme » (Encaissements d'une centrale, « Frais Rydar » d'une flotte). */
 export type OrgPlatformAccount =
   | { enabled: false }
   | {
       enabled: true;
-      organization: { id: Uuid; name: string; status: OrgStatus; timezone: string };
+      organization: { id: Uuid; name: string; status: OrgStatus; timezone: string; dispatch_model?: "fleet" | "centrale" };
       account: PlatformAccount;
       pay: PlatformPayInfo;
       payments: PlatformPayment[];
@@ -153,7 +159,7 @@ export type OrgPlatformAccount =
 
 /** RPC org_platform_statement(p_org, p_month) / admin_platform_account(…).statement : relevé mensuel. */
 export interface PlatformStatement {
-  organization: { id: Uuid; name: string; currency: string; timezone: string; reference: string };
+  organization: { id: Uuid; name: string; currency: string; timezone: string; reference: string; dispatch_model?: "fleet" | "centrale" };
   month: string;
   from: Iso;
   to: Iso;
@@ -258,6 +264,18 @@ export const PLATFORM_CYCLE_META: Record<PlatformBillingCycle, { label: string; 
   monthly: { label: "Mensuel", hint: "Frais du mois à régler au début du mois suivant" },
   weekly: { label: "Hebdomadaire", hint: "Frais de la semaine à régler au début de la semaine suivante" },
 };
+
+/**
+ * Frais Rydar d'une course de FLOTTE (miroir de private.fleet_platform_fee) : % du prix (0 sans prix) + fixe, sans
+ * plafond au prix (facturés à la flotte, pas prélevés sur le prix comme en centrale).
+ */
+export function fleetPlatformFee(priceCents: number | null | undefined, percent: number, fixedCents: number): number {
+  const price = Math.max(0, priceCents ?? 0);
+  return Math.min(10_000_000, Math.round((price * (Number(percent) || 0)) / 100) + (fixedCents || 0));
+}
+
+/** Écriture d'une course terminée en mode flotte (pas de règlement chauffeur ni de répartition). */
+export const isFleetFeeRide = (ride: PlatformEntry["ride"] | null | undefined) => !!ride?.fleet_fee && !ride.settlement_status;
 
 /** Statut affiché d'une écriture : une baisse remplacée par une nouvelle correction de prix n'a pas été refusée par Rydar. */
 export function platformEntryStatusMeta(e: Pick<PlatformEntry, "status" | "superseded">): { label: string; tone: Tone } {

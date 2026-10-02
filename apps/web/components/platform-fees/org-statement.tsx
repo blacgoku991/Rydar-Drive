@@ -1,5 +1,6 @@
-// Relevé mensuel des frais plateforme (côté centrale) : solde d'ouverture, frais du mois, reçu par Rydar,
-// solde de clôture, chaque écriture (course, correction, avoir) et chaque paiement. Rendu serveur.
+// Relevé mensuel des frais plateforme (côté centrale ou flotte) : solde d'ouverture, frais du mois, reçu par Rydar,
+// solde de clôture, chaque écriture (course, correction, avoir) et chaque paiement. Rendu serveur. Flotte : pas de
+// colonne « règlement chauffeur » (aucune commission), sauf course passée par le mode centrale.
 import {
   PAYMENT_METHOD_LABELS,
   PLATFORM_ENTRY_KIND_META,
@@ -12,7 +13,9 @@ import {
 } from "@rydar/shared";
 import { ArrowRight, ReceiptText } from "lucide-react";
 import Link from "next/link";
-import { dayTime, platformMethodLabel, price, rideSettlementText, shortDay, signedPrice } from "@/components/platform-fees/org-platform-format";
+import {
+  dayTime, platformMethodLabel, price, rideSettlementText, shortDay, showSettlementColumn, signedPrice,
+} from "@/components/platform-fees/org-platform-format";
 import { Badge, toneText } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
@@ -123,6 +126,7 @@ export function StatementEntries({ s }: { s: PlatformStatement }) {
   const cur = s.organization.currency || "EUR";
   const tz = s.organization.timezone || "Europe/Paris";
   const pending = s.entries.filter((e) => e.status === "pending");
+  const withSettlement = showSettlementColumn(s);
   return (
     <Card className="overflow-hidden">
       <CardHeader
@@ -146,7 +150,7 @@ export function StatementEntries({ s }: { s: PlatformStatement }) {
                   <TH className="w-[118px]">Date</TH>
                   <TH>Libellé</TH>
                   <TH>Course</TH>
-                  <TH>Règlement chauffeur</TH>
+                  {withSettlement && <TH>Règlement chauffeur</TH>}
                   <TH className="text-right">Montant</TH>
                 </tr>
               </THead>
@@ -162,7 +166,7 @@ export function StatementEntries({ s }: { s: PlatformStatement }) {
                       <TD className="h-auto max-w-[320px] py-3 align-top">
                         <RideCell e={e} currency={cur} />
                       </TD>
-                      <TD className={cn("h-auto py-3 align-top text-[12.5px]", st?.tone ?? "text-fg-muted")}>{st?.text ?? "—"}</TD>
+                      {withSettlement && <TD className={cn("h-auto py-3 align-top text-[12.5px]", st?.tone ?? "text-fg-muted")}>{st?.text ?? "—"}</TD>}
                       <TD className="h-auto py-3 text-right align-top">
                         <p className={cn("mono whitespace-nowrap text-[14px] font-semibold", amountClass(e))}>{signedPrice(e.amount_cents, cur)}</p>
                         <div className="mt-1 flex justify-end">
@@ -178,7 +182,7 @@ export function StatementEntries({ s }: { s: PlatformStatement }) {
           {/* Mobile / tablette : liste */}
           <ul className="divide-y divide-line lg:hidden">
             {s.entries.map((e) => {
-              const st = settlementText(e);
+              const st = withSettlement ? settlementText(e) : null;
               return (
                 <li key={e.id} className={cn("space-y-2 px-4 py-3.5 sm:px-5", e.status === "pending" && "bg-amber/[0.03]")}>
                   <div className="flex items-start justify-between gap-3">

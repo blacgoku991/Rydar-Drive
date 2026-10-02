@@ -1,5 +1,6 @@
 "use client";
-// Bandeau « Frais plateforme » du tableau de bord (owner / admin, mode centrale), lu via org_platform_status :
+// Bandeau « Frais plateforme » du tableau de bord (owner / admin ; centrale, ou flotte avec des frais Rydar), lu via
+// org_platform_status :
 //  • rouge : montant en retard (non couvert par une déclaration) ou création de courses suspendue — non fermable ;
 //  • ambre : échéance dans moins de 3 jours ;
 //  • bleu discret : relance récente de Rydar, ou paiement déclaré qui couvre le retard (en attente de Rydar).
@@ -11,6 +12,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { ago, isRecentReminder } from "@/components/platform-fees/org-platform-format";
+import type { PlatformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -94,7 +96,18 @@ const TONE: Record<Tone, { bar: string; icon: string; button: string }> = {
   blue: { bar: "border-blue/20 bg-blue/[0.05]", icon: "text-blue", button: "bg-white/[0.08] text-fg hover:bg-white/[0.13]" },
 };
 
-export function OrgPlatformBanner({ orgId, timeZone, enabled }: { orgId: string; timeZone: string; enabled: boolean }) {
+export function OrgPlatformBanner({
+  orgId,
+  timeZone,
+  enabled,
+  paths,
+}: {
+  orgId: string;
+  timeZone: string;
+  enabled: boolean;
+  /** Où régler : « Encaissements » (centrale) ou « Frais Rydar » (flotte) */
+  paths: Pick<PlatformFeesPaths, "account" | "page">;
+}) {
   const pathname = usePathname();
   const [account, setAccount] = useState<PlatformAccount | null>(null);
   const [hidden, setHidden] = useState<string | null>(null);
@@ -137,9 +150,9 @@ export function OrgPlatformBanner({ orgId, timeZone, enabled }: { orgId: string;
   if (!state) return null;
   const dismissible = state.tone !== "red";
   if (dismissible && hidden === state.key) return null;
-  // La carte « Frais plateforme » est déjà en tête de la page Encaissements ; Messages occupe toute la hauteur
+  // La carte « Frais plateforme » est déjà sur la page (Encaissements / Frais Rydar) ; Messages occupe toute la hauteur
   // de l'écran (h-dvh) : un bandeau dans le flux pousserait la zone de saisie hors de l'écran
-  if (pathname === "/dashboard/settlements" || pathname.startsWith("/dashboard/messages")) return null;
+  if (pathname === paths.page || pathname.startsWith("/dashboard/messages")) return null;
   const floating = pathname === "/dashboard";
   const t = TONE[state.tone];
 
@@ -168,7 +181,7 @@ export function OrgPlatformBanner({ orgId, timeZone, enabled }: { orgId: string;
         <span className="text-fg-muted"> · {state.detail}</span>
       </p>
       <Link
-        href="/dashboard/settlements#frais-plateforme"
+        href={paths.account}
         className={cn("inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[12px] font-medium transition-colors", t.button)}
       >
         Régler

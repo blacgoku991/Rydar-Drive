@@ -62,7 +62,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     db.from("api_keys").select("id", { count: "exact", head: true }).eq("organization_id", id).is("revoked_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("application_status", "pending").is("banned_at", null).is("deleted_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).not("banned_at", "is", null),
-    // Frais plateforme dus à Rydar (centrale, ou ancienne centrale qui a encore des frais)
+    // Frais plateforme dus à Rydar (centrale, flotte avec des frais par course, ou historique)
     db.rpc("admin_platform_account", { p_org: id }),
   ]);
   const k = (kpis.data ?? {}) as any;
@@ -82,7 +82,13 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   const joinUrl = org.join_code ? `${env.appUrl}/rejoindre/${org.join_code}` : null;
   const platformAccount = ((platform.data ?? null) as AdminPlatformAccount | null)?.account ?? null;
   const showPlatform =
-    !!platformAccount && (model === "centrale" || platformAccount.posted_cents !== 0 || platformAccount.received_cents !== 0 || platformAccount.declared_count > 0);
+    !!platformAccount &&
+    (model === "centrale" ||
+      Number(platformAccount.fee_percent) > 0 ||
+      platformAccount.fee_fixed_cents > 0 ||
+      platformAccount.posted_cents !== 0 ||
+      platformAccount.received_cents !== 0 ||
+      platformAccount.declared_count > 0);
 
   return (
     <>

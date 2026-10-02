@@ -258,6 +258,25 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   « en mode centrale »), défaut unique `joinInfoModel` (sans modèle → centrale), écran d'attente de l'app sans « Nouveau »
   en flotte, pastille des candidatures sans bannis ni supprimés ; tests `lib/join.test.ts` (route GET + erreurs) et
   `lib/network-actions.test.ts` (validation « confirmé » en flotte).
+- [x] **Frais Rydar des flottes (10/2026, migration 006400)** — modèle du propriétaire : abonnement (offres, inchangé) +
+  X € / Y % par course, flottes comprises. Mêmes règles d'argent que les centrales (registre immuable, corrections en
+  delta, baisses `pending`, paiements FIFO, déclarer / confirmer / refuser / rouvrir, relances, blocage, relevés).
+  Flotte : frais = arrondi(prix × % / 100) + fixe (sans prix : fixe seul ; sans plafond au prix, facturés et non
+  prélevés), taux FIGÉS à la fin de course dans `private.fleet_fee_basis` (aucune ligne si la flotte n'a ni frais ni
+  répartition héritée), prix corrigé → recalcul avec ces taux. Le modèle à la fin de course décide ; règlement chauffeur
+  présent (course de flotte repassée en centrale puis repricée) → règle centrale, par delta. Courses terminées avant
+  006400 : jamais facturées. `rides.platform_fee_cents` reste NULL en flotte (l'app chauffeur ne voit rien).
+  Redéfinies : `private.sync_platform_fee`, `private.platform_account` (+ `dispatch_model`, frais de flotte « encaissés
+  par l'organisation »), `private.platform_entry_json` (+ `ride.fleet_fee`), `private.platform_statement`
+  (+ `organization.dispatch_model`), `org_platform_account` / `org_platform_status` / `admin_platform_overview` (activés
+  par `private.platform_fees_enabled` : centrale, flotte avec des frais, ou historique). Taux hérités d'un ancien passage
+  en centrale remis à 0 pour les flottes (audit_logs). Web : super admin → champs des frais pour les deux modèles (fiche
+  et création, plus de « sans effet en mode flotte »), `/admin/frais` liste les flottes ; flotte → entrée « Frais Rydar »
+  (menu Organisation, owner / admin, si activé : `/dashboard/rydar`, relevé `/dashboard/rydar/releve`, même carte que
+  la centrale sans « d'où vient l'argent ») + bandeau d'échéance + renvoi depuis Réglages → Abonnement et Encaissements ;
+  chemins par modèle `components/platform-fees/org-platform-paths.ts`. Tests : `tests/db/fleet-platform-fees.test.ts`
+  (10), `org-platform-paths.test.ts`, `org-platform-format.test.ts`, `admin-platform-format.test.ts`, `shared.test.ts`
+  (`fleetPlatformFee`).
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
@@ -274,7 +293,7 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   Centrale : org_settlement_overview, org_settlements, confirm/dispute/waive/reopen_settlement, remind_driver_settlements, preview_ride_split,
   ban_driver, lift_driver_ban, lift_identity_ban, set_join_link, approve/reject_driver_application (aussi en flotte, 006300), admin_centrale_overview ;
   service role : svc_join_info, svc_identity_check, svc_driver_apply, svc_platform_ban/unban/dismiss_report.
-- Frais plateforme : centrale org_platform_status, org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
+- Frais plateforme (centrale, et flotte avec des frais depuis 006400) : org_platform_status, org_platform_account, org_platform_statement, declare/cancel_platform_payment ;
   super admin admin_platform_overview, admin_platform_account ; service role svc_platform_confirm/reject/reopen/record_payment,
   svc_platform_adjust, svc_platform_review_entry, svc_platform_remind, svc_platform_terms, svc_platform_billing_update.
 - Worker (connexion directe PG) : private.dispatch_tick(), private.claim_notifications(n), private.housekeeping(), private.watch_rides(), private.watch_driver_gps() (app fermée → hors ligne), private.flights_to_check(n)/apply_flight_status(...), private.document_reminders(), private.settlement_reminders() ; LISTEN rydar_notifications.

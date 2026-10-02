@@ -136,14 +136,16 @@ export function csvText(v: string | null | undefined) {
   return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Ventilation des frais comptabilisés : d'où vient l'argent (courses) + ajustements / courses supprimées. */
+/** Ventilation des frais comptabilisés : d'où vient l'argent (courses) + ajustements / courses supprimées. Flotte : ses
+ *  courses sont encaissées par elle-même (aucun règlement chauffeur). */
 export function originParts(a: PlatformAccount) {
   const other = a.posted_cents - a.collected_by_centrale_cents - a.with_drivers_cents - a.waived_by_centrale_cents;
+  const fleet = a.dispatch_model === "fleet";
   return [
     {
       key: "collected",
-      label: "Encaissé par la centrale",
-      hint: "Course payée à la centrale ou commission reçue du chauffeur",
+      label: fleet ? "Encaissé par la flotte" : "Encaissé par la centrale",
+      hint: fleet ? "Courses de la flotte (et, en centrale, courses payées à la centrale ou commissions reçues)" : "Course payée à la centrale ou commission reçue du chauffeur",
       cents: a.collected_by_centrale_cents,
       bar: "bg-blue",
       text: "text-blue",
@@ -177,8 +179,9 @@ export function entryKindLabel(e: Pick<PlatformEntry, "kind" | "amount_cents">) 
   return PLATFORM_ENTRY_KIND_META[e.kind].label;
 }
 
-/** Statut du règlement chauffeur d'une course (sens déduit de l'encaissement). */
+/** Statut du règlement chauffeur d'une course (sens déduit de l'encaissement) ; course terminée en flotte : « Flotte ». */
 export function rideSettlementLabel(ride: NonNullable<PlatformEntry["ride"]>) {
+  if (ride.fleet_fee && !ride.settlement_status) return "Flotte";
   if (!ride.settlement_status) return null;
   const direction = ride.payment_method === "cash" || ride.payment_method === "card" ? "driver_owes" : "centrale_owes";
   return settlementStatusLabel(ride.settlement_status as SettlementStatus, direction);

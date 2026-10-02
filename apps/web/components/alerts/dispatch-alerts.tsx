@@ -28,6 +28,7 @@ import { toast } from "sonner";
 import { redispatchRide } from "@/app/dashboard/rides/actions";
 import { confirmSettlements } from "@/app/dashboard/settlements/actions";
 import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
+import { isPlatformFeesPath, platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useCentrale, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { buildSettlementWhatsApp, methodLabel, parseDriverLabel, rideNumberOf, useDriverContact } from "@/components/settlements/settlement-ui";
@@ -771,8 +772,8 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     const org = centraleRef.current;
     if (!e?.action || !org || (org.role !== "owner" && org.role !== "admin")) return; // les dispatchers ne gèrent pas les frais
     if (e.organization_id && e.organization_id !== org.orgId) return;
-    // Page Encaissements (carte « Frais plateforme » + relevé) : relue après chaque changement
-    if (window.location.pathname.startsWith("/dashboard/settlements")) {
+    // Page Encaissements / Frais Rydar (carte « Frais plateforme » + relevé) : relue après chaque changement
+    if (isPlatformFeesPath(window.location.pathname)) {
       if (platformTimer.current) window.clearTimeout(platformTimer.current);
       platformTimer.current = window.setTimeout(() => router.refresh(), 700);
     }
@@ -790,7 +791,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
           note: e.action === "reminded" ? acc.account.reminder_note : undefined,
         };
         const alert = platformAlert(full);
-        if (alert) push({ ...alert, kind: "platform", rideId: null, href: "/dashboard/settlements#frais-plateforme", cta: "Frais plateforme" });
+        if (alert) push({ ...alert, kind: "platform", rideId: null, href: platformFeesPaths(org.model).account, cta: "Frais plateforme" });
       }, () => undefined);
   });
 

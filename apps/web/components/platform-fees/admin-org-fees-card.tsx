@@ -38,7 +38,8 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
         icon={<CircleDollarSign />}
         description={
           <>
-            Dus à Rydar par cette centrale · réf. <span className="mono whitespace-nowrap text-fg-muted">{a.reference}</span>
+            Dus à Rydar par {a.dispatch_model === "fleet" ? "cette flotte" : "cette centrale"} · réf.{" "}
+            <span className="mono whitespace-nowrap text-fg-muted">{a.reference}</span>
           </>
         }
         action={

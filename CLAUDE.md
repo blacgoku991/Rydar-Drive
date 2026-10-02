@@ -93,6 +93,7 @@ la centrale doit les frais plateforme à Rydar.
   flotte : validé à la main = « trusted », validation auto = reste « new » (plafonné si passage en centrale).
 - Frais plateforme : dus dès la fin de course (même si le règlement chauffeur est annulé/contesté), registre immuable
   `platform_fee_entries` (changement = correction delta ; BAISSE `pending` jusqu'à validation super admin), paiements FIFO.
+  Flottes aussi (006400) : % prix (0 sans prix) + fixe, taux figés fin de course (`private.fleet_fee_basis`), menu « Frais Rydar ».
 - Temps réel : `realtime.send` topics `org:{id}` (lu par TOUT membre, dispatcher compris : rien qu'un dispatcher ne lirait pas via
   RLS ; `platform.updated` = ids seulement), `driver:{id}`, `fleet:{org}`.
 - Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` idempotente (version `LEGAL_VERSION` de `@rydar/shared`,

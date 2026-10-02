@@ -1,5 +1,5 @@
 "use server";
-// Frais plateforme (côté centrale) : « J'ai payé » et retrait d'une déclaration non traitée.
+// Frais plateforme (côté centrale ou flotte) : « J'ai payé » et retrait d'une déclaration non traitée.
 // Seul le super admin confirme la réception ; la base vérifie owner / admin (centrale active ou suspendue).
 import { declarePlatformPaymentSchema, describeError, fieldErrors } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
@@ -26,8 +26,11 @@ const CODE_FIELD: Record<string, string> = { INVALID_AMOUNT: "amountCents", INVA
 type RpcPayload = { ok?: boolean; code?: string; message?: string; id?: string };
 
 function refresh() {
+  // Centrale : Encaissements + relevé ; flotte : « Frais Rydar » + relevé (org-platform-paths)
   revalidatePath("/dashboard/settlements");
   revalidatePath("/dashboard/settlements/rydar");
+  revalidatePath("/dashboard/rydar");
+  revalidatePath("/dashboard/rydar/releve");
   revalidatePath("/suspended");
 }
 

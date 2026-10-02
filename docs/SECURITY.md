@@ -115,18 +115,23 @@ Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domain
   aucun port, son point de santé n'écoute que sur 127.0.0.1, ses journaux ne contiennent ni corps, ni sujet, ni adresse
   complète.
 
-## Frais plateforme (centrales → Rydar)
+## Frais plateforme (centrales et flottes → Rydar)
 
 - Les frais d'une course terminée sont **dus par la centrale** dès la fin de course (`platform_fee_entries`, trigger
   `rides_e_platform_fee`) : annuler ou contester le règlement du chauffeur n'y change rien.
+- **Flottes** (migration 006400) : mêmes règles, frais = % du prix (0 sans prix) + fixe, dus par la flotte ; taux figés à
+  la fin de la course (`private.fleet_fee_basis`, aucun droit client ni service role) : un changement de réglage ne
+  touche jamais une course déjà terminée. Le modèle à la fin de course décide (règle centrale dès qu'un règlement
+  chauffeur existe), toujours par delta : ni double frais ni frais perdus au changement de modèle.
+  `rides.platform_fee_cents` reste vide en flotte : aucun chauffeur de flotte ne voit les frais Rydar.
 - **Registre immuable** : aucune écriture ne se modifie ni ne se supprime (trigger `platform_entry_guard`, même en service
   role) ; tout changement de frais est une nouvelle écriture de correction. Registre et paiements ne partent pas non plus
   avec la centrale : clés étrangères en `on delete restrict` (migration 004200), une centrale qui en a s'archive. Une **baisse** (prix corrigé après la course)
   reste « en attente » et ne compte qu'après l'accord du super admin.
 - **Seul le super admin** confirme un paiement (montant réellement reçu), le refuse, le rouvre, saisit un paiement, accorde
   un avoir ou change les conditions : fonctions `svc_platform_*` réservées au service role, auteur super admin vérifié en
-  base, chaque action inscrite dans `audit_logs`. La centrale (owner / admin) peut seulement déclarer « J'ai payé » et
-  retirer sa déclaration tant que Rydar ne l'a pas traitée.
+  base, chaque action inscrite dans `audit_logs`. La centrale ou la flotte (owner / admin) peut seulement déclarer
+  « J'ai payé » et retirer sa déclaration tant que Rydar ne l'a pas traitée ; dispatchers et chauffeurs ne voient rien.
 - Colonnes `organizations.platform_*` et table `platform_billing` : jamais modifiables par un rattacheur (absentes des
   droits UPDATE, RLS en lecture seule).
 - **Temps réel** : l'événement `platform.updated` ne contient que l'action et des identifiants (le canal `org:{id}` est

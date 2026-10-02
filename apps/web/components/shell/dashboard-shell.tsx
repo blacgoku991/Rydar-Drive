@@ -7,6 +7,7 @@ import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-prov
 import { CookieNotice } from "@/components/legal/cookie-notice";
 import { joinNavLabel } from "@/components/network/join-copy";
 import { OrgPlatformBanner } from "@/components/platform-fees/org-platform-banner";
+import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, type CentraleCounts } from "@/components/settlements/counts";
@@ -42,6 +43,8 @@ type ShellProps = {
   superAdmin?: boolean;
   /** Mini-sites servis par la plateforme (interrupteur du super admin) : sinon, entrée « Mini-site » masquée */
   bookingSites?: boolean;
+  /** Flotte avec des frais Rydar (owner / admin, org_platform_status) : entrée « Frais Rydar » + bandeau d'échéance */
+  rydarFees?: boolean;
 };
 
 export function DashboardShell(props: ShellProps) {
@@ -86,12 +89,18 @@ function useCentraleCounts(orgId: string, centrale: boolean, initial: CentraleCo
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
-function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin, bookingSites }: ShellProps) {
+function ShellBody({
+  children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin, bookingSites, rydarFees,
+}: ShellProps) {
   const router = useRouter();
   const [, start] = useTransition();
   const { unread, openReports } = useChatUnread();
   const isCentrale = centrale.model === "centrale";
   const counts = useCentraleCounts(org.id, isCentrale, centraleCounts);
+  const isAdmin = org.role === "owner" || org.role === "admin";
+  // Frais dus à Rydar : centrale → carte d'« Encaissements » ; flotte avec des frais → entrée « Frais Rydar »
+  const feePaths = platformFeesPaths(centrale.model);
+  const fleetFees = !isCentrale && isAdmin && !!rydarFees;
   // Documents à valider : valeur serveur, relue après chaque dépôt / validation / refus (un incrément local compterait
   // aussi les pièces des candidats, que la page Chauffeurs n'affiche pas) et quand une candidature est traitée
   const [pendingDocuments, setPendingDocuments] = useState(pendingInitial ?? 0);
@@ -178,7 +187,13 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
         ...(bookingSites ? [{ href: "/dashboard/booking-site", label: "Mini-site", icon: "globe" as const }] : []),
       ],
     },
-    { title: "Organisation", items: [{ href: "/dashboard/settings", label: "Réglages", icon: "settings" }] },
+    {
+      title: "Organisation",
+      items: [
+        ...(fleetFees ? [{ href: feePaths.page, label: "Frais Rydar", icon: "landmark" as const }] : []),
+        { href: "/dashboard/settings", label: "Réglages", icon: "settings" },
+      ],
+    },
     ...(superAdmin ? [{ title: "Plateforme", items: [{ href: "/admin", label: "Espace super admin", icon: "shield" as const }] }] : []),
   ];
   return (
@@ -204,8 +219,8 @@ function ShellBody({ children, org, orgs, user, alerts, pendingDocuments: pendin
       />
       <div className="lg:pl-[232px]">
         <main id="contenu" tabIndex={-1} className="outline-none">
-          {/* Frais plateforme dus à Rydar (owner / admin, mode centrale) */}
-          <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isCentrale && (org.role === "owner" || org.role === "admin")} />
+          {/* Frais plateforme dus à Rydar (owner / admin : centrale, ou flotte avec des frais Rydar) */}
+          <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isAdmin && (isCentrale || fleetFees)} paths={feePaths} />
           {topBanner}
           {children}
         </main>

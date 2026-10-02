@@ -3,7 +3,7 @@ import {
   BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Mail, Menu, MessageCircle, Radar,
   Route, ScrollText, Settings, ShieldCheck, Sparkles, UserPlus, UserX, Users,
 } from "lucide-react";
-import { HandCoins, Waypoints } from "lucide-react";
+import { HandCoins, Landmark, Waypoints } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -18,8 +18,8 @@ const ICONS = {
   radar: Radar, route: Route, users: Users, scroll: ScrollText, chart: BarChart3, key: KeyRound, globe: Globe,
   settings: Settings, building: Building2, shield: ShieldCheck, card: CreditCard, sparkles: Sparkles, dashboard: LayoutDashboard,
   message: MessageCircle,
-  // Mode centrale : Encaissements, Réseau ; flotte : Inscriptions (lien d'inscription des chauffeurs)
-  wallet: HandCoins, network: Waypoints, userPlus: UserPlus,
+  // Mode centrale : Encaissements, Réseau ; flotte : Inscriptions (lien d'inscription des chauffeurs), Frais Rydar
+  wallet: HandCoins, network: Waypoints, userPlus: UserPlus, landmark: Landmark,
   // Super admin : suppressions de comptes chauffeur, demandes du formulaire de contact
   userX: UserX, mail: Mail,
 };

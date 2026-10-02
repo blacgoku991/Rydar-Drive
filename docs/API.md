@@ -123,7 +123,7 @@ Format commun :
 | 400 | `INVALID_JSON` |
 | 401 | `INVALID_API_KEY`, `API_KEY_REVOKED`, `API_KEY_EXPIRED` |
 | 402 | `PLAN_LIMIT_RIDES` (quota mensuel de l'offre atteint) |
-| 402 | `PLATFORM_FEES_OVERDUE` (mode centrale : frais plateforme en retard, création de courses suspendue par Rydar) |
+| 402 | `PLATFORM_FEES_OVERDUE` (centrale, ou flotte avec des frais Rydar : frais en retard, création de courses suspendue par Rydar) |
 | 403 | `FORBIDDEN_TENANT_FIELD`, `FORBIDDEN_TENANT`, `INSUFFICIENT_SCOPE`, `ORIGIN_NOT_ALLOWED` (clé « navigateur »), `ORGANIZATION_INACTIVE`, `PLAN_FEATURE_API` |
 | 404 | `RIDE_NOT_FOUND`, `WEBHOOK_NOT_FOUND` |
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` (valeur déjà utilisée par une autre clé), codes métier d'annulation (ex. course déjà terminée), `WEBHOOK_LIMIT` (10 adresses au plus), `WEBHOOK_DISABLED` (test d'une adresse désactivée) |

@@ -1,7 +1,8 @@
 "use client";
-// Carte « Frais plateforme Rydar » (tête de la page Encaissements, owner / admin) : ce que la centrale doit
-// reverser à Rydar, l'échéance, les paiements déclarés et reçus, d'où vient l'argent, les relances et le
-// blocage éventuel. « J'ai payé » ouvre la déclaration ; seul Rydar confirme la réception.
+// Carte « Frais plateforme Rydar » (owner / admin ; tête de la page Encaissements d'une centrale, page « Frais Rydar »
+// d'une flotte) : ce que l'organisation doit reverser à Rydar, l'échéance, les paiements déclarés et reçus, d'où vient
+// l'argent (centrale seulement : une flotte n'a ni commission ni règlement chauffeur), les relances et le blocage
+// éventuel. « J'ai payé » ouvre la déclaration ; seul Rydar confirme la réception.
 import { formatNumber, formatPrice, platformDueSummary, type OrgPlatformAccount, type PlatformAccount } from "@rydar/shared";
 import { BellRing, FileText, Landmark, Lock, Send, TrendingDown } from "lucide-react";
 import Link from "next/link";
@@ -47,6 +48,7 @@ export function OrgPlatformCard({
   const remaining = remainingAfterDeclared(a);
   const reminder = isRecentReminder(a, now);
   const mustPay = a.balance_cents > 0 && remaining > 0;
+  const fleet = (data.organization.dispatch_model ?? a.dispatch_model) === "fleet";
 
   return (
     <section id="frais-plateforme" aria-labelledby="frais-plateforme-title" className="scroll-mt-6">
@@ -138,8 +140,8 @@ export function OrgPlatformCard({
           />
         </div>
 
-        {/* ------------------------------------------------------------ d'où vient l'argent */}
-        <MoneyOrigin a={a} currency={cur} />
+        {/* ------------------------------------------------------------ d'où vient l'argent (centrale) */}
+        {!fleet && <MoneyOrigin a={a} currency={cur} />}
 
         {a.pending_reductions_count > 0 && (
           <p className="flex items-start gap-2 border-t border-line px-5 py-3 text-[12.5px] leading-5 text-amber">

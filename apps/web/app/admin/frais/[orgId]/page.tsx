@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
 
-export const metadata: Metadata = { title: "Frais plateforme · centrale" };
+export const metadata: Metadata = { title: "Frais plateforme · compte" };
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -109,7 +109,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
             label="Solde"
             value={formatPrice(a.balance_cents, cur)}
             tone={a.balance_cents > 0 ? "amber" : "green"}
-            sub={a.balance_cents < 0 ? "avance en faveur de la centrale" : "frais − paiements reçus"}
+            sub={a.balance_cents < 0 ? `avance en faveur de ${org.dispatch_model === "fleet" ? "la flotte" : "la centrale"}` : "frais − paiements reçus"}
             icon={<CircleDollarSign />}
           />
           <Metric
@@ -181,7 +181,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
             <CardHeader
               title="Conditions"
               icon={<CalendarClock />}
-              description="Échéance de chaque frais : fin du cycle dans le fuseau de la centrale, plus le délai."
+              description="Échéance de chaque frais : fin du cycle dans le fuseau de l'organisation, plus le délai."
             />
             <CardBody>
               <TermsForm orgId={orgId} cycle={a.cycle} paymentDays={a.payment_days} blockAfterDays={a.block_after_days} />
