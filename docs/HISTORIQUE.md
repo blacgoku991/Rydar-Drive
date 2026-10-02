@@ -299,6 +299,23 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   TTFB 1 048 → 447 ms ; filtre « Encaissés » 1,53 → 1,05 Mo, 250 → 140 ms ; Chauffeurs 1,08 Mo → 576 Ko (RSC 649 → 145 Ko),
   CPU 140 → 90 ms ; Courses CPU 70 → 50 ms. Requêtes en 60 s, temps réel coupé : fiche course 180 → 6, Encaissements 75 → 12,
   « En direct » 10 → 3 instantanés (0 onglet caché). Captures A/B identiques (hors épingles lointaines retirées).
+  Corrections après revue (A = 1bce786, B = correctifs, mêmes conditions) :
+  - `LiveRefresh` prend `maxPollMs` : fiche d'une course non close (ni terminée ni annulée) relue au plus toutes les
+    30 s sans temps réel (60 s sinon) ; course en cours, temps réel coupé, 180 s : 4 → 7 relectures, mais 12 → 7
+    requêtes (liens sans préchargement, ci-dessous).
+  - Encaissements : relecture de sécurité toutes les 5 min en temps réel (`livePollMs: 300_000`, diffusion perdue sans
+    coupure du canal) : 0 → 1 relecture en 310 s (une seule requête de plus, occupation 3,1 % des deux côtés).
+  - Sélection des Encaissements : `carrySelection` (`settlement-list.ts`, testé) ; une ligne cochée sortie des lignes
+    affichées après une relecture (re-tri des 100 premières) reste cochée, affichée sous « Sélection conservée », tant
+    que l'index des ouverts la donne avec le même statut et le même montant ; retirée sinon (vérifié dans Chromium en
+    réécrivant la relecture RSC : A perdait les 2 cases sans le dire, B garde la ligne encore ouverte, 1 sélectionné).
+  - Carte : `alertRideIds` (alertes ouvertes) : une course en alerte reste épinglée au-delà de 2 h comme dans la liste
+    « En cours » (alerte injectée dans l'instantané : 19 → 20 épingles, occupation inchangée 7,1 %).
+  - `prefetch={false}` sur les liens des fiches course (retour, chauffeur, règlement) et des Encaissements (onglets,
+    cartes, soldes, numéros de course, réglages, relevé) : chaque relecture relançait ~2 (fiche) ou ~10 (Encaissements)
+    préchargements de 2,4 Ko inutiles ; temps réel coupé, 120 s : fiche 15 → 5 requêtes, Encaissements 12 → 2 ; temps
+    de navigation au clic inchangé (médianes 944-1 600 ms des deux côtés).
+  - Barre latérale : commentaire « rendre le préchargement si un app/dashboard/loading.tsx arrive ».
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

@@ -100,6 +100,9 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
                 const active = item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <li key={item.href}>
+                    {/* Sans préchargement : chaque lien visible relançait le rendu (et l'authentification) de sa page.
+                        Si un app/dashboard/loading.tsx est ajouté, revenir au préchargement par défaut (squelette
+                        instantané). */}
                     <Link
                       href={item.href}
                       prefetch={false}

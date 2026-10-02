@@ -44,3 +44,35 @@ export function compactOpen(s: OrgSettlementItem): OpenSettlement {
     ride_number: s.ride?.number || (fromReference ? Number(fromReference[1]) : null),
   };
 }
+
+/** Règlement encore ouvert (cochable, compté dans « À traiter »). */
+export const OPEN_STATUSES: ReadonlySet<string> = new Set(["due", "declared", "disputed"]);
+
+type Carried = Pick<OrgSettlementItem, "id" | "status" | "amount_cents" | "due_at">;
+
+/**
+ * Sélection après une relecture de la liste. Ligne cochée encore affichée : sa version fraîche, gardée si elle est
+ * toujours ouverte. Ligne cochée sortie des lignes affichées (« À traiter » re-trié : 100 premières) : gardée tant que
+ * l'index des règlements ouverts la donne avec le même statut et le même montant (échéance mise à jour), retirée sinon
+ * (confirmée, contestée… ailleurs). Renvoie la même Map si rien ne change (aucun rendu inutile).
+ */
+export function carrySelection<T extends Carried>(
+  selected: ReadonlyMap<string, T>,
+  shown: readonly T[],
+  openById: ReadonlyMap<string, Pick<OpenSettlement, "status" | "amount_cents" | "due_at">>,
+): ReadonlyMap<string, T> {
+  if (!selected.size) return selected;
+  const fresh = new Map(shown.map((s) => [s.id, s]));
+  const next = new Map<string, T>();
+  for (const [id, row] of selected) {
+    const f = fresh.get(id);
+    if (f) {
+      if (OPEN_STATUSES.has(f.status)) next.set(id, f);
+      continue;
+    }
+    const o = openById.get(id);
+    if (o && o.status === row.status && o.amount_cents === row.amount_cents) next.set(id, o.due_at === row.due_at ? row : { ...row, due_at: o.due_at });
+  }
+  if (next.size === selected.size && [...next].every(([id, row]) => selected.get(id) === row)) return selected;
+  return next;
+}

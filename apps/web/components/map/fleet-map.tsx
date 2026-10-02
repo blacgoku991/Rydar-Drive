@@ -71,6 +71,8 @@ type Props = {
   offers: LiveOffer[];
   selectedDriverId?: string | null;
   selectedRideId?: string | null;
+  /** Courses en alerte ouverte : sur la carte quelle que soit l'heure de prise en charge (comme la liste « En cours »). */
+  alertRideIds?: ReadonlySet<string>;
   onSelectDriver?: (id: string | null) => void;
   onSelectRide?: (id: string | null) => void;
   showOffline?: boolean;
@@ -128,6 +130,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
     offers,
     selectedDriverId,
     selectedRideId,
+    alertRideIds,
     onSelectDriver,
     onSelectRide,
     showOffline = false,
@@ -400,15 +403,18 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   }, [drivers, ready, showOffline, selectedDriverId, selectedRide, relatedDrivers, offeredDrivers, hasRides, step, fitAll, fitPoints, mapRef, libRef, staleMs, tick]);
 
   // ---------------------------------------------------------------- courses & tracés
-  // Courses sur la carte : sélectionnée, ou non terminée et (prise en charge dans moins de 2 h, ou chauffeur en route /
-  // client à bord). Une course acceptée pour plus tard n'est ni épinglée ni reliée à la position actuelle de son chauffeur.
+  // Courses sur la carte : sélectionnée, ou non terminée et (prise en charge dans moins de 2 h, chauffeur en route /
+  // client à bord, ou alerte ouverte). Une course acceptée pour plus tard n'est ni épinglée ni reliée à la position
+  // actuelle de son chauffeur.
   const visible = useMemo(() => {
     const soon = Date.now() + HORIZON_MS;
     return rides.filter(
-      (r) => r.id === selectedRideId || (!TERMINAL.has(r.status) && (new Date(r.pickup_at).getTime() < soon || UNDERWAY.has(r.status))),
+      (r) =>
+        r.id === selectedRideId ||
+        (!TERMINAL.has(r.status) && (new Date(r.pickup_at).getTime() < soon || UNDERWAY.has(r.status) || !!alertRideIds?.has(r.id))),
     );
     // tick : réévaluation de l'horizon de 2 h
-  }, [rides, selectedRideId, tick]);
+  }, [rides, selectedRideId, alertRideIds, tick]);
 
   // Épingles départ / arrivée : ne dépendent que des courses (jamais des positions GPS)
   useEffect(() => {

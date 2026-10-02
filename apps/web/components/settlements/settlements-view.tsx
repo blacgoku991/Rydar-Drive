@@ -3,6 +3,8 @@
 // Les chiffres viennent de org_settlement_overview / org_settlements ; toute décision passe par une RPC
 // (Reçu, Pas reçu, Versé, Annuler, Rouvrir, Relancer) puis la page est relue. Temps réel : settlement.updated.
 // Chaque règlement est rendu une seule fois (ligne de tableau sur grand écran, carte en dessous : même balisage).
+// Liens sans préchargement : pages dynamiques sans loading.js, le préchargement ne rapportait que la mise en page et
+// repartait (onglets, réglages, relevé…) à chaque relecture de la page.
 import {
   DRIVER_BLOCKER_META, TRUST_LEVEL_META, formatNumber, formatPhone, formatPrice, formatRideDate, shortAddress, splitSummary,
   type OrgSettlementDriver, type OrgSettlementFilter, type OrgSettlementItem, type OrgSettlementOverview,
@@ -15,7 +17,9 @@ import { confirmSettlements } from "@/app/dashboard/settlements/actions";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { useCentrale } from "@/components/settlements/centrale-context";
-import { SETTLEMENT_MAX, SETTLEMENT_PAGE, lateNow, sortOpen, type OpenSettlement } from "@/components/settlements/settlement-list";
+import {
+  OPEN_STATUSES, SETTLEMENT_MAX, SETTLEMENT_PAGE, carrySelection, lateNow, sortOpen, type OpenSettlement,
+} from "@/components/settlements/settlement-list";
 import {
   DeclarationLine, METHOD_ICON, SettlementActions, SettlementBadge, SplitBar, WhatsAppButton, batchReference, buildSettlementWhatsApp,
   dueInfo, fromNow, methodLabel, rideNumberOf, useRemindDriver, useSettlementRunner, type ConfirmMethod,
@@ -69,8 +73,7 @@ const EMPTY: Record<OrgSettlementFilter, { title: string; description: string }>
   all: { title: "Aucun règlement", description: "Les règlements sont créés automatiquement à la fin des courses." },
 };
 
-const OPEN = new Set(["due", "declared", "disputed"]);
-const isOpen = (s: OrgSettlementItem) => OPEN.has(s.status);
+const isOpen = (s: OrgSettlementItem) => OPEN_STATUSES.has(s.status);
 const owesNow = (s: Pick<OrgSettlementItem, "direction" | "status">) => s.direction === "driver_owes" && (s.status === "due" || s.status === "disputed");
 
 function href(filter: OrgSettlementFilter, driver: string | null, n?: number) {
@@ -95,8 +98,9 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
   const centrale = useCentrale();
 
   // Relecture à chaque règlement créé / déclaré / confirmé (ici ou ailleurs), différée si l'onglet est caché ; sans
-  // temps réel, sondage 15 s → 45 s → 2 min (en pause onglet caché)
-  const { schedule } = useLiveSync(() => router.refresh(), { pollMs: 15_000, maxPollMs: 120_000, debounceMs: 450 });
+  // temps réel, sondage 15 s → 45 s → 2 min (en pause onglet caché) ; avec, relecture de sécurité toutes les 5 min
+  // (diffusion perdue sans coupure du canal)
+  const { schedule } = useLiveSync(() => router.refresh(), { pollMs: 15_000, maxPollMs: 120_000, livePollMs: 300_000, debounceMs: 450 });
   useRealtimeEvent("settlement.updated", schedule);
   // Une commission passe « en retard » à son échéance, sans événement : montants « En retard » relus à ce moment-là
   const nextDue = useMemo(() => {
@@ -137,6 +141,9 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
     if (filter !== "open") return items;
     return sortOpen(items, now);
   }, [items, filter, now]);
+
+  // Lignes cochées sorties de la page affichée : gardées tant qu'elles restent ouvertes (voir carrySelection)
+  const openById = useMemo(() => new Map(openIndex.map((s) => [s.id, s])), [openIndex]);
 
   // Réclamation WhatsApp par chauffeur : tout ce qui est à régler (à régler + contesté), comme l'app chauffeur
   const owedByDriver = useMemo(() => {
@@ -277,6 +284,7 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
               <Link
                 key={tab.key}
                 href={href(tab.key, driverId)}
+                prefetch={false}
                 role="tab"
                 aria-selected={active}
                 scroll={false}
@@ -306,7 +314,7 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
             <span className="inline-flex h-7 items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.07] pl-3 pr-1 text-[12.5px] text-fg">
               <Funnel className="size-3.5 text-brand" />
               {filteredDriverLabel}
-              <Link href={href(filter, null)} scroll={false} className="grid size-5 place-items-center rounded-full text-fg-muted hover:bg-white/10 hover:text-fg" aria-label="Retirer le filtre chauffeur">
+              <Link href={href(filter, null)} scroll={false} prefetch={false} className="grid size-5 place-items-center rounded-full text-fg-muted hover:bg-white/10 hover:text-fg" aria-label="Retirer le filtre chauffeur">
                 <X className="size-3.5" />
               </Link>
             </span>
@@ -315,6 +323,7 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
 
         <SettlementList
           items={list}
+          openById={openById}
           filter={filter}
           now={now}
           timeZone={timeZone}
@@ -341,7 +350,7 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
         {hasMore && (
           <div className="mt-4 flex justify-center">
             <Button asChild variant="outline" size="sm">
-              <Link href={href(filter, driverId, Math.min(SETTLEMENT_MAX, limit + SETTLEMENT_PAGE))} scroll={false}>Afficher plus</Link>
+              <Link href={href(filter, driverId, Math.min(SETTLEMENT_MAX, limit + SETTLEMENT_PAGE))} scroll={false} prefetch={false}>Afficher plus</Link>
             </Button>
           </div>
         )}
@@ -366,7 +375,7 @@ function Kpi({ label, value, sub, tone, href: to, icon }: { label: string; value
   const cls = "surface relative block min-w-0 rounded-xl px-4 py-3.5";
   return to ? (
     // Défilement jusqu'à la liste filtrée (#reglements)
-    <Link href={to} className={cn(cls, "transition-colors hover:border-line-strong hover:bg-ink-700")}>
+    <Link href={to} prefetch={false} className={cn(cls, "transition-colors hover:border-line-strong hover:bg-ink-700")}>
       {body}
     </Link>
   ) : (
@@ -421,7 +430,7 @@ function BalanceRow({ d, currency, now, whatsapp, active }: { d: OrgSettlementDr
       <WhatsAppButton href={whatsapp} size="sm" />
       <Tooltip content={active ? "Tous les chauffeurs" : `Règlements de ${d.first_name}`}>
         <Button asChild variant="ghost" size="icon-sm" aria-label={active ? "Retirer le filtre chauffeur" : `Afficher les règlements de ${d.first_name}`}>
-          <Link href={href("open", active ? null : d.driver_id)} scroll={!active}>
+          <Link href={href("open", active ? null : d.driver_id)} scroll={!active} prefetch={false}>
             {active ? <FunnelX className="text-brand" /> : <Funnel />}
           </Link>
         </Button>
@@ -480,6 +489,7 @@ const ROW_GRID = "xl:grid xl:grid-cols-[20px_minmax(0,1.5fr)_minmax(0,1fr)_minma
 
 function SettlementList({
   items,
+  openById,
   filter,
   now,
   timeZone,
@@ -489,6 +499,7 @@ function SettlementList({
   whatsappFor,
 }: {
   items: OrgSettlementItem[];
+  openById: ReadonlyMap<string, OpenSettlement>;
   filter: OrgSettlementFilter;
   now: number;
   timeZone: string;
@@ -497,11 +508,15 @@ function SettlementList({
   blockUnpaid: boolean;
   whatsappFor: (s: OrgSettlementItem) => string | null;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Sélection : id → dernière version connue de la ligne (une ligne cochée peut sortir des lignes affichées)
+  const [selected, setSelected] = useState<ReadonlyMap<string, OrgSettlementItem>>(() => new Map());
   const [bulkMethod, setBulkMethod] = useState<ConfirmMethod | "declared">("declared");
   const { pending, run } = useSettlementRunner();
   const selectable = items.filter(isOpen);
-  const picked = items.filter((s) => selected.has(s.id));
+  const picked = [...selected.values()];
+  // Cochées mais plus dans la liste (relecture qui re-trie « À traiter ») : affichées à part, toujours sélectionnées
+  const shownIds = useMemo(() => new Set(items.map((s) => s.id)), [items]);
+  const carried = picked.filter((s) => !shownIds.has(s.id));
   // Entrées (commissions à encaisser) et sorties (parts à verser) jamais additionnées
   const inCents = picked.reduce((n, s) => n + (s.direction === "driver_owes" ? s.amount_cents : 0), 0);
   const outCents = picked.reduce((n, s) => n + (s.direction === "centrale_owes" ? s.amount_cents : 0), 0);
@@ -512,20 +527,17 @@ function SettlementList({
     ? `${formatPrice(inCents, currency)} à encaisser · ${formatPrice(outCents, currency)} à verser`
     : formatPrice(inCents + outCents, currency);
   const verb = allOwes ? "Marquer reçus" : allPays ? "Marquer versés" : "Marquer réglés";
-  // Sélection nettoyée quand un règlement quitte la liste (confirmé ailleurs, temps réel)
+  // Sélection relue avec la liste : règlement réglé ailleurs (temps réel) retiré, ligne sortie de la page gardée s'il
+  // reste ouvert et inchangé
   useEffect(() => {
-    setSelected((cur) => {
-      const ids = new Set(items.filter(isOpen).map((s) => s.id));
-      const next = new Set([...cur].filter((id) => ids.has(id)));
-      return next.size === cur.size ? cur : next;
-    });
-  }, [items]);
+    setSelected((cur) => carrySelection(cur, items, openById));
+  }, [items, openById]);
 
-  const toggle = (id: string) =>
+  const toggle = (s: OrgSettlementItem) =>
     setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const next = new Map(cur);
+      if (next.has(s.id)) next.delete(s.id);
+      else next.set(s.id, s);
       return next;
     });
   const allChecked = selectable.length > 0 && selectable.every((s) => selected.has(s.id));
@@ -546,7 +558,7 @@ function SettlementList({
             {selectable.length > 0 && (
               <Checkbox
                 checked={allChecked}
-                onChange={() => setSelected(allChecked ? new Set() : new Set(selectable.map((s) => s.id)))}
+                onChange={() => setSelected((cur) => (allChecked ? new Map() : new Map([...cur, ...selectable.map((s) => [s.id, s] as const)])))}
                 label="Tout sélectionner"
               />
             )}
@@ -567,12 +579,36 @@ function SettlementList({
               timeZone={timeZone}
               canManage={canManage}
               checked={selected.has(s.id)}
-              onToggle={isOpen(s) ? () => toggle(s.id) : undefined}
+              onToggle={isOpen(s) ? () => toggle(s) : undefined}
               whatsapp={whatsappFor(s)}
               blockUnpaid={blockUnpaid}
             />
           ))}
         </ul>
+        {carried.length > 0 && (
+          <div className="border-t border-line-strong">
+            <p className="px-5 pb-1 pt-3 text-[12px] text-fg-muted">
+              {carried.length > 1
+                ? `Sélection conservée : ces ${carried.length} règlements ne font plus partie des lignes affichées.`
+                : "Sélection conservée : ce règlement ne fait plus partie des lignes affichées."}
+            </p>
+            <ul className="divide-y divide-line">
+              {carried.map((s) => (
+                <SettlementRow
+                  key={s.id}
+                  s={s}
+                  now={now}
+                  timeZone={timeZone}
+                  canManage={canManage}
+                  checked
+                  onToggle={() => toggle(s)}
+                  whatsapp={whatsappFor(s)}
+                  blockUnpaid={blockUnpaid}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
       </Card>
 
       {picked.length > 0 && (
@@ -596,21 +632,21 @@ function SettlementList({
                 ))}
               </select>
             </label>
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Annuler</Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Map())}>Annuler</Button>
             <Button
               variant="primary"
               size="sm"
               loading={pending}
               onClick={() =>
                 run(
-                  () => confirmSettlements([...selected], bulkMethod === "declared" ? null : bulkMethod),
+                  () => confirmSettlements([...selected.keys()], bulkMethod === "declared" ? null : bulkMethod),
                   (r) =>
                     `${r.count ?? picked.length} règlement${(r.count ?? picked.length) > 1 ? "s" : ""} confirmé${(r.count ?? picked.length) > 1 ? "s" : ""} · ${
                       mixed
                         ? `${formatPrice(r.received_cents ?? inCents, currency)} encaissés · ${formatPrice(r.paid_out_cents ?? outCents, currency)} versés`
                         : formatPrice(r.amount_cents ?? inCents + outCents, currency)
                     }`,
-                  () => setSelected(new Set()),
+                  () => setSelected(new Map()),
                 )
               }
             >
@@ -668,7 +704,7 @@ function SettlementRow({
   const course = (
     <div className="min-w-0 xl:order-1">
       <p className="flex min-w-0 items-baseline gap-2 text-[13.5px]">
-        <Link href={`/dashboard/rides/${s.ride_id}`} className="mono shrink-0 font-semibold text-fg hover:text-brand">
+        <Link href={`/dashboard/rides/${s.ride_id}`} prefetch={false} className="mono shrink-0 font-semibold text-fg hover:text-brand">
           #{n ?? "—"}
         </Link>
         <span className="truncate text-[12px] text-fg-subtle">{s.ride.completed_at ? formatRideDate(s.ride.completed_at, timeZone, new Date(at)) : "—"}</span>

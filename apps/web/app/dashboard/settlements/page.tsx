@@ -81,7 +81,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
         actions={
           canManage ? (
             <Button asChild variant="outline">
-              <Link href="/dashboard/settings?tab=centrale">
+              <Link href="/dashboard/settings?tab=centrale" prefetch={false}>
                 <Settings2 /> Commission & encaissement
               </Link>
             </Button>

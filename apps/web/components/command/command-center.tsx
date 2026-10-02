@@ -252,6 +252,12 @@ export function CommandCenter({
     return m;
   }, [state.alerts]);
 
+  // Courses en alerte ouverte : gardées sur la carte même au-delà de 2 h (elles sont dans la liste « En cours »)
+  const alertRideIds = useMemo(
+    () => new Set(Object.entries(alertByRide).filter(([, a]) => a.status === "open").map(([rideId]) => rideId)),
+    [alertByRide],
+  );
+
   // Signalements encore actifs (retirés à l'expiration, vérifié toutes les 15 s)
   const tick = Math.floor(now / 15_000);
   const reports = useMemo(() => {
@@ -468,6 +474,7 @@ export function CommandCenter({
           offers={offers}
           selectedDriverId={selectedDriver}
           selectedRideId={selectedRide}
+          alertRideIds={alertRideIds}
           onSelectDriver={selectDriver}
           onSelectRide={selectRide}
           showOffline={showOffline}

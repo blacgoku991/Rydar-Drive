@@ -1,6 +1,6 @@
 import type { OrgSettlementItem } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
-import { compactOpen, lateNow, openRank, sortOpen } from "./settlement-list";
+import { carrySelection, compactOpen, lateNow, openRank, sortOpen } from "./settlement-list";
 
 const NOW = Date.parse("2026-10-02T12:00:00Z");
 
@@ -45,5 +45,37 @@ describe("liste « À traiter »", () => {
     expect(s).toEqual({ id: "1783", driver_id: "d1", direction: "driver_owes", status: "due", due_at: "2026-10-03T12:00:00Z", amount_cents: 1200, reference: "C1783", ride_number: 1783 });
     expect(compactOpen(item("9", { ride: undefined as never, reference: "C42" })).ride_number).toBe(42);
     expect(compactOpen(item("9", { ride: undefined as never, reference: "X" })).ride_number).toBeNull();
+  });
+
+  it("sélection relue : ligne sortie de la page gardée si toujours ouverte et inchangée, retirée sinon", () => {
+    const a = item("1", {});
+    const b = item("2", { status: "declared" });
+    const c = item("3", {});
+    const d = item("4", {});
+    const selected = new Map([a, b, c, d].map((s) => [s.id, s]));
+    const freshA = item("1", { status: "paid" });
+    const index = new Map(
+      [
+        compactOpen(b),
+        compactOpen(item("3", { status: "disputed" })),
+        compactOpen(item("4", { due_at: "2026-10-04T12:00:00Z" })),
+      ].map((s) => [s.id, s]),
+    );
+    const next = carrySelection(selected, [freshA], index);
+    // 1 affichée mais réglée : retirée ; 2 hors page, inchangée : gardée telle quelle ; 3 statut changé : retirée ;
+    // 4 hors page, échéance déplacée : gardée avec la nouvelle échéance
+    expect([...next.keys()]).toEqual(["2", "4"]);
+    expect(next.get("2")).toBe(b);
+    expect(next.get("4")?.due_at).toBe("2026-10-04T12:00:00Z");
+  });
+
+  it("sélection relue : même Map si rien ne change, version fraîche d'une ligne affichée", () => {
+    const a = item("1", {});
+    const selected = new Map([[a.id, a]]);
+    expect(carrySelection(selected, [a], new Map())).toBe(selected);
+    const fresh = item("1", { reminders_sent: 2 });
+    expect(carrySelection(selected, [fresh], new Map()).get("1")).toBe(fresh);
+    const empty = new Map<string, ReturnType<typeof item>>();
+    expect(carrySelection(empty, [a], new Map())).toBe(empty);
   });
 });

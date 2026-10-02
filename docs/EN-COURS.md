@@ -41,6 +41,13 @@ pour les flottes.
   « à traiter » complète envoyée en version compacte (compteurs, WhatsApp), relecture à l'échéance d'une commission au
   lieu de toutes les 2 min. Chauffeurs : tableau client alimenté par des lignes compactes. Console super admin : horloge
   15 s, âges à la seconde. Mesures A/B : voir HISTORIQUE (« Volet navigateur »).
+  Après revue : fiche d'une course non close relue au plus toutes les 30 s sans temps réel (60 s sinon) ;
+  Encaissements relus toutes les 5 min même en temps réel (diffusion perdue) ; ligne cochée sortie des 100 premières
+  après une relecture gardée cochée (bloc « Sélection conservée ») tant qu'elle reste ouverte et inchangée ; course en
+  alerte ouverte épinglée même au-delà de 2 h ; liens des fiches course et Encaissements sans préchargement (il
+  repartait à chaque relecture). **À vérifier en production avant fusion** : le témoin « temps réel » du centre de
+  commande doit être vert (sinon les écrans vivent sur le repli, plus espacé qu'avant). **À la fusion des volets** : si
+  un `app/dashboard/loading.tsx` arrive, rendre leur préchargement aux liens de la barre latérale.
 - **Mini-sites coupés pour toute la plateforme (demande du propriétaire, migration 006200)** : jusqu'à réactivation par
   le super admin (Offres & limites, carte « Mini-sites de réservation », confirmation, journal d'audit). Coupé : menu
   « Mini-site » masqué, éditeur remplacé par « Les mini-sites de réservation sont momentanément désactivés par Rydar. »,
