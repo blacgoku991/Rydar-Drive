@@ -5,6 +5,7 @@
 import "server-only";
 import { fieldErrors, joinApplicationSchema, type DriverApplyResult, type IdentityCheck, type JoinInfo } from "@rydar/shared";
 import { z } from "zod";
+import { JOIN_ALREADY_REGISTERED, JOIN_LINK_INACTIVE, joinErrorCopy, joinInfoModel } from "@/components/network/join-copy";
 import { audit } from "@/lib/audit";
 import { LEGAL_VERSION } from "@/lib/legal";
 import { rateLimitAll } from "@/lib/rate-limit";
@@ -16,15 +17,11 @@ export type JoinResult =
   | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 export const JOIN_CODE_RE = /^[a-z0-9]{10,32}$/;
-/** Refus volontairement neutre (identité bannie) : on ne dit pas pourquoi. */
-const NEUTRAL_REFUSAL = "Inscription impossible. Contactez la centrale.";
-const LINK_INACTIVE = "Ce lien d'inscription n'est plus actif. Demandez un nouveau lien à la centrale.";
+/** Avant de connaître l'organisation (lien invalide, trop de tentatives) : textes valables pour une flotte comme une centrale. */
+const LINK_INACTIVE = JOIN_LINK_INACTIVE;
 
-const DUPLICATE: Record<NonNullable<IdentityCheck["duplicate"]>, { field: string; message: string }> = {
-  phone: { field: "phone", message: "Ce numéro est déjà inscrit dans cette centrale : connectez-vous à l'application avec votre compte." },
-  email: { field: "email", message: "Cette adresse e-mail est déjà inscrite dans cette centrale." },
-  plate: { field: "vehicle.plate", message: "Cette plaque est déjà enregistrée dans cette centrale." },
-};
+/** Champ du formulaire concerné par chaque doublon. */
+const DUPLICATE_FIELD: Record<NonNullable<IdentityCheck["duplicate"]>, string> = { phone: "phone", email: "email", plate: "vehicle.plate" };
 
 export async function applyWithJoinLink(code: string, input: z.input<typeof joinApplicationSchema>): Promise<JoinResult> {
   const joinCode = String(code ?? "").trim().toLowerCase();
@@ -44,15 +41,22 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
     { key: `join:ip:${ip}`, limit: 8, windowSec: 900 },
     { key: `join:email:${v.email}`, limit: 4, windowSec: 3600 },
   ]);
-  if (!limit.ok) return { ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes ou contactez la centrale." };
+  if (!limit.ok) return { ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes." };
 
   const admin = createAdminClient();
   const { data: infoData } = await admin.rpc("svc_join_info", { p_code: joinCode });
   const info = infoData as JoinInfo | null;
   if (!info?.ok || !info.organization) return { ok: false, error: LINK_INACTIVE };
   const org = info.organization;
+  // Textes selon le modèle (flotte : jamais « la centrale ») ; refus volontairement neutre (identité bannie) : on ne dit
+  // pas pourquoi
+  const copy = joinErrorCopy(org.name, joinInfoModel(info.dispatch_model));
+  const duplicate = (kind: keyof typeof DUPLICATE_FIELD) => {
+    const field = DUPLICATE_FIELD[kind];
+    return { ok: false as const, error: copy[kind], fieldErrors: { [field]: copy[kind] } };
+  };
 
-  // Identité bannie (centrale ou plateforme) ? Déjà inscrit dans cette centrale ?
+  // Identité bannie (centrale ou plateforme) ? Déjà inscrit dans cette organisation ?
   const { data: checkData, error: checkError } = await admin.rpc("svc_identity_check", {
     p_org: org.id,
     p_phone: v.phone,
@@ -72,12 +76,9 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
       severity: "warning",
       metadata: { reason: "identity_banned", via: "join_link" },
     });
-    return { ok: false, error: NEUTRAL_REFUSAL };
+    return { ok: false, error: copy.refusal };
   }
-  if (check.duplicate) {
-    const d = DUPLICATE[check.duplicate];
-    return { ok: false, error: d.message, fieldErrors: { [d.field]: d.message } };
-  }
+  if (check.duplicate) return duplicate(check.duplicate);
 
   // Compte de connexion (application chauffeur : e-mail + mot de passe)
   const created = await admin.auth.admin.createUser({
@@ -122,19 +123,19 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
     await admin.auth.admin.deleteUser(userId).catch(() => null);
     switch (res?.code) {
       case "PHONE_TAKEN":
-        return { ok: false, error: DUPLICATE.phone.message, fieldErrors: { phone: DUPLICATE.phone.message } };
+        return duplicate("phone");
       case "PLATE_TAKEN":
-        return { ok: false, error: DUPLICATE.plate.message, fieldErrors: { "vehicle.plate": DUPLICATE.plate.message } };
+        return duplicate("plate");
       case "EMAIL_TAKEN":
-        return { ok: false, error: DUPLICATE.email.message, fieldErrors: { email: DUPLICATE.email.message } };
+        return duplicate("email");
       case "IDENTITY_BANNED":
-        return { ok: false, error: NEUTRAL_REFUSAL };
+        return { ok: false, error: copy.refusal };
       case "JOIN_DISABLED":
         return { ok: false, error: LINK_INACTIVE };
       case "INVALID_FORM":
         return { ok: false, error: "Vérifiez le formulaire (nom, téléphone, e-mail, modèle et plaque du véhicule)." };
       case "ALREADY_REGISTERED":
-        return { ok: false, error: "Ce compte est déjà rattaché à une centrale." };
+        return { ok: false, error: JOIN_ALREADY_REGISTERED };
       default:
         return { ok: false, error: res?.message ?? "Inscription impossible pour le moment. Réessayez." };
     }
@@ -160,7 +161,7 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
   return { ok: true, status: res.code === "APPROVED" ? "APPROVED" : "PENDING", organizationName: res.organization?.name ?? org.name, email: v.email };
 }
 
-/** Centrale derrière un code d'inscription (null : lien invalide ou désactivé). */
+/** Organisation (flotte ou centrale) derrière un code d'inscription (null : lien invalide ou désactivé). */
 export async function loadJoinInfo(raw: string): Promise<JoinInfo | null> {
   const code = String(raw ?? "").trim().toLowerCase();
   if (!JOIN_CODE_RE.test(code)) return null;

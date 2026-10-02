@@ -126,6 +126,7 @@ export function DispatchModelForm({
   const fees = readFees(percent, fixed);
   const dirty = value !== model || (fees.valid && (fees.percent !== Number(feePercent) || fees.fixedCents !== feeFixedCents));
   const toFleet = model === "centrale" && value === "fleet";
+  const toCentrale = model === "fleet" && value === "centrale";
 
   const save = () =>
     start(() => runAction(async () => {
@@ -153,6 +154,13 @@ export function DispatchModelForm({
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           Retour au mode flotte{" "}: plus de commission ni de règlement sur les nouvelles courses. Le lien d&apos;inscription des chauffeurs est
           conservé{joinEnabled ? " (actif)" : ""}, sans mention de commission{" "}; les chauffeurs déjà inscrits restent rattachés.
+        </p>
+      )}
+      {toCentrale && (
+        <p className="rounded-lg border border-line bg-white/[0.015] px-3 py-2.5 text-[12.5px] text-fg-muted">
+          Passage en centrale{" "}: les chauffeurs entrés par la validation automatique du lien d&apos;inscription (jamais vérifiés)
+          seront au niveau «{" "}Nouveau{" "}» (courses plafonnées) jusqu&apos;à leur confirmation dans «{" "}Réseau{" "}»{" "}; ceux
+          créés ou validés par la flotte sont «{" "}Confirmés{" "}».
         </p>
       )}
       <div className="flex items-center justify-end gap-2">

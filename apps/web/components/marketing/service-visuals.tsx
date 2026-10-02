@@ -567,7 +567,7 @@ export function MessagesVisual() {
   );
 }
 
-/** Arrivée d'un chauffeur en mode centrale : lien d'inscription, candidature, vérification, validation. */
+/** Arrivée d'un chauffeur par le lien d'inscription (flotte ou centrale) : candidature, vérification, validation. */
 export function OnboardingVisual() {
   const steps: { icon: LucideIcon; label: string }[] = [
     { icon: Link2, label: "Lien d'inscription partagé" },
@@ -576,7 +576,7 @@ export function OnboardingVisual() {
     { icon: UserCheck, label: "Chauffeur validé" },
   ];
   return (
-    <ol aria-label="Inscription d'un chauffeur en mode centrale" className="space-y-1.5">
+    <ol aria-label="Inscription d'un chauffeur par le lien d'inscription" className="space-y-1.5">
       {steps.map(({ icon: Icon, label }, i) => {
         const last = i === steps.length - 1;
         return (

@@ -27,7 +27,14 @@ export async function fetchCentraleCounts(
     withSettlements ? settlements().eq("status", "declared") : none,
     withSettlements ? settlements().eq("direction", "driver_owes").eq("status", "due").lte("due_at", now) : none,
     withSettlements ? settlements().eq("direction", "driver_owes").eq("status", "disputed") : none,
-    supabase.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", orgId).eq("application_status", "pending"),
+    // Mêmes filtres que la liste de /dashboard/network : ni candidat banni, ni compte supprimé (fiche anonyme)
+    supabase
+      .from("drivers")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .eq("application_status", "pending")
+      .is("banned_at", null)
+      .is("deleted_at", null),
   ]);
   return {
     declared: declared.count ?? 0,

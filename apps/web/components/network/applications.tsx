@@ -319,7 +319,7 @@ export function ApplicationsCard({
         </ul>
       )}
       {!canManage && candidates.length > 0 && (
-        <p className="border-t border-line px-5 py-3 text-[12px] text-fg-subtle">Validation et refus réservés aux administrateurs de la centrale.</p>
+        <p className="border-t border-line px-5 py-3 text-[12px] text-fg-subtle">Validation et refus réservés aux administrateurs (propriétaire ou admin).</p>
       )}
 
       <Dialog open={!!docsCandidate} onOpenChange={(o) => !o && setDocsFor(null)}>

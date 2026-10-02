@@ -6,10 +6,12 @@
 -- Désormais, quel que soit le modèle d'exploitation (flotte ou centrale) :
 --   • set_join_link (owner / admin) : créer, activer / couper, régénérer, validation automatique ;
 --   • svc_join_info : renvoie aussi le modèle (page et application : aucune mention de commission pour une flotte) ;
---   • svc_driver_apply : candidature dans une flotte comme dans une centrale ; flotte : niveau « confirmé » (comme
---     un chauffeur créé par la flotte : aucun plafond de prix si le compte passe un jour en centrale), centrale :
---     « nouveau » comme avant ;
---   • approve_driver_application : flotte → « confirmé » ; centrale inchangé (niveau choisi, sinon celui de la fiche) ;
+--   • svc_driver_apply : candidature dans une flotte comme dans une centrale, fiche au niveau « nouveau » comme avant
+--     (sans effet en flotte : niveaux et plafond n'existent qu'en centrale) ; validation automatique → reste
+--     « nouveau » (personne n'a vérifié le chauffeur : plafonné si le compte passe un jour en centrale) ; messages
+--     « cette flotte » / « cette centrale » selon le modèle ;
+--   • approve_driver_application : flotte → niveau « confirmé » (validé par un humain, comme un chauffeur créé par la
+--     flotte) ; centrale inchangé (niveau choisi, sinon celui de la fiche) ;
 --   • changement de modèle par le super admin : le lien garde son code, son état (actif / coupé) et la validation
 --     automatique ; les candidatures en attente restent en attente (à traiter dans « Inscriptions » ou « Réseau »).
 --     Seule la garde « règlements ouverts » (centrale → flotte) demeure.
@@ -88,9 +90,10 @@ end;
 $$;
 
 -- ----------------------------------------------------------------- candidature par lien (service role)
--- Dernière définition : 20260924004800_audit_rgpd.sql. Changements : flottes comprises ; niveau de confiance de la
--- fiche selon le modèle (flotte : « trusted », comme un chauffeur créé par la flotte ; centrale : « new ») ; journal
--- « … rejoint la flotte » pour une flotte. Réponse au candidat inchangée (mêmes clés, rien sur une dette).
+-- Dernière définition : 20260924004800_audit_rgpd.sql. Changements : flottes comprises (fiche « new » comme en centrale :
+-- une validation automatique n'est pas une vérification ; seule approve_driver_application la confirme en flotte) ;
+-- journal « … rejoint la flotte » et messages « cette flotte » pour une flotte ; compte déjà rattaché : « à une centrale
+-- ou à une flotte ». Réponse au candidat inchangée (mêmes clés, rien sur une dette).
 create or replace function public.svc_driver_apply(
   p_org uuid,
   p_user_id uuid,
@@ -124,14 +127,16 @@ declare
   v_debt_numbers integer[];
   v_debt_drivers uuid[];
   v_unit text;
+  v_this text;
 begin
   select * into o from public.organizations where id = p_org;
   if not found or o.status <> 'active' or not o.join_enabled then
     return jsonb_build_object('ok', false, 'code', 'JOIN_DISABLED', 'message', 'Ce lien d''inscription n''est plus actif.');
   end if;
   v_unit := case when o.dispatch_model = 'centrale' then 'la centrale' else 'la flotte' end;
+  v_this := case when o.dispatch_model = 'centrale' then 'cette centrale' else 'cette flotte' end;
   if p_user_id is null or exists (select 1 from public.drivers x where x.user_id = p_user_id) then
-    return jsonb_build_object('ok', false, 'code', 'ALREADY_REGISTERED', 'message', 'Ce compte est déjà rattaché à une centrale.');
+    return jsonb_build_object('ok', false, 'code', 'ALREADY_REGISTERED', 'message', 'Ce compte est déjà rattaché à une centrale ou à une flotte.');
   end if;
   if char_length(v_first) not between 1 and 80 or char_length(v_last) not between 1 and 80
      or char_length(v_phone) not between 6 and 30
@@ -142,7 +147,7 @@ begin
   end if;
   if exists (select 1 from public.drivers x where x.organization_id = p_org
              and private.identity_normalize('phone', x.phone) = private.identity_normalize('phone', v_phone)) then
-    return jsonb_build_object('ok', false, 'code', 'PHONE_TAKEN', 'message', 'Ce numéro est déjà inscrit dans cette centrale.');
+    return jsonb_build_object('ok', false, 'code', 'PHONE_TAKEN', 'message', format('Ce numéro est déjà inscrit dans %s.', v_this));
   end if;
   perform private.set_actor('system', null);
 
@@ -158,7 +163,7 @@ begin
     insert into public.drivers (organization_id, user_id, first_name, last_name, phone, email, vtc_card_number, status,
       presence, vehicle_id, trust_level, joined_via, application_status, application_message, applied_at)
     values (p_org, p_user_id, v_first, v_last, v_phone, v_email, left(nullif(btrim(coalesce(p_vtc_card, '')), ''), 40),
-      'inactive', 'offline', v_vehicle, case when o.dispatch_model = 'centrale' then 'new' else 'trusted' end,
+      'inactive', 'offline', v_vehicle, 'new',
       'join_link', 'pending', left(nullif(btrim(coalesce(p_message, '')), ''), 1000), now())
     returning * into d;
   exception
@@ -168,12 +173,13 @@ begin
         'code', case when v_constraint like 'vehicles%' then 'PLATE_TAKEN'
                      when v_constraint like '%email%' then 'EMAIL_TAKEN'
                      else 'ALREADY_REGISTERED' end,
-        'message', case when v_constraint like 'vehicles%' then 'Cette plaque est déjà enregistrée dans cette centrale.'
-                        when v_constraint like '%email%' then 'Cette adresse e-mail est déjà inscrite dans cette centrale.'
+        'message', case when v_constraint like 'vehicles%' then format('Cette plaque est déjà enregistrée dans %s.', v_this)
+                        when v_constraint like '%email%' then format('Cette adresse e-mail est déjà inscrite dans %s.', v_this)
                         else 'Ce compte est déjà inscrit.' end);
     when insufficient_privilege then
       -- identité bannie (trigger) : message volontairement neutre
-      return jsonb_build_object('ok', false, 'code', 'IDENTITY_BANNED', 'message', 'Inscription impossible. Contactez la centrale.');
+      return jsonb_build_object('ok', false, 'code', 'IDENTITY_BANNED', 'message',
+        format('Inscription impossible. Contactez %s.', case when o.dispatch_model = 'centrale' then 'la centrale' else o.name end));
     when check_violation or invalid_text_representation or numeric_value_out_of_range or string_data_right_truncation then
       return jsonb_build_object('ok', false, 'code', 'INVALID_FORM', 'message', 'Vérifiez le formulaire.');
   end;
@@ -233,7 +239,8 @@ $$;
 
 -- ----------------------------------------------------------------- validation d'une candidature (owner / admin)
 -- Dernière définition : 20260924004000_account_deletion_fixes.sql. Seul changement : flotte → niveau « confirmé »
--- (comme un chauffeur créé par la flotte), quel que soit p_trust_level (toujours contrôlé) ; centrale inchangé.
+-- (validé par un humain, comme un chauffeur créé par la flotte), quel que soit p_trust_level (toujours contrôlé) ;
+-- centrale inchangé.
 create or replace function public.approve_driver_application(p_driver_id uuid, p_trust_level text default null)
 returns jsonb
 language plpgsql

@@ -229,14 +229,19 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   Intégrations (`components/dashboard-webhooks.tsx`, envois par adresse). `publicRide` (`@rydar/shared`) partagé API v1
   / worker : toute colonne ajoutée va dans `PUBLIC_RIDE_SELECT` ET `private.webhook_ride_json`. Contrat : docs/API.md.
 - [x] **Lien d'inscription des chauffeurs pour les flottes (10/2026, migration 006300)** : `set_join_link`,
-  `svc_join_info` (+ `dispatch_model`), `svc_driver_apply` sans restriction de modèle ; flotte : candidat « trusted »
-  (`approve_driver_application` force « confirmé »), journal « … la flotte » ; `private.organizations_dispatch_model_guard`
+  `svc_driver_apply` sans restriction de modèle ; flotte : fiche « new » (sans effet en flotte),
+  `approve_driver_application` force « confirmé », validation automatique = reste « new » (plafonné si passage en
+  centrale ; avertissement dans le dialogue super admin), journal et messages « … la flotte » ; `private.organizations_dispatch_model_guard`
   ne coupe plus le lien (trigger sur `dispatch_model` seul : code, état, validation auto, candidatures conservés ;
   garde SETTLEMENTS_OPEN inchangée). Web : même page `/dashboard/network`, menu « Inscriptions » (flotte, icône
   `userPlus`, pastille des candidatures, juste sous « Chauffeurs ») / « Réseau » (centrale) + bouton « Lien
   d'inscription » sur la page Chauffeurs ; textes par modèle `components/network/join-copy.ts` (page /rejoindre, message
   WhatsApp / Telegram, validation sans niveau de confiance) ; `/api/join/{code}` renvoie `model` (app : textes JS seuls,
   EAS) ; dialogue super admin du modèle mis à jour. Tests : `tests/db/fleet-join.test.ts`, `join-copy.test.ts`.
+  Après revue : textes neutres (erreurs de `lib/join.ts` selon le modèle, « propriétaire ou admin », site vitrine sans
+  « en mode centrale »), défaut unique `joinInfoModel` (sans modèle → centrale), écran d'attente de l'app sans « Nouveau »
+  en flotte, pastille des candidatures sans bannis ni supprimés ; tests `lib/join.test.ts` (route GET + erreurs) et
+  `lib/network-actions.test.ts` (validation « confirmé » en flotte).
 
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.

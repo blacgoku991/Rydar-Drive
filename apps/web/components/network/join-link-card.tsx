@@ -114,7 +114,7 @@ export function JoinLinkCard({
               <Link2 /> Créer le lien d&apos;inscription
             </Button>
           ) : (
-            <p className="text-[12.5px] text-fg-subtle">Un administrateur de la centrale peut le créer.</p>
+            <p className="text-[12.5px] text-fg-subtle">Un administrateur (propriétaire ou admin) peut le créer.</p>
           )}
         </div>
       ) : (
@@ -186,7 +186,7 @@ export function JoinLinkCard({
               </Button>
             </div>
           ) : (
-            <p className="text-[12px] text-fg-subtle">Réglages du lien réservés aux administrateurs de la centrale.</p>
+            <p className="text-[12px] text-fg-subtle">Réglages du lien réservés aux administrateurs (propriétaire ou admin).</p>
           )}
         </div>
       )}

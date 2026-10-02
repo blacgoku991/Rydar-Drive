@@ -29,7 +29,9 @@ démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissem
   « Inscriptions » (même page, juste sous « Chauffeurs », pastille des candidatures) et la page Chauffeurs un bouton
   « Lien d'inscription » : créer / couper / régénérer le lien, validation automatique, copier, WhatsApp, Telegram,
   candidatures (valider, refuser, reconsidérer), bannis. Page /rejoindre et app (JS seul → mise à jour EAS) sans mention
-  de commission pour une flotte ; candidat validé = chauffeur « confirmé » comme ceux créés par la flotte. Mêmes contrôles
+  de commission ni « centrale » pour une flotte ; candidat validé par un administrateur = chauffeur « confirmé » comme ceux
+  créés par la flotte ; entré par la validation automatique = reste « nouveau » (sans effet en flotte, plafonné si le
+  compte passe en centrale : à confirmer dans « Réseau »). Mêmes contrôles
   qu'en centrale (bannis, débiteurs, limite de chauffeurs, rôles, jeton après activation). Changement de modèle par le
   super admin : le lien n'est plus coupé (code, réglages et candidatures conservés). Migration `20260924006300`.
 - **Webhooks sortants (en cours : fusion, revue adverse, bout en bout avec RYDAR Privé)** : à chaque changement de

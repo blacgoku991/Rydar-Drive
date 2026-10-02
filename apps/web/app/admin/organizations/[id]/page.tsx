@@ -60,7 +60,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     db.from("notifications").select("id, type, title, status, last_error, created_at").eq("organization_id", id).order("created_at", { ascending: false }).limit(12),
     db.from("organization_users").select("id, user_id, role, status, created_at, user:users!organization_users_user_id_fkey(full_name, email)").eq("organization_id", id),
     db.from("api_keys").select("id", { count: "exact", head: true }).eq("organization_id", id).is("revoked_at", null),
-    db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("application_status", "pending"),
+    db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).eq("application_status", "pending").is("banned_at", null).is("deleted_at", null),
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).not("banned_at", "is", null),
     // Frais plateforme dus à Rydar (centrale, ou ancienne centrale qui a encore des frais)
     db.rpc("admin_platform_account", { p_org: id }),

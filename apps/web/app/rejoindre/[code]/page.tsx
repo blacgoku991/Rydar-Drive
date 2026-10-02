@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import { Logo, RadarMark } from "@/components/brand/logo";
 import { LegalLinks } from "@/components/legal/legal-links";
-import { joinPageCopy } from "@/components/network/join-copy";
+import { JOIN_LINK_INACTIVE, joinInfoModel, joinPageCopy } from "@/components/network/join-copy";
 import { JoinForm } from "@/components/network/join-form";
 import { OpenInApp } from "@/components/network/open-in-app";
 import { loadJoinInfo } from "@/lib/join";
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<{ code: str
   if (!info?.organization) return { title: { absolute: "Lien d'inscription — Rydar Drive" }, robots: NOINDEX };
   return {
     title: { absolute: `Rejoindre ${info.organization.name} — Chauffeurs VTC` },
-    description: joinPageCopy(info.organization.name, info.dispatch_model, !!info.auto_approve).description,
+    description: joinPageCopy(info.organization.name, joinInfoModel(info.dispatch_model), !!info.auto_approve).description,
     robots: NOINDEX,
   };
 }
@@ -64,7 +64,7 @@ function InvalidLink() {
         </div>
         <h1 className="text-[22px] font-semibold tracking-tight">Lien invalide ou désactivé</h1>
         <p className="mt-3 text-[14px] leading-relaxed text-fg-muted">
-          Ce lien d&apos;inscription n&apos;est plus actif. Demandez le lien à jour à la centrale ou à la flotte qui vous l&apos;a envoyé.
+          {JOIN_LINK_INACTIVE}
         </p>
       </div>
     </main>
@@ -79,8 +79,9 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
   const brand = brandColor(org.brand_color);
   const style = { "--color-brand": brand, "--color-brand-strong": brand, "--color-brand-fg": readableOn(brand) } as React.CSSProperties;
   const autoApprove = !!info.auto_approve;
-  // Flotte (ou réponse d'avant 20260924006300, sans modèle : seules les centrales avaient un lien) → textes sans commission
-  const model = info.dispatch_model ?? "centrale";
+  // Flotte → textes sans commission ; réponse sans modèle (base d'avant 20260924006300, où seules les centrales avaient
+  // un lien) → centrale (joinInfoModel, même défaut que /api/join/{code})
+  const model = joinInfoModel(info.dispatch_model);
   const copy = joinPageCopy(org.name, model, autoApprove);
   const benefits = model === "centrale" ? BENEFITS : FLEET_BENEFITS;
 

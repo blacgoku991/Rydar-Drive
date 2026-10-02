@@ -1,6 +1,6 @@
 // État du compte hors « actif » (driver_account_state) :
-//  - candidature en attente (inscription par lien) : étapes, dépôt des justificatifs, vérification toutes les 20 s
-//    et bascule vers l'accueil dès la validation par la centrale ;
+//  - candidature en attente (inscription par lien, flotte ou centrale) : étapes, dépôt des justificatifs, vérification
+//    toutes les 20 s et bascule vers l'accueil dès la validation (flotte : ni niveau « Nouveau » ni plafond annoncés) ;
 //  - refusé, banni, suspendu, désactivé, centrale suspendue… : écran bloquant avec le motif,
 //    appel de la centrale, déconnexion et suppression du compte (mot de passe demandé si la session est refusée).
 // Sobre : pas d'animation décorative ; la couleur ne sert qu'à l'état (étiquette, pictogramme d'état).
@@ -30,6 +30,9 @@ const newDriverNote = () => {
   const { label, description } = TRUST_LEVEL_META.new;
   return `Statut « ${label} » au début : ${description.charAt(0).toLowerCase()}${description.slice(1)}`;
 };
+
+/** Niveaux de confiance et plafond : mode centrale seulement (une flotte n'en a pas). */
+const isCentrale = (account: DriverAccountState) => account.organization?.dispatch_model === "centrale";
 
 export default function AccountScreen() {
   const { ready, session, account, canDrive } = useDriver();
@@ -67,6 +70,7 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
   const orgName = account.organization?.name ?? "votre centrale";
   const phone = account.organization?.phone ?? null;
   const userId = session?.user.id;
+  const centrale = isCentrale(account);
 
   // Dossier de stockage des justificatifs : <organisation>/<chauffeur>/ — organisation donnée par l'état du compte
   // (relu toutes les 20 s) ; repli pour un serveur qui ne la renvoie pas : fiche lisible par son titulaire
@@ -107,8 +111,12 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
           : `${todo.length}${NB}justificatif${todo.length > 1 ? "s" : ""} à ajouter ou à mettre à jour`,
       state: docsDone ? "done" : "current",
     },
-    { title: "Validation par la centrale", sub: `${orgName} vérifie votre dossier et votre véhicule`, state: docsDone ? "current" : "todo" },
-    { title: "Premières courses", sub: frTypo(`Passez en ligne. ${newDriverNote()}`), state: "todo" },
+    {
+      title: centrale ? "Validation par la centrale" : "Validation du dossier",
+      sub: `${orgName} vérifie votre dossier et votre véhicule`,
+      state: docsDone ? "current" : "todo",
+    },
+    { title: "Premières courses", sub: centrale ? frTypo(`Passez en ligne. ${newDriverNote()}`) : "Passez en ligne.", state: "todo" },
   ];
 
   return (
@@ -134,7 +142,7 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
               Candidature envoyée à {orgName}
             </Text>
             <Text style={styles.lead}>
-              La centrale valide votre inscription. Ajoutez vos justificatifs dès maintenant pour accélérer la validation.
+              {centrale ? "La centrale" : orgName} valide votre inscription. Ajoutez vos justificatifs dès maintenant pour accélérer la validation.
             </Text>
             <Text style={styles.checked} accessibilityLiveRegion="polite">
               Vérifié à {formatTime(new Date(checkedAt))} · actualisation automatique
@@ -265,7 +273,12 @@ function Welcome({ account }: { account: DriverAccountState }) {
               {account.organization?.name ?? "Votre centrale"}
             </Text>
           </View>
-          <Text style={styles.lead}>{frTypo(`Passez en ligne pour recevoir vos premières courses. ${newDriverNote()}`)}</Text>
+          <Text style={styles.lead}>
+            {/* « Nouveau » annoncé seulement s'il s'applique : centrale ET niveau « Nouveau » (pas un chauffeur confirmé) */}
+            {isCentrale(account) && account.driver?.trust_level === "new"
+              ? frTypo(`Passez en ligne pour recevoir vos premières courses. ${newDriverNote()}`)
+              : "Passez en ligne pour recevoir vos premières courses."}
+          </Text>
         </View>
         <BigButton title="Aller à l'accueil" onPress={() => router.replace("/home")} />
       </SafeAreaView>

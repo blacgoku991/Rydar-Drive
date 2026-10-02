@@ -116,7 +116,7 @@ export async function rejectApplication(driverId: string, reason: string): Promi
 /** Débloquer une identité précise (ex. plaque d'une voiture de location reprise par un autre chauffeur). */
 export async function liftIdentityBan(identityId: string, reason?: string): Promise<Result<{ message: string }>> {
   const ctx = await managerCtx();
-  if (!ctx) return { ok: false, error: "Réservé aux administrateurs de la centrale." };
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs (propriétaire ou admin)." };
   if (!uuid.safeParse(identityId).success) return { ok: false, error: "Demande invalide." };
   const { data, error } = await ctx.supabase.rpc("lift_identity_ban", { p_id: identityId, p_reason: reason?.trim().slice(0, 500) || null });
   if (error || !data) return { ok: false, error: actionError(error, "Action impossible.") };

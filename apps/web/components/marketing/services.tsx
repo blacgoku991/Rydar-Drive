@@ -338,7 +338,7 @@ export function ServiceThemes() {
           <Card
             icon={UserPlus}
             title="Arrivée des chauffeurs"
-            text="Vous créez le compte du chauffeur ou l'invitez par e-mail. En mode centrale, partagez aussi votre lien d'inscription : le chauffeur dépose sa candidature et ses documents, vous vérifiez avant de le valider."
+            text="Vous créez le compte du chauffeur ou l'invitez par e-mail. Partagez aussi votre lien d'inscription : le chauffeur dépose sa candidature et ses documents, vous vérifiez avant de le valider."
           >
             <OnboardingVisual />
           </Card>

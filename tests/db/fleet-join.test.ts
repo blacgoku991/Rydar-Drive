@@ -4,7 +4,8 @@ import { as, createAuthUser, createDriver, createMember, createOrg, expectPgErro
 
 // Lien d'inscription des chauffeurs pour les FLOTTES (migration 20260924006300) : même parcours et mêmes contrôles que
 // pour une centrale (rôles, jeton émis après l'activation de l'adhésion, identités bannies, empreintes d'un débiteur,
-// limite de chauffeurs de l'offre, compte déjà rattaché) ; validé = « confirmé » ; changement de modèle sans coupure.
+// limite de chauffeurs de l'offre, compte déjà rattaché) ; fiche « nouveau » (sans effet en flotte), validée par un
+// administrateur = « confirmé », validation automatique = reste « nouveau » ; changement de modèle sans coupure.
 
 afterAll(async () => {
   await pool.end();
@@ -113,7 +114,7 @@ describe("Flotte : lien d'inscription et candidatures", () => {
     expect(applied.code).toBe("PENDING");
     // Réponse au candidat : mêmes clés qu'en centrale
     expect(Object.keys(applied).filter((k) => k !== "userId").sort()).toEqual(["code", "driver_id", "number", "ok", "organization"]);
-    expect(await driverRow(applied.driver_id)).toEqual({ status: "inactive", application_status: "pending", trust_level: "trusted", joined_via: "join_link" });
+    expect(await driverRow(applied.driver_id)).toEqual({ status: "inactive", application_status: "pending", trust_level: "new", joined_via: "join_link" });
     const [event] = await sql(`select message from public.ride_events where type = 'driver.applied' and data ->> 'driver_id' = $1`, [applied.driver_id]);
     expect(event.message).toContain("demande à rejoindre la flotte");
     const [realtime] = await sql(`select payload from realtime.messages where event = 'driver.application' and topic = $1 order by id desc limit 1`, [`org:${org.id}`]);
@@ -127,7 +128,11 @@ describe("Flotte : lien d'inscription et candidatures", () => {
     // Compte déjà rattaché à une fiche chauffeur : jamais une seconde fiche
     const again = await svc("svc_driver_apply", [org.id, applied.userId, "Bis", "Bis", uniquePhone(), `bis-${randomUUID().slice(0, 6)}@test.dev`, null,
       JSON.stringify({ model: "Zoé", plate: uniquePlate() }), null]);
-    expect(again.code).toBe("ALREADY_REGISTERED");
+    expect(again).toMatchObject({ code: "ALREADY_REGISTERED", message: "Ce compte est déjà rattaché à une centrale ou à une flotte." });
+    // Messages de la flotte : jamais « cette centrale »
+    const [{ phone: takenPhone }] = await sql(`select phone from public.drivers where id = $1`, [applied.driver_id]);
+    const dupPhone = await apply(org, { phone: takenPhone });
+    expect(dupPhone).toMatchObject({ ok: false, code: "PHONE_TAKEN", message: "Ce numéro est déjà inscrit dans cette flotte." });
     const driverOfFleet = await createDriver(org);
     expect((await svc("svc_driver_apply", [org.id, driverOfFleet.userId, "Ter", "Ter", uniquePhone(), `ter-${randomUUID().slice(0, 6)}@test.dev`, null,
       JSON.stringify({ model: "Zoé", plate: uniquePlate() }), null])).code).toBe("ALREADY_REGISTERED");
@@ -158,11 +163,11 @@ describe("Flotte : lien d'inscription et candidatures", () => {
     expect((await expectPgError(rpc(stranger.ownerId, "reject_driver_application", [third.driver_id, null]))).code).toBe("42501");
   });
 
-  it("validation automatique ; limite de chauffeurs de l'offre → candidature en attente, validation manuelle refusée", async () => {
+  it("validation automatique (reste « nouveau » : personne ne l'a vérifié) ; limite de chauffeurs → en attente, validation manuelle refusée", async () => {
     const { org } = await fleetWithLink("Flotte Auto", true);
     const ok = await apply(org);
     expect(ok.code).toBe("APPROVED");
-    expect(await driverRow(ok.driver_id)).toEqual({ status: "active", application_status: "approved", trust_level: "trusted", joined_via: "join_link" });
+    expect(await driverRow(ok.driver_id)).toEqual({ status: "active", application_status: "approved", trust_level: "new", joined_via: "join_link" });
     const [event] = await sql(`select message from public.ride_events where type = 'driver.applied' and data ->> 'driver_id' = $1`, [ok.driver_id]);
     expect(event.message).toContain("a rejoint la flotte");
     expect((await rpc(ok.userId, "driver_account_state")).state).toBe("active");
@@ -189,7 +194,7 @@ describe("Flotte : bannissements et empreintes d'un débiteur", () => {
 
     expect((await svc("svc_identity_check", [org.id, uniquePhone(), "x@test.dev", vtc.toLowerCase(), null])).banned).toBe(true);
     const refused = await apply(org, { vtc: vtc.toLowerCase() });
-    expect(refused).toMatchObject({ ok: false, code: "IDENTITY_BANNED", message: "Inscription impossible. Contactez la centrale." });
+    expect(refused).toMatchObject({ ok: false, code: "IDENTITY_BANNED", message: "Inscription impossible. Contactez Flotte Bannis." });
     expect(await sql(`select id from public.drivers where user_id = $1`, [refused.userId])).toHaveLength(0);
 
     // Bannissement de la flotte : limité à elle
@@ -233,7 +238,7 @@ describe("Flotte : bannissements et empreintes d'un débiteur", () => {
 
     const again = await apply(org, { phone: uniquePhone(), email: `autre-${randomUUID().slice(0, 6)}@test.dev`, vtc: id.vtc.toLowerCase() });
     expect(again.code).toBe("PENDING");
-    expect(await driverRow(again.driver_id)).toMatchObject({ status: "inactive", application_status: "pending", trust_level: "trusted" });
+    expect(await driverRow(again.driver_id)).toMatchObject({ status: "inactive", application_status: "pending", trust_level: "new" });
     const [warn] = await sql(`select level, data from public.ride_events where type = 'driver.applied_debtor' and data ->> 'driver_id' = $1`, [again.driver_id]);
     expect(warn).toMatchObject({ level: "warning", data: { owed_cents: 1900, owed_settlements: 1 } });
     // Réponse identique à une candidature en attente : rien n'est dit au candidat
@@ -249,17 +254,27 @@ describe("Changement de modèle : le lien n'est plus coupé", () => {
     const { org, link } = await fleetWithLink("Flotte Bascule");
     const fleetApplicant = await apply(org);
     expect(fleetApplicant.code).toBe("PENDING");
+    // Validé par un administrateur de la flotte → « confirmé » ; entré par la validation automatique → « nouveau »
+    const vetted = await apply(org, { first: "Valide" });
+    expect((await rpc(org.ownerId, "approve_driver_application", [vetted.driver_id, null])).code).toBe("APPROVED");
+    await rpc(org.ownerId, "set_join_link", [org.id, true, false, true]);
+    const unvetted = await apply(org, { first: "Auto" });
+    expect(unvetted.code).toBe("APPROVED");
+    await rpc(org.ownerId, "set_join_link", [org.id, true, false, false]);
 
     await sql(`update public.organizations set dispatch_model = 'centrale' where id = $1`, [org.id]);
     const [c] = await sql(`select join_code, join_enabled, join_auto_approve from public.organizations where id = $1`, [org.id]);
     expect(c).toEqual({ join_code: link.join_code, join_enabled: true, join_auto_approve: false });
     expect(await svc("svc_join_info", [link.join_code])).toMatchObject({ ok: true, dispatch_model: "centrale" });
     expect((await driverRow(fleetApplicant.driver_id)).application_status).toBe("pending");
-    // Centrale : nouveau candidat au niveau « nouveau » ; la fiche reçue en flotte garde son niveau
+    // Passage en centrale : le chauffeur jamais vérifié est plafonné (« nouveau »), celui validé par la flotte non
+    expect((await driverRow(vetted.driver_id)).trust_level).toBe("trusted");
+    expect(await driverRow(unvetted.driver_id)).toMatchObject({ status: "active", trust_level: "new" });
+    // Centrale : nouveau candidat au niveau « nouveau » ; la candidature reçue en flotte suit les règles de la centrale
     const centraleApplicant = await apply(org);
     expect((await driverRow(centraleApplicant.driver_id)).trust_level).toBe("new");
     expect((await rpc(org.ownerId, "approve_driver_application", [fleetApplicant.driver_id, null])).code).toBe("APPROVED");
-    expect((await driverRow(fleetApplicant.driver_id)).trust_level).toBe("trusted");
+    expect((await driverRow(fleetApplicant.driver_id)).trust_level).toBe("new");
     const [enter] = await sql(`select message from public.ride_events where type = 'driver.applied' and data ->> 'driver_id' = $1`, [centraleApplicant.driver_id]);
     expect(enter.message).toContain("demande à rejoindre la centrale");
 

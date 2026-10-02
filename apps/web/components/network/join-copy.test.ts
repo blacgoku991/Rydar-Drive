@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  autoApproveHelp, joinMessage, joinNavLabel, joinPageCopy, joinShareText, joinSuccessCopy, joinedLabel, rejectReasons,
+  JOIN_ALREADY_REGISTERED, JOIN_LINK_INACTIVE, autoApproveHelp, joinErrorCopy, joinInfoModel, joinMessage, joinNavLabel, joinPageCopy,
+  joinShareText, joinSuccessCopy, joinedLabel, rejectReasons,
 } from "./join-copy";
 
 // Lien d'inscription des chauffeurs (20260924006300) : flotte comme centrale. Textes de la centrale inchangés ;
@@ -24,6 +25,7 @@ function allTexts(model: "fleet" | "centrale") {
     ...Object.values(joinPageCopy("Taxi Sud", model, false)),
     ...Object.values(joinSuccessCopy("Taxi Sud", model, true)),
     ...Object.values(joinSuccessCopy("Taxi Sud", model, false)),
+    ...Object.values(joinErrorCopy("Taxi Sud", model)),
   ].filter((t): t is string => typeof t === "string");
 }
 
@@ -58,8 +60,26 @@ describe("textes du lien d'inscription selon le modèle", () => {
     expect(rejectReasons("fleet")).toContain("Flotte complète");
   });
 
-  it("modèle inconnu (réponse sans modèle) : textes de flotte, jamais de commission annoncée à tort", () => {
-    expect(joinNavLabel(undefined)).toBe("Inscriptions");
-    expect(joinMessage("Taxi Sud", URL, null)).not.toMatch(COMMISSION_WORDS);
+  it("réponse sans modèle (base d'avant 20260924006300 : seules les centrales avaient un lien) → centrale, partout", () => {
+    expect(joinInfoModel(undefined)).toBe("centrale");
+    expect(joinInfoModel(null)).toBe("centrale");
+    expect(joinInfoModel("centrale")).toBe("centrale");
+    expect(joinInfoModel("fleet")).toBe("fleet");
+    expect(joinInfoModel("autre")).toBe("centrale");
+  });
+
+  it("erreurs de l'inscription : jamais « centrale » pour une flotte ; centrale inchangée ; textes communs neutres", () => {
+    const fleet = joinErrorCopy("Taxi Sud", "fleet");
+    for (const text of Object.values(fleet)) expect(text).not.toMatch(/centrale/i);
+    expect(fleet.refusal).toBe("Inscription impossible. Contactez Taxi Sud.");
+    expect(fleet.phone).toBe(`Ce numéro est déjà inscrit dans cette flotte${NB}: connectez-vous à l'application avec votre compte.`);
+    expect(joinErrorCopy("Taxi Sud", "centrale")).toEqual({
+      refusal: "Inscription impossible. Contactez la centrale.",
+      phone: "Ce numéro est déjà inscrit dans cette centrale : connectez-vous à l'application avec votre compte.",
+      email: "Cette adresse e-mail est déjà inscrite dans cette centrale.",
+      plate: "Cette plaque est déjà enregistrée dans cette centrale.",
+    });
+    expect(JOIN_LINK_INACTIVE).toContain("à la centrale ou à la flotte");
+    expect(JOIN_ALREADY_REGISTERED).toBe("Ce compte est déjà rattaché à une centrale ou à une flotte.");
   });
 });
