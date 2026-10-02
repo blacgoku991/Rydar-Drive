@@ -68,6 +68,9 @@ services:
   worker:
     <<: *service
     image: rydar-worker
+    # Arrêt : jusqu'à 14 s pour finir les envois en cours (webhook : essai de 10 s + résultat enregistré), sinon
+    # un webhook déjà reçu repartirait en double (apps/worker/src/index.ts, SHUTDOWN_TIMEOUT_MS)
+    stop_grace_period: 20s
     build:
       context: ..
       dockerfile: apps/worker/Dockerfile

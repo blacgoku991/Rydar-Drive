@@ -1,5 +1,6 @@
 // Webhooks sortants : un essai d'envoi HTTP (POST) vers une cible déjà validée (ssrf.ts).
-//  - succès = réponse 2xx reçue dans le délai (10 s au total : connexion, TLS, en-têtes) ; tout le reste est un échec ;
+//  - succès = réponse 2xx reçue dans le délai (10 s au total pour l'essai : résolution DNS, connexion, TLS, en-têtes ;
+//    ici le temps qui reste après la résolution) ; tout le reste est un échec ;
 //  - redirections JAMAIS suivies (3xx = échec) : une redirection pourrait viser le réseau interne ;
 //  - corps de la réponse ignoré : 2 Ko lus au plus, puis la connexion est fermée ;
 //  - connexion vers les adresses validées seulement (pinnedLookup), sans agent partagé ni mandataire (agent: false) ;
@@ -11,7 +12,18 @@ import { pinnedLookup, type WebhookTarget } from "./ssrf";
 
 export type PostResult = { ok: boolean; statusCode: number | null; error: string | null };
 
-export type PostOptions = { timeoutMs: number; maxResponseBytes: number };
+export type PostOptions = {
+  /** Temps laissé à la requête (connexion, TLS, en-têtes). */
+  timeoutMs: number;
+  maxResponseBytes: number;
+  /** Délai de l'essai entier, annoncé dans le message d'échec (défaut : timeoutMs). */
+  totalMs?: number;
+};
+
+/** « Délai dépassé (10 s) » (secondes à la française, une décimale au plus). */
+export function timeoutMessage(ms: number): string {
+  return `Délai dépassé (${String(Math.round(ms / 100) / 10).replace(".", ",")} s)`;
+}
 
 /** Verdict d'après le code HTTP reçu. */
 export function resultFromStatus(code: number): PostResult {
@@ -51,6 +63,9 @@ export function describeNetworkError(error: unknown): string {
 /** POST du corps signé ; ne lève jamais (le résultat dit pourquoi l'essai a échoué). */
 export function postWebhook(target: WebhookTarget, body: string, headers: Record<string, string>, opts: PostOptions): Promise<PostResult> {
   const client = target.url.protocol === "http:" ? http : https;
+  const timedOut: PostResult = { ok: false, statusCode: null, error: timeoutMessage(opts.totalMs ?? opts.timeoutMs) };
+  // Délai déjà épuisé (résolution DNS lente) : aucune connexion
+  if (!(opts.timeoutMs > 0)) return Promise.resolve(timedOut);
   return new Promise<PostResult>((resolve) => {
     let done = false;
     let status: number | null = null;
@@ -63,11 +78,7 @@ export function postWebhook(target: WebhookTarget, body: string, headers: Record
       req?.destroy();
     };
     // Délai global : sans réponse, échec ; en-têtes déjà reçus (corps qui traîne), le code HTTP fait foi
-    const seconds = String(Math.round(opts.timeoutMs / 100) / 10).replace(".", ",");
-    const timer = setTimeout(
-      () => finish(status != null ? resultFromStatus(status) : { ok: false, statusCode: null, error: `Délai dépassé (${seconds} s)` }),
-      opts.timeoutMs,
-    );
+    const timer = setTimeout(() => finish(status != null ? resultFromStatus(status) : timedOut), opts.timeoutMs);
     try {
       req = client.request({
         protocol: target.url.protocol,

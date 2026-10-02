@@ -6,12 +6,13 @@ import { selectFlightProvider, withCache } from "./flights";
 import { flightJob, type QueryFn } from "./flights/job";
 import { createContactPurge, runHousekeeping, type QueryFn as HousekeepingQuery } from "./housekeeping";
 import { checkPushReceipts, processNotifications, stopNotifications } from "./notifications";
-import { createWebhookDispatcher, WEBHOOK_POLL_MS, WEBHOOK_PURGE_MS } from "./webhooks";
+import { createWebhookDispatcher, WEBHOOK_DRAIN_MS, WEBHOOK_POLL_MS, WEBHOOK_PURGE_MS } from "./webhooks";
 import { processWhatsApp, stopWhatsApp } from "./whatsapp";
 
 /**
- * Webhooks sortants des centrales (webhooks.ts) : réveil par LISTEN rydar_webhooks, sondage toutes les 5 s, purge
- * toutes les heures. Fonctions SQL absentes (migration pas encore appliquée) : avertissement unique, sans erreur.
+ * Webhooks sortants des centrales (webhooks.ts) : file continue (5 envois en cours au plus, nouvelle réservation dès
+ * qu'une place se libère), réveil par LISTEN rydar_webhooks, sondage toutes les 5 s, purge toutes les heures.
+ * Fonctions SQL absentes (migration pas encore appliquée) : avertissement unique, sans erreur.
  */
 const webhooks = createWebhookDispatcher({
   query: (sql, params) => pool.query(sql, params),
@@ -207,8 +208,12 @@ const accountDeletions = single("accountDeletions", async () => {
   }
 });
 
-/** Attente d'un travail en cours pendant l'arrêt : 1 s (LISTEN) + 8 s (tick / lot) + 1 s (pool) ≈ grâce de `docker stop`. */
-const SHUTDOWN_TIMEOUT_MS = 8_000;
+/**
+ * Attente d'un travail en cours pendant l'arrêt : 1 s (LISTEN) + 12 s (tick, lot, et surtout webhook en cours : un essai
+ * de 10 s au plus, DNS compris, puis son résultat enregistré) + 1 s (pool) = 14 s, sous la grâce de `docker stop` du
+ * worker (stop_grace_period: 20s, deploy/docker-compose.yml). Un webhook coupé par la sortie repartirait en double.
+ */
+const SHUTDOWN_TIMEOUT_MS = Math.max(8_000, WEBHOOK_DRAIN_MS);
 const RECEIPT_POLL_MS = 5_000;
 
 /** true si p s'est terminée (même en erreur) avant ms. */
@@ -295,7 +300,8 @@ async function main() {
     flights?.stop();
     health.close();
     await within(stop(), 1_000);
-    // On laisse finir le tick / le lot en cours (sinon notifications bloquées en « sending »).
+    // On laisse finir le tick / le lot en cours (sinon notifications bloquées en « sending ») et les webhooks en cours
+    // (webhooks.stop() : plus aucun nouvel envoi ; résultat de chaque envoi parti enregistré avant pool.end()).
     const drained = await within(Promise.allSettled([...inflight]), SHUTDOWN_TIMEOUT_MS);
     if (!drained) log("warn", "shutdown timeout, in-flight work abandoned", { inflight: inflight.size });
     // pool.end() attend la libération des connexions : bornée si une requête est restée bloquée.
