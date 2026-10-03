@@ -23,7 +23,16 @@ export default async function PrivacyPage() {
     <LegalPage title="Politique de confidentialité" updatedAt={PRIVACY_UPDATED_AT}>
       <p>
         Rydar Drive est un logiciel de dispatch pour les centrales et flottes de VTC, édité par{" "}
-        <span className="text-fg">{legal.name}</span>
+        {legal.nameSet ? (
+          <span className="text-fg">{legal.name}</span>
+        ) : (
+          <>
+            la société identifiée dans les{" "}
+            <Link href="/mentions-legales" className={link}>
+              mentions légales
+            </Link>
+          </>
+        )}
         {legal.address ? <>, {legal.address}</> : null} (l&apos;« éditeur »). Cette politique explique quelles données
         sont traitées, pourquoi, avec qui elles sont partagées, combien de temps elles sont gardées et comment exercer
         vos droits. Elle concerne :
@@ -57,7 +66,8 @@ export default async function PrivacyPage() {
             <>
               Position GPS, avec cap, vitesse, précision et <span className="text-fg">niveau de batterie</span> du téléphone : en continu
               lorsque vous êtes <span className="text-fg">EN LIGNE</span> ou en course, y compris application en arrière-plan ou
-              téléphone verrouillé. Ponctuellement, lorsque vous publiez un signalement pour la flotte (contrôle, accident,
+              téléphone verrouillé. Le niveau de batterie n&apos;est gardé qu&apos;avec la dernière position connue : il aide la
+              centrale à comprendre une position qui n&apos;arrive plus (téléphone presque déchargé). Ponctuellement, lorsque vous publiez un signalement pour la flotte (contrôle, accident,
               bouchon…), sa position est enregistrée et montrée aux chauffeurs de votre flotte, <span className="text-fg">même hors ligne</span>.
             </>,
             <>
@@ -94,8 +104,9 @@ export default async function PrivacyPage() {
           Nom, téléphone, e-mail (facultatif), adresses de départ et d&apos;arrivée, date et heure, nombre de passagers
           et de bagages, numéro de vol éventuel, précisions, prix et mode de paiement. Vous les saisissez sur le mini-site
           de la centrale, ou la centrale les enregistre (téléphone, son propre site par l&apos;API). Aucun compte client
-          n&apos;est créé. L&apos;adresse IP de l&apos;appareil qui envoie une réservation sert quelques minutes à limiter
-          les abus du formulaire.
+          n&apos;est créé. Ces données sont transmises à la centrale nommée sur le mini-site, qui organise la course : aucune case à
+          cocher ne vous est demandée pour cela. L&apos;adresse IP de l&apos;appareil qui envoie une réservation sert, sous
+          forme d&apos;empreinte, à limiter les abus du formulaire (compteurs effacés au bout de 24 heures au plus).
         </p>
       </LegalSection>
 
@@ -105,7 +116,7 @@ export default async function PrivacyPage() {
             <>Utilisateurs du tableau de bord : nom, e-mail, téléphone, rôle, centrales gérées, journal des actions sensibles (qui, quoi, quand, adresse IP et navigateur), historique des connexions (date, e-mail, adresse IP), preuve d&apos;acceptation des CGU et de cette politique (document, version, date). Pour la centrale cliente : coordonnées de facturation et paiements.</>,
             <>Acceptation des CGV et de l&apos;accord de traitement au nom d&apos;une centrale : date, version et e-mail de la personne qui a accepté, gardés comme preuve du contrat même si son compte est supprimé.</>,
             <>Moyens de paiement que la centrale propose à ses chauffeurs (lien de paiement, bénéficiaire, IBAN et BIC, consignes) : visibles de son équipe et des chauffeurs à qui ils sont proposés, modifiables par le propriétaire et les administrateurs seulement.</>,
-            <>Visiteurs : aucune mesure d&apos;audience ni publicité. Le serveur reçoit, comme tout site, l&apos;adresse IP et le navigateur, pour la sécurité. Voir la <Link href="/cookies" className={link}>politique cookies</Link>.</>,
+            <>Visiteurs : aucune mesure d&apos;audience ni publicité. Le serveur reçoit, comme tout site, l&apos;adresse IP et le navigateur : aucun journal des pages consultées n&apos;est tenu ; les limites anti-abus (connexion, formulaires) comptent les demandes par empreinte de l&apos;adresse IP, effacée au bout de 24 heures au plus ; les journaux techniques du serveur (erreurs, fonctionnement) servent à la sécurité et au diagnostic (article 9). Voir la <Link href="/cookies" className={link}>politique cookies</Link>.</>,
             <>Formulaire de contact (demande de tarif, question, partenariat) : nom, adresse e-mail et message, et si vous les indiquez société, téléphone, taille de flotte et offre visée ; une empreinte (hachage) de l&apos;adresse IP, pour prévenir les envois abusifs ; les e-mails échangés à propos de la demande (accusé de réception, réponses).</>,
           ]}
         />
@@ -117,7 +128,9 @@ export default async function PrivacyPage() {
             <>Proposer automatiquement les courses aux chauffeurs les plus proches (4 km, puis 8 km, 12 km…), suivre l&apos;approche et la course, guider le chauffeur : exécution du contrat entre le chauffeur et la centrale, et entre le client et la centrale.</>,
             <>Examiner une candidature, vérifier les justificatifs et rappeler leurs échéances : mesures précontractuelles et obligations légales de la centrale (Code des transports).</>,
             <>Calculer gains, commissions et règlements, tenir la comptabilité : exécution du contrat et obligation légale.</>,
-            <>Envoyer les offres, messages, rappels et relances de commission par notification (et par WhatsApp si la centrale l&apos;active, avec votre accord recueilli par elle) : exécution du contrat.</>,
+            <>Envoyer les offres, messages, rappels et relances de commission par notification dans l&apos;application : exécution du contrat.</>,
+            <>Envoyer les relances de commission par WhatsApp, si la centrale les active : votre consentement, recueilli par la centrale avant le premier envoi. Pour le retirer, prévenez la centrale ou bloquez son numéro WhatsApp : les relances passent alors par l&apos;application.</>,
+            <>Relancer par WhatsApp le propriétaire d&apos;une centrale à commission pour les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur (conditions générales de vente).</>,
             <>Assurer la sécurité, prévenir la fraude, bannir un auteur de fraude : intérêt légitime de la centrale et de l&apos;éditeur.</>,
             <>Garder, après la suppression d&apos;un compte, les empreintes d&apos;un chauffeur qui doit encore des commissions à la centrale : constatation, exercice ou défense des droits de la centrale en justice (article 17.3.e du RGPD), l&apos;éditeur agissant pour son compte.</>,
             <>Gérer les comptes des centrales, les abonnements et les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur, et obligations comptables.</>,
@@ -137,6 +150,13 @@ export default async function PrivacyPage() {
           Vous pouvez présenter vos observations, contester la décision et demander qu&apos;une personne la réexamine :
           adressez-vous à la centrale, ou à {contact} pour un bannissement décidé par l&apos;éditeur. Aucune donnée
           n&apos;est vendue, utilisée pour de la publicité ou pour vous suivre sur d&apos;autres applications.
+        </p>
+        <p>
+          Données obligatoires ou facultatives : dans chaque formulaire, les champs facultatifs sont marqués
+          « optionnel » ; les autres sont nécessaires au service demandé, et sans eux l&apos;inscription, la réservation ou
+          la demande ne peut pas être envoyée. La position est nécessaire pour recevoir des courses : sans elle,
+          l&apos;application ne passe pas en ligne. Les justificatifs demandés par la centrale lui servent à respecter la
+          réglementation du transport : sans eux, elle peut refuser de vous proposer des courses.
         </p>
       </LegalSection>
 
@@ -161,7 +181,7 @@ export default async function PrivacyPage() {
             <>Le client : seulement ce que la centrale lui communique, par exemple le prénom du chauffeur et le modèle, la couleur et la plaque du véhicule (que l&apos;API remet à la centrale). Le logiciel ne montre pas la position du chauffeur au client.</>,
             <>L&apos;éditeur (support, sécurité, traitement des signalements, facturation) : il peut consulter les données des centrales, y compris le fil « Chauffeurs » et la carte des chauffeurs en ligne, dans la limite de ces missions.</>,
             <>Demandes du formulaire de contact : l&apos;éditeur seul. Les e-mails qui s&apos;y rapportent partent du serveur de messagerie de l&apos;éditeur, hébergé avec le site.</>,
-            <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : hébergement, notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
+            <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : l&apos;hébergeur du serveur de l&apos;éditeur (site, base de données, fichiers, sauvegardes et e-mails, voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>), notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
             <>Les autorités, lorsque la loi l&apos;exige.</>,
           ]}
         />
@@ -173,7 +193,9 @@ export default async function PrivacyPage() {
 
       <LegalSection title="8. Transferts hors de l'Union européenne">
         <p>
-          Les données sont hébergées dans l&apos;Union européenne. Certains prestataires sont situés aux États-Unis
+          Les données sont hébergées dans l&apos;Union européenne, sur le serveur de l&apos;éditeur, qui porte le site, la
+          base de données, les fichiers, les sauvegardes et le serveur d&apos;envoi des e-mails (hébergeur et lieu : voir
+          les <Link href="/mentions-legales" className={link}>mentions légales</Link>). Certains prestataires sont situés aux États-Unis
           (notifications et mises à jour de l&apos;application, cartes de l&apos;application, WhatsApp, et selon la
           configuration adresses, itinéraires et suivi des vols) : ces transferts sont encadrés par le Data Privacy
           Framework UE–États-Unis ou par les clauses contractuelles types de la Commission européenne.
@@ -189,6 +211,10 @@ export default async function PrivacyPage() {
             <>Notifications, y compris les relances WhatsApp : 90 jours après leur envoi prévu, qu&apos;elles aient abouti ou non. Journaux d&apos;appels de l&apos;API : 90 jours.</>,
             <>Demandes du formulaire de contact : 3 ans après leur envoi, puis supprimées avec les e-mails qui s&apos;y rapportent ; une demande classée indésirable, 30 jours après ce classement. L&apos;empreinte de l&apos;adresse IP est effacée au bout d&apos;un an. Vous pouvez demander l&apos;effacement plus tôt (article 11).</>,
             <>Adresse IP et navigateur enregistrés dans le journal de sécurité (inscription par lien, actions sensibles de l&apos;équipe) et historique des connexions du service d&apos;authentification : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
+            <>Sessions de connexion ouvertes (adresse IP et navigateur de l&apos;appareil, tenus par le service d&apos;authentification) : jusqu&apos;à la déconnexion ou à la suppression du compte.</>,
+            <>Journaux techniques du serveur (fonctionnement et erreurs des services, requêtes reçues par la base de données et le service d&apos;authentification, avec l&apos;adresse IP) : 1 an au plus. Compteurs anti-abus (empreinte de l&apos;adresse IP) : 24 heures au plus.</>,
+            <>Sauvegardes de la base de données et des fichiers : faites chaque nuit, chacune gardée 14 jours puis effacée ; une donnée supprimée du service disparaît des sauvegardes au plus tard 14 jours après.</>,
+            <>Copies des e-mails envoyés par le service : celles d&apos;une demande de contact, avec la demande (3 ans) ; annonces de frais plateforme et de nouvelles conditions adressées aux centrales, 10 ans (preuve de l&apos;annonce) ; autres e-mails (tests, notifications), 1 an.</>,
             <>Courses (y compris les coordonnées du client), gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course, pour les obligations comptables de la centrale, puis supprimés, y compris une course jamais terminée.</>,
             <>Comptes et journal des actions de l&apos;équipe d&apos;une centrale : tant qu&apos;elle utilise le service, puis supprimés dans les 30 jours qui suivent la fin du contrat, sauf les actions sur les frais plateforme et leurs paiements, gardées avec ce registre comptable.</>,
             <>Preuves d&apos;acceptation : celle des CGU et de cette politique reste, détachée du compte s&apos;il est supprimé (document, version, date) ; celle des CGV et de l&apos;accord de traitement, avec l&apos;e-mail de la personne qui les a acceptés, est gardée comme preuve du contrat, y compris après sa fin (la fiche de la centrale est alors archivée, jamais supprimée).</>,

@@ -13,18 +13,22 @@ export const metadata: Metadata = {
 
 type Processor = { name: string; service: string; data: string; place: string; safeguards: string };
 
-/** Sous-traitants ultérieurs : tableau défilant horizontalement sur petit écran. */
+/**
+ * Sous-traitants ultérieurs : tableau défilant horizontalement sur petit écran ; la zone défilante est atteignable au
+ * clavier (flèches) et nommée.
+ */
 function ProcessorTable({ rows }: { rows: Processor[] }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-md" tabIndex={0} role="region" aria-label="Sous-traitants ultérieurs">
       <table className="w-full min-w-[720px] border-collapse text-left text-[13px]">
+        <caption className="sr-only">Sous-traitants ultérieurs de l&apos;éditeur</caption>
         <thead>
           <tr className="border-b border-line-strong text-fg">
-            <th className="py-2 pr-4 font-medium">Sous-traitant</th>
-            <th className="py-2 pr-4 font-medium">Service</th>
-            <th className="py-2 pr-4 font-medium">Données concernées</th>
-            <th className="py-2 pr-4 font-medium">Localisation</th>
-            <th className="py-2 font-medium">Garanties</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Sous-traitant</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Service</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Données concernées</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Localisation</th>
+            <th scope="col" className="py-2 font-medium">Garanties</th>
           </tr>
         </thead>
         <tbody>
@@ -53,18 +57,12 @@ export default async function DataProcessingPage() {
   const link = "text-fg underline underline-offset-2";
   const processors: Processor[] = [
     {
-      name: "Supabase, Inc.",
-      service: "Base de données, comptes de connexion, fichiers (justificatifs, photos), temps réel",
-      data: "Toutes les données du service",
-      place: "Union européenne (région d'hébergement choisie par l'éditeur)",
-      safeguards: "Hébergement dans l'UE ; clauses contractuelles types pour l'assistance",
-    },
-    {
       name: legal.hostName || "Hébergeur du serveur (voir les mentions légales)",
-      service: "Serveur du site, de l'API et des traitements automatiques (dispatch, notifications, relances)",
-      data: "Données en transit et journaux techniques",
-      place: legal.hostAddress || "Voir les mentions légales",
-      safeguards: "Contrat de sous-traitance de l'hébergeur",
+      service:
+        "Location du serveur de l'éditeur, qui héberge le site, l'API, la base de données et les comptes de connexion (logiciel Supabase installé et administré par l'éditeur), les fichiers (justificatifs, photos), le temps réel, les sauvegardes, les traitements automatiques (dispatch, notifications, relances) et le serveur d'envoi des e-mails",
+      data: "Toutes les données du service",
+      place: legal.dataHost || "Union européenne",
+      safeguards: "Hébergement dans l'Union européenne ; contrat de l'hébergeur (article 28 du RGPD)",
     },
     {
       name: "650 Industries, Inc. (Expo)",
@@ -142,10 +140,22 @@ export default async function DataProcessingPage() {
       <p>
         Le présent accord (article 28 du règlement (UE) 2016/679, « RGPD ») fait partie intégrante des{" "}
         <Link href="/cgv" className={link}>conditions générales de vente</Link>. Il s&apos;applique entre chaque
-        centrale cliente et <span className="text-fg">{legal.name}</span> (l&apos;« éditeur ») et prévaut sur toute
+        centrale cliente et{" "}
+        {legal.nameSet ? (
+          <span className="text-fg">{legal.name}</span>
+        ) : (
+          <>
+            la société identifiée dans les{" "}
+            <Link href="/mentions-legales" className={link}>
+              mentions légales
+            </Link>
+          </>
+        )}{" "}
+        (l&apos;« éditeur ») et prévaut sur toute
         autre stipulation relative aux données personnelles. Version {ORG_LEGAL_VERSION}, commune aux CGV et au présent
-        accord (contenu de l&apos;accord inchangé depuis le {DPA_UPDATED_AT}), acceptée par le propriétaire ou un
-        administrateur de la centrale dans le tableau de bord.
+        accord, acceptée par le propriétaire ou un administrateur de la centrale dans le tableau de bord. Le{" "}
+        {DPA_UPDATED_AT}, la description de l&apos;hébergement, des sauvegardes et des sous-traitants (articles 5, 6, 7 et
+        11) a été corrigée pour correspondre à l&apos;installation réelle, sans nouvelle obligation pour la centrale.
       </p>
 
       <LegalSection title="1. Rôles">
@@ -198,7 +208,7 @@ export default async function DataProcessingPage() {
             <>Jetons d&apos;accès WhatsApp Business stockés côté serveur, jamais lisibles par les utilisateurs ni renvoyés au navigateur.</>,
             <>Journal d&apos;audit des actions sensibles ; journaux d&apos;appels de l&apos;API.</>,
             <>Session chiffrée sur le téléphone du chauffeur, avec une clé gardée dans le trousseau sécurisé du système.</>,
-            <>Sauvegardes de la base de données assurées par l&apos;hébergeur des données ; mises à jour de sécurité régulières.</>,
+            <>Sauvegarde de la base de données et des fichiers chaque nuit, par l&apos;éditeur, sur son serveur ; chaque sauvegarde est gardée 14 jours puis effacée ; mises à jour de sécurité régulières.</>,
           ]}
         />
       </LegalSection>
@@ -214,15 +224,18 @@ export default async function DataProcessingPage() {
         </p>
         <ProcessorTable rows={processors} />
         <p>
-          Les e-mails de connexion (invitation, mot de passe oublié) partent par le relais d&apos;envoi (SMTP) configuré
-          par l&apos;éditeur dans l&apos;hébergeur des données ; son nom est communiqué sur simple demande. Les services
-          marqués « si activé » ne reçoivent aucune donnée tant qu&apos;ils ne sont pas utilisés.
+          La base de données (Supabase) est un logiciel installé et administré par l&apos;éditeur sur son serveur : la
+          société Supabase, Inc. ne reçoit aucune donnée du service. Les e-mails (invitation, mot de passe oublié,
+          accusés de réception, annonces) partent du serveur d&apos;envoi installé sur ce même serveur, directement vers
+          la messagerie du destinataire, sans prestataire d&apos;envoi. Les services marqués « si activé » ne reçoivent
+          aucune donnée tant qu&apos;ils ne sont pas utilisés.
         </p>
       </LegalSection>
 
       <LegalSection title="7. Transferts hors de l'Union européenne">
         <p>
-          Les données sont hébergées dans l&apos;Union européenne. Les transferts vers un pays tiers, limités aux services
+          Les données sont hébergées dans l&apos;Union européenne, sur le serveur de l&apos;éditeur (hébergeur et lieu :
+          voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>). Les transferts vers un pays tiers, limités aux services
           indiqués dans le tableau, sont encadrés par une décision d&apos;adéquation (notamment le Data Privacy Framework
           UE–États-Unis pour les entreprises certifiées) ou par les clauses contractuelles types de la Commission
           européenne, complétées si besoin de mesures supplémentaires.
@@ -276,8 +289,8 @@ export default async function DataProcessingPage() {
           par un moyen sécurisé). Il supprime ensuite, dans les 30 jours et selon sa procédure interne documentée, les
           données personnelles traitées pour son compte (comptes des chauffeurs et candidats, avec leurs justificatifs et
           leurs fichiers ; courses et coordonnées des clients ; messages ; positions ; comptes de l&apos;équipe et journal
-          de leurs actions ; mini-site), copies comprises, sauf obligation légale de conservation ; les sauvegardes sont
-          effacées à l&apos;expiration de leur cycle. Il conserve, comme responsable de traitement distinct, la fiche
+          de leurs actions ; mini-site), copies comprises, sauf obligation légale de conservation ; les sauvegardes, gardées
+          14 jours, en disparaissent à l&apos;expiration de ce cycle. Il conserve, comme responsable de traitement distinct, la fiche
           archivée de la centrale, le registre des frais plateforme et les paiements, avec le journal des actions qui s&apos;y
           rapportent (obligations comptables, 10 ans au moins) et la preuve d&apos;acceptation des CGV et du présent accord, avec l&apos;e-mail de la personne qui les a
           acceptés (preuve du contrat).
@@ -303,7 +316,7 @@ export default async function DataProcessingPage() {
       </LegalSection>
 
       <LegalSection title="14. Contact">
-        <p>Délégué ou contact « données personnelles » de l&apos;éditeur : {contact}.</p>
+        <p>Contact « données personnelles » de l&apos;éditeur : {contact}.</p>
       </LegalSection>
     </LegalPage>
   );
