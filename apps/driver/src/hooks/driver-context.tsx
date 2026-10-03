@@ -11,7 +11,9 @@ import { frTypo } from "@/components/centrale";
 import { api, ApiError, refusalText } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
-import { ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking } from "@/lib/location";
+import {
+  ensureTracking, locationPermissionState, MAX_ACCURACY_M, onServerOffline, requestLocationPermissions, setHighAccuracy, startTracking, stopTracking,
+} from "@/lib/location";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
 import { settlementSession } from "@/lib/settlement-session";
@@ -49,7 +51,8 @@ type Ctx = {
   /** Relecture de l'accueil et des offres (une seule à la fois, les demandes simultanées sont regroupées). */
   refresh: () => Promise<DriverHome | null>;
   setOnline: (online: boolean) => Promise<OnlineResult>;
-  signOut: () => Promise<void>;
+  /** false : rien n'a été fait (course en cours, session impossible à effacer) — l'écran reste affiché. */
+  signOut: () => Promise<boolean>;
   /** Passage en ligne / hors ligne en cours (confirmation du serveur, quelques centaines de ms). */
   busy: boolean;
   /** Messagerie (centrale + flotte) et signalements actifs — driver_chat_overview, tenu à jour en temps réel. */
@@ -84,6 +87,14 @@ const INIT_RETRY_MS = [2000, 5000, 10_000, 20_000, 30_000];
 
 /** Présences de course : le suivi GPS tourne quoi qu'il arrive (jamais de course sans position). */
 const RIDE_PRESENCES = new Set<DriverPresence>(["en_route", "arrived", "on_trip"]);
+
+/** Course en cours sans autorisation de position : rien n'est arrêté (la course continue), le chauffeur est prévenu. */
+function alertRideWithoutLocation() {
+  Alert.alert("Course en cours sans position", frTypo("Réactivez la localisation de Rydar Drive : votre centrale ne suit plus la course."), [
+    { text: "Plus tard", style: "cancel" },
+    { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
+  ]);
+}
 
 /** Fenêtre (s) en deçà de laquelle une offre est traitée comme urgente (sonnerie, compte à rebours). */
 export const URGENT_OFFER_S = 120;
@@ -453,6 +464,12 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       void (async () => {
         const perm = await locationPermissionState();
         if (perm === "ok") return void ensureTracking(RIDE_PRESENCES.has(presence)).catch(() => null);
+        // En course : jamais « hors ligne » (refusé par le serveur) ; position approximative → suivie quand même,
+        // localisation retirée → alerte dédiée (la centrale ne suit plus la course)
+        if (RIDE_PRESENCES.has(presence)) {
+          if (perm === "coarse") return void ensureTracking(true).catch(() => null);
+          return alertRideWithoutLocation();
+        }
         const res = await api.setOnline(false).catch(() => null);
         if (res && !res.ok) return; // en course : il reste en ligne jusqu'à la fin
         void stopTracking().catch(() => null);
@@ -468,11 +485,28 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   // processus (passage hors ligne, puis course démarrée) — autorisation déjà accordée seulement, rien n'est demandé ici
   const ridePresence = canDrive && home != null && RIDE_PRESENCES.has(home.driver.presence);
   useEffect(() => {
+    // Mode course du suivi (précision maximale, notification « course en cours ») lié à la COURSE et non à l'écran
+    // ouvert : ni course de demain consultée depuis le Planning, ni précision réduite après un retour à l'accueil
+    void setHighAccuracy(ridePresence).catch(() => null);
     if (!ridePresence) return;
+    // Position approximative : suivie quand même pendant la course (mieux qu'aucune position)
     void locationPermissionState()
-      .then((perm) => (perm === "ok" ? ensureTracking(true) : undefined))
+      .then((perm) => (perm !== "denied" ? ensureTracking(true) : undefined))
       .catch(() => null);
   }, [ridePresence]);
+
+  // Hors ligne décidé par le serveur pendant le suivi : après une coupure réseau longue (parking souterrain, tunnel),
+  // remise en ligne automatique ; sinon (refusée, autre appareil) accueil relu et chauffeur prévenu — jamais « en
+  // ligne » à tort sans le savoir
+  useEffect(() => {
+    if (!canDrive) return;
+    return onServerOffline((revived) => {
+      void refresh();
+      if (revived) return;
+      patchPresence("offline");
+      Alert.alert("Vous êtes hors ligne", frTypo("Vous ne recevez plus de courses : repassez en ligne depuis l'accueil."));
+    });
+  }, [canDrive, patchPresence, refresh]);
 
   // Initialisation après connexion (compte actif) : données d'abord, push en parallèle, puis temps réel.
   // Dépend de l'utilisateur et non de l'objet session : le renouvellement du jeton (≈ toutes les heures)
@@ -499,7 +533,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         // Déjà en ligne au redémarrage : la position exacte a pu être retirée entre-temps dans les réglages
         const perm = await locationPermissionState();
         if (perm === "ok") startTracking().catch(() => null);
-        else {
+        else if (RIDE_PRESENCES.has(h.driver.presence)) {
+          // En course : toujours en course (jamais « passé hors ligne ») ; approximative → suivie quand même
+          if (perm === "coarse") startTracking().catch(() => null);
+          else alertRideWithoutLocation();
+        } else {
           await api.setOnline(false).catch(() => null);
           patchPresence("offline");
           void refresh();
@@ -806,13 +844,28 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
    * de CET appareil, même hors réseau avec un jeton expiré. Les données du compte sont vidées au SIGNED_OUT (effet
    * [userId]) ; l'état du compte n'est pas remis à zéro tant que la session existe (sinon écran de connexion figé).
    */
-  const signOut = useCallback(async () => {
-    await api.setOnline(false).catch(() => null);
+  const signOut = useCallback(async (): Promise<boolean> => {
+    // Jamais en pleine course (en route, sur place, client à bord) : suivi GPS, notifications d'annulation et sessions
+    // seraient coupés alors que la course continue côté serveur (position figée pour la centrale). Le serveur tranche
+    // (ACTIVE_RIDE) ; sans réponse (réseau), la présence connue de l'app ; compte refusé (suspendu, banni) : déconnexion.
+    let offError: unknown = null;
+    const off = await api.setOnline(false).catch((e: unknown) => {
+      offError = e;
+      return null;
+    });
+    const onRide = off
+      ? !off.ok && off.code === "ACTIVE_RIDE"
+      : !isForbidden(offError) && RIDE_PRESENCES.has(homeRef.current?.driver.presence ?? "offline");
+    if (onRide) {
+      void refresh();
+      Alert.alert("Course en cours", frTypo("Terminez votre course avant de vous déconnecter."));
+      return false;
+    }
     await stopTracking().catch(() => null);
     const pushRemoved = await unregisterPush();
     if (!(await signOutThisDevice())) {
       Alert.alert("Déconnexion impossible", "Réessayez dans un instant.");
-      return;
+      return false;
     }
     applyHome(null);
     applyOffers([]);
@@ -831,7 +884,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         ],
       );
     }
-  }, [applyHome, applyOffers]);
+    return true;
+  }, [applyHome, applyOffers, refresh]);
 
   const offersReadAt = useCallback(() => offersReadAtRef.current, []);
   const forgetOffer = useCallback((offerId: string) => void seenOffers.current.delete(offerId), []);

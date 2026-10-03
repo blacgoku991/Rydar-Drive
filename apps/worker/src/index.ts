@@ -282,6 +282,22 @@ async function main() {
     res.end(JSON.stringify({ healthy, ...state }));
   }).listen(config.healthPort);
 
+  // Chien de garde : aucun tick de dispatch réussi depuis WATCHDOG_MS (base injoignable, connexion figée) → sortie en
+  // erreur pour que Docker relance le conteneur (restart: unless-stopped ne relance qu'un processus terminé, jamais un
+  // conteneur « unhealthy »). WORKER_WATCHDOG=0 le coupe (développement).
+  const startedAt = Date.now();
+  if (process.env.WORKER_WATCHDOG !== "0") {
+    timers.push(
+      setInterval(() => {
+        if (stopping) return;
+        const since = Date.now() - (state.lastTick || startedAt);
+        if (since < config.watchdogMs) return;
+        log("error", "watchdog: no successful dispatch tick, exiting for restart", { since_ms: since, errors: state.errors });
+        process.exit(1);
+      }, 15_000),
+    );
+  }
+
   let stoppingAt = 0;
   const shutdown = async (signal: string) => {
     if (stopping) {

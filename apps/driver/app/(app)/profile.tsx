@@ -4,9 +4,9 @@ import { VEHICLE_CATEGORY_META, formatPrice } from "@rydar/shared";
 import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
 import { Children, Fragment, useCallback, useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { TrustBadge } from "@/components/centrale";
+import { TrustBadge, frTypo } from "@/components/centrale";
 import { buildDocEntries, needsAction } from "@/components/documents";
 import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
@@ -202,15 +202,26 @@ export default function Profile() {
               icon="log-out-outline"
               height={control.md}
               loading={leaving}
-              onPress={async () => {
-                setLeaving(true);
-                try {
-                  await signOut();
-                } finally {
-                  setLeaving(false);
-                }
-                router.replace("/login");
-              }}
+              onPress={() =>
+                // Confirmation : un appui (accessible pendant une course depuis l'accueil) ne déconnecte plus d'emblée
+                Alert.alert("Se déconnecter ?", frTypo("Vous passerez hors ligne et ne recevrez plus de courses sur ce téléphone."), [
+                  { text: "Annuler", style: "cancel" },
+                  {
+                    text: "Se déconnecter",
+                    style: "destructive",
+                    onPress: async () => {
+                      setLeaving(true);
+                      let out = false;
+                      try {
+                        out = await signOut();
+                      } finally {
+                        setLeaving(false);
+                      }
+                      if (out) router.replace("/login");
+                    },
+                  },
+                ])
+              }
             />
             <Text style={styles.version}>Rydar Drive {Constants.expoConfig?.version}</Text>
           </View>

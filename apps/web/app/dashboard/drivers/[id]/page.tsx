@@ -136,7 +136,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
       <div className="border-b border-line">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
           <div>
-            <Link href="/dashboard/drivers" className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
+            <Link href="/dashboard/drivers" prefetch={false} className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
               <ArrowLeft className="size-3.5" /> Chauffeurs
             </Link>
             <div className="flex items-center gap-4">
@@ -167,7 +167,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
           {!deleted && (
             <div className="flex flex-wrap gap-2">
               <Button variant="primary" asChild>
-                <Link href={`/dashboard/messages?driver=${d.id}`}>
+                <Link href={`/dashboard/messages?driver=${d.id}`} prefetch={false}>
                   <MessageCircle /> Message
                 </Link>
               </Button>
@@ -381,7 +381,7 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
               <tbody>
                 {rides.map((r: any) => (
                   <TR key={r.id} className="relative">
-                    <TD><Link href={`/dashboard/rides/${r.id}`} className="absolute inset-0" aria-label={`Course ${r.number}`} /><span className="num font-semibold">#{r.number}</span></TD>
+                    <TD><Link href={`/dashboard/rides/${r.id}`} prefetch={false} className="absolute inset-0" aria-label={`Course ${r.number}`} /><span className="num font-semibold">#{r.number}</span></TD>
                     <TD className="text-[13px] text-fg-muted">{formatRideDate(r.pickup_at, tz)}</TD>
                     <TD className="max-w-[360px] truncate text-[13px]">{shortAddress(r.pickup_address)} → {shortAddress(r.dropoff_address)}</TD>
                     <TD className="num text-right font-semibold">{formatPrice(r.price_cents)}</TD>

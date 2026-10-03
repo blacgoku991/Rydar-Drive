@@ -15,15 +15,18 @@ export function LiveRefresh({
   events = ["ride.updated", "ride.event", "offer.updated"],
   pollMs = 5000,
   maxPollMs = 60_000,
+  debounceMs = 400,
 }: {
   rideId?: string;
   driverId?: string;
   events?: string[];
   pollMs?: number;
   maxPollMs?: number;
+  /** Regroupement des événements (ms) : plus long sur les listes (une relecture pour une rafale de changements). */
+  debounceMs?: number;
 }) {
   const router = useRouter();
-  const { schedule } = useLiveSync(() => router.refresh(), { pollMs, maxPollMs, debounceMs: 400 });
+  const { schedule } = useLiveSync(() => router.refresh(), { pollMs, maxPollMs, debounceMs });
   // liste fixe (règle des hooks) ; « settlement.updated » : règlement de la course (mode centrale)
   for (const ev of ["ride.updated", "ride.event", "offer.updated", "driver.updated", "ride.alert", "settlement.updated"]) {
     useRealtimeEvent(ev, (p: any) => {

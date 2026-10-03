@@ -114,6 +114,8 @@ export async function proxy(request: NextRequest) {
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_KEY, {
     // Connexions gardées ouvertes et DNS mémorisé : le proxy passe à chaque page (lib/server-fetch.ts)
     global: { fetch: serverFetch },
+    // Session jamais envoyée en clair sur http:// en production (attribut Secure)
+    cookieOptions: { secure: process.env.NODE_ENV === "production" },
     cookies: {
       getAll() {
         return request.cookies.getAll();

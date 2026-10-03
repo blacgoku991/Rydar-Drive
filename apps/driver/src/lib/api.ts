@@ -6,6 +6,7 @@ import type {
 import { extractErrorCode, humanizeError } from "@rydar/shared";
 import { appConfig } from "./config";
 import { debtFromSettlements } from "./debt";
+import { fetchWithDeadline, NETWORK_ERROR_TEXT } from "./http";
 import { supabase } from "./supabase";
 
 /** Erreur d'appel serveur : message FR prêt à afficher + code métier (ex. RATE_LIMITED). */
@@ -44,6 +45,17 @@ export function refusalText(res: { code?: string | null; message?: string | null
 const jwtRejected = (e: { code?: string; message?: string }) =>
   e.code === "PGRST301" || e.code === "PGRST303" || /JWT expired/i.test(e.message ?? "");
 
+/**
+ * Lecture de table ou envoi de fichier avec le même réessai que rpc() : jeton refusé (horloge du téléphone en retard)
+ * → renouvelé puis UN nouvel essai (sinon course en « Chargement… », planning « Connexion impossible »).
+ */
+async function withJwtRetry<R extends { error: unknown }>(run: () => PromiseLike<R>): Promise<R> {
+  const first = await run();
+  const e = first.error as { code?: string; message?: string } | null;
+  if (e && jwtRejected(e) && !(await supabase.auth.refreshSession()).error) return run();
+  return first;
+}
+
 export async function rpc<T>(fn: string, args?: Record<string, unknown>): Promise<T> {
   let { data, error } = await supabase.rpc(fn, args ?? {});
   // Jeton expiré : renouvelé puis UN nouvel essai (sinon chaque envoi échouerait jusqu'au renouvellement suivant)
@@ -77,12 +89,12 @@ export const LAST_EMAIL_KEY = "rydar.driver.lastEmail";
 /** Connexion via l'API web (anti brute force, contrôle du compte), repli direct Supabase. */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
   if (appConfig.apiUrl) {
-    const res = await fetch(`${appConfig.apiUrl}/api/auth/driver-login`, {
+    const res = await fetchWithDeadline(`${appConfig.apiUrl}/api/auth/driver-login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
     }).catch(() => null);
-    if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+    if (!res) throw new ApiError(NETWORK_ERROR_TEXT, "NETWORK");
     const json = (await res.json().catch(() => ({}))) as {
       access_token?: string; refresh_token?: string; state?: DriverAccountStateKind; error?: string; code?: string;
     };
@@ -109,12 +121,12 @@ export async function signIn(email: string, password: string): Promise<SignInRes
  */
 export async function requestPasswordReset(email: string): Promise<void> {
   if (!appConfig.apiUrl) throw new ApiError("Réinitialisation indisponible : contactez votre centrale.", "CONFIG");
-  const res = await fetch(`${appConfig.apiUrl}/api/auth/driver-password-reset`, {
+  const res = await fetchWithDeadline(`${appConfig.apiUrl}/api/auth/driver-password-reset`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: email.trim().toLowerCase() }),
   }).catch(() => null);
-  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  if (!res) throw new ApiError(NETWORK_ERROR_TEXT, "NETWORK");
   if (res.ok) return;
   const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
   throw new ApiError(json.error ?? "Envoi impossible pour le moment. Réessayez.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
@@ -151,12 +163,12 @@ async function deletionRoute(body: { confirm: "SUPPRIMER" } | { preview: true },
   const login = (email ?? session?.user.email ?? "").trim().toLowerCase();
   if (!token && !password) throw new ApiError("Session expirée : saisissez le mot de passe de votre compte.", "UNAUTHORIZED");
   if (password && !login) throw new ApiError("Saisissez l'adresse e-mail de votre compte.", "EMAIL_REQUIRED");
-  const res = await fetch(`${appConfig.apiUrl}/api/driver/delete-account`, {
+  const res = await fetchWithDeadline(`${appConfig.apiUrl}/api/driver/delete-account`, {
     method: "POST",
     headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(password ? { ...body, email: login, password } : body),
   }).catch(() => null);
-  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  if (!res) throw new ApiError(NETWORK_ERROR_TEXT, "NETWORK");
   const json = (await res.json().catch(() => ({}))) as {
     code?: string; error?: string; message?: string; pending?: boolean; debt?: DriverDeletionDebt | null;
   };
@@ -212,12 +224,12 @@ export async function deletionDebt(): Promise<DriverDeletionDebt | null> {
  */
 export async function confirmPasswordReset(email: string, code: string, password: string): Promise<SignInResult> {
   if (!appConfig.apiUrl) throw new ApiError("Réinitialisation indisponible : contactez votre centrale.", "CONFIG");
-  const res = await fetch(`${appConfig.apiUrl}/api/auth/driver-password-reset/confirm`, {
+  const res = await fetchWithDeadline(`${appConfig.apiUrl}/api/auth/driver-password-reset/confirm`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.replace(/\s+/g, ""), password }),
   }).catch(() => null);
-  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  if (!res) throw new ApiError(NETWORK_ERROR_TEXT, "NETWORK");
   const json = (await res.json().catch(() => ({}))) as {
     access_token?: string; refresh_token?: string; state?: DriverAccountStateKind; error?: string; code?: string;
   };
@@ -290,7 +302,7 @@ export const api = {
   unregisterToken: (token: string) => rpc<RpcResult>("driver_unregister_push_token", { p_token: token }),
   /** Courses du chauffeur (RLS : uniquement les siennes, coordonnées client incluses). */
   ride: async (id: string) => {
-    const { data, error } = await supabase.from("rides").select("*").eq("id", id).maybeSingle();
+    const { data, error } = await withJwtRetry(() => supabase.from("rides").select("*").eq("id", id).maybeSingle());
     if (error) throw new Error("Course indisponible.");
     return data as Ride | null;
   },
@@ -323,10 +335,12 @@ export const api = {
     }),
   /** Dépôt du fichier dans le stockage (INSERT seul : pas d'écrasement d'un justificatif). */
   uploadDocument: async (path: string, body: ArrayBuffer, contentType: string) => {
-    const res = await supabase.storage
-      .from(DOCUMENTS_BUCKET)
-      .upload(path, body, { contentType, upsert: false })
-      .catch((e: unknown) => ({ data: null, error: e }));
+    const res = await withJwtRetry(() =>
+      supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .upload(path, body, { contentType, upsert: false })
+        .catch((e: unknown) => ({ data: null, error: e })),
+    );
     if (!res.error) return;
     const e = res.error as { message?: string; status?: number | string; statusCode?: number | string; name?: string };
     const status = Number(e.status ?? e.statusCode ?? 0);
@@ -354,7 +368,7 @@ export const api = {
    * au chemin de stockage des justificatifs (<org>/<chauffeur>/…).
    */
   myDriverRow: async (userId: string) => {
-    const { data, error } = await supabase.from("drivers").select("id, organization_id").eq("user_id", userId).maybeSingle();
+    const { data, error } = await withJwtRetry(() => supabase.from("drivers").select("id, organization_id").eq("user_id", userId).maybeSingle());
     if (error) throw new ApiError("Connexion impossible. Réessayez.", null);
     return data as { id: string; organization_id: string } | null;
   },
@@ -364,13 +378,15 @@ export const api = {
    * rester au-delà des 50 premières. Erreur (ApiError) : réseau, serveur — jamais une liste vide trompeuse.
    */
   upcoming: async (driverId: string) => {
-    const { data, error } = await supabase
-      .from("rides")
-      .select("*")
-      .eq("driver_id", driverId)
-      .in("status", ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"])
-      .order("pickup_at", { ascending: true })
-      .limit(50);
+    const { data, error } = await withJwtRetry(() =>
+      supabase
+        .from("rides")
+        .select("*")
+        .eq("driver_id", driverId)
+        .in("status", ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"])
+        .order("pickup_at", { ascending: true })
+        .limit(50),
+    );
     if (error) throw new ApiError("Connexion impossible. Réessayez.", null);
     return (data ?? []) as Ride[];
   },
@@ -401,20 +417,20 @@ function joinUrl(code: string) {
 }
 
 export async function fetchJoinCentrale(code: string): Promise<JoinCentrale> {
-  const res = await fetch(joinUrl(code)).catch(() => null);
-  if (!res) throw new ApiError("Réseau indisponible.", "NETWORK");
+  const res = await fetchWithDeadline(joinUrl(code)).catch(() => null);
+  if (!res) throw new ApiError(NETWORK_ERROR_TEXT, "NETWORK");
   const json = (await res.json().catch(() => ({}))) as Partial<JoinCentrale> & { ok?: boolean; error?: string };
   if (!res.ok || !json.ok || !json.organization) throw new ApiError(json.error ?? "Lien d'inscription invalide.", "JOIN_LINK_INVALID");
   return { autoApprove: !!json.autoApprove, model: json.model === "fleet" ? "fleet" : "centrale", organization: json.organization };
 }
 
 export async function joinCentrale(code: string, input: JoinInput): Promise<JoinResponse> {
-  const res = await fetch(joinUrl(code), {
+  const res = await fetchWithDeadline(joinUrl(code), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   }).catch(() => null);
-  if (!res) return { ok: false, error: "Réseau indisponible." };
+  if (!res) return { ok: false, error: NETWORK_ERROR_TEXT };
   return ((await res.json().catch(() => null)) as JoinResponse | null) ?? { ok: false, error: "Inscription impossible pour le moment. Réessayez." };
 }
 

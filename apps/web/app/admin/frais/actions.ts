@@ -7,6 +7,7 @@ import {
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { audit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth";
 import { actionError } from "@/lib/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -155,8 +156,17 @@ export async function removePlatformWhatsApp(): Promise<WhatsAppActionResult> {
 }
 
 export async function testPlatformWhatsApp(to: string): Promise<WhatsAppActionResult> {
-  await requireSuperAdmin();
+  const session = await requireSuperAdmin();
   const res = await testWhatsApp(null, "Centrale exemple", to);
+  // Message envoyé depuis le numéro WhatsApp de Rydar : tracé (numéro masqué, résultat)
+  const digits = String(to ?? "").replace(/\D/g, "");
+  await audit({
+    actorUserId: session.user.id,
+    actorType: "super_admin",
+    action: "whatsapp.test_sent",
+    severity: res.ok ? "info" : "warning",
+    metadata: { to: digits ? `…${digits.slice(-2)}` : null, ok: res.ok },
+  });
   revalidatePath("/admin/frais");
   return res;
 }

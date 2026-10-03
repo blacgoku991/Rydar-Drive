@@ -12,13 +12,21 @@ const h = vi.hoisted(() => ({
   deletedUsers: [] as string[],
   audits: [] as Row[],
   limitOk: true,
+  ip: "203.0.113.7",
+  limitKeys: [] as string[],
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/request", () => ({ clientIp: async () => "203.0.113.7" }));
+vi.mock("@/lib/request", async () => ({ ...(await import("./request")), clientIp: async () => h.ip }));
 vi.mock("@/lib/rate-limit", () => ({
-  rateLimit: async () => ({ ok: h.limitOk, remaining: 1, resetAt: 0, limit: 1 }),
-  rateLimitAll: async () => ({ ok: h.limitOk, remaining: 1, resetAt: 0, limit: 1 }),
+  rateLimit: async (key: string) => {
+    h.limitKeys.push(key);
+    return { ok: h.limitOk, remaining: 1, resetAt: 0, limit: 1 };
+  },
+  rateLimitAll: async (rules: { key: string }[]) => {
+    h.limitKeys.push(...rules.map((r) => r.key));
+    return { ok: h.limitOk, remaining: 1, resetAt: 0, limit: 1 };
+  },
 }));
 vi.mock("@/lib/audit", () => ({ audit: async (entry: Row) => void h.audits.push(entry) }));
 vi.mock("@/lib/legal", () => ({ LEGAL_VERSION: "test" }));
@@ -76,6 +84,25 @@ beforeEach(() => {
   h.deletedUsers = [];
   h.audits = [];
   h.limitOk = true;
+  h.ip = "203.0.113.7";
+  h.limitKeys = [];
+});
+
+describe("limitation de débit de l'inscription", () => {
+  it("IPv6 regroupée par /64 (changer d'adresse à chaque essai ne contourne rien) + plafond par organisation", async () => {
+    h.rpc.svc_join_info = joinInfo("fleet");
+    h.ip = "2001:db8:1:2::1";
+    await applyWithJoinLink(CODE, VALID);
+    h.ip = "2001:db8:1:2::ffff";
+    await applyWithJoinLink(CODE, { ...VALID, email: "autre@test.dev" });
+    const ipKeys = h.limitKeys.filter((k) => k.startsWith("join:ip:"));
+    expect(ipKeys).toHaveLength(2);
+    expect(new Set(ipKeys).size).toBe(1);
+    expect(h.limitKeys).toContain(`join:org:${ORG.id}`);
+    // Carte du lien (GET) : même regroupement
+    await getCard();
+    expect(h.limitKeys.filter((k) => k.startsWith("join:info:"))).toEqual([`join:info:${ipKeys[0]!.slice("join:ip:".length)}`]);
+  });
 });
 
 describe("GET /api/join/{code} : carte de l'organisation pour l'application", () => {

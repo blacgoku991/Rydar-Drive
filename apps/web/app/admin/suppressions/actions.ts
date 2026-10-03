@@ -27,7 +27,17 @@ export async function findDriversForDeletion(query: string): Promise<Result<{ dr
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Recherche invalide." };
   const { data, error } = await session.supabase.rpc("admin_find_drivers", { p_query: parsed.data });
   if (error) return { ok: false, error: actionError(error, "Recherche impossible pour le moment.") };
-  return { ok: true, drivers: (data ?? []) as DriverMatch[] };
+  const drivers = (data ?? []) as DriverMatch[];
+  // Recherche de données personnelles dans toutes les centrales : tracée (type de recherche et nombre de résultats,
+  // jamais la valeur cherchée)
+  await audit({
+    actorUserId: session.user.id,
+    actorType: "super_admin",
+    action: "driver.lookup",
+    entityType: "drivers",
+    metadata: { by: parsed.data.includes("@") ? "email" : "phone", results: drivers.length },
+  });
+  return { ok: true, drivers };
 }
 
 /** Message pour le super admin (troisième personne) selon l'issue de la suppression. */

@@ -81,6 +81,8 @@ export const config = {
   /** Mode TLS imposé (journal de démarrage) ; vide = celui de DATABASE_URL. */
   databaseSslMode: (process.env.DATABASE_SSLMODE || "").trim(),
   dispatchTickMs: num("DISPATCH_TICK_MS", 2000),
+  /** Sans tick de dispatch réussi depuis ce délai : sortie en erreur, relance par Docker (index.ts ; WORKER_WATCHDOG=0 : coupé). */
+  watchdogMs: num("WORKER_WATCHDOG_MS", 120_000),
   notificationPollMs: num("NOTIFICATION_POLL_MS", 3000),
   housekeepingMs: num("HOUSEKEEPING_MS", 5 * 60_000),
   /** Surveillance des courses en cours (retard, immobile, GPS muet, pas démarrée) : private.watch_rides(). */

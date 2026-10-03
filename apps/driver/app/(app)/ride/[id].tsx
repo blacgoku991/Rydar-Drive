@@ -16,9 +16,8 @@ import { BigButton, BottomSheet, Chip, Pill, Screen, Sheet, SlideToConfirm, Step
 import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { useNavigation } from "@/hooks/use-navigation";
-import { api } from "@/lib/api";
+import { api, refusalText } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
-import { setHighAccuracy } from "@/lib/location";
 import { overdue, overdueHint } from "@/lib/planning";
 import { navUrl, rideTarget, type NavApp, type RideTarget } from "@/lib/ride-target";
 import { approachSeconds, colors, control, mono, overlay, radius, space, type, weight } from "@/theme";
@@ -96,11 +95,6 @@ export default function RideScreen() {
   useAppEvent("ride", (rideId) => {
     if (!rideId || rideId === String(id)) void load();
   });
-
-  useEffect(() => {
-    void setHighAccuracy(true).catch(() => null);
-    return () => void setHighAccuracy(false).catch(() => null);
-  }, []);
 
   const rideRoute = useMemo(() => (ride?.route_polyline ? decodePolyline(ride.route_polyline) : null), [ride?.route_polyline]);
   // Points de la carte : mêmes objets tant que les coordonnées ne changent pas (pas de recadrage ni de rendu natif inutile)
@@ -193,10 +187,20 @@ export default function RideScreen() {
         );
       }
     }
-    const res = await api.updateStatus(ride.id, step.next).catch((e: Error) => ({ ok: false, message: e.message }) as { ok: boolean; message?: string });
+    const res = await api
+      .updateStatus(ride.id, step.next)
+      .catch((e: Error) => ({ ok: false, code: (e as { code?: string | null }).code ?? null, message: e.message }) as { ok: boolean; code?: string | null; message?: string });
+    // Glissière gardée en attente jusqu'à la relecture : réarmée plus tôt, elle repartait avec l'ANCIEN libellé (second
+    // glissé = même statut redemandé, refusé). Refus ou réponse perdue : la course est relue aussi (annulée, statut
+    // déjà passé) au lieu d'attendre le sondage suivant.
+    await Promise.all([load(), refresh()]).catch(() => null);
     setLoading(false);
-    if (!res.ok) return Alert.alert("Action impossible", res.message ? frTypo(res.message) : "Réessayez.");
-    await Promise.all([load(), refresh()]);
+    if (!res.ok) {
+      const text = res.code === "INVALID_TRANSITION"
+        ? "La course a changé (annulée ou mise à jour par la centrale) : l'écran vient d'être actualisé."
+        : refusalText(res, "Réessayez.");
+      return Alert.alert("Action impossible", frTypo(text));
+    }
     if (step.next === "COMPLETED" && centrale) {
       // Règlement créé à la clôture (trigger) : montant et échéance exacts pour le récapitulatif
       const mine = await api.settlements(20).catch(() => null);

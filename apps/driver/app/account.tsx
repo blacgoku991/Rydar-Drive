@@ -204,8 +204,9 @@ function PendingApplication({ account }: { account: DriverAccountState }) {
               loading={leaving}
               onPress={async () => {
                 setLeaving(true);
-                await signOut();
-                router.replace("/login");
+                const out = await signOut();
+                setLeaving(false);
+                if (out) router.replace("/login");
               }}
             />
             <BigButton title="Supprimer mon compte" variant="ghost" height={control.sm} onPress={() => router.push("/delete-account")} />
@@ -406,8 +407,9 @@ function AccountBlocked({ account }: { account: DriverAccountState }) {
               loading={leaving}
               onPress={async () => {
                 setLeaving(true);
-                await signOut();
-                router.replace("/login");
+                const out = await signOut();
+                setLeaving(false);
+                if (out) router.replace("/login");
               }}
             />
             {/* Aussi pour un compte suspendu, banni ou d'une centrale suspendue : session refusée par le serveur →

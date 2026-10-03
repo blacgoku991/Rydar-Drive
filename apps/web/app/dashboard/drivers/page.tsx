@@ -1,4 +1,4 @@
-import type { DriverStatus, OrgDocumentAlerts } from "@rydar/shared";
+import { normalizePhone, type DriverStatus, type OrgDocumentAlerts } from "@rydar/shared";
 import { Link2, Search, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -7,6 +7,7 @@ import { DriverFormSheet } from "@/components/drivers/driver-form-sheet";
 import { DriversTable, type DriverTableRow } from "@/components/drivers/drivers-table";
 import { FleetOverviewMap } from "@/components/drivers/fleet-overview-map";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
+import { LiveRefresh } from "@/components/rides/live-refresh";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
@@ -44,8 +45,20 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
   const serverNow = Date.now();
   const all = (drivers ?? []) as any[];
   const busy = new Set(["en_route", "arrived", "on_trip"]);
+  const one = <T,>(x: T | T[] | null | undefined): T | null => (Array.isArray(x) ? (x[0] ?? null) : (x ?? null));
+  // Téléphone saisi comme on le lit (« 06 12… », « 0612… ») comparé au format enregistré (E.164) ; plaque sans espaces ni tirets
+  const qPhone = normalizePhone(q);
+  const qCompact = q.replace(/[\s.\-]/g, "");
+  const qDigits = /^\+?\d{4,15}$/.test(qCompact) ? qCompact.replace(/^\+/, "").replace(/^0/, "") : null;
+  const matches = (d: any) => {
+    const plate = String(one<any>(d.vehicle)?.plate ?? "").toLowerCase();
+    if (`${d.first_name} ${d.last_name} ${d.phone} ${d.email} ${plate} ${d.number}`.toLowerCase().includes(q)) return true;
+    if (qPhone && d.phone === qPhone) return true;
+    if (qDigits && String(d.phone ?? "").includes(qDigits)) return true;
+    return qCompact.length >= 2 && plate.replace(/[\s.\-]/g, "").includes(qCompact);
+  };
   const list = all.filter((d) => {
-    if (q && !`${d.first_name} ${d.last_name} ${d.phone} ${d.email} ${d.vehicle?.plate ?? ""} ${d.number}`.toLowerCase().includes(q)) return false;
+    if (q && !matches(d)) return false;
     switch (filter) {
       case "online": return d.status === "active" && d.presence !== "offline";
       case "available": return d.status === "active" && d.presence === "available";
@@ -56,7 +69,6 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     }
   });
   const active = all.filter((d) => d.status === "active");
-  const one = <T,>(x: T | T[] | null | undefined): T | null => (Array.isArray(x) ? (x[0] ?? null) : (x ?? null));
   // Lignes compactes pour le tableau (composant client) : seuls les champs affichés quittent le serveur
   const rows: DriverTableRow[] = list.map((d) => {
     const x = m.get(d.id);
@@ -82,6 +94,8 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
+      {/* Présence et statuts relus au fil des changements (rafales regroupées, rien onglet caché) */}
+      <LiveRefresh events={["driver.updated"]} pollMs={30_000} debounceMs={2000} />
       <PageHeader
         eyebrow="Flotte"
         title="Chauffeurs"
@@ -90,7 +104,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
           <div className="flex flex-wrap gap-2">
             {/* Lien d'inscription à partager (flotte : « Inscriptions », centrale : « Réseau ») */}
             <Button variant="secondary" asChild>
-              <Link href="/dashboard/network">
+              <Link href="/dashboard/network" prefetch={false}>
                 <Link2 /> Lien d&apos;inscription
               </Link>
             </Button>
@@ -136,6 +150,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
               <Link
                 key={f.key}
                 href={`/dashboard/drivers?filter=${f.key}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+                prefetch={false}
                 className={cn("rounded-lg px-3 py-1.5 text-[12.5px] font-medium", filter === f.key ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg")}
               >
                 {f.label}

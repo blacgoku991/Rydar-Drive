@@ -115,7 +115,7 @@ export function BannedDriversCard({ drivers, canManage, timeZone }: { drivers: B
                 </div>
                 <div className="flex flex-wrap items-center gap-2 sm:pl-[54px]">
                   <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/dashboard/drivers/${d.id}`}><UserRound /> Fiche</Link>
+                    <Link href={`/dashboard/drivers/${d.id}`} prefetch={false}><UserRound /> Fiche</Link>
                   </Button>
                   {canManage && !platform && <LiftBanButton driverId={d.id} driverName={fullName(d)} />}
                 </div>

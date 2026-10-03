@@ -55,7 +55,7 @@ export function DriversTable({ rows, serverNow }: { rows: DriverTableRow[]; serv
           return (
             <TR key={d.id} className="relative">
               <TD>
-                <Link href={`/dashboard/drivers/${d.id}`} className="absolute inset-0" aria-label={`${d.first_name} ${d.last_name}`} />
+                <Link href={`/dashboard/drivers/${d.id}`} prefetch={false} className="absolute inset-0" aria-label={`${d.first_name} ${d.last_name}`} />
                 <div className="flex items-center gap-3">
                   <Avatar name={`${d.first_name} ${d.last_name}`} src={d.photo_url} size={34} />
                   <div className="min-w-0">

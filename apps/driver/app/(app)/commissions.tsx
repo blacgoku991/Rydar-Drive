@@ -154,12 +154,13 @@ export default function Commissions() {
   const orgName = data?.organization.name ?? home?.organization.name ?? "la centrale";
   const open = data?.items.filter((i) => ["due", "declared", "disputed"].includes(i.status)) ?? [];
   const closed = data?.items.filter((i) => !["due", "declared", "disputed"].includes(i.status)) ?? [];
+  // « pour recevoir des courses » seulement si le serveur bloque vraiment (la centrale peut ne pas bloquer les impayés)
   const dueLine = !data
     ? ""
     : disputed.length > 0
-      ? frTypo(`La centrale n'a pas reçu votre paiement de ${price(disputed.reduce((s, i) => s + i.amount_cents, 0))} : réglez-le de nouveau pour recevoir des courses`)
+      ? frTypo(`La centrale n'a pas reçu votre paiement de ${price(disputed.reduce((s, i) => s + i.amount_cents, 0))} : réglez-le de nouveau ${blocked ? "pour recevoir des courses" : "dès que possible"}`)
       : late
-        ? frTypo(`${price(data.summary.overdue_cents)} en retard : réglez maintenant pour recevoir des courses`)
+        ? frTypo(`${price(data.summary.overdue_cents)} en retard : ${blocked ? "réglez maintenant pour recevoir des courses" : "réglez dès que possible"}`)
         : data.summary.next_due_at
           ? dueText(data.summary.next_due_at, tz, now).text
           : `À régler dans les ${data.grace_hours}${NBSP}h après chaque course`;
@@ -308,7 +309,7 @@ export default function Commissions() {
                 <Tile
                   label="En retard"
                   value={price(data.summary.overdue_cents)}
-                  hint={data.summary.overdue_cents > 0 ? "Bloque les courses" : "Aucun retard"}
+                  hint={data.summary.overdue_cents > 0 ? (blocked ? "Bloque les courses" : "À régler") : "Aucun retard"}
                   color={data.summary.overdue_cents > 0 ? colors.red : colors.muted}
                 />
                 <Tile

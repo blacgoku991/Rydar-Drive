@@ -17,7 +17,8 @@ export async function audit(entry: {
     const admin = createAdminClient();
     const ip = await clientIp().catch(() => null);
     const ua = await userAgent().catch(() => null);
-    await admin.from("audit_logs").insert({
+    // supabase-js ne lève pas : l'erreur (base ou réseau) est dans le résultat, jamais perdue sans trace
+    const { error } = await admin.from("audit_logs").insert({
       organization_id: entry.organizationId ?? null,
       actor_user_id: entry.actorUserId ?? null,
       actor_type: entry.actorType ?? "user",
@@ -29,6 +30,7 @@ export async function audit(entry: {
       user_agent: ua,
       metadata: entry.metadata ?? {},
     } as never);
+    if (error) console.error("[audit] échec d'écriture", entry.action, error.message);
   } catch (error) {
     console.error("[audit] échec d'écriture", error);
   }

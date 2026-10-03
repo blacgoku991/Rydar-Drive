@@ -54,17 +54,27 @@ export async function deliverWhatsApp(n: ClaimedWhatsApp, deps: { query: Query; 
 
 let running = false;
 let stopping = false;
+/** Réveil reçu pendant un passage : une nouvelle réservation suit, sans attendre le sondage suivant. */
+let rerun = false;
 
 /** Réserve et envoie les messages WhatsApp en file (SKIP LOCKED : plusieurs workers possibles). */
 export async function processWhatsApp(): Promise<number> {
-  if (running || stopping) return 0;
+  if (stopping) return 0;
+  if (running) {
+    rerun = true;
+    return 0;
+  }
   running = true;
   let total = 0;
   const query: Query = (sql, params) => pool.query(sql, params);
   try {
     while (!stopping) {
+      rerun = false;
       const { rows } = await pool.query<ClaimedWhatsApp>("select * from private.claim_whatsapp($1)", [config.whatsapp.batch]);
-      if (!rows.length) break;
+      if (!rows.length) {
+        if (rerun) continue;
+        break;
+      }
       total += rows.length;
       // Envoi séquentiel : quelques messages par passage, sans dépasser les limites de débit de Meta
       for (const n of rows) {
@@ -74,7 +84,7 @@ export async function processWhatsApp(): Promise<number> {
         });
         if (!res.ok) log("warn", "whatsapp not sent", { id: n.id, type: n.type, error: res.error });
       }
-      if (rows.length < config.whatsapp.batch) break;
+      if (rows.length < config.whatsapp.batch && !rerun) break;
     }
     if (total) log("info", "whatsapp processed", { count: total });
   } finally {

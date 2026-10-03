@@ -160,14 +160,20 @@ describe("flux GPS de la carte : jamais figé", () => {
     expect(live()).toHaveLength(1);
   });
 
-  it("en arrière-plan : aucune relance par le chien de garde (iOS la refuserait)", async () => {
+  it("en arrière-plan : flux de l'interface coupé (plus aucun point publié aux écrans), aucune relance avant le retour", async () => {
     await setup();
     const w = live()[0];
     w.onFix(fix(AVENUE.lat, AVENUE.lng, 5));
     await setAppState("background");
+    expect(w.removed).toBe(true);
+    // Chien de garde : rien en arrière-plan (iOS refuserait un flux « pendant l'utilisation »)
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(w.removed).toBe(false);
     expect(h.watches).toHaveLength(1);
+    expect(live()).toHaveLength(0);
+    // Retour dans l'app : nouveau flux aussitôt
+    await setAppState("active");
+    expect(live()).toHaveLength(1);
+    expect(h.watches).toHaveLength(2);
   });
 
   it("plus aucun écran abonné : flux et chien de garde arrêtés", async () => {
