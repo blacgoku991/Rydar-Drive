@@ -61,6 +61,11 @@ const nextConfig: NextConfig = {
         headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
       },
       {
+        // Images du globe de l'accueil : gardées une semaine (revalidées ensuite), sans aller-retour à chaque visite
+        source: "/marketing/:file*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=604800, stale-while-revalidate=86400" }],
+      },
+      {
         source: "/((?!book|embed).*)",
         headers: [...baseHeaders, { key: "X-Frame-Options", value: "DENY" }, { key: "Content-Security-Policy", value: csp("'none'") }],
       },

@@ -183,12 +183,17 @@ function graticuleGeometry() {
   return g;
 }
 
+/** Durée de l'arrivée du globe (rotation d'entrée), en secondes. */
+const INTRO = 2.8;
+
 type Mount = {
-  /** Image figée (prefers-reduced-motion : reduce). */
+  /** Image figée (prefers-reduced-motion : reduce, ou pause). */
   reducedMotion: boolean;
+  /** Commence après l'arrivée en rotation : la scène remplace en fondu l'image du globe, au même cadrage. */
+  skipIntro?: boolean;
   /** Première image dessinée. */
   onReady: () => void;
-  /** WebGL indisponible, contexte perdu ou erreur de la scène : le parent affiche le repli. */
+  /** WebGL indisponible, contexte perdu ou erreur de la scène : le parent garde l'image du globe. */
   onFail: () => void;
 };
 
@@ -196,7 +201,7 @@ type Mount = {
  * Construit la scène dans `host` et lance l'animation ; renvoie la fonction de démontage. Toute erreur (création,
  * premier rendu, image suivante) libère les ressources déjà créées et appelle onFail, sans rien laisser remonter.
  */
-function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mount): (() => void) | undefined {
+function mountGlobe(host: HTMLDivElement, { reducedMotion, skipIntro, onReady, onFail }: Mount): (() => void) | undefined {
   let renderer: WebGLRenderer;
   try {
     renderer = new WebGLRenderer({ antialias: (window.devicePixelRatio || 1) < 2, alpha: true, powerPreference: "high-performance" });
@@ -537,7 +542,7 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     const carPos = new Vector3();
     const update = (t: number, dt: number) => {
       // Globe : arrivée en rotation, léger balancement, parallaxe du pointeur
-      const intro = reducedMotion ? 1 : easeOut(t / 2.8);
+      const intro = reducedMotion ? 1 : easeOut(t / INTRO);
       globe.rotation.y = baseYaw + (1 - intro) * 1.1 + Math.sin(t * 0.14) * 0.07 * intro;
       const k = 1 - Math.exp(-dt * 3);
       pointer.x += (pointer.tx - pointer.x) * k;
@@ -601,7 +606,7 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     // Boucle : ne tourne que visible à l'écran, onglet affiché, animations autorisées et page immobile
     let raf = 0;
     let last = 0;
-    let clock = 0;
+    let clock = skipIntro ? INTRO : 0;
     let pending = 0;
     let inView = true;
     let scrolling = false;
@@ -677,7 +682,7 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     resize();
     if (reducedMotion) drawStill();
     else {
-      update(0, 0);
+      update(clock, 0);
       render();
     }
 
@@ -750,9 +755,9 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
   return destroy;
 }
 
-type Props = { reducedMotion: boolean; onReady?: () => void; onFail?: () => void };
+type Props = { reducedMotion: boolean; skipIntro?: boolean; onReady?: () => void; onFail?: () => void };
 
-export default function GlobeScene({ reducedMotion, onReady, onFail }: Props) {
+export default function GlobeScene({ reducedMotion, skipIntro = false, onReady, onFail }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ready = useEffectEvent(() => onReady?.());
   const fail = useEffectEvent(() => onFail?.());
@@ -760,8 +765,8 @@ export default function GlobeScene({ reducedMotion, onReady, onFail }: Props) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    return mountGlobe(host, { reducedMotion, onReady: () => ready(), onFail: () => fail() });
-  }, [reducedMotion]);
+    return mountGlobe(host, { reducedMotion, skipIntro, onReady: () => ready(), onFail: () => fail() });
+  }, [reducedMotion, skipIntro]);
 
   return <div ref={hostRef} aria-hidden className="absolute inset-0" />;
 }

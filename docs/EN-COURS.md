@@ -36,8 +36,12 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   configuration comprise, restauration d'essai OK ; seuls 22 / 80 / 443 ouverts, Studio fermé, aucun AAAA.
 - Contrôlé : 797 tests DB, 1 234 unitaires, 19 pages publiques, 10 pages centrale et 17 pages super admin sans erreur.
 - Corrigé ensuite (dépôt) : cartes sans WebGL 2 → message « Carte indisponible » au lieu d'une erreur
-  (`MapUnavailable`, `useMapLibre().failed`) ; globe de l'accueil chargé après le chargement de la page, 30 images/s et
-  densité réduite sur écran tactile, en pause pendant le défilement, figé si l'appareil reste trop lent ; `install.sh`
+  (`MapUnavailable`, `useMapLibre().failed`) ; globe de l'accueil : IMAGE du globe servie avec la page pour tous
+  (`public/marketing/globe-{640,960,1200}.{avif,webp}`, rendu de la scène, 39 à 89 Ko en AVIF), globe animé three.js
+  seulement sur ordinateur bien équipé (souris, 8 cœurs, 8 Go), après le chargement, en fondu par-dessus l'image
+  (Lighthouse mobile : blocage 3 150 → 160 ms, score 52 → 81) ; sur ordinateur : 30 images/s sur écran tactile, pause
+  pendant le défilement, figé si trop lent. Image à régénérer si la scène change (capture Playwright, fond
+  transparent, puis AVIF/WebP) ; `install.sh`
   redémarre Caddy si le Caddyfile monté a changé ; contrôle du plafond de 1 Mo corrigé (DEPLOYMENT § 3).
 - RESTE : parcours chauffeur complet en production (lien d'inscription → validation → en ligne → course →
   encaissement), à refaire dans une nouvelle session sur le VPS ; relecture juridique avant d'activer le réseau partagé.

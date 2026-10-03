@@ -4,10 +4,9 @@ import { Pause, Play } from "lucide-react";
 import dynamic from "next/dynamic";
 import { Component, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { RadarScene } from "./radar-scene";
 
-// three.js n'est téléchargé que si le navigateur sait afficher la scène (WebGL 2), une fois la page chargée et le
-// navigateur au repos (useAfterLoad).
+// three.js n'est téléchargé que sur un ordinateur bien équipé (liveGlobeSnapshot), une fois la page chargée et le
+// navigateur au repos (useAfterLoad). Partout ailleurs : l'image du globe, sans script ni calcul 3D.
 const GlobeScene = dynamic(() => import("./globe-scene"), { ssr: false });
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
@@ -19,25 +18,43 @@ function subscribeReducedMotion(onChange: () => void) {
 }
 const reducedMotionSnapshot = () => window.matchMedia(REDUCED_MOTION).matches;
 
-let webgl2: boolean | undefined;
 /** WebGL 2 disponible (three.js ≥ r163 ne gère plus WebGL 1). Contexte de test libéré aussitôt. */
-function webgl2Snapshot() {
-  if (webgl2 === undefined) {
-    try {
-      const gl = document.createElement("canvas").getContext("webgl2");
-      webgl2 = !!gl;
-      gl?.getExtension("WEBGL_lose_context")?.loseContext();
-    } catch {
-      webgl2 = false;
-    }
+function hasWebgl2() {
+  try {
+    const gl = document.createElement("canvas").getContext("webgl2");
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    return !!gl;
+  } catch {
+    return false;
   }
-  return webgl2;
+}
+
+type NavigatorHints = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean; effectiveType?: string } };
+
+let live: boolean | undefined;
+/**
+ * Globe animé (three.js) seulement sur un ordinateur bien équipé : souris, 8 cœurs ou plus, 8 Go de mémoire ou plus
+ * (quand le navigateur l'indique), ni économie de données ni réseau lent, WebGL 2. Mesuré (Lighthouse, mobile) : la
+ * scène 3D bloque le téléphone environ 3 s ; l'image du globe, rien.
+ */
+function liveGlobeSnapshot() {
+  if (live === undefined) {
+    const nav = navigator as NavigatorHints;
+    live =
+      window.matchMedia("(pointer: fine) and (hover: hover)").matches &&
+      (nav.hardwareConcurrency || 0) >= 8 &&
+      (nav.deviceMemory === undefined || nav.deviceMemory >= 8) &&
+      !nav.connection?.saveData &&
+      !/2g|3g/.test(nav.connection?.effectiveType || "") &&
+      hasWebgl2();
+  }
+  return live;
 }
 const subscribeNever = () => () => {};
 
 /**
  * true une fois la page chargée et le navigateur au repos (2,5 s au plus après le chargement) : three.js et la
- * construction de la scène ne retardent ni l'affichage ni les premiers gestes, même sur un téléphone modeste.
+ * construction de la scène ne retardent ni l'affichage ni les premiers gestes.
  */
 function useAfterLoad(enabled: boolean) {
   const [done, setDone] = useState(false);
@@ -69,7 +86,7 @@ function useAfterLoad(enabled: boolean) {
 /**
  * Frontière d'erreur du globe : module three.js introuvable (réseau instable, page servie par l'ancienne version
  * pendant une mise à jour) ou erreur de la scène. Sans elle, l'erreur remonterait jusqu'à l'écran d'erreur de Next,
- * qui remplacerait toute la page ; ici, le parent affiche simplement le radar CSS.
+ * qui remplacerait toute la page ; ici, l'image du globe reste affichée.
  */
 class GlobeBoundary extends Component<{ onError: () => void; children: ReactNode }, { failed: boolean }> {
   override state = { failed: false };
@@ -87,24 +104,49 @@ class GlobeBoundary extends Component<{ onError: () => void; children: ReactNode
   }
 }
 
+/** Image du globe (rendu de la scène 3D, fond transparent) : AVIF, sinon WebP ; 640, 960 ou 1200 px selon l'écran. */
+function GlobeImage({ hidden }: { hidden: boolean }) {
+  const set = (ext: string) => [640, 960, 1200].map((w) => `/marketing/globe-${w}.${ext} ${w}w`).join(", ");
+  const sizes = "(min-width: 1024px) 600px, 92vw";
+  return (
+    <picture>
+      <source type="image/avif" srcSet={set("avif")} sizes={sizes} />
+      <source type="image/webp" srcSet={set("webp")} sizes={sizes} />
+      <img
+        src="/marketing/globe-960.webp"
+        alt=""
+        width={1200}
+        height={1200}
+        // Plus grand élément du haut de page (LCP) : téléchargé en priorité
+        fetchPriority="high"
+        className={cn(
+          "absolute inset-0 size-full select-none transition-opacity duration-700 ease-out motion-reduce:transition-none",
+          hidden && "opacity-0",
+        )}
+      />
+    </picture>
+  );
+}
+
 /**
- * Visuel du héro : globe 3D (radar de dispatch sur la France) chargé à la demande, silhouette CSS pendant le
- * chargement, radar CSS si WebGL est indisponible, si le module 3D ne se charge pas, en cas d'erreur de la scène
- * ou si le contexte est perdu. Image figée si l'utilisateur a demandé moins d'animations, ou après « Mettre en
- * pause » (animation continue : commande de pause obligatoire, WCAG 2.2.2 / RGAA 13.8).
+ * Visuel du héro : image du globe (radar de dispatch sur la France), servie avec la page. Sur un ordinateur bien
+ * équipé, le globe animé (three.js) la remplace en fondu une fois la page chargée ; s'il ne se charge pas, échoue ou
+ * perd son contexte, l'image reste. Pas d'animation si l'utilisateur en a demandé moins, ou après « Mettre en pause »
+ * (animation continue : commande de pause obligatoire, WCAG 2.2.2 / RGAA 13.8).
  */
 export function HeroVisual({ label, children, className }: { label: string; children?: ReactNode; className?: string }) {
   const reducedMotion = useSyncExternalStore(subscribeReducedMotion, reducedMotionSnapshot, () => false);
-  const canRender = useSyncExternalStore<boolean | null>(subscribeNever, webgl2Snapshot, () => null);
+  const capable = useSyncExternalStore(subscribeNever, liveGlobeSnapshot, () => false);
   const [failed, setFailed] = useState(false);
   const [ready, setReady] = useState(false);
   const [paused, setPaused] = useState(false);
-  const mode = canRender === null ? "pending" : canRender && !failed ? "globe" : "fallback";
-  const loaded = useAfterLoad(mode === "globe");
+  const animated = capable && !reducedMotion && !failed;
+  const loaded = useAfterLoad(animated);
+  const showLive = animated && loaded;
 
   return (
     <div className={cn("relative aspect-[20/23] w-full sm:aspect-square", className)}>
-      {mode === "globe" && !reducedMotion && (
+      {showLive && ready && (
         <button
           type="button"
           onClick={() => setPaused((p) => !p)}
@@ -115,37 +157,15 @@ export function HeroVisual({ label, children, className }: { label: string; chil
         </button>
       )}
       <div role="img" aria-label={label} className="absolute inset-0">
-        {/* Scène carrée en haut du visuel ; sur mobile, la place en dessous accueille la carte d'offre */}
-        <div className="absolute inset-x-0 top-0 aspect-square">
-          {mode !== "fallback" && (
-            <div
-              aria-hidden
-              className={cn(
-                "absolute inset-0 grid place-items-center transition-opacity duration-1000 ease-out motion-reduce:transition-none",
-                ready ? "opacity-0" : "opacity-100",
-              )}
-            >
-              {/* Silhouette du globe (mêmes proportions que la scène : 84 % du côté) */}
-              <div className="relative size-[84%] rounded-full bg-[radial-gradient(circle_at_34%_30%,var(--color-ink-700),var(--color-ink-850)_58%,var(--color-ink-900))] shadow-[0_0_0_1px_rgb(200_240_60/0.08),0_0_80px_-10px_rgb(200_240_60/0.22)]">
-                <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,rgb(158_165_177/0.16)_1px,transparent_1.6px)] bg-[length:11px_11px] [mask-image:radial-gradient(circle_at_40%_36%,black,transparent_72%)]" />
-              </div>
-            </div>
-          )}
-          {mode === "globe" && (
-            <div
-              aria-hidden
-              className={cn("absolute inset-0 transition-opacity duration-1000 ease-out motion-reduce:transition-none", ready ? "opacity-100" : "opacity-0")}
-            >
-              {loaded && (
-                <GlobeBoundary onError={() => setFailed(true)}>
-                  <GlobeScene reducedMotion={reducedMotion || paused} onReady={() => setReady(true)} onFail={() => setFailed(true)} />
-                </GlobeBoundary>
-              )}
-            </div>
-          )}
-          {mode === "fallback" && (
-            <div aria-hidden className="absolute inset-0 grid place-items-center">
-              <RadarScene className="w-[88%]" />
+        {/* Globe carré en haut du visuel ; sur mobile, la place en dessous accueille la carte d'offre */}
+        <div aria-hidden className="absolute inset-x-0 top-0 aspect-square">
+          {/* La scène dessine le globe sur 84 % du côté : même cadrage que l'image */}
+          <GlobeImage hidden={showLive && ready} />
+          {showLive && (
+            <div className={cn("absolute inset-0 transition-opacity duration-700 ease-out", ready ? "opacity-100" : "opacity-0")}>
+              <GlobeBoundary onError={() => setFailed(true)}>
+                <GlobeScene reducedMotion={paused} skipIntro onReady={() => setReady(true)} onFail={() => setFailed(true)} />
+              </GlobeBoundary>
             </div>
           )}
         </div>
