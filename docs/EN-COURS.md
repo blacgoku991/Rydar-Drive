@@ -339,8 +339,10 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
     contesté ; jamais `private.fleet_fee_basis` pour elle ;
   - relances automatiques réseau (`private.settlement_reminders`) : application seulement, 23 h d'écart, 3 au plus,
     A active et chauffeur actif ; clé `network` du résultat seulement s'il y en a ;
-  - Encaissements (`org_settlement_overview`, `org_settlements`, mois) et `organizations_dispatch_model_guard`
-    ignorent les lignes réseau (retour en flotte permis avec des lignes réseau ouvertes) ;
+  - Encaissements (`org_settlement_overview`, `org_settlements`, mois), `organizations_dispatch_model_guard` et
+    `svc_platform_set_fees` (redéfinie en 006900 : le prochain lot qui la touche part de cette version) ignorent les
+    lignes réseau (retour en flotte permis avec des lignes réseau ouvertes) ; `admin_centrale_overview` (super admin)
+    les compte encore dans l'encours de A : à trancher au lot administration ;
   - blocage : `private.network_identity_block` couvre aussi le débiteur réseau de A revenu sous une autre fiche (mêmes
     empreintes, règle `block_unpaid` de A, chez A seulement) ;
   - suppression : `private.driver_deletion_debt` ajoute `network` (dette par créancière), `private.delete_driver_account`

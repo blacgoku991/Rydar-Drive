@@ -1503,6 +1503,7 @@ describe("Encaissements et changement de modèle (§10.5, §14.1 n° 24)", () =>
   it("Encaissements sans ligne réseau ; retour en flotte permis avec des lignes réseau ouvertes, refusé avec des lignes propres", async () => {
     const p = await networkPair({ giver: "centrale" });
     const { settlement } = await sharedRide(p, { payment_method: "cash" });
+    const still = await sharedRide(p, { payment_method: "cash" });
     const overview = await rpc(p.A.ownerId, "org_settlement_overview", [p.A.id]);
     expect(overview.totals).toMatchObject({ to_collect_cents: 0, open_count: 0, declared_count: 0, to_pay_cents: 0 });
     expect(overview.month).toMatchObject({ rides: 0, volume_cents: 0 });
@@ -1511,16 +1512,24 @@ describe("Encaissements et changement de modèle (§10.5, §14.1 n° 24)", () =>
       expect((await rpc(p.A.ownerId, "org_settlements", [p.A.id, filter, null, 100, null])).items, filter).toEqual([]);
     }
 
-    // Retour en flotte : les lignes réseau ne le bloquent pas
+    // Retour en flotte : les lignes réseau ne le bloquent pas — déclencheur ET action du super admin
+    // (svc_platform_set_fees, seul chemin du produit, même garde)
+    const sa = await superAdmin();
+    const toFleet = () => svc("svc_platform_set_fees", [p.A.id, sa, null, null, "fleet", "consent", null, "Demande écrite (test)"]);
+    expect(await toFleet()).toMatchObject({ ok: true });
+    expect((await sql(`select dispatch_model from public.organizations where id = $1`, [p.A.id]))[0].dispatch_model).toBe("fleet");
+    await sql(`update public.organizations set dispatch_model = 'centrale' where id = $1`, [p.A.id]);
     await sql(`update public.organizations set dispatch_model = 'fleet' where id = $1`, [p.A.id]);
     // … elles se règlent toujours (onglet « Réseau partagé »)
     expect(await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "cash", null])).toMatchObject({ ok: true });
-    // Ligne propre ouverte : refus inchangé
+    // Ligne propre ouverte : refus inchangé, la ligne réseau encore ouverte n'est pas comptée
     await sql(`update public.organizations set dispatch_model = 'centrale' where id = $1`, [p.A.id]);
     const own = await createDriver(p.A, { firstName: "Interne" });
     const ownId = await ownLine(p.A, own.id);
+    expect((await sql(`select status from public.ride_settlements where id = $1`, [still.settlement.id]))[0].status).toBe("due");
     const err = await expectPgError(sql(`update public.organizations set dispatch_model = 'fleet' where id = $1`, [p.A.id]));
-    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("SETTLEMENTS_OPEN")]);
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("SETTLEMENTS_OPEN: 1 règlement(s)")]);
+    expect(await toFleet()).toMatchObject({ ok: false, code: "SETTLEMENTS_OPEN", count: 1, field: "dispatchModel" });
     // Ligne propre : comptée dans Encaissements comme avant
     expect((await rpc(p.A.ownerId, "org_settlement_overview", [p.A.id])).totals).toMatchObject({ open_count: 1, to_collect_cents: 1500 });
     expect((await rpc(p.A.ownerId, "org_settlements", [p.A.id, "open", null, 100, null])).items.map((i: any) => i.id)).toEqual([ownId]);

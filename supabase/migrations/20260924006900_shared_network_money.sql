@@ -12,7 +12,8 @@
 -- versement annulé + demande de baisse des frais Rydar), « Relancer » ; blocage d'un débiteur de A revenu par une autre
 -- fiche ; relances automatiques (application seulement) ; frais Rydar d'une course partagée aux termes figés chez A ;
 -- dette rappelée avant la suppression du compte et empreintes gardées pour chaque créancière ; Encaissements et garde
--- de changement de modèle sans les lignes réseau ; mois des relevés (identique chez A et chez B).
+-- de changement de modèle (déclencheur et svc_platform_set_fees) sans les lignes réseau ; mois des relevés (identique
+-- chez A et chez B).
 --
 -- Décisions du propriétaire appliquées :
 --  * Q1 : le chauffeur partenaire est traité comme les chauffeurs de A ; B ne prend rien. Montants = termes figés à
@@ -2475,6 +2476,349 @@ begin
     end if;
   end if;
   return new;
+end;
+$$;
+
+-- Dernière définition : 20260924006600_platform_fee_schedule.sql. Réseau partagé — même garde que le déclencheur
+-- organizations_dispatch_model_guard ci-dessus : le retour au mode flotte ignore les lignes réseau (sinon le super admin
+-- serait refusé là où le déclencheur l'accepte). Corps 006600 gardé À L'IDENTIQUE ; sans ligne réseau : identique.
+create or replace function public.svc_platform_set_fees(
+  p_org uuid,
+  p_actor uuid,
+  p_percent numeric,
+  p_fixed_cents integer,
+  p_dispatch_model text default null,
+  p_mode text default 'notice',
+  p_effective_on date default null,
+  p_consent_note text default null,
+  p_org_legal_version text default null,
+  p_org_legal_effective_on date default null,
+  p_app_url text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  o public.organizations;
+  c public.platform_fee_changes;   -- changement en attente (verrouillé)
+  n public.platform_fee_changes;   -- nouveau changement programmé
+  a public.platform_fee_changes;   -- changement appliqué tout de suite
+  v_mode text := lower(coalesce(nullif(btrim(p_mode), ''), 'notice'));
+  v_note text := left(nullif(btrim(regexp_replace(coalesce(p_consent_note, ''), '\s+', ' ', 'g')), ''), 500);
+  v_percent numeric(5, 2);
+  v_fixed integer := p_fixed_cents;
+  v_model text;
+  v_tz text;
+  v_today date;
+  v_version text := nullif(btrim(coalesce(p_org_legal_version, '')), '');
+  v_rates_given boolean := p_percent is not null or p_fixed_cents is not null;
+  v_accepted boolean;
+  v_increase boolean;
+  v_now_percent numeric(5, 2);
+  v_now_fixed integer;
+  v_model_changed boolean;
+  v_rates_changed boolean;
+  v_schedule boolean := false;
+  v_keep boolean := false;
+  v_close boolean := false;
+  v_pending_on date;
+  v_min date;
+  v_std date;
+  v_30 date;
+  v_reason text;
+  v_on date;
+  v_open integer;
+  v_mail jsonb;
+  v_emails integer := 0;
+  v_code text;
+  v_msg text;
+begin
+  perform private.assert_platform_actor(p_actor);
+  if v_mode not in ('initial', 'notice', 'consent') then
+    return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'mode', 'message', 'Mode de réglage inconnu.');
+  end if;
+  -- Taux : les deux, ou aucun (changement de modèle seul : taux et changement en attente inchangés)
+  if v_rates_given and (p_percent is null or round(p_percent, 2) < 0 or round(p_percent, 2) > 50) then
+    return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'platformFeePercent',
+      'message', private.fr_typo('Frais plateforme (%) : entre 0 et 50.'));
+  end if;
+  v_percent := round(p_percent, 2);
+  if v_rates_given and (v_fixed is null or v_fixed < 0 or v_fixed > 100000) then
+    return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'platformFeeFixedCents',
+      'message', private.fr_typo('Frais fixes par course : entre 0 et 1 000 €.'));
+  end if;
+  if p_dispatch_model is not null and p_dispatch_model not in ('fleet', 'centrale') then
+    return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'dispatchModel', 'message', 'Modèle d''exploitation inconnu.');
+  end if;
+  if v_version is not null and not private.legal_version_ok(v_version) then
+    return jsonb_build_object('ok', false, 'code', 'TERMS_VERSION_INVALID', 'message', 'Version des CGV invalide.');
+  end if;
+
+  -- Organisation puis changement en attente : même ordre de verrouillage que l'annulation et le ménage (« no key
+  -- update », comme un UPDATE : les insertions qui référencent l'organisation, courses ou écritures, ne sont pas bloquées)
+  select * into o from public.organizations where id = p_org for no key update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Organisation introuvable.');
+  end if;
+  select * into c from public.platform_fee_changes x where x.organization_id = p_org and x.status = 'scheduled' for no key update;
+  v_tz := coalesce(o.timezone, 'Europe/Paris');
+  v_today := (now() at time zone v_tz)::date;
+  v_pending_on := (c.effective_at at time zone v_tz)::date;
+  v_accepted := case when v_version is not null then private.org_terms_accepted(p_org, v_version) end;
+  v_model := coalesce(p_dispatch_model, o.dispatch_model);
+  v_model_changed := v_model is distinct from o.dispatch_model;
+  if not v_rates_given then
+    v_percent := o.platform_fee_percent;
+    v_fixed := o.platform_fee_fixed_cents;
+  end if;
+
+  -- Création : seulement une organisation tout juste créée, sans aucune course
+  if v_mode = 'initial' and (o.created_at < now() - interval '1 hour'
+                             or exists (select 1 from public.rides r where r.organization_id = p_org)) then
+    return jsonb_build_object('ok', false, 'code', 'ORG_NOT_NEW',
+      'message', private.fr_typo('Réglage initial réservé à une organisation tout juste créée, sans course : programmez la hausse ou indiquez l''accord écrit.'));
+  end if;
+
+  -- Changement de modèle d'exploitation (hors création) : seulement à la demande de l'organisation ou avec son accord
+  -- écrit (CGV art. 3), noté (date et forme) et journalisé — passer de centrale à flotte peut augmenter ses frais (fixe
+  -- dû même sans prix, plus de plafond au prix)
+  if v_model_changed and v_mode <> 'initial' and (v_note is null or char_length(v_note) < 3) then
+    return jsonb_build_object('ok', false, 'code', 'CONSENT_REQUIRED', 'field', 'consentNote',
+      'message', private.fr_typo('Changement de modèle : précisez la demande ou l''accord écrit de l''organisation (date et forme : e-mail, courrier…), CGV article 3.'));
+  end if;
+
+  -- Retour au mode flotte : refusé tant qu'un règlement chauffeur est ouvert (même garde que le déclencheur
+  -- organizations_dispatch_model_guard, qui reste le dernier rempart)
+  if o.dispatch_model = 'centrale' and v_model = 'fleet' then
+    select count(*) into v_open from public.ride_settlements x
+     where x.organization_id = p_org and x.status in ('due', 'declared', 'disputed')
+       -- Réseau partagé : lignes réseau ignorées (réglées dans l'onglet « Réseau partagé », quel que soit le modèle de A)
+       and x.network_driver_org_id is null;
+    if v_open > 0 then
+      return jsonb_build_object('ok', false, 'code', 'SETTLEMENTS_OPEN', 'count', v_open, 'field', 'dispatchModel',
+        'message', private.fr_typo(format('%s règlement%s chauffeur encore ouvert%s (à régler, signalé%s payé%s ou contesté%s) : la centrale doit les solder ou les annuler dans Encaissements avant le retour au mode flotte.',
+          v_open, case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end,
+          case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end)));
+    end if;
+  end if;
+
+  -- Hausse : l'un des deux taux augmente (une baisse du % compensée par une hausse du fixe reste une hausse)
+  v_increase := v_mode <> 'initial' and (v_percent > o.platform_fee_percent or v_fixed > o.platform_fee_fixed_cents);
+  v_now_percent := o.platform_fee_percent;
+  v_now_fixed := o.platform_fee_fixed_cents;
+
+  if not v_increase then
+    -- Création, baisse ou taux inchangés : tout de suite ; un changement en attente est remplacé (sauf modèle seul,
+    -- sans taux : il reste prévu)
+    v_now_percent := v_percent;
+    v_now_fixed := v_fixed;
+    v_close := v_rates_given and c.id is not null;
+    v_keep := not v_rates_given and c.id is not null;
+  elsif v_mode = 'consent' then
+    -- Accord écrit de l'organisation : tout de suite, note obligatoire
+    if v_note is null or char_length(v_note) < 3 then
+      return jsonb_build_object('ok', false, 'code', 'CONSENT_REQUIRED', 'field', 'consentNote',
+        'message', private.fr_typo('Accord écrit : précisez sa date et sa forme (e-mail, courrier…) pour appliquer la hausse tout de suite.'));
+    end if;
+    v_now_percent := v_percent;
+    v_now_fixed := v_fixed;
+    v_close := c.id is not null;
+  else
+    -- Hausse avec préavis
+    if v_version is null or p_org_legal_effective_on is null then
+      return jsonb_build_object('ok', false, 'code', 'TERMS_VERSION_INVALID',
+        'message', 'Version des CGV et date de leur entrée en vigueur requises pour programmer une hausse.');
+    end if;
+    -- CGV en vigueur ni acceptées ni annoncées à cette organisation : aucune hausse annoncée (elle ne lui sont pas
+    -- opposables) ; accord écrit possible
+    if not v_accepted and not private.org_terms_notified(p_org, v_version) then
+      return jsonb_build_object('ok', false, 'code', 'TERMS_NOT_NOTIFIED', 'field', 'mode', 'terms_accepted', false,
+        'message', private.fr_typo(format('CGV du %s ni acceptées par l''organisation ni annoncées par e-mail : prévenez-la d''abord (Informations légales, « Prévenir par e-mail »), ou appliquez la hausse sur son accord écrit.',
+          private.fr_long_date(v_version::date))));
+    end if;
+    -- Annonce par e-mail impossible (CGV art. 5 : annoncée au propriétaire par e-mail, à défaut à l'organisation)
+    if private.org_owner_emails(p_org) is null then
+      return jsonb_build_object('ok', false, 'code', 'NO_EMAIL', 'field', 'mode',
+        'message', private.fr_typo('Aucune adresse e-mail valide pour le propriétaire ni pour l''organisation : corrigez l''adresse pour annoncer la hausse, ou appliquez-la sur son accord écrit.'));
+    end if;
+    v_std := private.platform_fee_min_effective_on(p_org, v_version, p_org_legal_effective_on);
+    v_30 := private.platform_fee_min_effective_on(p_org, null, null);
+    v_min := v_std;
+    v_reason := case when v_std > v_30 then 'terms_effective' else 'notice_30_days' end;
+    -- Hausse moindre ou égale à celle déjà annoncée : la date annoncée reste possible
+    if c.id is not null and v_percent <= c.to_percent and v_fixed <= c.to_fixed_cents and v_pending_on < v_min then
+      v_min := v_pending_on;
+      v_reason := 'already_announced';
+    end if;
+    -- Par défaut : la date déjà annoncée quand elle est permise, sinon la plus proche possible
+    v_on := coalesce(p_effective_on, case when c.id is not null then greatest(v_min, v_pending_on) else v_min end);
+    if v_on < v_min then
+      return jsonb_build_object('ok', false, 'code', 'NOTICE_TOO_SHORT', 'field', 'effectiveOn',
+        'min_effective_on', v_min, 'min_reason', v_reason, 'terms_accepted', v_accepted,
+        'message', private.fr_typo(format('Préavis insuffisant : cette hausse peut s''appliquer au plus tôt le %s (%s). Pour l''appliquer avant, indiquez l''accord écrit de l''organisation.',
+          to_char(v_min, 'DD/MM/YYYY'),
+          case v_reason
+            when 'terms_effective' then 'entrée en vigueur des CGV, que l''organisation n''a pas encore acceptées'
+            when 'already_announced' then 'date déjà annoncée'
+            else '30 jours après l''annonce' end)));
+    end if;
+    if v_on > v_today + 366 then
+      return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'effectiveOn',
+        'message', private.fr_typo('Date d''effet trop lointaine : un an au plus.'));
+    end if;
+    if c.id is not null and c.to_percent = v_percent and c.to_fixed_cents = v_fixed and v_pending_on = v_on then
+      v_keep := true;
+    else
+      v_schedule := true;
+      v_close := c.id is not null;
+    end if;
+  end if;
+
+  v_rates_changed := (v_now_percent, v_now_fixed) is distinct from (o.platform_fee_percent, o.platform_fee_fixed_cents);
+  perform private.set_actor('super_admin', p_actor);
+
+  -- Modèle et / ou taux appliqués tout de suite (diffusion « platform.updated » model / rates par le déclencheur)
+  if v_model_changed or v_rates_changed then
+    update public.organizations
+       set dispatch_model = v_model, platform_fee_percent = v_now_percent, platform_fee_fixed_cents = v_now_fixed
+     where id = p_org;
+  end if;
+
+  if v_close then
+    update public.platform_fee_changes
+       set status = 'replaced', closed_at = now(), closed_by = p_actor,
+           close_reason = case when v_schedule then 'Remplacé par un nouveau changement programmé'
+                               when v_rates_changed then 'Remplacé par des frais appliqués tout de suite'
+                               else 'Annulé : frais actuels maintenus' end
+     where id = c.id;
+  end if;
+
+  if v_rates_changed then
+    insert into public.platform_fee_changes (organization_id, mode, status, from_percent, from_fixed_cents, to_percent,
+      to_fixed_cents, effective_at, consent_note, terms_version, terms_accepted, created_by, applied_at)
+    values (p_org, case when v_mode = 'initial' then 'initial' when v_increase then 'consent' else 'decrease' end, 'applied',
+      o.platform_fee_percent, o.platform_fee_fixed_cents, v_now_percent, v_now_fixed, now(),
+      case when v_increase then v_note end, v_version, v_accepted, p_actor, now())
+    returning * into a;
+  end if;
+
+  if v_schedule then
+    -- Date gardée d'une hausse déjà annoncée, plus proche que 30 jours : le préavis repose sur la première annonce
+    insert into public.platform_fee_changes (organization_id, mode, status, from_percent, from_fixed_cents, to_percent,
+      to_fixed_cents, effective_at, terms_version, terms_accepted, created_by, notice_change_id)
+    values (p_org, 'notice', 'scheduled', o.platform_fee_percent, o.platform_fee_fixed_cents, v_percent, v_fixed,
+      v_on::timestamp at time zone v_tz, v_version, v_accepted, p_actor,
+      case when v_on < v_std then coalesce(c.notice_change_id, c.id) end)
+    returning * into n;
+  end if;
+
+  -- E-mails aux propriétaires : annonce, confirmation d'une hausse sur accord écrit, frais à l'ouverture du compte, ou
+  -- annulation d'une annonce
+  if v_schedule then
+    v_mail := private.platform_fee_change_email('notice', p_org, v_model, o.platform_fee_percent, o.platform_fee_fixed_cents,
+      v_percent, v_fixed, v_on, case when v_close then v_pending_on end, p_app_url);
+    v_emails := private.queue_org_emails(p_org, 'platform_fee_change', v_mail ->> 'subject', v_mail ->> 'body', n.id, p_actor);
+    update public.platform_fee_changes set emails_queued = v_emails where id = n.id returning * into n;
+  elsif a.mode in ('consent', 'initial') then
+    v_mail := private.platform_fee_change_email(a.mode, p_org, v_model, a.from_percent, a.from_fixed_cents,
+      a.to_percent, a.to_fixed_cents, v_today, case when v_close then v_pending_on end, p_app_url);
+    v_emails := private.queue_org_emails(p_org, 'platform_fee_change', v_mail ->> 'subject', v_mail ->> 'body', a.id, p_actor);
+    update public.platform_fee_changes set emails_queued = v_emails where id = a.id returning * into a;
+  elsif v_close then
+    v_mail := private.platform_fee_change_email('cancel', p_org, v_model, o.platform_fee_percent, o.platform_fee_fixed_cents,
+      v_now_percent, v_now_fixed, null, v_pending_on, p_app_url);
+    v_emails := private.queue_org_emails(p_org, 'platform_fee_change', v_mail ->> 'subject', v_mail ->> 'body', c.id, p_actor);
+  end if;
+
+  -- Temps réel (identifiants seulement) : annonce ou annulation sans changement de taux
+  if v_schedule then
+    perform private.broadcast_platform(p_org, 'rates_scheduled');
+  elsif v_close and not v_rates_changed then
+    perform private.broadcast_platform(p_org, 'rates_cancelled');
+  end if;
+
+  -- Journal d'audit
+  if v_model_changed or v_rates_changed then
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (p_org, 'super_admin', p_actor,
+      case when v_model_changed then 'organization.dispatch_model_changed' else 'organization.platform_fee_changed' end,
+      'organizations', p_org::text,
+      case when v_model_changed or a.mode = 'consent' then 'warning' else 'info' end,
+      jsonb_build_object(
+        'before', jsonb_build_object('dispatch_model', o.dispatch_model, 'platform_fee_percent', o.platform_fee_percent,
+          'platform_fee_fixed_cents', o.platform_fee_fixed_cents),
+        'after', jsonb_build_object('dispatch_model', v_model, 'platform_fee_percent', v_now_percent,
+          'platform_fee_fixed_cents', v_now_fixed),
+        'mode', a.mode, 'change_id', a.id, 'consent_note', a.consent_note,
+        -- Demande ou accord écrit de l'organisation pour le changement de modèle (CGV art. 3)
+        'model_note', case when v_model_changed then v_note end,
+        'terms_version', v_version, 'terms_accepted', v_accepted,
+        'emails', case when a.mode in ('consent', 'initial') then v_emails end,
+        -- Lien d'inscription conservé tel quel lors d'un changement de modèle (20260924006300)
+        'join_link_enabled', o.join_enabled));
+  end if;
+  if v_schedule then
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (p_org, 'super_admin', p_actor, 'organization.platform_fee_scheduled', 'organizations', p_org::text, 'info',
+      jsonb_build_object('change_id', n.id,
+        'from', jsonb_build_object('platform_fee_percent', n.from_percent, 'platform_fee_fixed_cents', n.from_fixed_cents),
+        'to', jsonb_build_object('platform_fee_percent', n.to_percent, 'platform_fee_fixed_cents', n.to_fixed_cents),
+        'effective_at', n.effective_at, 'effective_on', v_on, 'min_effective_on', v_min, 'min_reason', v_reason,
+        'notice_change_id', n.notice_change_id,
+        'terms_version', v_version, 'terms_accepted', v_accepted, 'emails', v_emails,
+        'replaced_change_id', case when v_close then c.id end));
+  end if;
+  if v_close then
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (p_org, 'super_admin', p_actor, 'organization.platform_fee_schedule_cancelled', 'organizations', p_org::text, 'info',
+      jsonb_build_object('change_id', c.id, 'reason', 'replaced',
+        'to', jsonb_build_object('platform_fee_percent', c.to_percent, 'platform_fee_fixed_cents', c.to_fixed_cents),
+        'effective_at', c.effective_at, 'replaced_by', coalesce(n.id, a.id),
+        'emails', case when not v_schedule and a.mode is distinct from 'consent' then v_emails end));
+  end if;
+
+  v_code := case when v_schedule then 'SCHEDULED'
+                 when v_model_changed or v_rates_changed then 'APPLIED'
+                 when v_close then 'CANCELLED'
+                 else 'UNCHANGED' end;
+  v_msg := case v_code
+    when 'SCHEDULED' then
+      format('Hausse programmée : %s à partir du %s. ', private.platform_fee_terms_text(v_percent, v_fixed), to_char(v_on, 'DD/MM/YYYY'))
+      || case when v_emails > 0 then format('Annonce envoyée par e-mail au propriétaire (%s e-mail%s).', v_emails, case when v_emails > 1 then 's' else '' end)
+              else 'Aucune adresse e-mail valide pour le propriétaire : prévenez l''organisation vous-même.' end
+    when 'APPLIED' then
+      concat_ws(' ',
+        case when v_model_changed then 'Modèle d''exploitation enregistré.' end,
+        case when a.mode = 'consent' then format('Accord écrit enregistré : %s dès maintenant.', private.platform_fee_terms_text(v_now_percent, v_now_fixed))
+                                         || case when v_emails > 0 then ' Confirmation envoyée par e-mail au propriétaire.' else '' end
+             when a.mode = 'initial' then format('Frais par course : %s.', private.platform_fee_terms_text(v_now_percent, v_now_fixed))
+                                         || case when v_emails > 0 then ' Communiqués par e-mail au propriétaire.'
+                                                 else ' Aucune adresse e-mail valide : communiquez-les vous-même à l''organisation.' end
+             when v_rates_changed then format('Frais par course enregistrés dès maintenant : %s.', private.platform_fee_terms_text(v_now_percent, v_now_fixed)) end,
+        case when v_close and a.mode is distinct from 'consent' then 'Le changement programmé est annulé.' end,
+        case when v_keep then format('Le changement programmé reste prévu le %s.', to_char(v_pending_on, 'DD/MM/YYYY')) end)
+    when 'CANCELLED' then
+      format('Changement programmé annulé. Frais inchangés : %s.', private.platform_fee_terms_text(v_now_percent, v_now_fixed))
+    else
+      'Aucun changement.' || case when v_keep then format(' Le changement programmé reste prévu le %s.', to_char(v_pending_on, 'DD/MM/YYYY')) else '' end
+  end;
+
+  return jsonb_build_object(
+    'ok', true,
+    'code', v_code,
+    'message', private.fr_typo(v_msg),
+    'dispatch_model', v_model,
+    'fee_percent', v_now_percent,
+    'fee_fixed_cents', v_now_fixed,
+    'scheduled_change', private.platform_scheduled_change_json(p_org, v_tz),
+    'applied_change_id', a.id,
+    'replaced_change_id', case when v_close then c.id end,
+    'emails_queued', v_emails,
+    'terms_accepted', v_accepted,
+    'min_effective_on', v_min,
+    'min_reason', v_reason);
 end;
 $$;
 
