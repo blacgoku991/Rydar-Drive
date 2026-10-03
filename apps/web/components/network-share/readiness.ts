@@ -145,6 +145,14 @@ export function orgReadinessView(r: OrgNetworkReadiness, model: DispatchModel, t
   return { sides: { out: side("out"), in: side("in") }, items, idle: states.out === "off" && states.in === "off" };
 }
 
+/**
+ * Partage demandé (actif ou en attente) : le commentaire d'une nouvelle course peut être lu par un chauffeur partenaire
+ * si elle part au réseau (avertissement du formulaire, S18). Réseau fermé ou partage désactivé : false.
+ */
+export function shareOutRequested(r: OrgNetworkReadiness | null | undefined): boolean {
+  return !!r?.enabled && sideState(r, "out") !== "off";
+}
+
 /** Phrase courte d'un sens demandé : « Actif » ou « En attente : {premier manque} ». */
 export function sideSummary(r: OrgNetworkReadiness, side: ReadinessSide): string {
   const state = sideState(r, side);

@@ -36,6 +36,24 @@ import type {
  */
 export const NETWORK_TERMS_VERSION = "2026-11-01";
 
+/**
+ * Ajout web (lot 8) : textes de la convention (/reseau-partage/conditions) et des conditions chauffeur
+ * (/reseau-partage/chauffeur) relus par le juriste (spec §7.7). false : bandeau « Texte en cours de relecture
+ * juridique » sur les deux pages publiques (et l'écran des conditions de l'app). Passe à true avec la version relue.
+ */
+export const NETWORK_TERMS_REVIEWED: boolean = false;
+
+/**
+ * Positionnement de Rydar (spec §7.1, U1), formule unique de la convention, des CGV, de l'interface et des docs.
+ * Ajout web (lot 8) : texte partagé par les pages publiques, /admin/reseau et l'app.
+ */
+export const NETWORK_POSITIONING =
+  "Le réseau partagé est une option du logiciel de dispatch : l'organisation diffuse elle-même aux chauffeurs des " +
+  "organisations ayant accepté la même convention les courses qu'aucun de ses chauffeurs n'a acceptées, selon ses propres " +
+  "réglages ; l'ordre est fixe et neutre (ses chauffeurs, puis la distance) ; Rydar ne choisit ni l'organisation " +
+  "partenaire ni le chauffeur, n'est partie ni au contrat de transport ni à la sous-traitance, n'encaisse aucune somme et " +
+  "ne garantit ni l'exécution ni le paiement.";
+
 /** Documents du réseau dans legal_acceptances (acceptés par RPC dédiées, jamais par accept_legal_documents). */
 export const NETWORK_DOCUMENTS = {
   /** Convention entre organisations (owner / admin) */
@@ -677,6 +695,24 @@ export interface NetworkRideEventData {
   "dispatch.network": { partners_nearby: number; stage?: NetworkShareStage; cycle?: number };
   "dispatch.network_skipped": { reason: NetworkSkipReason };
   "dispatch.network_error": { errors: number };
+}
+
+/**
+ * Ajout web (lot 8, facultatif) : données de « dispatch.no_driver » quand la course est passée par le réseau
+ * (network_at posé), en plus de waves / last_radius_m / closed_offers : compteur seulement, jamais d'identifiant de
+ * partenaire. Le message est complété par « , réseau partagé : n chauffeurs partenaires sollicités » (spec §9.2).
+ * Absent : l'alerte du tableau de bord reconnaît le réseau à ce message.
+ */
+export interface NetworkNoDriverEventData {
+  network_partners_offered?: number;
+}
+
+/** « dispatch.no_driver » passé par le réseau (spec §9.2) : nombre de partenaires sollicités, sinon null. */
+export function networkPartnersFromNoDriver(message: string | null | undefined, data?: NetworkNoDriverEventData | null): number | null {
+  const n = data?.network_partners_offered;
+  if (typeof n === "number" && Number.isFinite(n) && n >= 0) return n;
+  const m = /réseau partagé\s*:\s*(\d+)\s+chauffeurs?\s+partenaires?/i.exec(message ?? "");
+  return m ? Number(m[1]) : null;
 }
 
 /** Actions d'audit (audit_logs.action) du réseau. */
@@ -1589,6 +1625,19 @@ export const NETWORK_RPC_ACCESS: Record<NetworkRpcName, NetworkRpcAccess> = {
 };
 
 export const NETWORK_RPC_NAMES = Object.keys(NETWORK_RPC_ACCESS) as NetworkRpcName[];
+
+/**
+ * Ajout web (lot 8) — organisation A SUSPENDUE (C12, page /suspended/reseau-partage) : son propriétaire et ses
+ * administrateurs gardent l'accès à ses règlements réseau ouverts. Le SQL accepte ces appels pour owner / admin d'une
+ * organisation `suspended` (assert_network_creditor ; lecture comprise : org_network_summary et org_network_given,
+ * « member » pour une organisation active, réservées à owner / admin quand elle est suspendue), et pour les lignes
+ * réseau de confirm_settlements, dispute_settlement, waive_settlement et reopen_settlement. Toute autre RPC réseau, et
+ * tout dispatcher, restent refusés pour une organisation suspendue.
+ */
+export const NETWORK_SUSPENDED_CREDITOR_RPCS = [
+  "org_network_summary", "org_network_given", "network_partner_names", "org_network_payout_info", "validate_network_ride",
+  "contest_network_ride", "confirm_settlements", "dispute_settlement", "waive_settlement", "reopen_settlement",
+] as const;
 
 // =============================================================================
 // Codes d'erreur SQL du réseau (libellés : ERROR_MESSAGES de domain.ts)

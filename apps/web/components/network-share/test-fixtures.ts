@@ -1,7 +1,7 @@
 // Données simulées des RPC du réseau partagé (tests unitaires seulement ; formes du contrat packages/shared/src/network.ts).
 import {
   networkTerms,
-  type NetworkGivenItem, type NetworkReceivedItem, type NetworkTermsGiverInput, type OrgNetworkReadiness, type PaymentMethod,
+  type NetworkGivenItem, type NetworkReceivedItem, type NetworkTermsGiverInput, type OrgNetworkReadiness, type OrgNetworkRide, type PaymentMethod,
   type Settlement, type SettlementNetworkInfo, type SettlementStatus,
 } from "@rydar/shared";
 
@@ -166,5 +166,59 @@ export function receivedFromGiven(g: NetworkGivenItem, giverName = "Taxi A"): Ne
       : null,
     to_check: g.execution.suspect_reasons.length > 0,
     contested: !!g.execution.contested_at,
+  };
+}
+
+/** Bloc « Réseau partagé » de la fiche course (org_network_ride) de la course confiée `g`. */
+export function orgNetworkRide(
+  g: NetworkGivenItem = givenItem(),
+  over: Partial<Omit<OrgNetworkRide, "execution">> & { execution?: Partial<NonNullable<OrgNetworkRide["execution"]>> | null } = {},
+): OrgNetworkRide {
+  const { execution: execOver, ...rest } = over;
+  const execution: OrgNetworkRide["execution"] =
+    execOver === null
+      ? null
+      : {
+          ...g.execution,
+          checks: {
+            vtc_card_number: "VTC-075-123456",
+            vtc_card_expires_on: "2027-03-31",
+            insurance_expires_on: "2026-12-31",
+            vehicle_registration_expires_on: null,
+            driving_license_expires_on: "2030-01-01",
+            verified_at: "2026-09-01T08:00:00.000Z",
+          },
+          driver_phone: "+33612345678",
+          driver_phone_until: "2026-09-22T10:00:00.000Z",
+          client_data: { reads: 0, first_read_at: null, last_read_at: null },
+          ...execOver,
+        };
+  return {
+    ride_id: g.ride.id,
+    share: {
+      status: g.ride.status === "COMPLETED" ? "completed" : "accepted",
+      cycle: 1,
+      stage: "instant",
+      opened_at: "2026-09-20T08:55:00.000Z",
+      partners_offered: 3,
+      closed_at: null,
+      closed_reason: null,
+    },
+    execution,
+    operator: {
+      organization_id: ORG_B,
+      name: "Flotte B",
+      legal_name: "Flotte B SAS",
+      siret: "12345678900012",
+      vtc_registration: "EVTC075190001",
+      phone: "+33144556677",
+      email: "contact@flotte-b.fr",
+      dispatch_model: "fleet",
+      driver_operator_registration: null,
+    },
+    previous: [],
+    settlement: g.settlement,
+    can: { remove: false, close: false, validate: false, contest: true, exclude_driver: true, exclude_partner: true },
+    ...rest,
   };
 }

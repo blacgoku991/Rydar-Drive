@@ -32,6 +32,7 @@ export function RideActions({
   assignOpen: assignOpenProp,
   onAssignOpenChange,
   assignLabel = "Attribuer",
+  assignDescription,
 }: {
   compact?: boolean;
   rideId: string;
@@ -44,6 +45,8 @@ export function RideActions({
   assignOpen?: boolean;
   onAssignOpenChange?: (open: boolean) => void;
   assignLabel?: string;
+  /** Texte de la fenêtre d'attribution (ex. course tenue par un chauffeur partenaire : il est prévenu du retrait). */
+  assignDescription?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -101,9 +104,10 @@ export function RideActions({
         <DialogContent
           title={assignLabel === "Réattribuer" ? `Réattribuer la course #${number}` : "Attribution manuelle"}
           description={
-            assignLabel === "Réattribuer"
+            assignDescription ??
+            (assignLabel === "Réattribuer"
               ? "Le chauffeur actuel est prévenu que la course lui est retirée ; le nouveau reçoit immédiatement une notification."
-              : "Le chauffeur reçoit immédiatement une notification. Les offres en cours sont fermées."
+              : "Le chauffeur reçoit immédiatement une notification. Les offres en cours sont fermées.")
           }
           size="lg"
         >

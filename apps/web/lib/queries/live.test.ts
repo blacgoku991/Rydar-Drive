@@ -9,7 +9,7 @@ type Result = { data: unknown; error: { message: string } | null };
 type Handler = (calls: Call[]) => Result;
 
 /** Faux client supabase-js : chaque requête enregistre ses appels, `await` la résout via le gestionnaire de la table. */
-function fakeClient(tables: Record<string, Handler>): SupabaseClient {
+function fakeClient(tables: Record<string, Handler>, rpc?: (fn: string, args: Record<string, unknown>) => Result): SupabaseClient {
   const query = (table: string) => {
     const calls: Call[] = [];
     const builder: any = new Proxy(
@@ -33,7 +33,10 @@ function fakeClient(tables: Record<string, Handler>): SupabaseClient {
     );
     return builder;
   };
-  return { from: query, rpc: async () => ({ data: null, error: null }) } as unknown as SupabaseClient;
+  return {
+    from: query,
+    rpc: async (fn: string, args: Record<string, unknown>) => (rpc ? rpc(fn, args) : { data: null, error: null }),
+  } as unknown as SupabaseClient;
 }
 
 const arg = (calls: Call[], method: string) => calls.find((c) => c[0] === method);
@@ -128,5 +131,77 @@ describe("getLiveSnapshot", () => {
       ride_offers: () => ({ data: null, error: { message: "fetch failed" } }),
     });
     await expect(getLiveSnapshot(client, "org")).rejects.toThrow(/offres/);
+  });
+});
+
+describe("getLiveSnapshot — réseau partagé (lu seulement s'il sert)", () => {
+  const ORG = "org-a";
+  const calls: string[] = [];
+  const rpc = (replies: Record<string, Result>) => (fn: string) => {
+    calls.push(fn);
+    return replies[fn] ?? { data: null, error: null };
+  };
+  const located = { lat: 48.85, lng: 2.35, heading: null, speed_mps: null, updated_at: "2026-10-01T07:59:00Z" };
+
+  it("organisation qui n'a jamais touché le réseau : aucune lecture réseau, instantané inchangé", async () => {
+    calls.length = 0;
+    const client = fakeClient(
+      {
+        drivers: () => ({ data: [{ id: "d1", current_ride_id: "r1", location: located }], error: null }),
+        rides: (c) => (arg(c, "not") ? { data: [{ ...ride("r1", "ACCEPTED"), driver_id: "d1", driver_org_id: ORG, network_at: null }], error: null } : { data: [], error: null }),
+      },
+      rpc({}),
+    );
+    const snap = await getLiveSnapshot(client, ORG);
+    expect(calls).toEqual(["org_kpis"]);
+    expect("partners" in snap).toBe(false);
+    expect(snap.drivers[0]!.location).toEqual(located);
+    expect(snap.drivers[0]!.network_giver).toBeUndefined();
+  });
+
+  it("A : course tenue par le chauffeur d'une autre organisation → noms des partenaires (« Réseau · Flotte B »)", async () => {
+    calls.length = 0;
+    const client = fakeClient(
+      { rides: (c) => (arg(c, "not") ? { data: [{ ...ride("r1", "ACCEPTED"), driver_id: "x9", driver_org_id: "org-b" }], error: null } : { data: [], error: null }) },
+      rpc({ network_partner_names: { data: { "org-b": "Flotte B" }, error: null } }),
+    );
+    const snap = await getLiveSnapshot(client, ORG);
+    expect(calls.sort()).toEqual(["network_partner_names", "org_kpis"]);
+    expect(snap.partners).toEqual({ "org-b": "Flotte B" });
+  });
+
+  it("B : chauffeur en course partenaire → « En course partenaire (Taxi A) », jamais de position (Q5)", async () => {
+    calls.length = 0;
+    const client = fakeClient(
+      {
+        drivers: () => ({ data: [{ id: "d1", current_ride_id: "ride-de-a", location: located }, { id: "d2", current_ride_id: null, location: located }], error: null }),
+        rides: () => ({ data: [], error: null }),
+      },
+      rpc({
+        org_network_activity: {
+          data: { on_ride: [{ driver: { id: "d1", number: 12, first_name: "Karim", last_name: "Benali" }, giver: { id: "org-a", name: "Taxi A" }, phase: "DRIVER_EN_ROUTE", since: "2026-10-01T07:50:00Z" }], scheduled: [] },
+          error: null,
+        },
+      }),
+    );
+    const snap = await getLiveSnapshot(client, "org-b");
+    expect(calls.sort()).toEqual(["org_kpis", "org_network_activity"]);
+    const byId = Object.fromEntries(snap.drivers.map((d) => [d.id, d]));
+    expect(byId.d1).toMatchObject({ network_giver: "Taxi A", location: null });
+    expect(byId.d2!.location).toEqual(located);
+  });
+
+  it("lecture réseau en échec : l'instantané est servi quand même, sans étiquette", async () => {
+    const client = fakeClient(
+      {
+        drivers: () => ({ data: [{ id: "d1", current_ride_id: "ride-de-a", location: null }], error: null }),
+        rides: (c) => (arg(c, "not") ? { data: [{ ...ride("r1", "ACCEPTED"), driver_id: "x9", driver_org_id: "org-b" }], error: null } : { data: [], error: null }),
+      },
+      () => ({ data: null, error: { message: "function org_network_activity does not exist" } }),
+    );
+    const snap = await getLiveSnapshot(client, ORG);
+    expect(snap.rides).toHaveLength(1);
+    expect("partners" in snap).toBe(false);
+    expect(snap.drivers[0]!.network_giver).toBeUndefined();
   });
 });

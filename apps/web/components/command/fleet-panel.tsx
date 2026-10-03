@@ -125,11 +125,16 @@ const FleetRow = memo(function FleetRow({
         <span className="block truncate text-[13px] font-medium text-fg">
           {d.first_name} {d.last_name}
         </span>
-        <span className="block truncate text-[11.5px] text-fg-subtle">
-          {rideNumber != null ? `${PRESENCE_META[d.presence].label} · #${rideNumber}` : d.vehicle ? `${d.vehicle.model} · ${d.vehicle.plate}` : "Sans véhicule"}
-        </span>
+        {d.network_giver ? (
+          // Réseau partagé : course d'une autre organisation, sans position (Q5)
+          <span className="block truncate text-[11.5px] text-violet">En course partenaire ({d.network_giver})</span>
+        ) : (
+          <span className="block truncate text-[11.5px] text-fg-subtle">
+            {rideNumber != null ? `${PRESENCE_META[d.presence].label} · #${rideNumber}` : d.vehicle ? `${d.vehicle.model} · ${d.vehicle.plate}` : "Sans véhicule"}
+          </span>
+        )}
       </span>
-      <SeenAgo d={d} fallbackNow={fallbackNow} staleMs={staleMs} />
+      {d.network_giver ? <span className="shrink-0 text-[11px] text-fg-subtle">—</span> : <SeenAgo d={d} fallbackNow={fallbackNow} staleMs={staleMs} />}
     </button>
   );
 });

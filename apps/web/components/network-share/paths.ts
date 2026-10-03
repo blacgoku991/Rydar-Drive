@@ -63,10 +63,17 @@ export function parseNetworkShareParams(sp: NetworkShareSearchParams): NetworkSh
   };
 }
 
-/** Lien vers un sous-onglet (paramètres par défaut omis), avec ancre facultative. */
+/**
+ * Organisation SUSPENDUE (C12) : ses règlements réseau ouverts, hors du tableau de bord (owner / admin). Même contrat
+ * d'URL que « Courses confiées » (filtre, partenaire, mois, n).
+ */
+export const NETWORK_SUSPENDED_PATH = "/suspended/reseau-partage";
+
+/** Lien vers un sous-onglet (paramètres par défaut omis), avec ancre facultative ; `base` : autre page (suspendue). */
 export function networkShareHref(
   p: { tab: NetworkShareTab; filter?: string | null; partner?: string | null; month?: string | null; n?: number | null },
   hash?: string,
+  base: string = NETWORK_SHARE_PATH,
 ): string {
   const q = new URLSearchParams();
   if (p.tab !== "confiees") q.set("tab", p.tab);
@@ -75,7 +82,7 @@ export function networkShareHref(
   if (p.month) q.set("mois", p.month);
   if (p.n && p.n > NETWORK_LIST_PAGE) q.set("n", String(Math.min(NETWORK_LIST_MAX, p.n)));
   const s = q.toString();
-  return `${NETWORK_SHARE_PATH}${s ? `?${s}` : ""}${hash ? `#${hash}` : ""}`;
+  return `${base}${s ? `?${s}` : ""}${hash ? `#${hash}` : ""}`;
 }
 
 /** Export CSV / relevé mensuel : vue (confiees | recues), mois (obligatoire), partenaire facultatif. */

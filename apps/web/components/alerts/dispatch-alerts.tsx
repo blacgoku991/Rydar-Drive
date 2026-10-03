@@ -10,6 +10,9 @@
 //  - `driver.application` (candidature par le lien d'inscription) ; `driver.flagged` (appareil d'un compte banni) ;
 //  - `platform.updated` (frais plateforme dus à Rydar, owner / admin) : paiement reçu / non reçu, relance, avoir,
 //    baisse acceptée / refusée ; rien pour « fee » (chaque course terminée). Page Encaissements relue.
+// Réseau partagé (20260924006700, jamais émis tant que le réseau est fermé) : `dispatch.network` en information
+// (course proposée aux chauffeurs partenaires), « aucun chauffeur » qui mentionne le réseau, acceptation par un
+// chauffeur partenaire (libellé court) ; règlements des courses confiées → onglet « Réseau partagé » (jamais WhatsApp).
 import {
   DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatPhone, formatPrice, formatRideDate, formatTime,
   shortAddress,
@@ -18,16 +21,18 @@ import {
   type RideAlertKind, type RideAlertSeverity, type SettlementDirection, type SettlementEvent,
 } from "@rydar/shared";
 import {
-  AlertTriangle, ArrowUpRight, Bell, BellOff, BellRing, Check, CheckCheck, CheckCircle2, CircleSlash, Clock3, FileText, Flag, Globe, HandCoins, KeyRound, Landmark,
-  MessageSquareText, Monitor, Plane, PlaneLanding, Reply, RotateCw, ShieldAlert, UserPlus, Volume2, VolumeX, X, type LucideIcon,
+  AlertTriangle, ArrowLeftRight, ArrowUpRight, Bell, BellOff, BellRing, Check, CheckCheck, CheckCircle2, CircleSlash, Clock3, FileText, Flag, Globe, HandCoins, KeyRound,
+  Landmark, MessageSquareText, Monitor, Plane, PlaneLanding, Reply, RotateCw, ShieldAlert, UserPlus, Volume2, VolumeX, X, type LucideIcon,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { Popover as P } from "radix-ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { confirmNetworkSettlement } from "@/app/dashboard/reseau-partage/actions";
 import { redispatchRide } from "@/app/dashboard/rides/actions";
 import { confirmSettlements } from "@/app/dashboard/settlements/actions";
 import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
+import { acceptedBy, networkProposedAlert, networkSettlementLink, noDriverNetworkLine } from "@/components/network-share/alerts";
 import { feeTermsText } from "@/components/platform-fees/org-platform-format";
 import { isPlatformFeesPath, platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
@@ -41,7 +46,9 @@ import { cn } from "@/lib/utils";
 export type AlertKind =
   | "new" | "accepted" | "no_driver" | "escalated" | "cancelled" | "ride_alert" | "flight" | "message" | "report" | "document" | "moderation"
   // mode centrale
-  | "settlement" | "application" | "flagged" | "platform";
+  | "settlement" | "application" | "flagged" | "platform"
+  // réseau partagé : course proposée aux chauffeurs partenaires (information)
+  | "network";
 type Level = "info" | "success" | "warning" | "critical";
 export type AlertItem = {
   id: string;
@@ -75,6 +82,8 @@ export type AlertItem = {
     rideNumber: number | null;
     driverId: string | null;
     firstName: string;
+    /** Course confiée à un chauffeur partenaire (réseau partagé) : actions dans « Réseau partagé », jamais WhatsApp */
+    network?: boolean;
   };
 };
 
@@ -96,6 +105,7 @@ const BASE: Record<AlertKind, { icon: LucideIcon; color: string }> = {
   application: { icon: UserPlus, color: "var(--color-brand)" },
   flagged: { icon: ShieldAlert, color: "var(--color-red)" },
   platform: { icon: Landmark, color: "var(--color-violet)" },
+  network: { icon: ArrowLeftRight, color: "var(--color-violet)" },
 };
 
 const LEVEL_COLOR: Record<Level, string> = {
@@ -165,6 +175,9 @@ function behavior(i: AlertItem): { sound: SoundKind | null; desktop: boolean; du
       return i.level === "critical" || i.level === "warning"
         ? { sound: "notice", desktop: true, duration: 20_000 }
         : { sound: "notice", desktop: false, duration: 10_000 };
+    case "network":
+      // Information : la recherche continue chez les partenaires (rien à faire) ; « aucun chauffeur » suivra sinon
+      return { sound: null, desktop: false, duration: 8000 };
   }
 }
 
@@ -511,16 +524,26 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     const { label, route } = rideLine(e.ride_id);
     if (e.type === "offer.accepted") {
       const secs = e.data?.response_ms != null ? Math.max(1, Math.round(e.data.response_ms / 1000)) : null;
-      const who = String(e.message ?? "").replace(/ accepte$/, "");
+      // Chauffeur partenaire : « Karim B. (Flotte B) » + mention du réseau (jamais son nom de famille ni son n°)
+      const { who, network } = acceptedBy(e.message, e.data);
       push({
         id: `acc:${e.id}`,
         kind: "accepted",
         rideId: e.ride_id,
         title: `Course ${label} attribuée`.replace("  ", " "),
-        body: [`${who} a accepté${secs ? ` en ${secs} s` : ""}`, route].filter(Boolean).join(" · "),
+        body: [`${who} a accepté${secs ? ` en ${secs} s` : ""}`, network ? "chauffeur du réseau partagé" : null, route].filter(Boolean).join(" · "),
       });
     } else if (e.type === "dispatch.no_driver") {
-      push({ id: `nd:${e.id}`, kind: "no_driver", rideId: e.ride_id, title: `Aucun chauffeur pour ${label || "une course"}`.trim(), body: [route, "Relancez ou attribuez manuellement."].filter(Boolean).join(" · ") });
+      push({
+        id: `nd:${e.id}`,
+        kind: "no_driver",
+        rideId: e.ride_id,
+        title: `Aucun chauffeur pour ${label || "une course"}`.trim(),
+        body: [route, noDriverNetworkLine(e), "Relancez ou attribuez manuellement."].filter(Boolean).join(" · "),
+      });
+    } else if (e.type === "dispatch.network") {
+      // Information : aucun de vos chauffeurs n'a accepté, la course est proposée aux chauffeurs partenaires proches
+      push({ id: `net:${e.id}`, kind: "network", rideId: e.ride_id, level: "info", ...networkProposedAlert(e, { label, route }) });
     } else if (e.type === "dispatch.escalated") {
       push({ id: `esc:${e.id}`, kind: "escalated", rideId: e.ride_id, title: `Planifiée ${label} toujours sans chauffeur`.trim(), body: [route, "Recherche GPS lancée autour du départ."].filter(Boolean).join(" · ") });
     } else if (e.type === "ride.cancelled" && (e.actor_type === "api" || e.actor_type === "booking_site")) {
@@ -685,26 +708,29 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
       return;
     }
     if (e.action !== "created" && e.action !== "declared") return; // « updated » : montant recalculé après correction
-    const who = parseDriverLabel(s.driver_label);
-    const tag = `${who.firstName}${who.number ? ` #${who.number}` : ""}`;
+    // Course confiée à un chauffeur partenaire : « Karim B. (Flotte B) », onglet « Réseau partagé »
+    const network = s.network ?? null;
+    const who = network ? { firstName: network.driver_label, number: null } : parseDriverLabel(s.driver_label);
+    const tag = network ? `${network.driver_label} (${network.partner_name})` : `${who.firstName}${who.number ? ` #${who.number}` : ""}`;
     const n = rideLine(s.ride_id).number ?? rideNumberOf(s);
     const amount = formatPrice(s.amount_cents, s.currency);
     const tz = centraleRef.current?.timeZone;
     const settlement = {
       id: s.id, action: e.action, direction: s.direction, amountCents: s.amount_cents, currency: s.currency, reference: s.reference,
-      rideNumber: n, driverId: s.driver_id, firstName: who.firstName,
+      rideNumber: n, driverId: s.driver_id, firstName: who.firstName, network: !!network,
     } satisfies AlertItem["settlement"];
+    const link = network ? networkSettlementLink(e.action, s.direction) : null;
     if (e.action === "declared") {
       push({
         id: `set:${s.id}:declared:${s.declared_at ?? ""}`,
         kind: "settlement",
         rideId: null,
         title: `${who.firstName} signale avoir payé ${amount} — à confirmer`,
-        body: [n ? `Course #${n}` : null, methodLabel(s.declared_method), s.declared_note ? `« ${s.declared_note} »` : null, `réf. ${s.reference}`]
+        body: [n ? `Course #${n}` : null, network ? network.partner_name : null, methodLabel(s.declared_method), s.declared_note ? `« ${s.declared_note} »` : null, `réf. ${s.reference}`]
           .filter(Boolean)
           .join(" · "),
-        href: "/dashboard/settlements?filter=declared",
-        cta: "Encaissements",
+        href: link?.href ?? "/dashboard/settlements?filter=declared",
+        cta: link?.cta ?? "Encaissements",
         settlement,
       });
     } else if (s.direction === "driver_owes") {
@@ -714,12 +740,12 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
         rideId: null,
         title: `Course ${n ? `#${n} ` : ""}terminée · ${amount} à encaisser — ${tag}`,
         body: [
-          `Encaissée par le chauffeur (${(PAYMENT_METHOD_LABELS[s.payment_method as PaymentMethod] ?? "à bord").toLowerCase()})`,
+          `Encaissée par le chauffeur${network ? " partenaire" : ""} (${(PAYMENT_METHOD_LABELS[s.payment_method as PaymentMethod] ?? "à bord").toLowerCase()})`,
           `à régler ${dueWhen(s.due_at, tz)}`,
           `réf. ${s.reference}`,
         ].join(" · "),
-        href: "/dashboard/settlements",
-        cta: "Encaissements",
+        href: link?.href ?? "/dashboard/settlements",
+        cta: link?.cta ?? "Encaissements",
         settlement,
       });
     } else {
@@ -728,9 +754,16 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
         kind: "settlement",
         rideId: null,
         title: `${amount} à verser à ${tag}`,
-        body: [`Course ${n ? `#${n} ` : ""}terminée`, PAID_TO_CENTRALE[s.payment_method] ?? "payée à la centrale", `réf. ${s.reference}`].join(" · "),
-        href: "/dashboard/settlements?filter=to_pay",
-        cta: "Encaissements",
+        body: [
+          `Course ${n ? `#${n} ` : ""}terminée`,
+          network ? "déjà payée par votre client" : (PAID_TO_CENTRALE[s.payment_method] ?? "payée à la centrale"),
+          network?.on_hold ? "versement retenu : course à vérifier" : null,
+          `réf. ${s.reference}`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        href: link?.href ?? "/dashboard/settlements?filter=to_pay",
+        cta: link?.cta ?? "Encaissements",
         settlement,
       });
     }
@@ -963,7 +996,8 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
 /** Toast de règlement : « Reçu » (paiement signalé), « WhatsApp » (réclamation préremplie), « Encaissements ». */
 function SettlementToastActions({ item, api, onClose, btn }: { item: AlertItem; api: Api; onClose: () => void; btn: string }) {
   const s = item.settlement!;
-  const claim = s.action === "created" && s.direction === "driver_owes";
+  // Réseau partagé : pas de réclamation WhatsApp (relances dans l'application seulement, v1)
+  const claim = s.action === "created" && s.direction === "driver_owes" && !s.network;
   const contact = useDriverContact(claim ? s.driverId : null);
   const org = api.centrale();
   const whatsapp =
@@ -981,9 +1015,12 @@ function SettlementToastActions({ item, api, onClose, btn }: { item: AlertItem; 
         )
       : null;
   const [busy, setBusy] = useState(false);
+  // Règlement réseau : « Reçu » réservé au propriétaire et aux administrateurs (argent réseau, S9)
+  const canReceive = !s.network || org?.role === "owner" || org?.role === "admin";
   const received = async () => {
     setBusy(true);
-    const res = await runAction(() => confirmSettlements([s.id], null)).finally(() => setBusy(false));
+    const confirm = async (): Promise<{ ok: boolean; error?: string }> => (s.network ? confirmNetworkSettlement(s.id, null) : confirmSettlements([s.id], null));
+    const res = await runAction(confirm).finally(() => setBusy(false));
     if (!res) return;
     if (res.ok) {
       toast.success(`${formatPrice(s.amountCents, s.currency)} reçus de ${s.firstName}`, { description: `Règlement ${s.reference} soldé.` });
@@ -993,13 +1030,13 @@ function SettlementToastActions({ item, api, onClose, btn }: { item: AlertItem; 
   const open = () => (api.navigate(item.href ?? "/dashboard/settlements"), onClose());
   return (
     <div className="ml-12 mt-2.5 flex flex-wrap gap-1.5">
-      {s.action === "declared" && (
+      {s.action === "declared" && canReceive && (
         <button type="button" disabled={busy} onClick={received} className={cn(btn, "bg-brand font-semibold text-brand-fg hover:opacity-90 disabled:opacity-60")}>
           <Check className="size-3.5" /> Reçu
         </button>
       )}
       <button type="button" onClick={open} className={cn(btn, "bg-white/[0.08] text-fg hover:bg-white/[0.13]")}>
-        <HandCoins className="size-3.5" /> Encaissements
+        {s.network ? <ArrowLeftRight className="size-3.5" /> : <HandCoins className="size-3.5" />} {item.cta ?? "Encaissements"}
       </button>
       {whatsapp && (
         <a href={whatsapp} target="_blank" rel="noopener noreferrer" onClick={onClose} className={cn(btn, "border border-green/30 text-green hover:bg-green/10")}>

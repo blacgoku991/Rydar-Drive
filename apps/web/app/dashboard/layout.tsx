@@ -1,6 +1,6 @@
 import type { SettlementMethod } from "@rydar/shared";
 import { networkNavState } from "@/components/network-share/nav";
-import { networkTermsDue } from "@/components/network-share/readiness";
+import { networkTermsDue, shareOutRequested } from "@/components/network-share/readiness";
 import { NetworkTermsBanner } from "@/components/network-share/terms-banner";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
@@ -101,6 +101,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         methods: cs?.settlement_methods ?? [],
         bank: cs?.settlement_iban ? { payeeName: cs.settlement_payee_name || ctx.org.name, iban: cs.settlement_iban, bic: cs.settlement_bic } : null,
         blockUnpaid: cs?.block_unpaid ?? true,
+        network: networkInfo ? { shareOut: shareOutRequested(networkInfo.summary?.readiness) } : null,
       }}
       centraleCounts={centraleCounts}
       topBanner={

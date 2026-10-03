@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
 import { PRESENCE_COLOR } from "@/components/map/map-theme";
+import { LivePartnerCard } from "@/components/network-share/live-partner";
 import { FlightDetails, PickupTime } from "@/components/rides/flight-info";
 import { RideActions, type AssignableDriver } from "@/components/rides/ride-actions";
 import { useIsCentrale } from "@/components/settlements/centrale-context";
@@ -85,6 +86,7 @@ export function RideFocus({
   onAssignOpenChange,
   onBack,
   onSelectDriver,
+  network,
 }: {
   ride: LiveRide;
   driver?: LiveDriver;
@@ -99,6 +101,11 @@ export function RideFocus({
   onAssignOpenChange?: (open: boolean) => void;
   onBack: () => void;
   onSelectDriver: (id: string) => void;
+  /**
+   * Réseau partagé (A) : `label` = « Réseau · Flotte B » ou « proposée au réseau partagé » ; `held` = course tenue par un
+   * chauffeur partenaire ; `lock` = montants verrouillés (retirez-la au partenaire pour la modifier).
+   */
+  network?: { label: string; held: boolean; lock: string | null } | null;
 }) {
   const status = ride.status as RideStatus;
   const meta = RIDE_STATUS_META[status] ?? { label: status, tone: "neutral" as const };
@@ -166,7 +173,9 @@ export function RideFocus({
               ? ride.type === "instant" || ride.dispatch_mode === "geo"
                 ? `${(ride.dispatch_wave ?? 0) > firstPassWaves ? "Relance" : `Vague ${ride.dispatch_wave || 1}`} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])} · ${offers} chauffeur${offers > 1 ? "s" : ""} sollicité${offers > 1 ? "s" : ""}`
                 : `Proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`
-              : eta != null
+              : network?.held && (status === "ACCEPTED" || status === "DRIVER_EN_ROUTE")
+                ? "Chauffeur partenaire en route (position non partagée)"
+                : eta != null
                 ? `Arrivée au départ dans ~${formatDuration(eta)} (${formatTime(new Date(Date.now() + eta * 1000))})`
                 : status === "DRIVER_ARRIVED"
                   ? "Le chauffeur attend le client au point de départ"
@@ -218,7 +227,14 @@ export function RideFocus({
         </div>
 
         {/* Mode centrale : part chauffeur / commission / plateforme + règlement de fin de course */}
-        {centrale && <RideMoneyPanel rideId={ride.id} version={`${ride.status}:${ride.price_cents ?? ""}:${ride.payment_method ?? ""}:${ride.updated_at}`} now={now} />}
+        {centrale && (
+          <RideMoneyPanel
+            rideId={ride.id}
+            version={`${ride.status}:${ride.price_cents ?? ""}:${ride.payment_method ?? ""}:${ride.updated_at}`}
+            now={now}
+            network={network?.held ? { lock: network.lock } : null}
+          />
+        )}
 
         {/* Client */}
         <div className="flex items-center justify-between gap-3">
@@ -237,8 +253,11 @@ export function RideFocus({
           )}
         </div>
 
+        {/* Réseau partagé : chauffeur partenaire (libellé court, véhicule, téléphone), ou recherche chez les partenaires */}
+        {network && <LivePartnerCard rideId={ride.id} version={`${ride.status}:${ride.updated_at}`} label={network.label} />}
+
         {/* Chauffeur */}
-        {driver && (
+        {driver && !network?.held && (
           <div className="flex w-full items-center gap-3 rounded-xl border border-line px-3 py-2.5 hover:border-line-strong">
             <button type="button" onClick={() => onSelectDriver(driver.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
               <span className="grid size-9 shrink-0 place-items-center rounded-full bg-ink-600 text-[12px] font-semibold" style={{ boxShadow: `0 0 0 2px ${PRESENCE_COLOR[driver.presence]}` }}>
@@ -274,7 +293,10 @@ export function RideFocus({
               canCancel={canCancel(status)}
               canRedispatch={status === "NO_DRIVER_FOUND" || SEARCHING.has(status)}
               canAssign={ASSIGNABLE.has(status)}
-              assignLabel={ride.driver_id ? "Réattribuer" : "Attribuer"}
+              assignLabel={ride.driver_id || network?.held ? "Réattribuer" : "Attribuer"}
+              assignDescription={
+                network?.held ? "Le chauffeur partenaire est prévenu que la course lui est retirée ; votre chauffeur reçoit immédiatement une notification." : undefined
+              }
               assignOpen={assignOpen}
               onAssignOpenChange={onAssignOpenChange}
               drivers={assignable}

@@ -76,3 +76,39 @@ describe("réducteur du centre de commande", () => {
     expect(reducer(state, { type: "route", id: "absente", polyline: "abc" })).toBe(state);
   });
 });
+
+describe("réducteur — réseau partagé", () => {
+  it("A : chauffeur partenaire diffusé sans identifiant (network: true) → organisation gardée de l'instantané", () => {
+    let state = reducer(empty, { type: "snapshot", snapshot: snapshot({ rides: [ride("r1", { driver_id: "x9", driver_org_id: "org-b" })], partners: { "org-b": "Flotte B" } }) });
+    expect(state.partners).toEqual({ "org-b": "Flotte B" });
+    state = reducer(state, { type: "ride", payload: { ...ride("r1", { status: "DRIVER_EN_ROUTE" }), driver_id: null, network: true, network_execution_id: "e1" } });
+    expect(state.rides.r1).toMatchObject({ status: "DRIVER_EN_ROUTE", driver_id: null, driver_org_id: "org-b", network: true });
+    // Retirée au partenaire, puis prise par un chauffeur propre : plus de partenaire
+    state = reducer(state, { type: "ride", payload: { ...ride("r1", { status: "SEARCHING_DRIVER" }), driver_id: null } });
+    expect(state.rides.r1).toMatchObject({ driver_org_id: null, network: false });
+    // Instantané suivant sans nom (lecture inutile) : les noms connus restent
+    state = reducer(state, { type: "snapshot", snapshot: snapshot({ rides: [ride("r1")] }) });
+    expect(state.partners).toEqual({ "org-b": "Flotte B" });
+  });
+
+  it("A : même chauffeur rediffusé sans drapeau (avant le lot accès) → organisation gardée", () => {
+    let state = reducer(empty, { type: "snapshot", snapshot: snapshot({ rides: [ride("r1", { driver_id: "x9", driver_org_id: "org-b" })] }) });
+    state = reducer(state, { type: "ride", payload: { ...ride("r1", { status: "IN_PROGRESS" }), driver_id: "x9" } });
+    expect(state.rides.r1!.driver_org_id).toBe("org-b");
+    state = reducer(state, { type: "ride", payload: { ...ride("r1", { status: "ACCEPTED" }), driver_id: "d-propre" } });
+    expect(state.rides.r1!.driver_org_id).toBeNull();
+  });
+
+  it("B : course partenaire → « En course partenaire », position retirée et positions suivantes ignorées (Q5)", () => {
+    let state = reducer(empty, { type: "snapshot", snapshot: snapshot({ drivers: [driver("a")] }) });
+    state = reducer(state, { type: "driver", payload: { id: "a", presence: "en_route", status: "active", current_ride_id: null, network: true, network_giver: "Taxi A" } });
+    expect(state.drivers.a).toMatchObject({ network_giver: "Taxi A", location: null, presence: "en_route" });
+    const same = reducer(state, { type: "locations", payloads: [{ driver_id: "a", lat: 48.9, lng: 2.3, heading: 0, speed: 3, updated_at: "2026-10-01T08:10:00Z" }] });
+    expect(same).toBe(state);
+    // Fin de la course partenaire : statut normal, la position revient avec le point suivant
+    state = reducer(state, { type: "driver", payload: { id: "a", presence: "available", status: "active", current_ride_id: null } });
+    expect(state.drivers.a!.network_giver).toBeNull();
+    state = reducer(state, { type: "locations", payloads: [{ driver_id: "a", lat: 48.9, lng: 2.3, heading: 0, speed: 3, updated_at: "2026-10-01T08:30:00Z" }] });
+    expect(state.drivers.a!.location).toMatchObject({ lat: 48.9, lng: 2.3 });
+  });
+});

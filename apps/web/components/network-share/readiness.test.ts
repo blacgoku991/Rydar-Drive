@@ -4,7 +4,7 @@ import {
 } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
-  driverActionHref, driverReadinessView, networkTermsDue, orgActionHref, orgReadinessView, sideSummary,
+  driverActionHref, driverReadinessView, networkTermsDue, orgActionHref, orgReadinessView, shareOutRequested, sideSummary,
 } from "./readiness";
 import { readiness } from "./test-fixtures";
 
@@ -159,5 +159,15 @@ describe("bandeau « nouvelle convention »", () => {
   it("réseau fermé par la plateforme : jamais de bandeau", () => {
     const r = readiness({ enabled: false, terms: { version: "2026-11-01", min_version: null, grace_until: null, accepted_version: "2026-06-01", accepted_at: null } });
     expect(networkTermsDue(r)).toBeNull();
+  });
+});
+
+describe("avertissement du formulaire de course (commentaire lisible par un partenaire)", () => {
+  it("partage demandé (actif ou en attente) : oui ; désactivé, réseau fermé ou état illisible : non", () => {
+    expect(shareOutRequested(readiness())).toBe(false);
+    expect(shareOutRequested(readiness({ share_out: { active: true, missing: [], warnings: [] } }))).toBe(true);
+    expect(shareOutRequested(readiness({ share_out: { active: false, missing: ["approval_pending"], warnings: [] } }))).toBe(true);
+    expect(shareOutRequested(readiness({ enabled: false, share_out: { active: false, missing: ["network_off"], warnings: [] } }))).toBe(false);
+    expect(shareOutRequested(null)).toBe(false);
   });
 });

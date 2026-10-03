@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GivenActions } from "@/components/network-share/given-actions";
 import { givenProgress, givenRowActions, givenToCheck, suspectText } from "@/components/network-share/given";
-import { networkExportHref, networkShareHref, NETWORK_LIST_MAX, NETWORK_LIST_PAGE } from "@/components/network-share/paths";
+import { networkExportHref, networkShareHref, NETWORK_LIST_MAX, NETWORK_LIST_PAGE, NETWORK_SUSPENDED_PATH } from "@/components/network-share/paths";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { DeclarationLine, SettlementBadge, SplitBar, dueInfo, fromNow } from "@/components/settlements/settlement-ui";
@@ -44,6 +44,11 @@ type Props = {
   timeZone: string;
   serverNow: number;
   failed: boolean;
+  /**
+   * Organisation SUSPENDUE (C12, /suspended/reseau-partage) : décisions d'argent seulement (owner / admin) — ni relance,
+   * ni exclusion, ni export, ni lien vers la fiche course (tableau de bord fermé).
+   */
+  suspended?: boolean;
 };
 
 const EMPTY: Record<NetworkGivenFilter, { title: string; description: string }> = {
@@ -71,13 +76,17 @@ export function GivenView(p: Props) {
   useRealtimeEvent("settlement.updated", schedule);
 
   const href = (over: { filter?: string; partner?: string | null; month?: string | null; n?: number }) =>
-    networkShareHref({
-      tab: "confiees",
-      filter: over.filter ?? p.filter,
-      partner: "partner" in over ? over.partner : p.partner,
-      month: "month" in over ? over.month : p.month,
-      n: over.n,
-    });
+    networkShareHref(
+      {
+        tab: "confiees",
+        filter: over.filter ?? p.filter,
+        partner: "partner" in over ? over.partner : p.partner,
+        month: "month" in over ? over.month : p.month,
+        n: over.n,
+      },
+      undefined,
+      p.suspended ? NETWORK_SUSPENDED_PATH : undefined,
+    );
   const counts: Partial<Record<NetworkGivenFilter, number>> = g
     ? { in_progress: g.in_progress, to_check: g.to_check_count, to_confirm: g.to_confirm_count, overdue: g.overdue_count, disputed: g.disputed_count }
     : {};
@@ -188,7 +197,7 @@ export function GivenView(p: Props) {
               ))}
             </NativeSelect>
           </label>
-          {exportMonth && (
+          {exportMonth && !p.suspended && (
             <Button asChild variant="outline" size="sm" className="ml-auto">
               <a href={networkExportHref({ view: "confiees", month: exportMonth, partner: p.partner })} download>
                 <Download /> Relevé {p.months.find((m) => m.value === exportMonth)?.label ?? exportMonth} (CSV)
@@ -224,6 +233,7 @@ export function GivenView(p: Props) {
                   orgName={p.orgName}
                   canManage={p.canManage}
                   partnerExcluded={excluded.has(item.execution.partner.id)}
+                  suspended={p.suspended}
                 />
               ))}
             </ul>
@@ -255,6 +265,7 @@ function GivenRow({
   orgName,
   canManage,
   partnerExcluded,
+  suspended,
 }: {
   item: NetworkGivenItem;
   now: number;
@@ -262,13 +273,16 @@ function GivenRow({
   orgName: string;
   canManage: boolean;
   partnerExcluded: boolean;
+  suspended?: boolean;
 }) {
   const e = item.execution;
   const t = e.terms;
   const s = item.settlement;
   const currency = item.ride.currency;
   const owes = t.direction === "driver_owes";
-  const can = givenRowActions(item, { canManage, now, partnerExcluded });
+  const base = givenRowActions(item, { canManage, now, partnerExcluded });
+  // Organisation suspendue : décisions d'argent seulement (relance, exclusions : organisation active)
+  const can = suspended ? { ...base, remind: false, excludeDriver: false, excludePartner: false } : base;
   const progress = givenProgress(item);
   const live = s ? { ...s, overdue: s.direction === "driver_owes" && s.status === "due" && Date.parse(s.due_at) <= now } : null;
   const due = live ? dueInfo(live, now, { blockUnpaid: false }) : null;
@@ -282,9 +296,13 @@ function GivenRow({
       <div className={cn("flex flex-col gap-2.5", ROW_GRID)}>
         <div className="min-w-0">
           <p className="flex min-w-0 items-baseline gap-2 text-[13.5px]">
-            <Link href={`/dashboard/rides/${item.ride.id}`} prefetch={false} className="mono shrink-0 font-semibold text-fg hover:text-brand">
-              #{item.ride.number}
-            </Link>
+            {suspended ? (
+              <span className="mono shrink-0 font-semibold text-fg">#{item.ride.number}</span>
+            ) : (
+              <Link href={`/dashboard/rides/${item.ride.id}`} prefetch={false} className="mono shrink-0 font-semibold text-fg hover:text-brand">
+                #{item.ride.number}
+              </Link>
+            )}
             <span className="truncate text-[12px] text-fg-subtle">{formatRideDate(at, timeZone, new Date(now))}</span>
           </p>
           <p className="truncate text-[12.5px] text-fg-muted" title={`${item.ride.pickup_address} → ${item.ride.dropoff_address}`}>

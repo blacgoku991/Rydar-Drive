@@ -9,6 +9,8 @@ type Row = Record<string, any>;
 
 const h = vi.hoisted(() => ({
   ctx: null as any,
+  /** Contexte « créancier » (organisation active OU suspendue) ; undefined = le même que ctx */
+  payerCtx: undefined as any,
   rpcCalls: [] as { fn: string; args: Row }[],
   rpcReply: {} as Record<string, { data?: unknown; error?: { code?: string; message?: string } | null }>,
   updates: [] as { table: string; values: Row; filters: [string, unknown][] }[],
@@ -21,6 +23,7 @@ vi.mock("next/cache", () => ({ revalidatePath: (p: string) => void h.revalidated
 vi.mock("@/lib/auth", () => ({ isAdminRole: (role: string) => role === "owner" || role === "admin" }));
 vi.mock("@/lib/errors", async () => await import("./errors"));
 vi.mock("@/lib/org-context", () => ({ getOrgContext: async () => h.ctx }));
+vi.mock("@/components/platform-fees/org-payer-context", () => ({ getPayerContext: async () => (h.payerCtx === undefined ? h.ctx : h.payerCtx) }));
 
 const A = await import("../app/dashboard/reseau-partage/actions");
 
@@ -68,6 +71,7 @@ const settingsReply = (readiness: Row) => ({ data: { ok: true, membership: {}, r
 
 beforeEach(() => {
   h.ctx = context();
+  h.payerCtx = undefined;
   h.rpcCalls = [];
   h.updates = [];
   h.revalidated = [];
@@ -91,6 +95,8 @@ beforeEach(() => {
     set_network_exclusion: { data: { ok: true } },
     set_driver_network_allowed: { data: { ok: true, driver_id: DRIVER, allowed: false, closed_offers: 2 } },
     remind_network_driver: { data: { ok: true, code: "REMINDED" } },
+    reassign_ride: { data: { ok: true, code: "RELAUNCHED", message: "Recherche relancée" } },
+    close_network_ride: { data: { ok: true, ride_id: RIDE, status: "COMPLETED" } },
   };
 });
 
@@ -113,6 +119,7 @@ const ADMIN_ONLY: [string, () => Promise<{ ok: boolean }>][] = [
   ["contestNetworkRide", () => A.contestNetworkRide(RIDE, "Course non effectuée")],
   ["excludeNetworkDriver", () => A.excludeNetworkDriver(EXEC, "Retards")],
   ["liftNetworkDriverExclusion", () => A.liftNetworkDriverExclusion(EXEC)],
+  ["closeNetworkRide", () => A.closeNetworkRide(RIDE)],
 ];
 
 describe("rôles", () => {
@@ -155,7 +162,7 @@ describe("réglages : set_network_settings (paramètres NULL = inchangés)", () 
       },
     ]);
     expect(res).toMatchObject({ ok: true, message: "Demande enregistrée : en attente de validation par Rydar." });
-    expect(h.revalidated).toEqual(["/dashboard/reseau-partage", "/dashboard"]);
+    expect(h.revalidated).toEqual(["/dashboard/reseau-partage", "/suspended/reseau-partage", "/dashboard"]);
   });
 
   it("coupure de la réception : offres retirées annoncées, courses acceptées au bout", async () => {
@@ -280,5 +287,67 @@ describe("courses confiées : règlements et décisions", () => {
   it("« Relancer » trop tôt : message clair", async () => {
     h.rpcReply.remind_network_driver = { data: { ok: false, code: "TOO_SOON" } };
     expect(await A.remindNetworkDriver(SETTLEMENT)).toEqual({ ok: false, error: "Déjà relancé il y a moins de 30 minutes." });
+  });
+});
+
+describe("fiche course : Retirer, Clôturer", () => {
+  it("« Retirer » : reassign_ride avec le chauffeur affiché (DRIVER_CHANGED sinon), tout membre (la base décide)", async () => {
+    h.ctx = context("dispatcher");
+    const res = await A.removeNetworkRide(RIDE, DRIVER, "  Client injoignable  ");
+    expect(res).toEqual({ ok: true, message: "Course retirée au chauffeur partenaire : la recherche repart, vos chauffeurs d'abord." });
+    expect(h.rpcCalls).toEqual([{ fn: "reassign_ride", args: { p_ride_id: RIDE, p_reason: "Client injoignable", p_expected_driver: DRIVER } }]);
+    expect(h.revalidated).toContain("/dashboard/rides");
+  });
+
+  it("« Retirer » : course déjà changée, ou dispatch automatique coupé", async () => {
+    h.rpcReply.reassign_ride = { data: { ok: false, code: "DRIVER_CHANGED", message: "La course a déjà changé de chauffeur." } };
+    expect(await A.removeNetworkRide(RIDE, DRIVER)).toEqual({ ok: false, error: "La course a déjà changé de chauffeur." });
+    h.rpcReply.reassign_ride = { data: { ok: true, code: "UNASSIGNED" } };
+    expect(await A.removeNetworkRide(RIDE, DRIVER)).toMatchObject({ ok: true, message: "Course retirée au chauffeur partenaire : attribuez-la à l'un de vos chauffeurs." });
+    expect(await A.removeNetworkRide("pas-un-uuid", DRIVER)).toMatchObject({ ok: false });
+    expect(await A.removeNetworkRide(RIDE, "x")).toMatchObject({ ok: false });
+    expect(h.rpcCalls).toHaveLength(2);
+  });
+
+  it("« Clôturer la course » : close_network_ride, refus de la base traduit", async () => {
+    expect(await A.closeNetworkRide(RIDE)).toEqual({ ok: true, message: "Course clôturée : elle est marquée « à vérifier »." });
+    expect(h.rpcCalls).toEqual([{ fn: "close_network_ride", args: { p_ride: RIDE } }]);
+    h.rpcReply.close_network_ride = { error: { code: "55000", message: "NETWORK_CLOSE_NOT_ALLOWED" } };
+    expect(await A.closeNetworkRide(RIDE)).toEqual({ ok: false, error: ERROR_MESSAGES.NETWORK_CLOSE_NOT_ALLOWED });
+  });
+});
+
+describe("organisation suspendue (C12) : règlements réseau ouverts", () => {
+  const suspended = (role = "owner") => ({ ...context(role), org: { ...context(role).org, status: "suspended" } });
+
+  it("owner / admin : décisions d'argent permises, rien d'autre", async () => {
+    h.ctx = null; // le tableau de bord n'accepte qu'une organisation active
+    h.payerCtx = suspended("admin");
+    expect(await A.confirmNetworkSettlement(SETTLEMENT, "transfer")).toMatchObject({ ok: true });
+    expect(await A.disputeNetworkSettlement(SETTLEMENT, "Rien reçu")).toMatchObject({ ok: true });
+    expect(await A.getNetworkPayoutInfo(SETTLEMENT)).toMatchObject({ ok: true });
+    expect(await A.validateNetworkRide(RIDE)).toMatchObject({ ok: true });
+    expect(await A.contestNetworkRide(RIDE, "Course non effectuée")).toMatchObject({ ok: true });
+    const allowed = h.rpcCalls.map((c) => c.fn);
+    expect(allowed).toEqual(["confirm_settlements", "dispute_settlement", "org_network_payout_info", "validate_network_ride", "contest_network_ride"]);
+    // Réglages, exclusions, relance, retrait, clôture : organisation active seulement
+    for (const res of [
+      await A.setNetworkInsurance(true),
+      await A.setNetworkPartnerExcluded(PARTNER, true),
+      await A.excludeNetworkDriver(EXEC, null),
+      await A.remindNetworkDriver(SETTLEMENT),
+      await A.removeNetworkRide(RIDE, DRIVER),
+      await A.closeNetworkRide(RIDE),
+    ]) {
+      expect(res).toMatchObject({ ok: false });
+    }
+    expect(h.rpcCalls.map((c) => c.fn)).toEqual(allowed);
+  });
+
+  it("dispatcher d'une organisation suspendue : refusé sans appel", async () => {
+    h.ctx = null;
+    h.payerCtx = suspended("dispatcher");
+    expect(await A.confirmNetworkSettlement(SETTLEMENT, "cash")).toMatchObject({ ok: false, error: "Réservé au propriétaire et aux administrateurs de l'organisation." });
+    expect(h.rpcCalls).toEqual([]);
   });
 });

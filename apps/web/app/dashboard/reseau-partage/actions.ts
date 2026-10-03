@@ -1,17 +1,20 @@
 "use server";
 // Réseau partagé (onglet du tableau de bord) : réglages de l'organisation, décisions sur les courses confiées
-// (Reçu, Pas reçu, Annuler, Versé, Valider, Contester la course, Rouvrir), exclusions, relance.
+// (Reçu, Pas reçu, Annuler, Versé, Valider, Contester la course, Rouvrir), exclusions, relance ; fiche course : Retirer
+// la course au partenaire, Clôturer la course. Organisation SUSPENDUE (C12, /suspended/reseau-partage) : seules les
+// décisions d'argent sur ses courses confiées restent permises à owner / admin.
 // Chaque RPC revérifie en base l'appartenance, le rôle (owner / admin + jwt_issued_after pour l'argent et les réglages),
 // l'interrupteur plateforme et les délais ; ici, refus anticipé d'un dispatcher (lecture seule, sauf « Relancer »).
 // Fichier « use server » : seules des fonctions async sont exportées (les types sont effacés à la compilation).
 import {
   describeError, fieldErrors, humanizeError, settlementPaymentSchema,
-  type ContestNetworkRideResult, type ExcludeNetworkDriverResult, type OrgNetworkPayoutInfo, type OrgNetworkReadiness,
+  type CloseNetworkRideResult, type ContestNetworkRideResult, type ExcludeNetworkDriverResult, type OrgNetworkPayoutInfo, type OrgNetworkReadiness,
   type OrgNetworkSettingsResult, type RemindNetworkDriverResult, type SetDriverNetworkAllowedResult, type SettlementMethod,
   type SettlementPaymentInput, type ValidateNetworkRideResult,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { getPayerContext } from "@/components/platform-fees/org-payer-context";
 import { isAdminRole } from "@/lib/auth";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
@@ -21,6 +24,8 @@ export type NetworkActionResult<T = object> =
   | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 const PATH = "/dashboard/reseau-partage";
+/** Organisation suspendue : ses règlements réseau ouverts (owner / admin), hors du tableau de bord. */
+const SUSPENDED_PATH = "/suspended/reseau-partage";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ADMIN_ONLY = "Réservé au propriétaire et aux administrateurs de l'organisation.";
 const METHODS = new Set<string>(["link", "cash", "transfer", "other"]);
@@ -30,9 +35,13 @@ type Ctx = NonNullable<Awaited<ReturnType<typeof getOrgContext>>>;
 type Fail = { ok: false; error: string; fieldErrors?: Record<string, string> };
 type PgError = { code?: string; message?: string } | null;
 
-/** Organisation active ; owner / admin si `admin`. */
-async function context(admin: boolean): Promise<Ctx | Fail> {
-  const ctx = await getOrgContext();
+/**
+ * Organisation active ; owner / admin si `admin`. `creditor` : décision d'argent sur une course confiée, permise aussi
+ * à une organisation SUSPENDUE (même choix d'organisation que le tableau de bord ; la base revérifie le rôle et le
+ * statut, assert_network_creditor).
+ */
+async function context(admin: boolean, opts: { creditor?: boolean } = {}): Promise<Ctx | Fail> {
+  const ctx = opts.creditor ? await getPayerContext() : await getOrgContext();
   if (!ctx) return { ok: false, error: "Session expirée ou organisation indisponible : rechargez la page." };
   if (admin && !isAdminRole(ctx.role)) return { ok: false, error: ADMIN_ONLY };
   return ctx;
@@ -53,6 +62,7 @@ const isFail = <T,>(v: { data: T } | Fail): v is Fail => "ok" in v;
 
 function refresh(layout = false) {
   revalidatePath(PATH);
+  revalidatePath(SUSPENDED_PATH);
   // Menu (pastille), bandeau de la convention : mise en page relue
   if (layout) revalidatePath("/dashboard", "layout");
 }
@@ -283,7 +293,7 @@ export async function updateNetworkPaymentMethods(input: Partial<SettlementPayme
 type SettlementPayload = { ok?: boolean; code?: string; message?: string; count?: number; amount_cents?: number };
 
 async function settlementCall(fn: string, args: Record<string, unknown>, success: string): Promise<NetworkActionResult<{ amountCents?: number }>> {
-  const ctx = await context(true);
+  const ctx = await context(true, { creditor: true });
   if (failed(ctx)) return ctx;
   const res = await call<SettlementPayload | null>(ctx, fn, args, "Action impossible pour le moment.");
   if (isFail(res)) return res;
@@ -322,7 +332,7 @@ export async function reopenNetworkSettlement(id: string) {
 
 /** RIB du chauffeur pour un versement (consultation journalisée en base et notifiée au chauffeur). */
 export async function getNetworkPayoutInfo(settlementId: string): Promise<NetworkActionResult<{ info: OrgNetworkPayoutInfo }>> {
-  const ctx = await context(true);
+  const ctx = await context(true, { creditor: true });
   if (failed(ctx)) return ctx;
   if (!UUID.test(settlementId)) return { ok: false, error: "Règlement introuvable." };
   const res = await call<OrgNetworkPayoutInfo | null>(ctx, "org_network_payout_info", { p_settlement: settlementId }, "Coordonnées bancaires indisponibles.");
@@ -333,7 +343,7 @@ export async function getNetworkPayoutInfo(settlementId: string): Promise<Networ
 
 /** « Valider » : course « à vérifier » contrôlée, le versement retenu devient payable. */
 export async function validateNetworkRide(rideId: string): Promise<NetworkActionResult> {
-  const ctx = await context(true);
+  const ctx = await context(true, { creditor: true });
   if (failed(ctx)) return ctx;
   if (!UUID.test(rideId)) return { ok: false, error: "Course introuvable." };
   const res = await call<ValidateNetworkRideResult>(ctx, "validate_network_ride", { p_ride: rideId }, "Validation impossible pour le moment.");
@@ -344,7 +354,7 @@ export async function validateNetworkRide(rideId: string): Promise<NetworkAction
 
 /** « Contester la course » (7 jours après la fin) : versement annulé, demande de baisse des frais Rydar. */
 export async function contestNetworkRide(rideId: string, reason: string): Promise<NetworkActionResult<{ feeReductionCents: number | null }>> {
-  const ctx = await context(true);
+  const ctx = await context(true, { creditor: true });
   if (failed(ctx)) return ctx;
   if (!UUID.test(rideId)) return { ok: false, error: "Course introuvable." };
   const why = typeof reason === "string" ? reason.trim() : "";
@@ -397,4 +407,57 @@ export async function remindNetworkDriver(settlementId: string): Promise<Network
     };
   }
   return { ok: true, message: r.message || "Rappel envoyé au chauffeur (application).", code: r.code };
+}
+
+// =============================================================================================================
+// Fiche course : retirer la course au chauffeur partenaire, la clôturer à sa place
+// =============================================================================================================
+
+type ReassignPayload = { ok?: boolean; code?: string; message?: string };
+
+/**
+ * « Retirer » (fiche course) : le chauffeur partenaire est prévenu, la recherche repart avec vos chauffeurs d'abord ;
+ * la course redevient modifiable (prix, adresses, heure). reassign_ride passe, pour une course tenue par un partenaire,
+ * par unassign_network_ride (« removed_by_giver ») ; `expectedDriverId` évite de retirer la course à un autre chauffeur
+ * que celui affiché (DRIVER_CHANGED). Tout membre : la base décide (org_network_ride.can.remove).
+ */
+export async function removeNetworkRide(rideId: string, expectedDriverId: string | null, reason?: string | null): Promise<NetworkActionResult> {
+  const ctx = await context(false);
+  if (failed(ctx)) return ctx;
+  if (!UUID.test(rideId) || (expectedDriverId != null && !UUID.test(expectedDriverId))) return { ok: false, error: "Course introuvable." };
+  const why = typeof reason === "string" ? reason.trim().slice(0, 300) : "";
+  const res = await call<ReassignPayload | null>(
+    ctx,
+    "reassign_ride",
+    { p_ride_id: rideId, p_reason: why || null, p_expected_driver: expectedDriverId },
+    "Retrait impossible pour le moment.",
+  );
+  if (isFail(res)) return res;
+  const r = res.data ?? {};
+  if (!r.ok) return { ok: false, error: r.message || "La course a déjà changé : rechargez la fiche." };
+  refresh(true);
+  revalidatePath("/dashboard/rides");
+  return {
+    ok: true,
+    message:
+      r.code === "UNASSIGNED"
+        ? "Course retirée au chauffeur partenaire : attribuez-la à l'un de vos chauffeurs."
+        : "Course retirée au chauffeur partenaire : la recherche repart, vos chauffeurs d'abord.",
+  };
+}
+
+/**
+ * « Clôturer la course » (owner / admin) : le chauffeur partenaire ne peut plus la terminer dans l'application
+ * (organisation ou chauffeur inactif, ou sans position depuis 30 min). La course passe « Terminée » et reste
+ * « à vérifier » ; refus en base sinon (NETWORK_CLOSE_NOT_ALLOWED).
+ */
+export async function closeNetworkRide(rideId: string): Promise<NetworkActionResult> {
+  const ctx = await context(true);
+  if (failed(ctx)) return ctx;
+  if (!UUID.test(rideId)) return { ok: false, error: "Course introuvable." };
+  const res = await call<CloseNetworkRideResult>(ctx, "close_network_ride", { p_ride: rideId }, "Clôture impossible pour le moment.");
+  if (isFail(res)) return res;
+  refresh(true);
+  revalidatePath("/dashboard/rides");
+  return { ok: true, message: "Course clôturée : elle est marquée « à vérifier »." };
 }

@@ -19,6 +19,11 @@ export type CentraleInfo = {
   bank: SettlementBankInfo | null;
   /** Blocage automatique des retardataires (commission en retard ou contestée) */
   blockUnpaid: boolean;
+  /**
+   * Réseau partagé ouvert par la plateforme (shared_network_enabled) : `shareOut` = partage de ses courses demandé
+   * (actif ou en attente). null / absent : réseau fermé, aucun texte réseau dans les écrans.
+   */
+  network?: { shareOut: boolean } | null;
 };
 
 export type SettlementBankInfo = { payeeName: string; iban: string; bic: string | null };

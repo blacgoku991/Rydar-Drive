@@ -14,9 +14,11 @@ import { RideFocus } from "@/components/command/ride-focus";
 import { RideRow, SEARCHING, TERMINAL } from "@/components/command/ride-row";
 import { FleetMap, type FleetMapHandle } from "@/components/map/fleet-map";
 import { PRESENCE_COLOR, rideColor } from "@/components/map/map-theme";
+import { liveNetworkLabel, liveNetworkLock, livePartner } from "@/components/network-share/ride-network";
 import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { NewRideSheet } from "@/components/rides/new-ride-sheet";
+import { useCentrale } from "@/components/settlements/centrale-context";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/misc";
 import { useNow } from "@/hooks/use-now";
@@ -127,6 +129,7 @@ export function CommandCenter({
   const serverNow = useMemo(() => Date.parse(initial.serverTime), [initial.serverTime]);
   const now = useNow(15_000) ?? serverNow;
   const realtime = useRealtimeStatus();
+  const orgId = useCentrale()?.orgId ?? null;
 
   // Échec (réseau, 503 si une lecture a échoué côté serveur) : l'état courant est conservé jusqu'au prochain essai
   const refresh = useCallback(async () => {
@@ -157,6 +160,13 @@ export function CommandCenter({
   useEffect(() => () => {
     if (kpiTimer.current) window.clearTimeout(kpiTimer.current);
   }, []);
+
+  // Instantané relu : à chaque reconnexion du canal, au retour sur l'onglet après plus d'une minute, toutes les 2 min en
+  // temps réel (filet de sécurité, onglet visible) ; sans temps réel, sondage 6 → 18 → 30 s, en pause onglet caché.
+  const { schedule: resync } = useLiveSync(() => void refresh(), { pollMs: 6000, maxPollMs: 30_000, livePollMs: 120_000, resyncAfterHiddenMs: 60_000 });
+  // Réseau partagé : « network.updated » (org:{A} → { ride_id } ; org:{B} → { execution_id }) ne porte que des
+  // identifiants → instantané relu (partage ouvert, accepté, retiré, clos). Jamais émis tant que le réseau est fermé.
+  useRealtimeEvent("network.updated", () => resync());
 
   // Positions GPS regroupées : au plus un rendu par seconde (dernière position de chaque chauffeur), aucun tant que
   // l'onglet est caché (appliquées à son retour)
@@ -191,6 +201,8 @@ export function CommandCenter({
       dispatch({ type: "driver", payload: p });
       // Chauffeurs en ligne / libres (indicateurs)
       if (prev.presence !== p.presence) refreshKpis();
+      // Réseau partagé (B) : course partenaire dont l'organisation n'est pas encore connue → instantané relu
+      if (p.network === true && !p.network_giver && !prev.network_giver) resync();
     }
   });
   useRealtimeEvent("ride.updated", (p) => {
@@ -198,6 +210,8 @@ export function CommandCenter({
     dispatch({ type: "ride", payload: p });
     // Courses du jour, chiffre d'affaires, recherches en cours : seulement si statut, prix ou horaire changent
     if (!prev || prev.status !== p.status || prev.price_cents !== p.price_cents || prev.pickup_at !== p.pickup_at) refreshKpis();
+    // Réseau partagé (A) : chauffeur partenaire diffusé sans identifiant ; organisation inconnue → instantané relu
+    if (p.network === true && !prev?.driver_org_id) resync();
   });
   useRealtimeEvent("offer.updated", (p) => dispatch({ type: "offer", payload: p }));
   useRealtimeEvent("ride.event", (p) => {
@@ -208,9 +222,6 @@ export function CommandCenter({
   useRealtimeEvent("chat.message", (m: ChatMessage) => m?.report_type && dispatch({ type: "report", payload: m }));
   useRealtimeEvent("chat.report", (u: FleetReportUpdate) => u?.id && dispatch({ type: "report-update", payload: u }));
 
-  // Instantané relu : à chaque reconnexion du canal, au retour sur l'onglet après plus d'une minute, toutes les 2 min en
-  // temps réel (filet de sécurité, onglet visible) ; sans temps réel, sondage 6 → 18 → 30 s, en pause onglet caché.
-  useLiveSync(() => void refresh(), { pollMs: 6000, maxPollMs: 30_000, livePollMs: 120_000, resyncAfterHiddenMs: 60_000 });
 
   // Raccourcis : N = nouvelle course, Échap = désélection
   useEffect(() => {
@@ -303,6 +314,14 @@ export function CommandCenter({
 
   const ride = selectedRide ? state.rides[selectedRide] : null;
   const rideDriver = ride?.driver_id ? state.drivers[ride.driver_id] : undefined;
+  // Réseau partagé (A) : « Réseau · Flotte B » / « proposée au réseau partagé » (rien pour une course propre)
+  const partners = state.partners;
+  const networkOf = useCallback((r: LiveRide) => liveNetworkLabel(r, orgId, partners), [orgId, partners]);
+  const rideNetwork = useMemo(() => {
+    if (!ride) return null;
+    const label = networkOf(ride);
+    return label ? { label, held: livePartner(ride, orgId).held, lock: liveNetworkLock(ride, orgId) } : null;
+  }, [ride, networkOf, orgId]);
 
   // Itinéraire d'approche réel (chauffeur → départ) de la course sélectionnée
   useEffect(() => {
@@ -562,6 +581,7 @@ export function CommandCenter({
             onAssignOpenChange={setAssignOpen}
             onBack={() => setSelectedRide(null)}
             onSelectDriver={selectDriver}
+            network={rideNetwork}
           />
         ) : (
           <>
@@ -625,6 +645,7 @@ export function CommandCenter({
                     now={now}
                     timeout={offerTimeout}
                     alert={alertByRide[r.id]}
+                    networkLabel={networkOf(r)}
                   />
                 ))
               )}
@@ -649,10 +670,18 @@ export function CommandCenter({
               <p className="truncate text-[14px] font-semibold">
                 {driver.first_name} {driver.last_name} <span className="text-[12px] font-normal text-fg-subtle">#{driver.number}</span>
               </p>
-              <p className="text-[12.5px]" style={{ color: PRESENCE_COLOR[driver.presence] }}>
-                {PRESENCE_META[driver.presence].label}
-                <span className="text-fg-subtle"> · {driver.location ? `vu à ${formatTime(driver.location.updated_at)}` : "position inconnue"}</span>
-              </p>
+              {driver.network_giver ? (
+                // Réseau partagé (B) : course d'une autre organisation, position non partagée pendant la course (Q5)
+                <p className="text-[12.5px] text-violet">
+                  En course partenaire ({driver.network_giver})
+                  <span className="text-fg-subtle"> · position masquée pendant la course</span>
+                </p>
+              ) : (
+                <p className="text-[12.5px]" style={{ color: PRESENCE_COLOR[driver.presence] }}>
+                  {PRESENCE_META[driver.presence].label}
+                  <span className="text-fg-subtle"> · {driver.location ? `vu à ${formatTime(driver.location.updated_at)}` : "position inconnue"}</span>
+                </p>
+              )}
               <p className="truncate text-[12px] text-fg-muted">
                 {driver.vehicle ? `${driver.vehicle.brand ?? ""} ${driver.vehicle.model} · ${driver.vehicle.plate}` : "Sans véhicule"}
               </p>
