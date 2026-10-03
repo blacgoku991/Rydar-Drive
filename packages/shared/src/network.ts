@@ -1492,7 +1492,12 @@ export type NetworkPartnerNames = Record<Uuid, string>;
 /** RPC set_network_settings(…) : réglages de l'organisation (owner / admin). */
 export interface OrgNetworkSettingsResult {
   ok: true;
-  membership: NetworkMembership;
+  /**
+   * Adhésion après l'appel. Lot administration (20260924007100) : null quand l'organisation n'a pas d'adhésion et que
+   * l'appel n'enregistre rien (tous les paramètres NULL ou « désactivé ») — aucune adhésion n'est alors créée (une
+   * adhésion fait passer l'onglet en mode « membre », lib/shared-network.ts).
+   */
+  membership: NetworkMembership | null;
   readiness: OrgNetworkReadiness;
   /** Offres réseau fermées par une coupure de partage ou de réception */
   closed_offers: number;

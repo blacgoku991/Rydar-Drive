@@ -525,7 +525,7 @@ describe("Réseau partagé, administration (lot 6, 20260924007100) : SQL = contr
   it("super admin : seuils signalés = NETWORK_ADMIN_THRESHOLDS ; validation : codes et champs manquants = SvcNetworkApproveResult", () => {
     const row = lastSqlDefinition("private.admin_network_org_row");
     const T = NETWORK_ADMIN_THRESHOLDS;
-    expect(row).toContain(`v_offers.received >= ${T.minOffersForRatio} and v_offers.accepted::numeric / v_offers.received < ${T.minAcceptanceRatio}`);
+    expect(row).toContain(`when v_offers.received >= ${T.minOffersForRatio} then v_offers.accepted::numeric / v_offers.received < ${T.minAcceptanceRatio}`);
     expect(row).toContain(`v_releases >= ${T.releases}`);
     expect(row).toContain(`v_contested >= ${T.contests}`);
     expect(row).toContain(`x.due_at < now() - interval '${T.payoutOverdueDays} days'`);

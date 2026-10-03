@@ -161,7 +161,7 @@ begin
    where x.organization_id = o.id and x.network_driver_org_id is not null and x.direction = 'centrale_owes'
      and x.status = 'due' and x.due_at < now() - interval '7 days';
 
-  if v_offers.received >= 20 and v_offers.accepted::numeric / v_offers.received < 0.2 then
+  if (case when v_offers.received >= 20 then v_offers.accepted::numeric / v_offers.received < 0.2 else false end) then
     v_flags := v_flags || 'low_acceptance'::text;
   end if;
   if v_releases >= 3 then
@@ -373,6 +373,7 @@ declare
   v_reason text := left(nullif(btrim(regexp_replace(coalesce(p_reason, ''), '\s+', ' ', 'g')), ''), 300);
   v_closed integer := 0;
   v_released integer := 0;
+  v_errors integer := 0;
   v_res jsonb;
 begin
   perform private.assert_platform_actor(p_actor);
@@ -414,15 +415,21 @@ begin
        and r.status in ('ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED')
      order by r.pickup_at, r.id
   loop
-    v_res := private.unassign_network_ride(x.driver_id, x.id, 'executor_unavailable');
-    if coalesce((v_res ->> 'ok')::boolean, false) then
-      v_released := v_released + 1;
-    end if;
+    -- Course en erreur : la suspension s'applique quand même, private.network_watch la rend au passage suivant
+    begin
+      v_res := private.unassign_network_ride(x.driver_id, x.id, 'executor_unavailable');
+      if coalesce((v_res ->> 'ok')::boolean, false) then
+        v_released := v_released + 1;
+      end if;
+    exception when others then
+      v_errors := v_errors + 1;
+    end;
   end loop;
   insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
   values (p_org, 'super_admin', p_actor, 'network.suspended', 'network_memberships', p_org::text, 'warning',
           jsonb_build_object('reason', v_reason, 'already_suspended', m.suspended_at is not null,
-                             'closed_offers', v_closed, 'released_rides', v_released));
+                             'closed_offers', v_closed, 'released_rides', v_released)
+            || case when v_errors > 0 then jsonb_build_object('errors', v_errors) else '{}'::jsonb end);
   return jsonb_build_object('ok', true, 'code', 'SUSPENDED', 'closed_offers', v_closed, 'released_rides', v_released);
 end;
 $$;
@@ -1412,7 +1419,13 @@ end;
 $$;
 
 -- =============================================================================
--- 6. Droits
+-- 6. Index : offres réseau reçues par les chauffeurs d'une organisation (vue d'ensemble du super admin, 30 jours ;
+--    index partiel : offres réseau seulement)
+-- =============================================================================
+create index if not exists ride_offers_network_exec_idx on public.ride_offers (driver_org_id, sent_at desc) where is_network;
+
+-- =============================================================================
+-- 7. Droits
 -- =============================================================================
 -- Aides : fonctions serveur seulement (RPC definer, worker, service role)
 revoke all on function

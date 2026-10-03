@@ -263,7 +263,8 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin), 4 (argent, migration
   `20260924006900`, non poussée : 4a côté chauffeur ; 4b côté A, blocages, relances, frais Rydar, dette et
   suppression), 5a (accès : RPC du chauffeur, de A et de B, migration `20260924007000`, non poussée), 5b (journaux,
-  alertes, positions, temps réel, notifications, webhooks : même migration `20260924007000`). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  alertes, positions, temps réel, notifications, webhooks : même migration `20260924007000`), 6 (administration et cycle
+  de vie, migration `20260924007100`, non poussée). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
   liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
@@ -405,6 +406,26 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   - lots suivants : partir des versions 007000 de log_event, track_ride_status, apply_ride_alert, ride_alert_payload,
     watch_rides, cancel_ride_internal, update_driver_location, broadcast_driver_location, broadcast_driver,
     broadcast_ride, housekeeping, webhook_ride_json.
+- Règles posées par le lot 6 (administration et cycle de vie, `20260924007100`, non poussée) :
+  - super admin : `svc_set_shared_network_enabled`, `svc_network_approve`, `svc_network_suspend` (service role seul,
+    `p_actor` revérifié, audit en SQL) et `admin_network_overview` (super admin) ; coupure globale = offres réseau
+    fermées ; validation = instantané NORMALISÉ (espaces ; SIRET chiffres seuls) et contrôlé (`IDENTITY_INCOMPLETE`
+    + `missing`, jamais 23514), e-mail aux propriétaires (type `network_review` d'`email_outbox`, `EMAIL_KINDS`) ;
+    refus = validation et instantané retirés, offres fermées, motif montré ; suspension = offres fermées dans les deux
+    sens, courses non commencées de ses chauffeurs rendues (`unassign_network_ride`, « executor_unavailable ») ;
+  - organisation : `set_network_settings` (owner / admin, jeton émis après l'activation ; convention de la version EN
+    VIGUEUR seulement + preuve `legal_acceptances` « network » ; activer un sens exige une convention valable ; les
+    autres conditions ne bloquent pas : sens « en attente » avec ses raisons ; un sens activé ou la convention acceptée
+    vaut demande — après un refus aussi, motif effacé ; coupure d'un sens ou assurance retirée = offres fermées),
+    `set_network_exclusion` (organisation déjà rencontrée seulement, `{ ok: true }` dans tous les cas, symétrique,
+    levée par celle qui l'a posée), `org_network_readiness` / `network_driver_readiness` (enveloppes des aides
+    privées) ; réseau fermé : NETWORK_DISABLED ;
+  - suppression d'un compte : `private.scrub_network_traces` (appelée par `delete_driver_account`, dernière version :
+    007100) efface ses traces chez A avant l'anonymisation ; `private.debtor_match` (dernière version : 007100) renvoie
+    aussi les débiteurs réseau de p_org (lignes SANS fiche ni n°) ; `svc_driver_apply` (dernière version : 007100) les
+    journalise sans fiche, n° ni nom de B ; `private.housekeeping` inchangé (dernière version : 007000) ;
+  - décidé : `admin_centrale_overview` (super admin) garde les reversements réseau dans l'encours de A (sommes réellement
+    dues à A) ; `drivers.current_ride_id` lisible par B pendant une course partenaire (UUID opaque) reste au lot 7.
 - Règles posées par la revue du lot 4 (corrections dans 006900, non poussée) :
   - la baisse des frais Rydar demandée par « Contester la course » n'est JAMAIS acceptée d'office : redéfinition de
     `private.accept_stale_platform_reductions` (corps 006600 à l'identique + exclusion des courses partagées contestées) ;
