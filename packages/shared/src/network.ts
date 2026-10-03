@@ -698,18 +698,19 @@ export interface NetworkRideEventData {
 }
 
 /**
- * Ajout web (lot 8, facultatif) : données de « dispatch.no_driver » quand la course est passée par le réseau
- * (network_at posé), en plus de waves / last_radius_m / closed_offers : compteur seulement, jamais d'identifiant de
- * partenaire. Le message est complété par « , réseau partagé : n chauffeurs partenaires sollicités » (spec §9.2).
- * Absent : l'alerte du tableau de bord reconnaît le réseau à ce message.
+ * Données de « dispatch.no_driver » quand la course est passée par le réseau (network_at posé ; lot 3a, 006800), en
+ * plus de waves / last_radius_m / closed_offers : `network: true` et le compteur `partners_offered` (jamais
+ * d'identifiant de partenaire). Le message est complété par « , réseau partagé : n chauffeurs partenaires
+ * sollicités » (spec §9.2). Partage interrompu par des erreurs (C8) : `network: true` sans compteur.
  */
 export interface NetworkNoDriverEventData {
-  network_partners_offered?: number;
+  network?: boolean;
+  partners_offered?: number;
 }
 
 /** « dispatch.no_driver » passé par le réseau (spec §9.2) : nombre de partenaires sollicités, sinon null. */
 export function networkPartnersFromNoDriver(message: string | null | undefined, data?: NetworkNoDriverEventData | null): number | null {
-  const n = data?.network_partners_offered;
+  const n = data?.partners_offered;
   if (typeof n === "number" && Number.isFinite(n) && n >= 0) return n;
   const m = /réseau partagé\s*:\s*(\d+)\s+chauffeurs?\s+partenaires?/i.exec(message ?? "");
   return m ? Number(m[1]) : null;

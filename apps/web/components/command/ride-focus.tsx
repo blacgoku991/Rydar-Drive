@@ -170,7 +170,10 @@ export function RideFocus({
           </p>
           <p className="mt-1 text-[12.5px] text-fg-muted">
             {SEARCHING.has(status)
-              ? ride.type === "instant" || ride.dispatch_mode === "geo"
+              ? network && !network.held
+                ? // Phase réseau : vos chauffeurs d'abord (compteur ci-dessous pour les partenaires, jamais nommés)
+                  `${ride.type === "instant" || ride.dispatch_mode === "geo" ? `Réseau partagé · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])}` : "Proposée à la flotte et au réseau partagé"}${offers > 0 ? ` · ${offers} de vos chauffeurs sollicité${offers > 1 ? "s" : ""}` : ""}`
+                : ride.type === "instant" || ride.dispatch_mode === "geo"
                 ? `${(ride.dispatch_wave ?? 0) > firstPassWaves ? "Relance" : `Vague ${ride.dispatch_wave || 1}`} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])} · ${offers} chauffeur${offers > 1 ? "s" : ""} sollicité${offers > 1 ? "s" : ""}`
                 : `Proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`
               : network?.held && (status === "ACCEPTED" || status === "DRIVER_EN_ROUTE")

@@ -21,6 +21,11 @@ describe("alertes du réseau partagé", () => {
       title: "Course proposée au réseau partagé",
       body: "Aucun de vos chauffeurs n'a accepté",
     });
+    // Planifiée dans la fenêtre réseau (006800 : stage « scheduled_window ») : proposée en plus à la flotte
+    expect(networkProposedAlert({ data: { partners_nearby: 1, stage: "scheduled_window" } }, { label: "#1790", route: "Opéra → CDG" })).toEqual({
+      title: "Planifiée #1790 proposée aussi au réseau partagé",
+      body: "Toujours sans chauffeur · 1 chauffeur partenaire à proximité · Opéra → CDG",
+    });
   });
 
   it("aucun chauffeur : mention du réseau (donnée, sinon message complété par le SQL)", () => {
@@ -28,8 +33,13 @@ describe("alertes du réseau partagé", () => {
     expect(noDriverNetworkLine({ message: "Personne n'a accepté la course (4 → 8 km), réseau partagé : 3 chauffeurs partenaires sollicités" })).toBe(
       "Réseau partagé : 3 chauffeurs partenaires sollicités",
     );
-    expect(noDriverNetworkLine({ message: "", data: { network_partners_offered: 1 } })).toBe("Réseau partagé : 1 chauffeur partenaire sollicité");
-    expect(noDriverNetworkLine({ message: "", data: { network_partners_offered: 0 } })).toBe("Réseau partagé : aucun chauffeur partenaire disponible");
+    // Données du SQL (006800) : { waves, last_radius_m, closed_offers, network: true, partners_offered }
+    expect(noDriverNetworkLine({ message: "", data: { network: true, partners_offered: 1 } })).toBe("Réseau partagé : 1 chauffeur partenaire sollicité");
+    expect(noDriverNetworkLine({ message: "", data: { network: true, partners_offered: 0 } })).toBe("Réseau partagé : aucun chauffeur partenaire disponible");
+    // Partage arrêté après trois erreurs (C8) : network sans compteur, jamais de détail technique
+    expect(
+      noDriverNetworkLine({ message: "Personne n'a accepté la course (réseau partagé interrompu par des erreurs) — attribuez-la ou relancez", data: { network: true } }),
+    ).toBe("Réseau partagé interrompu");
   });
 
   it("règlement d'une course confiée : « Réseau partagé › Courses confiées », jamais Encaissements", () => {

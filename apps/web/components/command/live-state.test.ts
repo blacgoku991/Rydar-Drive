@@ -99,6 +99,18 @@ describe("réducteur — réseau partagé", () => {
     expect(state.rides.r1!.driver_org_id).toBeNull();
   });
 
+  it("A : offre à un chauffeur partenaire (network: true, sans chauffeur) jamais gardée, comme l'instantané (RLS)", () => {
+    const own = { id: "o1", ride_id: "r1", driver_id: "a", status: "pending", mode: "geo", wave: 1, distance_m: 800, expires_at: "2026-10-01T08:01:00Z" };
+    let state = reducer(empty, { type: "offer", payload: own });
+    const net = { id: "o2", ride_id: "r1", driver_id: null, status: "pending", mode: "geo", wave: null, distance_m: null, expires_at: "2026-10-01T08:01:00Z", network: true };
+    const same = reducer(state, { type: "offer", payload: net });
+    expect(same).toBe(state);
+    expect(Object.keys(same.offers)).toEqual(["o1"]);
+    // Offre propre close : retirée comme avant
+    state = reducer(state, { type: "offer", payload: { ...own, status: "expired" } });
+    expect(state.offers).toEqual({});
+  });
+
   it("B : course partenaire → « En course partenaire », position retirée et positions suivantes ignorées (Q5)", () => {
     let state = reducer(empty, { type: "snapshot", snapshot: snapshot({ drivers: [driver("a")] }) });
     state = reducer(state, { type: "driver", payload: { id: "a", presence: "en_route", status: "active", current_ride_id: null, network: true, network_giver: "Taxi A" } });

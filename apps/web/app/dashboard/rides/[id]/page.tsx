@@ -99,6 +99,9 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   ]);
   const networkData = (network && !network.error ? (network.data ?? null) : null) as OrgNetworkRide | null;
   const networkFailed = !!network?.error;
+  // Course non proposée (sans prix, sans part chauffeur, aucun partenaire proche…) : dernier motif du journal
+  const networkSkipped =
+    ((events.data ?? []) as { type: string; message: string }[]).findLast((e) => e.type === "dispatch.network_skipped")?.message ?? null;
   const partnerExecution = partnerOrg ? (networkData?.execution ?? null) : null;
   const partnerName = partnerExecution?.partner.name ?? (partnerOrg && networkData?.operator ? networkData.operator.name : null);
   const networkLock = networkLockMessage(ride, ctx.org.id);
@@ -249,6 +252,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               }}
               data={networkData}
               failed={networkFailed}
+              skipped={networkSkipped}
               canManage={isAdminRole(ctx.role)}
               timeZone={tz}
               serverNow={Date.now()}

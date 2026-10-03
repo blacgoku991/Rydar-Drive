@@ -1,7 +1,7 @@
 // Alertes du rattacheur (components/alerts/dispatch-alerts.tsx) liées au réseau partagé : course proposée au réseau
 // (information), aucun chauffeur après le réseau, acceptation par un chauffeur partenaire, règlement d'une course
 // confiée. Module pur (tests : alerts.test.ts). Les événements ne contiennent jamais d'identifiant de partenaire.
-import { networkPartnersFromNoDriver, type NetworkNoDriverEventData } from "@rydar/shared";
+import { networkPartnersFromNoDriver, type NetworkNoDriverEventData, type NetworkShareStage } from "@rydar/shared";
 import { networkShareHref } from "./paths";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
@@ -17,16 +17,20 @@ export function acceptedBy(message: string | null | undefined, data?: { network?
   return { who: who || (network ? "Un chauffeur partenaire" : "Un chauffeur"), network };
 }
 
-/** « dispatch.network » (information) : course proposée au réseau après les vagues de vos chauffeurs. */
+/**
+ * « dispatch.network » (information) : course proposée au réseau après les vagues de vos chauffeurs (immédiate), ou
+ * planifiée toujours sans chauffeur dans la fenêtre réseau (`stage: "scheduled_window"`, proposée en plus à la flotte).
+ */
 export function networkProposedAlert(
-  e: { data?: { partners_nearby?: number } | null },
+  e: { data?: { partners_nearby?: number; stage?: NetworkShareStage } | null },
   ride: { label: string; route: string },
 ): { title: string; body: string } {
   const n = e.data?.partners_nearby;
+  const scheduled = e.data?.stage === "scheduled_window";
   return {
-    title: `Course ${ride.label} proposée au réseau partagé`.replace("  ", " "),
+    title: (scheduled ? `Planifiée ${ride.label} proposée aussi au réseau partagé` : `Course ${ride.label} proposée au réseau partagé`).replace("  ", " "),
     body: [
-      "Aucun de vos chauffeurs n'a accepté",
+      scheduled ? "Toujours sans chauffeur" : "Aucun de vos chauffeurs n'a accepté",
       typeof n === "number" && n > 0 ? plural(n, "chauffeur partenaire à proximité", "chauffeurs partenaires à proximité") : null,
       ride.route || null,
     ]
@@ -35,10 +39,14 @@ export function networkProposedAlert(
   };
 }
 
-/** « dispatch.no_driver » passé par le réseau : « Réseau partagé : 3 chauffeurs partenaires sollicités », sinon null. */
+/**
+ * « dispatch.no_driver » passé par le réseau : « Réseau partagé : 3 chauffeurs partenaires sollicités » (compteur
+ * `partners_offered`, sinon le message complété par le SQL), « Réseau partagé interrompu » (`network: true` sans
+ * compteur : partage arrêté après des erreurs, sans détail technique), sinon null.
+ */
 export function noDriverNetworkLine(e: { message?: string | null; data?: NetworkNoDriverEventData | null }): string | null {
   const n = networkPartnersFromNoDriver(e.message, e.data);
-  if (n == null) return null;
+  if (n == null) return e.data?.network === true ? "Réseau partagé interrompu" : null;
   return n > 0 ? `Réseau partagé : ${plural(n, "chauffeur partenaire sollicité", "chauffeurs partenaires sollicités")}` : "Réseau partagé : aucun chauffeur partenaire disponible";
 }
 

@@ -25,6 +25,11 @@ export type Action =
   | { type: "report-update"; payload: FleetReportUpdate };
 
 const byId = <T extends { id: string }>(list: T[]) => Object.fromEntries(list.map((x) => [x.id, x]));
+const omit = <T,>(rec: Record<string, T>, id: string): Record<string, T> => {
+  const next = { ...rec };
+  delete next[id];
+  return next;
+};
 const sameTrip = (a: LiveRide, b: LiveRide) =>
   a.pickup_lat === b.pickup_lat && a.pickup_lng === b.pickup_lng && a.dropoff_lat === b.dropoff_lat && a.dropoff_lng === b.dropoff_lng;
 /** Client à bord : le trajet est tracé sur la carte même sans sélection. */
@@ -107,6 +112,9 @@ export function reducer(state: State, action: Action): State {
     }
     case "offer": {
       const p = action.payload;
+      // Offre à un chauffeur partenaire (réseau partagé, `network: true`, sans chauffeur ni distance) : jamais gardée,
+      // comme dans l'instantané (RLS) — compteur des partenaires dans le bloc réseau de la course.
+      if (p?.network === true || !p?.driver_id) return state.offers[p?.id] ? { ...state, offers: omit(state.offers, p.id) } : state;
       const offers = { ...state.offers };
       if (p.status === "pending") offers[p.id] = { ...(offers[p.id] ?? {}), ...p };
       else delete offers[p.id];

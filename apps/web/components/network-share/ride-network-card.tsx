@@ -30,6 +30,8 @@ type Props = {
   data: OrgNetworkRide | null;
   /** Lecture en échec (bloc réduit, rien n'est inventé) */
   failed: boolean;
+  /** Dernier journal « dispatch.network_skipped » (« Course sans prix : non proposée au réseau partagé »…) */
+  skipped?: string | null;
   canManage: boolean;
   timeZone: string;
   serverNow: number;
@@ -44,7 +46,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export function RideNetworkCard({ ride, data, failed, canManage, timeZone, serverNow }: Props) {
+export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZone, serverNow }: Props) {
   const now = useNow(30_000) ?? serverNow;
   const [mode, setMode] = useState<"remove" | "close" | null>(null);
   const item = useMemo<NetworkGivenItem | null>(() => (data ? givenItemOf(ride, data) : null), [ride, data]);
@@ -55,7 +57,9 @@ export function RideNetworkCard({ ride, data, failed, canManage, timeZone, serve
         <CardHeader title="Réseau partagé" icon={<ArrowLeftRight className="text-violet" />} />
         <CardBody>
           <p className="text-[13px] text-fg-muted">
-            {failed ? "Détails du réseau partagé momentanément indisponibles : rechargez la page dans un instant." : "Cette course n'a pas été proposée au réseau partagé."}
+            {failed
+              ? "Détails du réseau partagé momentanément indisponibles : rechargez la page dans un instant."
+              : (skipped ?? "Cette course n'a pas été proposée au réseau partagé.")}
           </p>
         </CardBody>
       </Card>
