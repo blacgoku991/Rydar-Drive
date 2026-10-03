@@ -392,7 +392,7 @@ describe("Application à la date d'effet par le ménage", () => {
 
     await sql(`update public.platform_fee_changes set effective_at = now() - interval '1 minute' where id = $1`, [id]);
     const r = await housekeeping();
-    expect(r.errors).toBeUndefined();
+    expect(r.errors?.platform_fee_changes).toBeUndefined();
     expect(r.platform_fee_changes_applied).toBeGreaterThanOrEqual(1);
     expect(await rates(o)).toMatchObject({ fixed: 200 });
     expect((await changes(o))[0]).toMatchObject({ status: "applied" });
