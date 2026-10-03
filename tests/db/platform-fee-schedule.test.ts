@@ -67,13 +67,14 @@ async function acceptTerms(o: Org, version = VERSION) {
 }
 
 type FeeOpts = {
-  percent?: number; fixed?: number; model?: "fleet" | "centrale" | null; mode?: string; on?: string | null; note?: string | null;
-  version?: string | null; legalOn?: string | null; url?: string | null;
+  percent?: number | null; fixed?: number | null; model?: "fleet" | "centrale" | null; mode?: string; on?: string | null;
+  note?: string | null; version?: string | null; legalOn?: string | null; url?: string | null;
 };
 /** Réglage par le super admin (actions serveur createOrganization / updateDispatchModel). */
 const setFees = (o: Org, actor: string, f: FeeOpts) =>
   svc("svc_platform_set_fees", [
-    o.id, actor, f.percent ?? 0, f.fixed ?? 0, f.model ?? null, f.mode ?? "notice", f.on ?? null, f.note ?? null,
+    o.id, actor, f.percent === undefined ? 0 : f.percent, f.fixed === undefined ? 0 : f.fixed, f.model ?? null, f.mode ?? "notice",
+    f.on ?? null, f.note ?? null,
     f.version === undefined ? VERSION : f.version, f.legalOn === undefined ? LEGAL_ON : f.legalOn,
     f.url === undefined ? APP_URL : f.url,
   ]);
@@ -362,6 +363,14 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     expect(res.message).toBe(`Modèle d'exploitation enregistré. Le changement programmé reste prévu le ${ddmmyyyy(MIN_30)}.`);
     expect(await rates(o)).toEqual({ model: "centrale", percent: 0, fixed: 0 });
     expect(await events(o)).toEqual(["rates_scheduled", "model"]);
+    // Modèle seul (aucun taux transmis) : taux et annonce inchangés
+    const back = await setFees(o, sa, { percent: null, fixed: null, model: "fleet" });
+    expect(back).toMatchObject({ ok: true, code: "APPLIED", dispatch_model: "fleet", fee_fixed_cents: 0, scheduled_change: { id: first.scheduled_change.id } });
+    expect(await setFees(o, sa, { percent: null, fixed: null })).toMatchObject({ ok: true, code: "UNCHANGED", scheduled_change: { fixed_cents: 200 } });
+    // Taux à moitié fournis : refusés
+    expect(await setFees(o, sa, { percent: 1, fixed: null })).toMatchObject({ ok: false, code: "INVALID", field: "platformFeeFixedCents" });
+    expect(await setFees(o, sa, { percent: null, fixed: 300 })).toMatchObject({ ok: false, code: "INVALID", field: "platformFeePercent" });
+    expect((await changes(o)).map((c) => c.status)).toEqual(["scheduled"]);
   });
 });
 
@@ -641,6 +650,29 @@ describe("Droits : super admin seulement, rien pour anon / authenticated", () =>
       [["svc_platform_set_fees", "svc_platform_cancel_fee_change", "svc_org_terms_notify", "admin_platform_fee_schedule"]],
     );
     expect(defs.map((d) => d.proname)).toEqual(["admin_platform_fee_schedule", "svc_org_terms_notify", "svc_platform_cancel_fee_change", "svc_platform_set_fees"]);
+  });
+
+  it("garde : une hausse écrite directement par le web (service role) est refusée ; baisse directe et rôle propriétaire possibles", async () => {
+    const o = await org("Garde Hausse Directe", { fixed: 200 });
+    for (const stmt of [
+      "update public.organizations set platform_fee_fixed_cents = 300 where id = $1",
+      "update public.organizations set platform_fee_percent = 1 where id = $1",
+      "update public.organizations set platform_fee_percent = 1, platform_fee_fixed_cents = 0 where id = $1",
+    ]) {
+      const e = await expectPgError(as({ role: "service_role" }, (q) => q(stmt, [o.id])));
+      expect(e.code, stmt).toBe("42501");
+      expect(e.message).toContain("PLATFORM_FEE_NOTICE_REQUIRED");
+    }
+    expect(await rates(o)).toMatchObject({ percent: 0, fixed: 200 });
+    // Baisse directe, ou mêmes taux réécrits avec d'autres colonnes : possibles
+    await as({ role: "service_role" }, (q) => q("update public.organizations set platform_fee_fixed_cents = 100 where id = $1", [o.id]));
+    await as({ role: "service_role" }, (q) =>
+      q("update public.organizations set platform_fee_fixed_cents = 100, name = 'Garde renommée' where id = $1", [o.id]));
+    expect(await rates(o)).toMatchObject({ fixed: 100 });
+    // Connexion directe avec le rôle propriétaire (migrations, seed, VPS) : non concernée
+    await sql("update public.organizations set platform_fee_fixed_cents = 500 where id = $1", [o.id]);
+    expect(await rates(o)).toMatchObject({ fixed: 500 });
+    expect(ERROR_MESSAGES.PLATFORM_FEE_NOTICE_REQUIRED).toBeTruthy();
   });
 
   it("paramètres invalides : refusés sans rien écrire", async () => {

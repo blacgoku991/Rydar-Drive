@@ -261,6 +261,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Interrupteur plateforme des mini-sites (20260924006200)
   BOOKING_SITES_DISABLED: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
   // Frais Rydar : hausses annoncées, accord écrit, annonce des CGV, relance WhatsApp d'une flotte (20260924006600)
+  PLATFORM_FEE_NOTICE_REQUIRED:
+    "Hausse des frais par course : à annoncer au moins 30 jours à l'avance, ou à appliquer sur accord écrit de l'organisation (fiche de l'organisation).",
   NOTICE_TOO_SHORT:
     "Préavis insuffisant : une hausse des frais par course s'applique au plus tôt 30 jours après son annonce (et pas avant l'entrée en vigueur des CGV pour une organisation qui ne les a pas acceptées), sauf accord écrit de l'organisation.",
   CONSENT_REQUIRED: "Accord écrit : précisez sa date et sa forme (e-mail, courrier…) pour appliquer la hausse tout de suite.",

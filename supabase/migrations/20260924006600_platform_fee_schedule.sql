@@ -9,7 +9,8 @@
 --    changement en attente par organisation (index unique partiel), écrit seulement par les RPC svc_* :
 --    • création d'une organisation (p_mode 'initial', organisation de moins d'une heure, sans course) : taux appliqués
 --      tout de suite ;
---    • baisse, ou taux inchangés : tout de suite (un changement en attente est remplacé, donc annulé) ;
+--    • baisse, ou taux égaux aux taux actuels : tout de suite (un changement en attente est remplacé, donc annulé) ;
+--      aucun taux transmis (changement de modèle seul) : taux et changement en attente inchangés ;
 --    • HAUSSE (l'un des deux taux augmente, y compris 0 → > 0) sur une organisation existante :
 --        - par défaut PROGRAMMÉE (p_mode 'notice') : date d'effet = un jour (minuit, fuseau de l'organisation) au plus
 --          tôt le premier minuit après max(maintenant + 30 jours, entrée en vigueur des CGV p_org_legal_effective_on
@@ -22,7 +23,9 @@
 --    • annulable (svc_platform_cancel_fee_change) ; un nouveau réglage remplace le changement en attente ; même
 --      réglage (mêmes taux, même date) renvoyé : rien (UNCHANGED, aucun nouvel e-mail) ;
 --    • changement de modèle d'exploitation (p_dispatch_model) : appliqué tout de suite, dans le même appel (garde
---      SETTLEMENTS_OPEN pour un retour en flotte) ; un changement de modèle seul n'est pas une hausse de taux.
+--      SETTLEMENTS_OPEN pour un retour en flotte) ; un changement de modèle seul n'est pas une hausse de taux ;
+--    • garde SQL (organizations_platform_rates_guard) : une hausse écrite directement par le web (service role) ou un
+--      client est refusée (PLATFORM_FEE_NOTICE_REQUIRED) ; une baisse directe reste possible.
 --    La règle des taux APPLIQUÉS aux courses ne change pas : flotte = taux en vigueur à la fin de la course
 --    (private.fleet_fee_basis) ; centrale = taux en vigueur au calcul de la répartition (création, puis chaque
 --    changement de prix, de commission ou de mode de paiement, y compris après la course, par correction).
@@ -277,6 +280,32 @@ revoke all on public.platform_fee_changes from public, anon, authenticated, serv
 grant select on public.platform_fee_changes to authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
+-- Garde : jamais de HAUSSE des frais par course écrite directement par le web (service role) ou par un client
+-- -----------------------------------------------------------------------------
+-- Une hausse passe par svc_platform_set_fees (préavis de 30 jours, ou accord écrit) ou par le ménage, qui s'exécutent
+-- avec le rôle propriétaire des fonctions ; une baisse directe reste possible. Non concernés : connexions directes avec
+-- le rôle propriétaire (migrations, seed, VPS) et création d'une organisation (INSERT).
+create or replace function private.organizations_platform_rates_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if current_user in ('service_role', 'authenticated', 'anon')
+     and (new.platform_fee_percent > old.platform_fee_percent or new.platform_fee_fixed_cents > old.platform_fee_fixed_cents) then
+    raise exception 'PLATFORM_FEE_NOTICE_REQUIRED: hausse des frais par course : annonce de 30 jours ou accord écrit (svc_platform_set_fees)'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists organizations_platform_rates_guard on public.organizations;
+create trigger organizations_platform_rates_guard
+  before update of platform_fee_percent, platform_fee_fixed_cents on public.organizations
+  for each row execute function private.organizations_platform_rates_guard();
+
+-- -----------------------------------------------------------------------------
 -- File des e-mails : annonces aux organisations
 -- -----------------------------------------------------------------------------
 alter table public.email_outbox drop constraint if exists email_outbox_kind_check;
@@ -514,7 +543,9 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Appelée par les actions serveur createOrganization (p_mode 'initial') et updateDispatchModel, avec la version des
 -- CGV en vigueur (ORG_LEGAL_VERSION) et leur date d'entrée en vigueur pour les organisations déjà clientes
--- (ORG_LEGAL_EFFECTIVE_AT) : la base ne connaît aucune version. p_app_url : origine du site pour les liens des
+-- (ORG_LEGAL_EFFECTIVE_AT) : la base ne connaît aucune version. p_percent et p_fixed_cents : les deux, ou aucun
+-- (changement de modèle seul : taux et changement en attente inchangés) ; des taux égaux aux taux ACTUELS alors qu'une
+-- hausse est annoncée l'annulent (« un nouveau réglage la remplace »). p_app_url : origine du site pour les liens des
 -- e-mails (facultatif). Champs d'erreur (« field ») : platformFeePercent, platformFeeFixedCents, dispatchModel,
 -- effectiveOn, consentNote, mode.
 create or replace function public.svc_platform_set_fees(
@@ -548,6 +579,7 @@ declare
   v_tz text;
   v_today date;
   v_version text := nullif(btrim(coalesce(p_org_legal_version, '')), '');
+  v_rates_given boolean := p_percent is not null or p_fixed_cents is not null;
   v_accepted boolean;
   v_increase boolean;
   v_now_percent numeric(5, 2);
@@ -573,12 +605,13 @@ begin
   if v_mode not in ('initial', 'notice', 'consent') then
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'mode', 'message', 'Mode de réglage inconnu.');
   end if;
-  if p_percent is null or round(p_percent, 2) < 0 or round(p_percent, 2) > 50 then
+  -- Taux : les deux, ou aucun (changement de modèle seul : taux et changement en attente inchangés)
+  if v_rates_given and (p_percent is null or round(p_percent, 2) < 0 or round(p_percent, 2) > 50) then
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'platformFeePercent',
       'message', 'Frais plateforme (%) : entre 0 et 50.');
   end if;
   v_percent := round(p_percent, 2);
-  if v_fixed is null or v_fixed < 0 or v_fixed > 100000 then
+  if v_rates_given and (v_fixed is null or v_fixed < 0 or v_fixed > 100000) then
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'platformFeeFixedCents',
       'message', 'Frais fixes par course : entre 0 et 1 000 €.');
   end if;
@@ -589,18 +622,23 @@ begin
     return jsonb_build_object('ok', false, 'code', 'TERMS_VERSION_INVALID', 'message', 'Version des CGV invalide.');
   end if;
 
-  -- Organisation puis changement en attente : même ordre de verrouillage que l'annulation et le ménage
-  select * into o from public.organizations where id = p_org for update;
+  -- Organisation puis changement en attente : même ordre de verrouillage que l'annulation et le ménage (« no key
+  -- update », comme un UPDATE : les insertions qui référencent l'organisation, courses ou écritures, ne sont pas bloquées)
+  select * into o from public.organizations where id = p_org for no key update;
   if not found then
     return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Organisation introuvable.');
   end if;
-  select * into c from public.platform_fee_changes x where x.organization_id = p_org and x.status = 'scheduled' for update;
+  select * into c from public.platform_fee_changes x where x.organization_id = p_org and x.status = 'scheduled' for no key update;
   v_tz := coalesce(o.timezone, 'Europe/Paris');
   v_today := (now() at time zone v_tz)::date;
   v_pending_on := (c.effective_at at time zone v_tz)::date;
   v_accepted := case when v_version is not null then private.org_terms_accepted(p_org, v_version) end;
   v_model := coalesce(p_dispatch_model, o.dispatch_model);
   v_model_changed := v_model is distinct from o.dispatch_model;
+  if not v_rates_given then
+    v_percent := o.platform_fee_percent;
+    v_fixed := o.platform_fee_fixed_cents;
+  end if;
 
   -- Création : seulement une organisation tout juste créée, sans aucune course
   if v_mode = 'initial' and (o.created_at < now() - interval '1 hour'
@@ -628,10 +666,12 @@ begin
   v_now_fixed := o.platform_fee_fixed_cents;
 
   if not v_increase then
-    -- Création, baisse ou taux inchangés : tout de suite ; un changement en attente est remplacé
+    -- Création, baisse ou taux inchangés : tout de suite ; un changement en attente est remplacé (sauf modèle seul,
+    -- sans taux : il reste prévu)
     v_now_percent := v_percent;
     v_now_fixed := v_fixed;
-    v_close := c.id is not null;
+    v_close := v_rates_given and c.id is not null;
+    v_keep := not v_rates_given and c.id is not null;
   elsif v_mode = 'consent' then
     -- Accord écrit de l'organisation : tout de suite, note obligatoire
     if v_note is null or char_length(v_note) < 3 then
@@ -840,11 +880,11 @@ declare
   v_emails integer;
 begin
   perform private.assert_platform_actor(p_actor);
-  select * into o from public.organizations where id = p_org for update;
+  select * into o from public.organizations where id = p_org for no key update;
   if not found then
     return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Organisation introuvable.');
   end if;
-  select * into c from public.platform_fee_changes x where x.organization_id = p_org and x.status = 'scheduled' for update;
+  select * into c from public.platform_fee_changes x where x.organization_id = p_org and x.status = 'scheduled' for no key update;
   if not found or p_change is null or c.id <> p_change then
     return jsonb_build_object('ok', false, 'code', 'FEE_CHANGE_NOT_PENDING',
       'message', 'Ce changement n''est plus en attente (déjà appliqué, annulé ou remplacé) : rechargez la page.');
@@ -988,9 +1028,9 @@ begin
      order by f.effective_at, f.id
      limit greatest(coalesce(p_limit, 100), 1)
   loop
-    select * into o from public.organizations where id = x.organization_id for update skip locked;
+    select * into o from public.organizations where id = x.organization_id for no key update skip locked;
     continue when not found;
-    select * into c from public.platform_fee_changes where id = x.id for update;
+    select * into c from public.platform_fee_changes where id = x.id for no key update;
     continue when not found or c.status <> 'scheduled' or c.effective_at > now();
     perform private.set_actor('system', null);
     update public.organizations
@@ -2147,7 +2187,8 @@ revoke execute on function
   private.org_terms_email(uuid, text, date, text),
   private.platform_scheduled_change_json(uuid, text),
   private.platform_fee_change_admin_json(public.platform_fee_changes, text),
-  private.apply_platform_fee_changes(integer)
+  private.apply_platform_fee_changes(integer),
+  private.organizations_platform_rates_guard()
 from public, anon, authenticated, service_role;
 
 -- Super admin : actions serveur (service role, auteur p_actor revérifié par private.assert_platform_actor)

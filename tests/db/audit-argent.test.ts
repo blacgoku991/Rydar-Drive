@@ -371,9 +371,11 @@ describe("Frais plateforme", () => {
     const ride = await createRideAsOwner(org, { price_cents: 10000, payment_method: "cash" });
     expect((await sql(`select platform_fee_cents from public.rides where id = $1`, [ride.id]))[0].platform_fee_cents).toBeNull();
 
-    await as({ role: "service_role" }, (q) =>
-      q(`update public.organizations set dispatch_model = 'centrale', platform_fee_percent = 10 where id = $1`, [org.id]),
-    );
+    // Action serveur du super admin (svc_platform_set_fees) : passage en centrale à 10 %, appliqué tout de suite sur
+    // accord écrit (une hausse écrite directement par le service role est refusée : 20260924006600)
+    const sa = await superAdmin();
+    expect(await svc("svc_platform_set_fees", [org.id, sa, 10, 0, "centrale", "consent", null, "Accord écrit (test)"]))
+      .toMatchObject({ ok: true, code: "APPLIED", dispatch_model: "centrale", fee_percent: 10 });
     const [split] = await sql(`select commission_cents, platform_fee_cents, driver_payout_cents from public.rides where id = $1`, [ride.id]);
     expect(split).toEqual({ commission_cents: 2000, platform_fee_cents: 1000, driver_payout_cents: 7000 });
     await advance(d, ride.id);
