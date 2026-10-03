@@ -72,9 +72,11 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   `email_outbox` (annonce, confirmation d'accord écrit, annulation ; contenu fixe) ; owner / admin :
   `account.scheduled_change` ; super admin : `admin_platform_fee_schedule`. Annonce des CGV : `svc_org_terms_notify`
   (une fois par organisation et par version). Textes « réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») »,
-  relance WhatsApp de Rydar refusée pour une flotte (WHATSAPP.md). Reste au web : actions `createOrganization` /
-  `updateDispatchModel` sur la RPC (formulaire prérempli avec le changement en attente), fiche super admin, encart et
-  bandeau, bouton « Prévenir par e-mail », alerte en direct selon le modèle. **Tâche manuelle du propriétaire** : facture
+  relance WhatsApp de Rydar refusée pour une flotte (WHATSAPP.md). Garde SQL : une hausse écrite directement par le
+  service role est refusée (`PLATFORM_FEE_NOTICE_REQUIRED`). Reste au web : actions `createOrganization` (p_mode
+  `initial`) / `updateDispatchModel` sur la RPC (formulaire prérempli avec le changement en attente, ou modèle seul sans
+  taux), fiche super admin, encart et bandeau, bouton « Prévenir par e-mail », alerte en direct selon le modèle,
+  actions temps réel `rates_scheduled` / `rates_cancelled` (relecture du layout : menu « Frais Rydar » d'une flotte à 0 €). **Tâche manuelle du propriétaire** : facture
   récapitulative des frais de chaque cycle (le relevé n'est pas une facture). Amélioration possible : figer les taux en
   centrale comme en flotte (aujourd'hui : taux du calcul de la répartition, y compris après la course).
 - **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour

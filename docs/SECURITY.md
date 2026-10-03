@@ -139,7 +139,16 @@ Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domain
   (`org_platform_fees_enabled`) restent réservés à l'owner / admin.
 - **CGV** (version 2026-10-02 = `ORG_LEGAL_VERSION`, acceptée par l'owner / admin seulement) : l'article 5 couvre les
   frais des deux modèles (flotte : % + fixe facturés à la flotte, fixe dû sans prix, sans plafond ; centrale : prélevés
-  sur le prix, plafonnés). Régler les frais d'une flotte après son acceptation de cette version (`/admin/legal`).
+  sur le prix, plafonnés).
+- **Hausse des taux annoncée** (migration 006600) : seulement par `svc_platform_set_fees` (auteur super admin revérifié,
+  audit en SQL) ; une hausse s'applique au plus tôt 30 jours après son annonce par e-mail aux propriétaires (et pas avant
+  l'entrée en vigueur des CGV qu'une organisation n'a pas acceptées), sauf accord écrit noté (journal « warning »,
+  e-mail de confirmation au propriétaire). Garde `organizations_platform_rates_guard` : une hausse écrite directement
+  par le service role ou un client est refusée (`PLATFORM_FEE_NOTICE_REQUIRED`). E-mails à contenu fixe (référence
+  issue du slug, jamais le nom saisi par l'organisation), adresses validées comme `email_outbox.to_email`. Tables
+  `platform_fee_changes` et `org_terms_notices` : lecture super admin (RLS), aucune écriture directe (RPC seulement).
+- **Relance WhatsApp de Rydar** refusée pour une flotte (`WHATSAPP_FLEET_UNSUPPORTED`) : le modèle approuvé renvoie à
+  l'onglet « Encaissements », absent d'une flotte (WHATSAPP.md).
 - **Registre immuable** : aucune écriture ne se modifie ni ne se supprime (trigger `platform_entry_guard`, même en service
   role) ; tout changement de frais est une nouvelle écriture de correction. Registre et paiements ne partent pas non plus
   avec la centrale : clés étrangères en `on delete restrict` (migration 004200), une centrale qui en a s'archive. Une **baisse** (prix corrigé après la course)
