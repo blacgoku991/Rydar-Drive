@@ -257,8 +257,9 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
 ## Réseau partagé (branche `shared-network`, en cours, interrupteur plateforme coupé)
 - Lots faits : 0 (contrats `packages/shared/src/network.ts`), 2 (schéma, gardes, droits : migration `20260924006700`,
   non poussée), 3 (dispatch, migration `20260924006800`, non poussée : 3a éligibilité, étape réseau des immédiates et
-  des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin), 4a (argent côté chauffeur,
-  migration `20260924006900`, non poussée ; la partie 4b la complète). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin), 4 (argent, migration
+  `20260924006900`, non poussée : 4a côté chauffeur ; 4b côté A, blocages, relances, frais Rydar, dette et
+  suppression). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
   liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
@@ -318,6 +319,38 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   - `private.network_driver_readiness(chauffeur)` (lisibilité complète, contrat NetworkDriverReadiness) : les RPC de
     lisibilité des lots 5 et 6 l'enveloppent ; `driver_home().network` et `driver_earnings` (net par course aux termes
     figés, communes seulement pour une course partenaire) : clés ajoutées seulement quand il y a du réseau.
+- Règles posées par le lot 4b (argent, côté A) :
+  - toute action d'argent de A sur une ligne réseau passe par `private.assert_network_creditor` (owner / admin, A
+    suspendue ou archivée comprise ; jamais un dispatcher, lot mêlé compris) : « Reçu » / « Versé »
+    (`confirm_settlements`), « Pas reçu », « Annuler » (refusé sur un versement : `NETWORK_SETTLEMENT_ACTION_FORBIDDEN`,
+    il faut contester la course), « Rouvrir » (reversement : nouvelle échéance au délai de A, relances remises à zéro),
+    `org_network_payout_info` (RIB d'un versement dû et non retenu, consultation journalisée SANS IBAN et notifiée au
+    chauffeur, avertissements `iban_changed` / `recent_change` 72 h), `validate_network_ride`, `contest_network_ride` ;
+    seule « Relancer » (`remind_network_driver`) est ouverte à tout membre de p_org ACTIVE (app seulement, une par
+    30 min, envers p_org seulement) ;
+  - chauffeur partenaire prévenu par `private.network_notify` (ligne chez A, `data.network = true`, jamais commission
+    ni frais de A) ; jamais `maybe_promote_driver` pour une ligne réseau, et les courses partenaires ne comptent pas
+    dans la promotion chez B ;
+  - « Valider » : `ride_network_executions.validated_at / validated_by` (diffusées) ; « Contester la course » (7 jours
+    après la fin, motif 5 à 300 caractères, idempotente) : versement ouvert annulé, baisse des frais Rydar `pending`
+    (super admin), puis `NETWORK_RIDE_CONTESTED` (plus de « Valider » ni de « Rouvrir » du versement) ;
+  - frais Rydar d'une course partagée (`private.sync_platform_fee`) : chez A, au taux des termes figés, libellé
+    « Course N · réseau partagé », jamais recalculés ensuite (rien si une écriture existe), dus même si le règlement est
+    contesté ; jamais `private.fleet_fee_basis` pour elle ;
+  - relances automatiques réseau (`private.settlement_reminders`) : application seulement, 23 h d'écart, 3 au plus,
+    A active et chauffeur actif ; clé `network` du résultat seulement s'il y en a ;
+  - Encaissements (`org_settlement_overview`, `org_settlements`, mois) et `organizations_dispatch_model_guard`
+    ignorent les lignes réseau (retour en flotte permis avec des lignes réseau ouvertes) ;
+  - blocage : `private.network_identity_block` couvre aussi le débiteur réseau de A revenu sous une autre fiche (mêmes
+    empreintes, règle `block_unpaid` de A, chez A seulement) ;
+  - suppression : `private.driver_deletion_debt` ajoute `network` (dette par créancière), `private.delete_driver_account`
+    garde les empreintes dans `private.network_debtor_identities` par créancière, `private.housekeeping` les purge une
+    fois tout réglé : les lots 5 et 6 partent des versions 006900 de ces deux fonctions ;
+  - à brancher : lot 5 = `private.network_month(exécution)` pour p_month (fin de course, fuseau de A : même mois chez A
+    et B) et `validated_at` dans NetworkExecutionSummary ; lot 6 = `debtor_match` étendu à
+    `network_debtor_identities` (sans n° de fiche de B), `scrub_network_traces` ; web et app : rien de plus (journal
+    `ride.network_validated` / `ride.network_contested` affiché par son message, `NETWORK_RIDE_CONTESTED` libellé dans
+    ERROR_MESSAGES, notifications `settlement_*` avec `data.network` déjà ouvertes sur « Courses partenaires »).
 - Règles posées par la revue du lot 3 :
   - client à bord d'un partenaire (PASSENGER_ONBOARD, IN_PROGRESS) : `cancel_ride` refusé à tous sauf système / super
     admin (`NETWORK_RIDE_IN_PROGRESS` ; `private.cancel_ride_internal` redéfinie en 006800, le lot suivant qui la touche
