@@ -83,7 +83,7 @@ export function DispatchJournal({ initial, tenant, timeZone, rideNumbers }: { in
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
-            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="#course, message…" aria-label="Rechercher dans le journal" className="h-8 w-48 rounded-lg border border-line bg-ink-850 pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:border-brand/50" />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="#course, message…" aria-label="Rechercher dans le journal" className="h-8 w-48 rounded-lg border border-line-field bg-ink-850 pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/40" />
           </div>
           <div className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[12px]">
             {(["all", "warning", "error"] as const).map((l) => (

@@ -75,7 +75,7 @@ export function HeroVisual({ label, children, className }: { label: string; chil
         <button
           type="button"
           onClick={() => setPaused((p) => !p)}
-          className="absolute right-1 top-1 z-30 grid size-9 place-items-center rounded-full border border-line-strong bg-ink-800/80 text-fg-muted transition-colors hover:text-fg"
+          className="absolute left-1 top-1 z-30 grid size-9 place-items-center rounded-full border border-line-strong bg-ink-800/80 text-fg-muted transition-colors hover:text-fg"
         >
           {paused ? <Play aria-hidden className="size-4" /> : <Pause aria-hidden className="size-4" />}
           <span className="sr-only">{paused ? "Relancer l'animation du globe" : "Mettre en pause l'animation du globe"}</span>

@@ -14,6 +14,24 @@ import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
+/**
+ * Contraste de la couleur principale sur le fond du mini-site (ink-950, #060709) : texte et repères colorés lisibles
+ * à partir de 4,5:1 (WCAG 1.4.3). null : couleur illisible (saisie en cours).
+ */
+export function brandContrastOnDark(hex: string): number | null {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return null;
+  const lum = (h: string) => {
+    const n = parseInt(h.slice(1), 16);
+    const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const [a, b] = [lum(hex), lum("#060709")].sort((x, y) => y - x);
+  return (a! + 0.05) / (b! + 0.05);
+}
+
 export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit, planAllows, customDomainAllowed }: { site: any; slug: string; rootDomain: string; appUrl: string; token: string; canEdit: boolean; planAllows: boolean; customDomainAllowed: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -82,7 +100,14 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
           <CardHeader title="Contenu & identité" />
           <CardBody className="grid gap-4 sm:grid-cols-2">
             <Field label="Nom affiché"><Input value={s.title ?? ""} onChange={(e) => set("title", e.target.value)} disabled={!canEdit} /></Field>
-            <Field label="Couleur principale">
+            <Field
+              label="Couleur principale"
+              hint={
+                (brandContrastOnDark(s.primary_color) ?? 21) < 4.5
+                  ? `Couleur trop sombre sur le fond du mini-site (contraste ${(brandContrastOnDark(s.primary_color) ?? 0).toFixed(1).replace(".", ",")}:1, 4,5:1 au moins) : certains textes seraient peu lisibles, choisissez une teinte plus claire.`
+                  : undefined
+              }
+            >
               <div className="flex gap-2">
                 <input type="color" value={s.primary_color} onChange={(e) => set("primary_color", e.target.value.toUpperCase())} disabled={!canEdit} className="h-10 w-12 cursor-pointer rounded-lg border border-line-strong bg-ink-850 p-1" />
                 <Input value={s.primary_color} onChange={(e) => set("primary_color", e.target.value)} className="num" disabled={!canEdit} aria-label="Couleur principale, code hexadécimal" />

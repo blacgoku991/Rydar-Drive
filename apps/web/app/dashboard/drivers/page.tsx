@@ -145,7 +145,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
           <form action="/dashboard/drivers" className="relative w-full max-w-xs">
             <input type="hidden" name="filter" value={filter} />
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
-            <input type="search" name="q" defaultValue={q} placeholder="Nom, téléphone, plaque…" aria-label="Rechercher un chauffeur" className="h-9 w-full rounded-lg border border-line-strong bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60" />
+            <input type="search" name="q" defaultValue={q} placeholder="Nom, téléphone, plaque…" aria-label="Rechercher un chauffeur" className="h-9 w-full rounded-lg border border-line-field bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60 focus-visible:ring-2 focus-visible:ring-brand/40" />
           </form>
         </div>
 

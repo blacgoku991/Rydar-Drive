@@ -10,12 +10,14 @@ vi.mock("@/lib/utils", async () => await import("../../lib/utils"));
 const { Field, Input, NativeSelect, Textarea, asFieldControl } = await import("./input");
 
 const render = (node: ReactNode) => renderToStaticMarkup(node as never);
+/** Field avec son contrôle (children passé dans les props, comme en JSX). */
+const field = (props: Omit<Parameters<typeof Field>[0], "children">, child: ReactNode) => createElement(Field, { ...props, children: child });
 /** Attribut d'une balise (première occurrence). */
 const attr = (html: string, tag: string, name: string) => new RegExp(`<${tag}\\b[^>]*\\b${name}="([^"]*)"`).exec(html)?.[1];
 
 describe("Field : libellé, aide et erreur reliés au champ", () => {
   it("libellé relié à l'input (id généré), aide annoncée par aria-describedby", () => {
-    const html = render(createElement(Field, { label: "Nom", hint: "Tel qu'écrit sur la carte" }, createElement(Input, { name: "name" })));
+    const html = render(field({ label: "Nom", hint: "Tel qu'écrit sur la carte" }, createElement(Input, { name: "name" })));
     const id = attr(html, "input", "id");
     expect(id).toBeTruthy();
     expect(attr(html, "label", "for")).toBe(id);
@@ -26,7 +28,7 @@ describe("Field : libellé, aide et erreur reliés au champ", () => {
   });
 
   it("erreur : aria-invalid et message relié (à la place de l'aide)", () => {
-    const html = render(createElement(Field, { label: "E-mail", hint: "aide", error: "Adresse invalide" }, createElement(Input, { name: "email" })));
+    const html = render(field({ label: "E-mail", hint: "aide", error: "Adresse invalide" }, createElement(Input, { name: "email" })));
     expect(attr(html, "input", "aria-invalid")).toBe("true");
     const describedBy = attr(html, "input", "aria-describedby")!;
     expect(new RegExp(`<p id="${describedBy}"[^>]*>Adresse invalide</p>`).test(html)).toBe(true);
@@ -35,9 +37,7 @@ describe("Field : libellé, aide et erreur reliés au champ", () => {
 
   it("champ dans un conteneur (mot de passe + bouton) : le premier contrôle est relié, pas le bouton", () => {
     const html = render(
-      createElement(
-        Field,
-        { label: "Mot de passe" },
+      field({ label: "Mot de passe" },
         createElement("div", { className: "relative" }, createElement(Input, { name: "password", type: "password" }), createElement("button", { type: "button" }, "Afficher")),
       ),
     );
@@ -47,7 +47,7 @@ describe("Field : libellé, aide et erreur reliés au champ", () => {
 
   it("id, aria-invalid et aria-describedby déjà posés : gardés (aria-describedby complété)", () => {
     const html = render(
-      createElement(Field, { label: "Code", hint: "6 chiffres", error: undefined }, createElement(Input, { id: "code", "aria-describedby": "regle", "aria-invalid": false })),
+      field({ label: "Code", hint: "6 chiffres", error: undefined }, createElement(Input, { id: "code", "aria-describedby": "regle", "aria-invalid": false })),
     );
     expect(attr(html, "input", "id")).toBe("code");
     expect(attr(html, "label", "for")).toBe("code");
@@ -56,15 +56,15 @@ describe("Field : libellé, aide et erreur reliés au champ", () => {
   });
 
   it("htmlFor explicite : utilisé pour le libellé et l'id du champ", () => {
-    const html = render(createElement(Field, { label: "Montant", htmlFor: "amount" }, createElement(Input, { name: "amount" })));
+    const html = render(field({ label: "Montant", htmlFor: "amount" }, createElement(Input, { name: "amount" })));
     expect(attr(html, "label", "for")).toBe("amount");
     expect(attr(html, "input", "id")).toBe("amount");
   });
 
   it("liste déroulante et zone de texte reliées", () => {
-    const select = render(createElement(Field, { label: "Paiement" }, createElement(NativeSelect, null, createElement("option", { value: "a" }, "A"))));
+    const select = render(field({ label: "Paiement" }, createElement(NativeSelect, null, createElement("option", { value: "a" }, "A"))));
     expect(attr(select, "label", "for")).toBe(attr(select, "select", "id"));
-    const area = render(createElement(Field, { label: "Message" }, createElement(Textarea, { name: "m" })));
+    const area = render(field({ label: "Message" }, createElement(Textarea, { name: "m" })));
     expect(attr(area, "label", "for")).toBe(attr(area, "textarea", "id"));
   });
 
@@ -72,13 +72,13 @@ describe("Field : libellé, aide et erreur reliés au champ", () => {
     const Unit = asFieldControl(function Unit(props: Record<string, unknown>) {
       return createElement("div", null, createElement("input", { ...props }), createElement("span", null, "km"));
     });
-    const html = render(createElement(Field, { label: "Rayon", hint: "en km" }, createElement(Unit, { name: "r" })));
+    const html = render(field({ label: "Rayon", hint: "en km" }, createElement(Unit, { name: "r" })));
     expect(attr(html, "label", "for")).toBe(attr(html, "input", "id"));
     expect(attr(html, "input", "aria-describedby")).toBeTruthy();
     function Picker() {
       return createElement("div", { role: "radiogroup", "aria-label": "Moyen" });
     }
-    const other = render(createElement(Field, { label: "Moyen" }, createElement(Picker)));
+    const other = render(field({ label: "Moyen" }, createElement(Picker)));
     expect(attr(other, "label", "for")).toBeUndefined();
   });
 });

@@ -28,6 +28,8 @@
   /* Lignes */
   --color-line: rgb(255 255 255 / 0.065);
   --color-line-strong: rgb(255 255 255 / 0.1);
+  /* Contour d'un champ de saisie au repos : ≥ 3:1 contre ink-700 à ink-950 (WCAG 1.4.11, composants) */
+  --color-line-field: #666d79;
 
   /* Marque */
   --color-brand: #c8f03c;

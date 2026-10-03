@@ -56,9 +56,14 @@ export default async function AccessibilityPage() {
           et de l&apos;administration. Aucun lecteur d&apos;écran (NVDA, VoiceOver) n&apos;a encore été utilisé.
         </p>
         <p>
-          Les défauts relevés ont été corrigés : libellés et messages d&apos;erreur reliés aux champs, contrastes du
-          texte secondaire, focus visible, animations arrêtées avec le réglage « réduire les animations », titres de page
-          et hiérarchie des titres, zones défilantes atteignables au clavier, liens ouvrant un nouvel onglet signalés.
+          Les défauts relevés ont été corrigés : libellés, aides et messages d&apos;erreur reliés aux champs, contraste
+          du texte secondaire et des contours de champs, focus visible et jamais masqué par le bandeau d&apos;information
+          sur les cookies, mouvements arrêtés au bout de 5 secondes (et dès le réglage « réduire les animations »),
+          commande de pause de l&apos;animation du globe, titres de page et hiérarchie des titres, zones défilantes
+          atteignables au clavier, liens ouvrant un nouvel onglet annoncés. Après ces corrections, l&apos;outil
+          automatique ne relève plus de défaut sur les pages contrôlées (pages du site vitrine mesurées avec le réglage
+          « réduire les animations », leurs fondus au défilement faussant la mesure du contraste) : cela ne suffit pas à
+          établir la conformité.
         </p>
       </LegalSection>
 
@@ -67,7 +72,8 @@ export default async function AccessibilityPage() {
           items={[
             <>Cartes interactives (centre de commande, suivi d&apos;une course, carte des chauffeurs, mini-site) : non utilisables au lecteur d&apos;écran. Les mêmes informations sont disponibles sous forme de listes et de texte : liste des courses avec leurs adresses et leur statut, liste des chauffeurs avec leur état et l&apos;heure de leur dernière position.</>,
             <>Graphiques des statistiques : les principaux chiffres sont aussi affichés en texte, mais toutes les valeurs d&apos;un graphique ne le sont pas.</>,
-            <>Bordures des champs de formulaire au repos : contraste inférieur à 3:1 par rapport au fond ; chaque champ reste identifié par son libellé.</>,
+            <>Bandeaux d&apos;acceptation des conditions du tableau de bord : leurs liens s&apos;ouvrent dans un nouvel onglet sans l&apos;annoncer.</>,
+            <>Mini-sites de réservation : la couleur principale est choisie par chaque centrale ; le réglage signale une couleur trop sombre, sans l&apos;interdire.</>,
             <>Application mobile « Rydar Drive Chauffeur » : non évaluée.</>,
           ]}
         />
