@@ -1,6 +1,6 @@
 import {
-  DRIVER_BLOCKER_META, formatDistance, type DriverAccountState, type DriverChatOverview, type DriverHome, type DriverOffer,
-  type DriverPresence, type SettlementEvent,
+  formatDistance, type DriverAccountState, type DriverChatOverview, type DriverHome, type DriverNetworkSettlementEvent, type DriverNetworkState,
+  type DriverOfferV2, type DriverPresence, type SettlementEvent,
 } from "@rydar/shared";
 import { isAuthRetryableFetchError, type RealtimeChannel, type Session } from "@supabase/supabase-js";
 import * as Notifications from "expo-notifications";
@@ -8,10 +8,11 @@ import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Linking, Platform, Vibration } from "react-native";
 import { frTypo } from "@/components/centrale";
-import { api, ApiError, refusalText } from "@/lib/api";
+import { api, ApiError, isMissingRpc, refusalText, type AcceptResult } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
 import { ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking } from "@/lib/location";
+import { offerBlockView, settleHref, type SettleTarget } from "@/lib/network";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
 import { settlementSession } from "@/lib/settlement-session";
@@ -41,7 +42,7 @@ type Ctx = {
   home: DriverHome | null;
   /** Accueil jamais lu et dernière lecture en échec (réseau, serveur) : « Connexion impossible » plutôt que « Chargement… ». */
   homeError: boolean;
-  offers: DriverOffer[];
+  offers: DriverOfferV2[];
   /** Heure (ms) de la dernière lecture RÉUSSIE des offres, même identique à la précédente. */
   offersReadAt: () => number;
   /** Offre fermée localement sans réponse du chauffeur : elle pourra se rouvrir si le serveur la prolonge. */
@@ -65,6 +66,15 @@ type Ctx = {
   canDrive: boolean;
   /** Relit l'état du compte (écran d'attente, retour au premier plan, accès refusé par le serveur). */
   checkAccount: () => Promise<DriverAccountState | null>;
+  /**
+   * Réseau partagé (driver_network_state) : réglage, conditions, lisibilité, coordonnées bancaires masquées. null : pas
+   * encore lu, illisible, ou serveur sans réseau partagé — aucun écran réseau dans ce cas.
+   */
+  network: DriverNetworkState | null;
+  /** Relecture de l'état réseau (profil, conditions, coordonnées bancaires). */
+  refreshNetwork: () => Promise<DriverNetworkState | null>;
+  /** État réseau renvoyé par une action (driver_set_network) : appliqué sans relecture. */
+  applyNetwork: (state: DriverNetworkState | null) => void;
 };
 
 /** Valeur numérique d'une donnée de notification (FCM/APNs transportent des chaînes). */
@@ -75,6 +85,11 @@ const isForbidden = (e: unknown) => e instanceof ApiError && (e.code ?? "").star
 
 /** Relecture périodique de l'état du compte (suspension, bannissement) quand l'app est au premier plan. */
 const ACCOUNT_CHECK_MS = 60_000;
+
+/** Réseau partagé : signe de vie de la nouvelle app (capable_at, 7 j) au plus tous les quarts d'heure au premier plan. */
+const NETWORK_PING_MS = 15 * 60_000;
+/** État réseau relu au retour au premier plan, au plus une fois par minute. */
+const NETWORK_STATE_MS = 60_000;
 
 /** Splash au lancement : au-delà, une session enregistrée mais pas encore rétablie (hors réseau) est signalée. */
 const SPLASH_MAX_MS = 3000;
@@ -89,7 +104,7 @@ const RIDE_PRESENCES = new Set<DriverPresence>(["en_route", "arrived", "on_trip"
 export const URGENT_OFFER_S = 120;
 
 /** Offre à traiter tout de suite : dispatch GPS, ou fenêtre courte (course planifiée proche). */
-export function isUrgentOffer(o: Pick<DriverOffer, "mode" | "sent_at" | "expires_at">) {
+export function isUrgentOffer(o: Pick<DriverOfferV2, "mode" | "sent_at" | "expires_at">) {
   if (o.mode === "geo") return true;
   if (!o.expires_at) return false;
   return new Date(o.expires_at).getTime() - new Date(o.sent_at).getTime() <= URGENT_OFFER_S * 1000;
@@ -157,21 +172,28 @@ function alertLocationLost(perm: "coarse" | "denied") {
   );
 }
 
-/** Écran Commissions : rafraîchi s'il est déjà affiché, sinon ouvert. */
-function openCommissions() {
+/** Écran Commissions (onglet « Courses partenaires » pour un règlement du réseau) : rafraîchi s'il est affiché, sinon ouvert. */
+function openCommissions(target: SettleTarget = "own") {
   appEvents.emit("settlements", undefined);
-  if (!settlementSession.open) router.push("/commissions");
+  if (target === "network") appEvents.emit("settlements:tab", "network");
+  if (!settlementSession.open) router.push(settleHref(target));
 }
 
-/** Acceptation refusée (mode centrale) : commission en retard, plafond d'encours… → accès direct au règlement. */
-export function alertDriverBlocked(res: { reason?: string | null; message?: string }) {
-  const meta = res.reason ? DRIVER_BLOCKER_META[res.reason as keyof typeof DRIVER_BLOCKER_META] : undefined;
-  const payable = res.reason !== "new_driver";
-  Alert.alert("Acceptation impossible", frTypo(res.message ?? meta?.message ?? "Réglez vos commissions pour accepter des courses."), [
+/**
+ * Acceptation refusée (DRIVER_BLOCKED) : commission en retard, plafond d'encours (centrale) ; impayé ou plafond envers
+ * l'organisation partenaire, plafond de la sienne (réseau partagé) → accès direct au règlement.
+ */
+export function alertDriverBlocked(res: { reason?: string | null; message?: string }, names: { giver?: string | null; executor?: string | null } = {}) {
+  const block = offerBlockView(res.reason ?? "unpaid", res.message ?? null, names);
+  const payable = block?.payable ?? true;
+  Alert.alert("Acceptation impossible", block?.message ?? frTypo("Réglez vos commissions pour accepter des courses."), [
     { text: payable ? "Plus tard" : "OK", style: "cancel" },
-    ...(payable ? [{ text: "Régler mes commissions", onPress: () => router.push("/commissions") }] : []),
+    ...(payable && block ? [{ text: block.actionLabel, onPress: () => router.push(settleHref(block.target)) }] : []),
   ]);
 }
+
+/** Notification d'un règlement : course partenaire (organisation qui confie la course) ou commission propre. */
+const isNetworkData = (data: Record<string, unknown>) => data.network === true || data.network === "true";
 
 const DriverContext = createContext<Ctx | null>(null);
 
@@ -184,7 +206,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   const [accountFor, setAccountFor] = useState<string | null>(null);
   const [home, setHome] = useState<DriverHome | null>(null);
   const [homeError, setHomeError] = useState(false);
-  const [offers, setOffers] = useState<DriverOffer[]>([]);
+  const [offers, setOffers] = useState<DriverOfferV2[]>([]);
+  const [network, setNetwork] = useState<DriverNetworkState | null>(null);
   const [busy, setBusy] = useState(false);
   const [chat, setChat] = useState<DriverChatOverview | null>(null);
   const seenOffers = useRef(new Set<string>());
@@ -217,7 +240,18 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     homeRef.current = h;
     setHome(h);
   }, []);
-  const applyOffers = useCallback((o: DriverOffer[]) => {
+  const networkJson = useRef("");
+  // Serveur sans réseau partagé (fonctions absentes, PGRST202) : api.ts ne les rappelle pas pendant 10 min, puis réessaie
+  // (jamais d'abandon pour toute la vie du processus : SQL déployé après le lancement, cache de schéma en rechargement)
+  const networkReadAt = useRef(0);
+  const networkPingAt = useRef(0);
+  const applyNetwork = useCallback((n: DriverNetworkState | null) => {
+    const json = n ? JSON.stringify(n) : "";
+    if (json === networkJson.current) return;
+    networkJson.current = json;
+    setNetwork(n);
+  }, []);
+  const applyOffers = useCallback((o: DriverOfferV2[]) => {
     const json = JSON.stringify(o);
     if (json === offersJson.current) return;
     offersJson.current = json;
@@ -282,12 +316,15 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     setAccountFor(null);
     applyHome(null);
     applyOffers([]);
+    applyNetwork(null);
     setChat(null);
     setHomeError(false);
     seenOffers.current.clear();
     pushReady.current = null;
+    networkReadAt.current = 0;
+    networkPingAt.current = 0;
     if (userId) void checkAccount();
-  }, [userId, checkAccount, applyHome, applyOffers]);
+  }, [userId, checkAccount, applyHome, applyOffers, applyNetwork]);
 
   const accountChecked = userId != null && accountFor === userId;
   const ready = sessionReady && (!userId || accountChecked);
@@ -301,7 +338,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     void stopTracking().catch(() => null);
     applyHome(null);
     applyOffers([]);
-  }, [blockedAccount, applyHome, applyOffers]);
+    applyNetwork(null);
+  }, [blockedAccount, applyHome, applyOffers, applyNetwork]);
 
   /**
    * Enregistrement de l'appareil (jeton push) pour le compte connecté. Jeton Expo illisible hors réseau, serveur
@@ -361,7 +399,51 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(id);
   }, [canDrive, checkAccount]);
 
-  const openOffer = useCallback((offer: DriverOffer) => {
+  // Réseau partagé : état (réglage, conditions, lisibilité) lu pour le compte connecté. Serveur sans réseau partagé
+  // (PGRST202 : nouvel essai 10 min plus tard) ou réseau coupé par Rydar (NETWORK_DISABLED) : aucun écran réseau ; réseau
+  // injoignable : dernier état connu gardé.
+  const refreshNetwork = useCallback(async (): Promise<DriverNetworkState | null> => {
+    const uid = userIdRef.current;
+    if (!uid) return null;
+    try {
+      const state = await api.networkState();
+      if (uid !== userIdRef.current) return null;
+      networkReadAt.current = Date.now();
+      applyNetwork(state ?? null);
+      return state ?? null;
+    } catch (e) {
+      if (uid !== userIdRef.current) return null;
+      if (isMissingRpc(e) || (e instanceof ApiError && e.code === "NETWORK_DISABLED")) applyNetwork(null);
+      return null;
+    }
+  }, [applyNetwork]);
+
+  // Nouvelle application ouverte (démarrage, puis retour au premier plan) : driver_network_ping (une offre partenaire ne
+  // part qu'à une app récente), puis état réseau relu. Lié au compte (userId), jamais à l'objet session.
+  useEffect(() => {
+    if (!userId || !canDrive) return;
+    let alive = true;
+    const wake = (force: boolean) => {
+      const now = Date.now();
+      const ping = force || now - networkPingAt.current >= NETWORK_PING_MS;
+      if (ping) networkPingAt.current = now;
+      void (ping ? api.networkPing().catch((e: unknown) => {
+        // Fonction absente (api.ts : sans appel pendant 10 min) ou serveur injoignable : nouvel essai au prochain retour ;
+        // refus du serveur (réseau coupé compris) : 15 min
+        if (isMissingRpc(e) || !(e instanceof ApiError && e.code)) networkPingAt.current = 0;
+      }) : Promise.resolve()).then(() => {
+        if (alive && (force || Date.now() - networkReadAt.current >= NETWORK_STATE_MS)) void refreshNetwork();
+      });
+    };
+    wake(true);
+    const sub = AppState.addEventListener("change", (s) => s === "active" && wake(false));
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, [userId, canDrive, refreshNetwork]);
+
+  const openOffer = useCallback((offer: DriverOfferV2) => {
     if (seenOffers.current.has(offer.offer_id)) return;
     seenOffers.current.add(offer.offer_id);
     if (offerSession.openId === offer.offer_id) return;
@@ -528,10 +610,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         .on("broadcast", { event: "chat.read" }, scheduleChat)
         // Documents : validation, refus, échéance
         .on("broadcast", { event: "driver.document" }, () => appEvents.emit("documents"))
-        // Mode centrale : commission créée, déclarée, confirmée, contestée… (bandeau d'accueil, blocage, écran Commissions)
+        // Mode centrale : commission créée, déclarée, confirmée, contestée… ; réseau partagé : règlement d'une course
+        // partenaire (charge utile sans commission ni frais). Bandeau d'accueil, blocage, écran Commissions
         .on("broadcast", { event: "settlement.updated" }, (m) => {
           void refresh();
-          appEvents.emit("settlements", m.payload as SettlementEvent | undefined);
+          appEvents.emit("settlements", m.payload as SettlementEvent | DriverNetworkSettlementEvent | undefined);
         })
         .subscribe((status) => {
           liveRef.current = status === "SUBSCRIBED";
@@ -640,10 +723,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         router.push("/documents");
         return;
       }
-      // Mode centrale : commission à régler, relance, contestation, paiement confirmé, versement… (data.ride_id présent)
+      // Mode centrale : commission à régler, relance, contestation, paiement confirmé, versement… (data.ride_id présent) ;
+      // réseau partagé : règlement avec une organisation partenaire → onglet « Courses partenaires »
       if (type.startsWith("settlement_")) {
         void refresh();
-        openCommissions();
+        openCommissions(isNetworkData(data) ? "network" : "own");
         return;
       }
       // Candidature validée par la centrale : état du compte relu, direction l'accueil
@@ -668,11 +752,14 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       }
     }
     if (r.actionIdentifier === "ACCEPT" && offerId) {
-      const res = await api.accept(offerId).catch(() => null);
+      // Refus levé en erreur (course partenaire modifiée, créneau déjà pris…) : motif affiché ; réseau : null
+      const res = await api
+        .accept(offerId)
+        .catch((e: unknown): AcceptResult | null => (e instanceof ApiError && e.code ? { ok: false, code: e.code, message: e.message } : null));
       if (res?.ok) offerSession.accepted.add(offerId);
       await refresh();
       if (!res) router.push({ pathname: "/offer/[id]", params: { id: offerId } }); // réseau : réessai depuis l'offre
-      else if (!res.ok && res.code === "DRIVER_BLOCKED") alertDriverBlocked(res);
+      else if (!res.ok && res.code === "DRIVER_BLOCKED") alertDriverBlocked(res, { executor: homeRef.current?.organization.name });
       else if (!res.ok) Alert.alert(res.code === "OFFER_EXPIRED" ? "Offre expirée" : "Course indisponible", frTypo(refusalText(res)));
       else if (data.ride_type === "instant" && res.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(res.ride_id) } });
       else {
@@ -816,6 +903,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     }
     applyHome(null);
     applyOffers([]);
+    applyNetwork(null);
     setChat(null);
     seenOffers.current.clear();
     if (!pushRemoved) {
@@ -831,7 +919,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         ],
       );
     }
-  }, [applyHome, applyOffers]);
+  }, [applyHome, applyOffers, applyNetwork]);
 
   const offersReadAt = useCallback(() => offersReadAtRef.current, []);
   const forgetOffer = useCallback((offerId: string) => void seenOffers.current.delete(offerId), []);
@@ -839,11 +927,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       session, ready, restoring, home, homeError, offers, offersReadAt, forgetOffer, refresh, setOnline, signOut, busy, chat, refreshChat,
-      account, canDrive, checkAccount,
+      account, canDrive, checkAccount, network, refreshNetwork, applyNetwork,
     }),
     [
       session, ready, restoring, home, homeError, offers, offersReadAt, forgetOffer, refresh, setOnline, signOut, busy, chat, refreshChat,
-      account, canDrive, checkAccount,
+      account, canDrive, checkAccount, network, refreshNetwork, applyNetwork,
     ],
   );
   return <DriverContext.Provider value={value}>{children}</DriverContext.Provider>;

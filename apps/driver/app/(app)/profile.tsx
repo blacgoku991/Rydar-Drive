@@ -1,17 +1,24 @@
-// Mon compte : identité, accès aux gains / commissions / documents / messages, véhicule, centrale, déconnexion.
+// Mon compte : identité, accès aux gains / commissions / documents / messages, véhicule, centrale, réseau partagé
+// (réglage, conditions, coordonnées bancaires), déconnexion.
 import { Ionicons } from "@expo/vector-icons";
-import { VEHICLE_CATEGORY_META, formatPrice } from "@rydar/shared";
+import { VEHICLE_CATEGORY_META, formatPrice, type NetworkReadinessAction } from "@rydar/shared";
 import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
 import { Children, Fragment, useCallback, useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { TrustBadge } from "@/components/centrale";
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { frTypo, TrustBadge } from "@/components/centrale";
 import { buildDocEntries, needsAction } from "@/components/documents";
-import { BigButton, Screen, ScreenHeader } from "@/components/ui";
+import { BigButton, hapticResult, Screen, ScreenHeader, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { api, legalUrl } from "@/lib/api";
+import { usePayoutInfo } from "@/hooks/use-payout-info";
+import { useReturnFlash } from "@/hooks/use-return-flash";
+import { api, ApiError, legalUrl } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
+import {
+  driverNetworkStatus, enableNeedsTerms, hasPartnerMoney, networkVisible, PARTNER_SETTLEMENTS_TITLE, partnerAccess, payoutRowDetail,
+  settleHref, type NetworkStatusTone,
+} from "@/lib/network";
 import { colors, control, mono, radius, space, type, weight } from "@/theme";
 
 const NBSP = "\u00A0";
@@ -55,9 +62,75 @@ function Group({ children }: { children: React.ReactNode }) {
   );
 }
 
+const STATUS_COLOR: Record<NetworkStatusTone, string> = { green: colors.green, amber: colors.amber, red: colors.red, muted: colors.muted };
+
 export default function Profile() {
-  const { home, signOut, chat } = useDriver();
+  const { home, signOut, chat, network, refreshNetwork, applyNetwork } = useDriver();
+  const insets = useSafeAreaInsets();
+  const flash = useFlash(insets.top + 64);
+  // Retour de l'écran des conditions : « Courses du réseau partagé activées »
+  useReturnFlash(flash.show);
   const v = home?.vehicle;
+  const tz = home?.organization.timezone;
+  // Réseau partagé : visible seulement si Rydar l'a ouvert ET que l'organisation du chauffeur le reçoit
+  const showNetwork = networkVisible(network);
+  const status = network && showNetwork ? driverNetworkStatus(network, tz) : null;
+  // Entrée « Courses partenaires » (flotte) : réseau visible, ou sommes partenaires ouvertes (même réseau coupé ensuite)
+  const access = partnerAccess({ model: home?.model ?? home?.organization.dispatch_model, homeNetwork: home?.network, network });
+  // Coordonnées bancaires : état réseau, sinon lues directement si des sommes partenaires existent (réseau coupé ensuite) ;
+  // inconnues : rien n'est affirmé
+  const payout = usePayoutInfo(!status && hasPartnerMoney(home?.network));
+  const payoutDue = home?.network?.payout_due_cents ?? 0;
+  const payoutDetail = payoutRowDetail(payout, payoutDue);
+  const [toggling, setToggling] = useState(false);
+  useFocusEffect(useCallback(() => void refreshNetwork(), [refreshNetwork]));
+
+  /** Interrupteur « Courses du réseau partagé » : conditions en vigueur acceptées d'abord (écran), arrêt confirmé. */
+  async function setNetworkEnabled(next: boolean) {
+    if (!network || toggling) return;
+    if (next && enableNeedsTerms(network)) {
+      router.push("/network-terms");
+      return;
+    }
+    const run = async () => {
+      setToggling(true);
+      try {
+        applyNetwork(await api.setNetwork(next, next ? network.terms.version : null));
+        hapticResult(true);
+      } catch (e) {
+        hapticResult(false);
+        // Conditions changées entre-temps : texte du chauffeur (jamais la convention des organisations) et accès direct
+        if (e instanceof ApiError && e.code === "NETWORK_TERMS_OUTDATED") {
+          void refreshNetwork();
+          Alert.alert("Nouvelles conditions", frTypo(e.message), [
+            { text: "Plus tard", style: "cancel" },
+            { text: "Lire les conditions", onPress: () => router.push("/network-terms") },
+          ]);
+          return;
+        }
+        Alert.alert(next ? "Activation impossible" : "Arrêt impossible", frTypo((e as Error).message));
+      } finally {
+        setToggling(false);
+      }
+    };
+    if (next) return void run();
+    Alert.alert(
+      frTypo("Arrêter les courses du réseau partagé ?"),
+      "Vous ne recevrez plus les courses des organisations partenaires. Les courses déjà acceptées restent à faire.",
+      [{ text: "Annuler", style: "cancel" }, { text: "Arrêter", style: "destructive", onPress: () => void run() }],
+    );
+  }
+
+  /** Bouton du premier manque (lisibilité du réseau). */
+  function runNetworkAction(kind: NetworkReadinessAction) {
+    if (kind === "enable_network") return void setNetworkEnabled(true);
+    if (kind === "open_network_terms") return router.push("/network-terms");
+    if (kind === "open_documents") return router.push("/documents");
+    if (kind === "pay_own") return router.push("/commissions");
+    if (kind === "pay_network") return router.push(settleHref("network"));
+    // Application à jour (celle-ci) : signe de vie renvoyé, puis état relu
+    if (kind === "update_app") void api.networkPing().catch(() => null).then(() => refreshNetwork());
+  }
   const [docsTodo, setDocsTodo] = useState<number | null>(null);
   // Déconnexion hors réseau : jusqu'à ~30 s (renouvellement du jeton tenté) — bouton en attente
   const [leaving, setLeaving] = useState(false);
@@ -142,6 +215,16 @@ export default function Profile() {
                 onPress={() => router.push("/commissions")}
               />
             )}
+            {/* Flotte : règlements des courses partenaires (le chauffeur règle lui-même l'organisation qui les confie) */}
+            {access.entry && (
+              <Row
+                icon="swap-horizontal-outline"
+                title={PARTNER_SETTLEMENTS_TITLE}
+                detail={partnerDetail(home?.network)}
+                detailColor={home?.network && home.network.owed_cents > 0 ? colors.amber : home?.network && home.network.payout_due_cents > 0 ? colors.green : undefined}
+                onPress={() => router.push(settleHref("network"))}
+              />
+            )}
             <Row
               icon="folder-open-outline"
               title="Mes documents"
@@ -174,6 +257,89 @@ export default function Profile() {
               </View>
             </View>
           </View>
+
+          {status && network && (
+            <>
+              <Text style={styles.section} accessibilityRole="header">Réseau partagé</Text>
+              <Group>
+                <View style={styles.networkRow}>
+                  <Pressable
+                    onPress={() => void setNetworkEnabled(!network.enabled)}
+                    disabled={toggling}
+                    style={({ pressed }) => [styles.switchRow, pressed && { backgroundColor: colors.surface2 }]}
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: network.enabled, disabled: toggling }}
+                    accessibilityLabel={`Courses du réseau partagé, ${status.title}`}
+                  >
+                    <Ionicons name="swap-horizontal-outline" size={ICON} color={colors.muted} />
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text style={styles.rowTitle}>Courses du réseau partagé</Text>
+                      <Text style={[styles.rowDetail, { color: STATUS_COLOR[status.tone] }]}>{status.title}</Text>
+                    </View>
+                    <Switch
+                      value={network.enabled}
+                      disabled={toggling}
+                      onValueChange={(next) => void setNetworkEnabled(next)}
+                      trackColor={{ false: colors.subtle, true: colors.brand }}
+                      thumbColor={colors.fg}
+                      ios_backgroundColor={colors.subtle}
+                      accessibilityElementsHidden
+                      importantForAccessibility="no"
+                    />
+                  </Pressable>
+                  {status.hint || status.action || status.warning ? (
+                    <View style={styles.networkBody}>
+                      {status.hint ? <Text style={styles.networkHint}>{status.hint}</Text> : null}
+                      {status.action ? (
+                        <BigButton
+                          title={status.action.kind === "update_app" ? "Actualiser" : status.action.label}
+                          variant="secondary"
+                          height={control.sm}
+                          onPress={() => runNetworkAction(status.action!.kind)}
+                          style={styles.networkAction}
+                        />
+                      ) : null}
+                      {status.warning ? (
+                        <>
+                          <Text style={[styles.networkHint, { color: colors.amber }]}>{status.warning.text}</Text>
+                          <BigButton
+                            title={status.warning.action.label}
+                            variant="secondary"
+                            height={control.sm}
+                            onPress={() => runNetworkAction(status.warning!.action.kind)}
+                            style={styles.networkAction}
+                          />
+                        </>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+                <Row icon="document-text-outline" title="Conditions du réseau partagé" onPress={() => router.push("/network-terms")} />
+                <Row
+                  icon="card-outline"
+                  title="Mes coordonnées bancaires"
+                  detail={payoutDetail?.text}
+                  detailColor={payoutDetail?.alert ? colors.amber : undefined}
+                  onPress={() => router.push("/payout")}
+                />
+              </Group>
+            </>
+          )}
+          {/* Réseau coupé ensuite : coordonnées bancaires encore utiles tant qu'un versement est attendu */}
+          {!status && (payout?.configured || payoutDue > 0) && (
+            <>
+              <Text style={styles.section} accessibilityRole="header">{PARTNER_SETTLEMENTS_TITLE}</Text>
+              <Group>
+                <Row
+                  icon="card-outline"
+                  title="Mes coordonnées bancaires"
+                  detail={payoutDetail?.text}
+                  detailColor={payoutDetail?.alert ? colors.amber : undefined}
+                  onPress={() => router.push("/payout")}
+                />
+              </Group>
+            </>
+          )}
 
           {phone && (
             <>
@@ -216,8 +382,17 @@ export default function Profile() {
           </View>
         </ScrollView>
       </SafeAreaView>
+      {flash.node}
     </Screen>
   );
+}
+
+/** Détail de l'entrée « Courses partenaires » : à régler, à recevoir, ou à jour. */
+function partnerDetail(n: { owed_cents: number; payout_due_cents: number } | null | undefined) {
+  if (!n) return undefined;
+  if (n.owed_cents > 0) return `${formatPrice(n.owed_cents)} à régler`;
+  if (n.payout_due_cents > 0) return `${formatPrice(n.payout_due_cents)} à recevoir`;
+  return "À jour";
 }
 
 const styles = StyleSheet.create({
@@ -233,6 +408,11 @@ const styles = StyleSheet.create({
   rowTitle: { color: colors.fg, fontSize: type.callout, fontWeight: weight.medium },
   rowDetail: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.regular },
   sep: { height: 1, backgroundColor: colors.line, marginLeft: ROW_PAD + ICON + ROW_GAP },
+  networkRow: { paddingBottom: space.xs },
+  switchRow: { flexDirection: "row", alignItems: "center", gap: ROW_GAP, minHeight: control.md + space.xs, paddingHorizontal: ROW_PAD, paddingVertical: space.md },
+  networkBody: { gap: space.sm, paddingLeft: ROW_PAD + ICON + ROW_GAP, paddingRight: ROW_PAD, paddingBottom: space.md },
+  networkHint: { color: colors.muted, fontSize: type.subhead, lineHeight: 20 },
+  networkAction: { alignSelf: "flex-start", minWidth: 160 },
   footer: { marginTop: "auto", paddingTop: space.xl, gap: space.md },
   version: { color: colors.muted, textAlign: "center", fontSize: type.caption },
 });

@@ -2,76 +2,79 @@
 // frais) et ce qu'elle lui doit (courses payées en ligne : sa part). Paiement par lien prérempli
 // (Revolut, PayPal…), espèces ou virement → « J'ai payé » (driver_declare_payment), confirmé ou contesté
 // par la centrale. Temps réel settlement.updated (driver:{id}) → relecture.
+// Réseau partagé : onglet « Courses partenaires » (un bloc par organisation qui a confié des courses, avec SES moyens) ;
+// pour un chauffeur de flotte, l'écran s'appelle « Courses partenaires » et ne montre que lui. Réseau coupé et aucune
+// somme partenaire : écran inchangé.
 import { Ionicons } from "@expo/vector-icons";
 import {
   PAYMENT_METHOD_LABELS, SETTLEMENT_METHOD_META, SETTLEMENT_STATUS_META, formatIban, formatPrice, formatRideDate,
-  type DriverSettlementItem, type DriverSettlements, type SettlementMethod,
+  type DriverNetworkSettlements, type DriverSettlementItem, type DriverSettlements,
 } from "@rydar/shared";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { blockerInfo, driverSettlementLabel, dueText, formatWhen, frTypo } from "@/components/centrale";
-import { BigButton, BottomSheet, hapticResult, Label, Pill, Screen, ScreenHeader, useFlash } from "@/components/ui";
+import { NetworkSettlementsView } from "@/components/network-settlements";
+import { METHOD_BUTTON, PaySheet, type ManualMethod, type PaySheetState, type PaySnapshot } from "@/components/pay-sheet";
+import { BigButton, hapticResult, Label, Pill, Screen, ScreenHeader, Segmented, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useNow } from "@/hooks/use-now";
-import { api } from "@/lib/api";
+import { usePayoutInfo } from "@/hooks/use-payout-info";
+import { api, isMissingRpc } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useAppEvent } from "@/lib/events";
+import { ownTabBadge, PARTNER_SETTLEMENTS_TITLE, PARTNER_TAB_LABEL, partnerAccess, partnerTabBadge } from "@/lib/network";
+import { pastWhen } from "@/lib/settlement-text";
 import { settlementSession } from "@/lib/settlement-session";
 import { colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
 
 const NBSP = "\u00A0";
 
-/** Montants figés au moment du paiement : un règlement créé entre-temps n'est pas déclaré payé par erreur. */
-type PaySnapshot = { amount: number; ids: string[]; reference: string | null };
-type SheetState =
-  | ({ kind: "link" } & PaySnapshot)
-  | ({ kind: "manual"; method: Exclude<SettlementMethod, "link"> } & PaySnapshot);
-
-/** « aujourd'hui 14:32 », « hier 22:10 », « le jeu. 25/09 06:30 » */
-function pastWhen(iso: string | null | undefined, tz?: string) {
-  if (!iso) return "";
-  const s = formatRideDate(iso, tz);
-  if (/^(Aujourd'hui|Hier|Demain) /.test(s)) return `${s.charAt(0).toLowerCase()}${s.slice(1)}`;
-  return `le ${s}`;
-}
-
 const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? many : one}`;
 
-const METHOD_TITLE: Record<Exclude<SettlementMethod, "link">, string> = {
-  transfer: "Paiement par virement",
-  cash: "Paiement en espèces",
-  other: "Autre moyen de paiement",
-};
-const METHOD_BUTTON: Record<Exclude<SettlementMethod, "link">, string> = {
-  transfer: "J'ai payé par virement",
-  cash: "J'ai payé en espèces",
-  other: "J'ai payé (autre moyen)",
-};
+type Tab = "own" | "network";
 
 export default function Commissions() {
-  const { home, refresh } = useDriver();
+  const { home, refresh, network } = useDriver();
+  const params = useLocalSearchParams<{ tab?: string }>();
   const insets = useSafeAreaInsets();
   const flash = useFlash(insets.top + 64);
   const now = useNow(30_000);
   const [data, setData] = useState<DriverSettlements | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Réseau partagé : null tant que non lu ; « unsupported » : serveur sans réseau partagé
+  const [net, setNet] = useState<DriverNetworkSettlements | "unsupported" | null>(null);
+  const [netError, setNetError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>(params.tab === "network" ? "network" : "own");
   const [refreshing, setRefreshing] = useState(false);
   const [retrying, setRetrying] = useState(false);
-  const [sheet, setSheet] = useState<SheetState | null>(null);
+  const [sheet, setSheet] = useState<PaySheetState | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const tz = home?.organization.timezone;
 
-  const load = useCallback(async () => {
+  const loadNetwork = useCallback(async () => {
     try {
-      setData(await api.settlements(50));
-      setError(null);
+      setNet(await api.networkSettlements());
+      setNetError(null);
     } catch (e) {
-      setError((e as Error).message);
+      if (isMissingRpc(e)) setNet("unsupported");
+      else setNetError((e as Error).message);
     }
   }, []);
+  const load = useCallback(async () => {
+    await Promise.all([
+      api.settlements(50).then(
+        (d) => {
+          setData(d);
+          setError(null);
+        },
+        (e: unknown) => setError((e as Error).message),
+      ),
+      loadNetwork(),
+    ]);
+  }, [loadNetwork]);
   // Écran affiché : une notification « commission » le rafraîchit au lieu d'en ouvrir un second
   useFocusEffect(
     useCallback(() => {
@@ -82,8 +85,23 @@ export default function Commissions() {
       };
     }, [load]),
   );
-  // Commission créée, paiement confirmé ou contesté par la centrale (temps réel / notification)
+  // Commission créée, paiement confirmé ou contesté par la centrale ; règlement d'une course partenaire (temps réel /
+  // notification)
   useAppEvent("settlements", () => void load());
+  // Notification d'un règlement partenaire, écran déjà affiché : onglet « Courses partenaires »
+  useAppEvent("settlements:tab", (t) => setTab(t));
+
+  // Commissions de la centrale (mode centrale) et courses partenaires (réseau partagé) : une seule décision, testée
+  // (lib/network.ts : partnerAccess) — réseau coupé ou non reçu, sans somme partenaire : écran « Commissions » inchangé
+  const model = data?.model ?? home?.model ?? home?.organization.dispatch_model;
+  const netData = net && net !== "unsupported" ? net : null;
+  const access = partnerAccess({ model, homeNetwork: home?.network, network, settlements: net, requested: params.tab === "network", tab });
+  const { showNetwork, title } = access;
+  // Coordonnées bancaires : état réseau, sinon lues directement (réseau coupé ensuite) ; inconnues : aucune invitation
+  const payout = usePayoutInfo(showNetwork);
+  // Pastilles des onglets : courses à régler de l'autre onglet (rouge s'il y a du retard)
+  const partnerBadge = partnerTabBadge(netData, home?.network);
+  const ownBadge = ownTabBadge(data?.pay, data?.summary.overdue_cents);
 
   const currency = data?.currency ?? "EUR";
   const price = (c: number | null | undefined) => formatPrice(c, currency);
@@ -115,14 +133,14 @@ export default function Commissions() {
     setSheet({ kind: "link", ...snap });
   }
 
-  function payManually(method: Exclude<SettlementMethod, "link">) {
+  function payManually(method: ManualMethod) {
     const snap = snapshot();
     if (!snap) return;
     setNote("");
     setSheet({ kind: "manual", method, ...snap });
   }
 
-  async function declare(s: SheetState) {
+  async function declare(s: PaySheetState) {
     setBusy(true);
     try {
       const res = await api.declarePayment(s.ids, s.kind === "link" ? "link" : s.method, s.kind === "manual" ? note : null);
@@ -150,7 +168,7 @@ export default function Commissions() {
   // Paiement signalé puis contesté par la centrale (« Non reçu ») : à régler de nouveau
   const disputed = data?.items.filter((i) => i.direction === "driver_owes" && i.status === "disputed") ?? [];
   const canLink = !!pay?.link && pay.methods.includes("link");
-  const manual = (pay?.methods ?? []).filter((m): m is Exclude<SettlementMethod, "link"> => m !== "link");
+  const manual = (pay?.methods ?? []).filter((m): m is ManualMethod => m !== "link");
   const orgName = data?.organization.name ?? home?.organization.name ?? "la centrale";
   const open = data?.items.filter((i) => ["due", "declared", "disputed"].includes(i.status)) ?? [];
   const closed = data?.items.filter((i) => !["due", "declared", "disputed"].includes(i.status)) ?? [];
@@ -168,7 +186,7 @@ export default function Commissions() {
   return (
     <Screen>
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
-        <ScreenHeader title="Commissions" />
+        <ScreenHeader title={title} />
         <ScrollView
           contentContainerStyle={styles.content}
           refreshControl={
@@ -183,7 +201,50 @@ export default function Commissions() {
             />
           }
         >
-          {!data || !pay ? (
+          {access.tabs && (
+            <Segmented
+              value={tab}
+              onChange={setTab}
+              options={[
+                {
+                  value: "own", label: data?.organization.name ?? home?.organization.name ?? "Ma centrale",
+                  badge: ownBadge.count, badgeColor: ownBadge.late ? colors.red : colors.amber, badgeLabel: ownBadge.label,
+                },
+                {
+                  // Libellé court : tient sur une ligne avec sa pastille (lecteur d'écran : « Courses partenaires »)
+                  value: "network", label: PARTNER_TAB_LABEL, accessibilityLabel: PARTNER_SETTLEMENTS_TITLE,
+                  badge: partnerBadge.count, badgeColor: partnerBadge.late ? colors.red : colors.amber, badgeLabel: partnerBadge.label,
+                },
+              ]}
+            />
+          )}
+          {showNetwork ? (
+            netData ? (
+              <NetworkSettlementsView data={netData} tz={tz} now={now} payout={payout} onChanged={() => load().then(() => void refresh())} flash={flash} />
+            ) : (
+              <View style={styles.loading}>
+                {netError ? (
+                  <>
+                    <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">{netError}</Text>
+                    <BigButton
+                      title="Réessayer"
+                      variant="secondary"
+                      height={control.sm}
+                      loading={retrying}
+                      style={{ alignSelf: "center", minWidth: 160 }}
+                      onPress={async () => {
+                        setRetrying(true);
+                        await loadNetwork();
+                        setRetrying(false);
+                      }}
+                    />
+                  </>
+                ) : (
+                  <ActivityIndicator color={colors.muted} accessibilityLabel="Chargement des courses partenaires" />
+                )}
+              </View>
+            )
+          ) : !data || !pay ? (
             <View style={styles.loading}>
               {error ? (
                 <>
@@ -363,115 +424,18 @@ export default function Commissions() {
       {flash.node}
 
       {/* « Avez-vous payé ? » au retour du lien de paiement ; espèces / virement : instructions + référence */}
-      <BottomSheet visible={sheet != null} onClose={() => !busy && setSheet(null)} dismissable={!busy} keyboard={sheet?.kind === "manual"}>
-        {sheet && (
-          <>
-            <View style={{ gap: space.xs }}>
-              <Text style={styles.sheetTitle} accessibilityRole="header">
-                {sheet.kind === "link" ? `Avez-vous payé ${price(sheet.amount)}${NBSP}?` : METHOD_TITLE[sheet.method]}
-              </Text>
-              <Text style={styles.sheetSub}>
-                {sheet.kind === "link"
-                  ? frTypo("Si le paiement est passé (Revolut, PayPal…), confirmez : la centrale le vérifiera.")
-                  : sheet.method === "cash"
-                    ? `Remettez ${price(sheet.amount)} en main propre à ${orgName}, puis confirmez.`
-                    : sheet.method === "transfer"
-                      ? `Faites un virement de ${price(sheet.amount)} à ${data?.pay.bank?.payee_name ?? orgName} avec la référence, puis confirmez.`
-                      : `Payez ${price(sheet.amount)} à ${orgName} comme indiqué ci-dessous, puis confirmez.`}
-              </Text>
-            </View>
-
-            {sheet.kind === "manual" && (
-              <Text style={styles.sheetAmount} accessibilityLabel={`Montant ${price(sheet.amount)}`}>{price(sheet.amount)}</Text>
-            )}
-            {sheet.reference ? (
-              <Pressable
-                onPress={() => void copyReference(sheet.reference)}
-                style={({ pressed }) => [styles.refBox, pressed && { backgroundColor: colors.surface3 }]}
-                accessibilityRole="button"
-                accessibilityLabel={`Copier la référence ${sheet.reference}`}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.refLabel}>Référence à indiquer</Text>
-                  <Text style={styles.refValue} selectable>{sheet.reference}</Text>
-                </View>
-                <View style={styles.copyBtn}>
-                  <Ionicons name="copy-outline" size={18} color={colors.fg} />
-                  <Text style={styles.copyText}>Copier</Text>
-                </View>
-              </Pressable>
-            ) : null}
-            {sheet.kind === "manual" && sheet.method === "transfer" && data?.pay.bank ? (
-              <View style={styles.bank} accessible={false}>
-                <View style={styles.bankRow}>
-                  <Text style={styles.refLabel}>Bénéficiaire</Text>
-                  <Text style={styles.bankValue} selectable>{data.pay.bank.payee_name}</Text>
-                </View>
-                <Pressable
-                  onPress={() => void copyIban(data.pay.bank!.iban)}
-                  style={({ pressed }) => [styles.bankIban, pressed && { backgroundColor: colors.surface3 }]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Copier l'IBAN ${formatIban(data.pay.bank.iban)}`}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.refLabel}>IBAN</Text>
-                    <Text style={styles.ibanValue} selectable>{formatIban(data.pay.bank.iban)}</Text>
-                  </View>
-                  <View style={styles.copyBtn}>
-                    <Ionicons name="copy-outline" size={18} color={colors.fg} />
-                    <Text style={styles.copyText}>Copier</Text>
-                  </View>
-                </Pressable>
-                {data.pay.bank.bic ? (
-                  <View style={styles.bankRow}>
-                    <Text style={styles.refLabel}>BIC</Text>
-                    <Text style={[styles.bankValue, mono]} selectable>{data.pay.bank.bic}</Text>
-                  </View>
-                ) : null}
-              </View>
-            ) : null}
-            {data?.pay.instructions ? (
-              <View style={styles.instructions}>
-                <Ionicons name="information-circle-outline" size={20} color={colors.muted} />
-                <Text style={styles.instructionsText}>{data.pay.instructions}</Text>
-              </View>
-            ) : null}
-            {sheet.kind === "manual" && (
-              <TextInput
-                value={note}
-                onChangeText={setNote}
-                placeholder={sheet.method === "cash" ? "Note pour la centrale (ex. remis à Mehdi)" : "Note pour la centrale (facultatif)"}
-                placeholderTextColor={colors.muted}
-                maxLength={300}
-                editable={!busy}
-                style={styles.noteInput}
-                accessibilityLabel="Note pour la centrale"
-              />
-            )}
-
-            <View style={{ gap: space.sm }}>
-              <BigButton
-                title={sheet.kind === "link" ? `Oui, j'ai payé ${price(sheet.amount)}` : `Je confirme avoir payé ${price(sheet.amount)}`}
-                icon="checkmark"
-                height={control.lg}
-                loading={busy}
-                onPress={() => void declare(sheet)}
-              />
-              {sheet.kind === "link" && data?.pay.link ? (
-                <BigButton
-                  title="Rouvrir le lien de paiement"
-                  icon="open-outline"
-                  variant="secondary"
-                  height={control.md}
-                  disabled={busy}
-                  onPress={() => void Linking.openURL(data.pay.link!).catch(() => null)}
-                />
-              ) : null}
-              <BigButton title={sheet.kind === "link" ? "Pas encore" : "Annuler"} variant="ghost" height={control.sm} disabled={busy} onPress={() => setSheet(null)} />
-            </View>
-          </>
-        )}
-      </BottomSheet>
+      <PaySheet
+        sheet={sheet}
+        target={pay ? { name: orgName, confirmer: "la centrale", link: pay.link, bank: pay.bank, instructions: pay.instructions } : null}
+        currency={currency}
+        busy={busy}
+        note={note}
+        onNote={setNote}
+        onClose={() => setSheet(null)}
+        onConfirm={(s) => void declare(s)}
+        onCopyReference={(r) => void copyReference(r)}
+        onCopyIban={(i) => void copyIban(i)}
+      />
     </Screen>
   );
 }
@@ -595,29 +559,4 @@ const styles = StyleSheet.create({
   },
   disputeText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
   footnote: { color: colors.muted, fontSize: type.footnote, marginTop: space.xs, lineHeight: 18 },
-  sheetTitle: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, ...mono },
-  sheetSub: { color: colors.muted, fontSize: type.body, lineHeight: 21 },
-  sheetAmount: { color: colors.fg, fontSize: type.display, fontWeight: weight.bold, letterSpacing: -0.5, ...mono },
-  refBox: {
-    flexDirection: "row", alignItems: "center", gap: space.md, padding: space.lg, borderRadius: radius.md,
-    backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong,
-  },
-  refLabel: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.semibold },
-  refValue: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, letterSpacing: 0.5, marginTop: 2, ...mono },
-  copyBtn: {
-    flexDirection: "row", alignItems: "center", gap: 6, height: control.sm, paddingHorizontal: space.lg, borderRadius: radius.md,
-    backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong,
-  },
-  copyText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold },
-  bank: { gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong },
-  bankRow: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: space.md },
-  bankValue: { flexShrink: 1, color: colors.fg, fontSize: type.body, fontWeight: weight.semibold, textAlign: "right" },
-  bankIban: { flexDirection: "row", alignItems: "center", gap: space.md, paddingVertical: space.xs, borderRadius: radius.sm },
-  ibanValue: { color: colors.fg, fontSize: type.callout, fontWeight: weight.bold, marginTop: 2, ...mono },
-  instructions: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surface2 },
-  instructionsText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
-  noteInput: {
-    height: control.md, borderRadius: radius.md, paddingHorizontal: space.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
-    color: colors.fg, fontSize: type.callout,
-  },
 });

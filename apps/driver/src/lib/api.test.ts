@@ -45,7 +45,7 @@ vi.mock("./supabase", async () => {
   return { supabase };
 });
 
-const { api, deletionDebt, previewAccountDeletion } = await import("./api");
+const { api, deletionDebt, previewAccountDeletion, resetRpcFallbacks } = await import("./api");
 const { supabase } = await import("./supabase");
 const { myRides } = await import("./planning");
 
@@ -85,8 +85,12 @@ function postgrest(url: URL, rows: Record<string, unknown>[]) {
 const at = (hours: number) => new Date(Date.UTC(2026, 9, 1, 6) + hours * 3_600_000).toISOString();
 const ride = (id: string, driverId: string, hours: number) => ({ id, driver_id: driverId, type: "scheduled", status: "ACCEPTED", pickup_at: at(hours) });
 
+/** Serveur antérieur au réseau partagé : fonction inconnue de PostgREST. */
+const missing = (fn: string) => ({ status: 404, body: { code: "PGRST202", message: `Could not find the function public.${fn} without parameters in the schema cache` } });
+
 beforeEach(() => {
   h.s.requests.length = 0;
+  resetRpcFallbacks();
   vi.stubGlobal("fetch", h.fetch);
 });
 
@@ -97,16 +101,28 @@ afterEach(async () => {
 });
 
 describe("« Mes courses » (app_worker#1)", () => {
-  it("gérant qui roule aussi : ses courses lues malgré 50 courses plus tôt d'autres chauffeurs de sa centrale", async () => {
+  it("gérant qui roule aussi, serveur antérieur : ses courses lues malgré 50 courses plus tôt d'autres chauffeurs de sa centrale", async () => {
     // RLS rides_select : un membre de la centrale lit toutes ses courses actives, pas seulement les siennes
     const rows = [...Array.from({ length: 50 }, (_, i) => ride(`autre-${i}`, OTHER, i + 1)), ride("mienne", ME, 100)];
-    h.s.handle = (req) => (req.url.pathname === "/rest/v1/rides" ? { body: postgrest(req.url, rows) } : { status: 404 });
+    h.s.handle = (req) =>
+      req.url.pathname === "/rest/v1/rides" ? { body: postgrest(req.url, rows) }
+      : req.url.pathname === "/rest/v1/rpc/driver_rides_upcoming" ? missing("driver_rides_upcoming")
+      : { status: 404 };
 
     const list = await api.upcoming(ME);
     expect(myRides(list, ME).map((r) => r.id)).toEqual(["mienne"]);
-    const [read] = h.s.requests;
+    const read = h.s.requests.find((r) => r.url.pathname === "/rest/v1/rides")!;
     expect(read.url.searchParams.get("driver_id")).toBe(`eq.${ME}`);
     expect(read.url.searchParams.get("limit")).toBe("50");
+  });
+
+  it("serveur à jour : driver_rides_upcoming (ses seules courses, partenaires comprises), sans lecture de rides", async () => {
+    const mine = [{ ...ride("propre", ME, 2), network: null }, { ...ride("partenaire", ME, 5), driver_id: undefined, network: { execution_id: "x", giver: { name: "Taxi Alpha" } } }];
+    const served = mine.map(({ driver_id: _d, ...r }) => r);
+    h.s.handle = (req) => (req.url.pathname === "/rest/v1/rpc/driver_rides_upcoming" ? { body: served } : { status: 404 });
+    const list = await api.upcoming(ME);
+    expect(myRides(list, ME).map((r) => r.id)).toEqual(["propre", "partenaire"]);
+    expect(h.s.requests.map((r) => r.url.pathname)).toEqual(["/rest/v1/rpc/driver_rides_upcoming"]);
   });
 });
 

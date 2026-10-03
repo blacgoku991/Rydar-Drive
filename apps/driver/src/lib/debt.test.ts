@@ -1,6 +1,6 @@
 // Suppression du compte avec des commissions dues (audit sql-rpc-argent#1) : le chauffeur est prévenu du montant.
 import { describe, expect, it } from "vitest";
-import { debtFromSettlements, openDebt, openDebtNotice } from "./debt";
+import { debtFromSettlements, debtTotal, openDebt, openDebtNotice } from "./debt";
 
 const NBSP = " ";
 
@@ -46,5 +46,41 @@ describe("openDebtNotice", () => {
   it("part signalée payée, en attente de confirmation", () => {
     expect(openDebtNotice(openDebt(debt(2600, 1200))!).message).toMatch(/^Dont 12 € signalés payés/);
     expect(openDebtNotice(openDebt(debt(0, 1200))!).message).toMatch(/^Paiement signalé/);
+  });
+});
+
+describe("dettes envers les organisations partenaires (réseau partagé)", () => {
+  const network = (owed: number, declared = 0, organization = "Taxi Alpha") => ({ organization, owed_cents: owed, declared_cents: declared });
+  const withNetwork = (own: number, list: ReturnType<typeof network>[]) => ({ ...debt(own, 0), network: list });
+
+  it("seules les organisations qui attendent une somme ; total pour la confirmation", () => {
+    const d = openDebt(withNetwork(0, [network(1250), network(0, 0, "Taxi Gamma"), network(0, 500, "Taxi Delta")]))!;
+    expect(d.cents).toBe(0);
+    expect(d.network).toEqual([
+      { organization: "Taxi Alpha", cents: 1250, declaredCents: 0 },
+      { organization: "Taxi Delta", cents: 500, declaredCents: 500 },
+    ]);
+    expect(debtTotal(d)).toBe(1750);
+    expect(openDebt(withNetwork(0, [network(0)]))).toBeNull();
+  });
+
+  it("courses partenaires seules : chaque organisation listée, empreintes gardées pour chacune", () => {
+    const n = openDebtNotice(openDebt(withNetwork(0, [network(1250), network(500, 0, "Taxi Gamma")]))!);
+    expect(n.title).toBe(`Courses partenaires : 17,50${NBSP}€ dus`);
+    expect(n.message).toMatch(/^À régler : 12,50\s€ à Taxi Alpha, 5\s€ à Taxi Gamma\./);
+    expect(n.message).toContain("pour chaque organisation concernée");
+    expect(n.confirm).toBe(`Les sommes dues aux organisations partenaires (17,50${NBSP}€) restent à régler : 12,50${NBSP}€ à Taxi Alpha, 5${NBSP}€ à Taxi Gamma.`);
+  });
+
+  it("commissions de la centrale et courses partenaires : total et détail", () => {
+    // 12,50 € signalés payés à Taxi Alpha, pas encore confirmés : toujours dus
+    const n = openDebtNotice(openDebt(withNetwork(3800, [network(0, 1250)]))!);
+    expect(n.title).toBe(`Sommes dues : 50,50${NBSP}€`);
+    expect(n.message).toMatch(/^Commissions : 38\s€ à Taxi Bleu\. Courses partenaires : 12,50\s€ à Taxi Alpha\. Dont 12,50\s€ signalés payés/);
+    expect(n.confirm).toBe(`Les sommes dues (50,50${NBSP}€) restent à régler : 38${NBSP}€ à Taxi Bleu, 12,50${NBSP}€ à Taxi Alpha.`);
+  });
+
+  it("sans dette partenaire : avertissement des commissions inchangé", () => {
+    expect(openDebt(withNetwork(3800, []))).toEqual(openDebt(debt(3800, 0)));
   });
 });

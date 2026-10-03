@@ -1,21 +1,31 @@
 import type {
-  ChatThreadKey, DocumentType, DriverAccountState, DriverAccountStateKind, DriverBlocker, DriverChatOverview, DriverDeletionDebt,
-  DriverDocumentItem, DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverSettlements, FleetReportType, FleetReportVoteResult,
-  LatLng, MarkChatReadResult, NavStep, Ride, RideStatus, RpcResult, SendChatMessageResult, SettlementMethod,
+  ChatThreadKey, DocumentType, DriverAccountState, DriverAccountStateKind, DriverChatOverview, DriverDeletionDebt, DriverDocumentItem,
+  DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverOfferV2, DriverSettlements, FleetReportType, FleetReportVoteResult, LatLng,
+  MarkChatReadResult, NavStep, NetworkRpcArgs, NetworkRpcName, NetworkRpcResult, OfferBlocker, Ride, RideStatus, RpcResult,
+  SendChatMessageResult, SettlementMethod,
 } from "@rydar/shared";
-import { extractErrorCode, humanizeError } from "@rydar/shared";
+import { NETWORK_DOCUMENTS, extractErrorCode, humanizeError } from "@rydar/shared";
 import { appConfig } from "./config";
 import { debtFromSettlements } from "./debt";
+import { legacyOffer, legacyRide, normalizeBic, normalizeIban, type AppRide, type LegacyRideContext, type RideRead } from "./network";
 import { supabase } from "./supabase";
 
-/** Erreur d'appel serveur : message FR prêt à afficher + code métier (ex. RATE_LIMITED). */
+/**
+ * Erreur d'appel serveur : message FR prêt à afficher + code métier (ex. RATE_LIMITED) + code brut de PostgREST ou de
+ * Postgres (`pg`, ex. PGRST202 : fonction inconnue du serveur).
+ */
 export class ApiError extends Error {
   code: string | null;
-  constructor(message: string, code: string | null) {
+  pg: string | null;
+  constructor(message: string, code: string | null, pg: string | null = null) {
     super(message);
     this.code = code;
+    this.pg = pg;
   }
 }
+
+/** Fonction inconnue du serveur (PostgREST PGRST202) : serveur antérieur à la migration qui l'apporte. */
+export const isMissingRpc = (e: unknown) => e instanceof ApiError && e.pg === "PGRST202";
 
 /**
  * Message lisible : code connu (@rydar/shared), sinon texte « CODE: texte » renvoyé par la base
@@ -37,8 +47,19 @@ export function errorText(raw: string | null | undefined, fallback: string) {
  * message du serveur, sinon repli neutre — jamais « déjà attribuée » par défaut (la course a pu être annulée).
  */
 export function refusalText(res: { code?: string | null; message?: string | null }, fallback = "Offre retirée.") {
-  return humanizeError(res.code, "") || res.message || fallback;
+  return (res.code ? DRIVER_MESSAGES[res.code] : undefined) || humanizeError(res.code, "") || res.message || fallback;
 }
+
+/**
+ * Libellés partagés écrits pour l'organisation, reformulés pour le chauffeur : il accepte des « conditions » (jamais la
+ * convention des organisations) et s'adresse à son organisation (jamais « contactez Rydar »).
+ */
+export const DRIVER_MESSAGES: Record<string, string> = {
+  DRIVER_BUSY_AT_TIME: "Créneau déjà pris\u00A0: vous avez une autre course à cette heure-là.",
+  NETWORK_TERMS_OUTDATED: "Les conditions du réseau partagé ont changé\u00A0: lisez et acceptez la nouvelle version.",
+  NETWORK_TERMS_REQUIRED: "Lisez et acceptez les conditions du réseau partagé pour en recevoir les courses.",
+  NETWORK_SUSPENDED: "Le réseau partagé est suspendu pour votre organisation\u00A0: renseignez-vous auprès d'elle.",
+};
 
 /** Jeton refusé par l'API (expiré pendant la requête, horloge du téléphone en retard). */
 const jwtRejected = (e: { code?: string; message?: string }) =>
@@ -50,8 +71,59 @@ export async function rpc<T>(fn: string, args?: Record<string, unknown>): Promis
   if (error && jwtRejected(error) && !(await supabase.auth.refreshSession()).error) {
     ({ data, error } = await supabase.rpc(fn, args ?? {}));
   }
-  if (error) throw new ApiError(errorText(error.message, "Connexion impossible. Réessayez."), extractErrorCode(error.message));
+  if (error) {
+    const code = extractErrorCode(error.message);
+    const known = code ? DRIVER_MESSAGES[code] : undefined;
+    throw new ApiError(known ?? errorText(error.message, "Connexion impossible. Réessayez."), code, error.code || null);
+  }
   return data as T;
+}
+
+/** RPC du réseau partagé : nom, paramètres et réponse du contrat (@rydar/shared, NetworkRpcs). */
+export function networkRpc<K extends NetworkRpcName>(fn: K, args: NetworkRpcArgs<K>): Promise<NetworkRpcResult<K>> {
+  return rpc<NetworkRpcResult<K>>(fn, args as Record<string, unknown>);
+}
+
+/** Fonctions absentes du serveur (version antérieure) : appel de l'ancienne directement pendant 10 min, puis nouvel essai. */
+const missingUntil = new Map<string, number>();
+export const MISSING_RETRY_MS = 10 * 60_000;
+
+/**
+ * Fonctions appelées d'office (démarrage, retour au premier plan : état réseau, signe de vie) absentes du serveur
+ * (PGRST202 : SQL pas encore déployé, cache de schéma en rechargement) : plus d'appel pendant 10 min (rejet immédiat,
+ * même erreur), puis nouvel essai — jamais pour toute la vie du processus (l'app reste ouverte des jours, GPS).
+ */
+async function gated<T>(fn: string, call: () => Promise<T>): Promise<T> {
+  const until = missingUntil.get(fn);
+  if (until != null && until > Date.now()) throw new ApiError("Fonction indisponible sur ce serveur.", null, "PGRST202");
+  try {
+    const res = await call();
+    missingUntil.delete(fn);
+    return res;
+  } catch (e) {
+    if (isMissingRpc(e)) missingUntil.set(fn, Date.now() + MISSING_RETRY_MS);
+    throw e;
+  }
+}
+
+/** Nouvelle fonction, repli sur l'ancienne si le serveur ne la connaît pas encore (jamais sur une autre erreur). */
+async function withLegacy<T>(fn: string, modern: () => Promise<T>, legacy: () => Promise<T>): Promise<T> {
+  const until = missingUntil.get(fn);
+  if (until != null && until > Date.now()) return legacy();
+  try {
+    const res = await modern();
+    missingUntil.delete(fn);
+    return res;
+  } catch (e) {
+    if (!isMissingRpc(e)) throw e;
+    missingUntil.set(fn, Date.now() + MISSING_RETRY_MS);
+    return legacy();
+  }
+}
+
+/** Tests : oublie les fonctions marquées absentes. */
+export function resetRpcFallbacks() {
+  missingUntil.clear();
 }
 
 /** Bucket privé des justificatifs ; chemin imposé <org>/<chauffeur>/<type>-<horodatage>.<ext> (politique storage). */
@@ -60,8 +132,8 @@ export const STORAGE_UNAVAILABLE = "Envoi de fichiers indisponible sur ce serveu
 
 export type SubmitDocumentResult = RpcResult & { replaced_id?: string | null; document?: DriverDocumentItem };
 
-/** accept_ride_offer : DRIVER_BLOCKED (mode centrale) porte le motif du blocage. */
-export type AcceptResult = RpcResult & { ride_id?: string; reason?: DriverBlocker };
+/** accept_ride_offer : DRIVER_BLOCKED (centrale ou réseau partagé) porte le motif du blocage. */
+export type AcceptResult = RpcResult & { ride_id?: string; reason?: OfferBlocker };
 
 /** driver_declare_payment : « J'ai payé » (à confirmer par la centrale). */
 export type DeclarePaymentResult = RpcResult & { count?: number; amount_cents?: number };
@@ -258,9 +330,41 @@ export async function fetchDriverRoute(from: LatLng, to: LatLng, signal?: AbortS
   };
 }
 
+/** driver_ride, repli sur la ligne rides d'un serveur antérieur (PGRST202) ; provenance renvoyée avec la course. */
+async function readRide(id: string, legacy?: LegacyRideContext): Promise<RideRead> {
+  let fromLegacy = false;
+  const ride = await withLegacy<AppRide | null>(
+    "driver_ride",
+    () =>
+      networkRpc("driver_ride", { p_ride: id }).then(
+        (r) => r as AppRide,
+        (e: unknown) => {
+          if (e instanceof ApiError && e.code === "RIDE_NOT_FOUND") return null;
+          throw e;
+        },
+      ),
+    async () => {
+      fromLegacy = true;
+      const { data, error } = await supabase.from("rides").select("*").eq("id", id).maybeSingle();
+      if (error) throw new Error("Course indisponible.");
+      return data ? legacyRide(data as Ride, legacy) : null;
+    },
+  );
+  return { ride, legacy: fromLegacy };
+}
+
 export const api = {
   home: () => rpc<DriverHome>("driver_home"),
-  offers: () => rpc<DriverOffer[]>("driver_offers"),
+  /**
+   * Offres en attente : driver_offers_v2 (offres de son organisation + offres partenaires, bloc network) ; serveur
+   * antérieur : driver_offers (jamais d'offre partenaire).
+   */
+  offers: () =>
+    withLegacy<DriverOfferV2[]>(
+      "driver_offers_v2",
+      () => networkRpc("driver_offers_v2", {}),
+      async () => (await rpc<DriverOffer[]>("driver_offers")).map(legacyOffer),
+    ),
   setOnline: (online: boolean) => rpc<RpcResult & { presence: string }>("driver_set_online", { p_online: online }),
   accept: (offerId: string) => rpc<AcceptResult>("accept_ride_offer", { p_offer_id: offerId }),
   decline: (offerId: string) => rpc<RpcResult>("decline_ride_offer", { p_offer_id: offerId }),
@@ -288,12 +392,17 @@ export const api = {
       p_app_version: p.appVersion ?? null,
     }),
   unregisterToken: (token: string) => rpc<RpcResult>("driver_unregister_push_token", { p_token: token }),
-  /** Courses du chauffeur (RLS : uniquement les siennes, coordonnées client incluses). */
-  ride: async (id: string) => {
-    const { data, error } = await supabase.from("rides").select("*").eq("id", id).maybeSingle();
-    if (error) throw new Error("Course indisponible.");
-    return data as Ride | null;
-  },
+  /**
+   * Course du chauffeur (propre ou partenaire) : driver_ride, liste blanche (client dans sa fenêtre pour une course
+   * partenaire, bon de réservation) ; null : course qu'il ne tient pas (RIDE_NOT_FOUND : retirée, réattribuée).
+   * Serveur antérieur : ligne rides (RLS), argent déduit du modèle de l'organisation (`legacy`).
+   */
+  ride: (id: string, legacy?: LegacyRideContext) => readRide(id, legacy).then((r) => r.ride),
+  /**
+   * Même lecture, avec sa provenance (`legacy` : repli sur la table rides). Une lecture de repli ne montre jamais une
+   * course partenaire (RLS) : l'écran de course ne la prend pas pour un retrait (lib/network.ts : rideReadAction).
+   */
+  rideRead: (id: string, legacy?: LegacyRideContext) => readRide(id, legacy),
   // --- Messagerie + signalements (migration 002300) ------------------------------------------
   chatOverview: () => rpc<DriverChatOverview>("driver_chat_overview"),
   /** Message « Centrale » (fil direct) ou « Flotte » ; signalement = fil flotte + type (+ position, sinon dernière connue). */
@@ -359,22 +468,51 @@ export const api = {
     return data as { id: string; organization_id: string } | null;
   },
   /**
-   * Courses attribuées au chauffeur, à venir ou en cours. Filtre sur sa fiche DANS la requête, avant la limite : un
-   * gérant qui roule aussi lit toutes les courses actives de sa centrale (RLS rides_select), les siennes pouvaient
-   * rester au-delà des 50 premières. Erreur (ApiError) : réseau, serveur — jamais une liste vide trompeuse.
+   * Courses attribuées au chauffeur, à venir ou en cours (propres et partenaires) : driver_rides_upcoming. Serveur
+   * antérieur : lignes rides, filtrées sur sa fiche DANS la requête, avant la limite (un gérant qui roule aussi lit
+   * toutes les courses actives de sa centrale, RLS rides_select). Erreur (ApiError) : réseau, serveur — jamais une
+   * liste vide trompeuse.
    */
-  upcoming: async (driverId: string) => {
-    const { data, error } = await supabase
-      .from("rides")
-      .select("*")
-      .eq("driver_id", driverId)
-      .in("status", ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"])
-      .order("pickup_at", { ascending: true })
-      .limit(50);
-    if (error) throw new ApiError("Connexion impossible. Réessayez.", null);
-    return (data ?? []) as Ride[];
-  },
+  upcoming: (driverId: string, legacy?: LegacyRideContext) =>
+    withLegacy<AppRide[]>(
+      "driver_rides_upcoming",
+      async () => ((await networkRpc("driver_rides_upcoming", {})) ?? []) as AppRide[],
+      async () => {
+        const { data, error } = await supabase
+          .from("rides")
+          .select("*")
+          .eq("driver_id", driverId)
+          .in("status", ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"])
+          .order("pickup_at", { ascending: true })
+          .limit(50);
+        if (error) throw new ApiError("Connexion impossible. Réessayez.", null);
+        return ((data ?? []) as Ride[]).map((r) => legacyRide(r, legacy));
+      },
+    ),
+  // --- Réseau partagé (contrat @rydar/shared network.ts ; serveur antérieur : PGRST202, voir isMissingRpc) ------------
+  /** Réglage « Courses du réseau partagé », conditions, lisibilité, coordonnées bancaires masquées. */
+  networkState: () => gated("driver_network_state", () => networkRpc("driver_network_state", {})),
+  /** Nouvelle application ouverte (démarrage, retour au premier plan) : offres partenaires possibles. */
+  networkPing: () => gated("driver_network_ping", () => networkRpc("driver_network_ping", {})),
+  /** Active (avec la version des conditions acceptée) ou arrête les courses du réseau partagé. */
+  setNetwork: (enabled: boolean, version: string | null) => networkRpc("driver_set_network", { p_enabled: enabled, p_version: version }),
+  /** Coordonnées bancaires des versements (IBAN toujours masqué : 4 derniers caractères). */
+  payoutInfo: () => networkRpc("driver_payout_info", {}),
+  setPayoutDetails: (p: { payee: string; iban: string; bic?: string | null }) =>
+    networkRpc("driver_set_payout_details", { p_payee: p.payee.trim(), p_iban: normalizeIban(p.iban), p_bic: normalizeBic(p.bic) || null }),
+  /** Refusé tant qu'un versement est ouvert (PAYOUT_DETAILS_IN_USE). */
+  deletePayoutDetails: () => networkRpc("driver_delete_payout_details", {}),
+  /** « Courses partenaires » : un bloc par organisation (sommes, moyens de paiement de CETTE organisation, lignes). */
+  networkSettlements: () => networkRpc("driver_network_settlements", {}),
+  /** « J'ai payé » à UNE organisation partenaire, avec un de ses moyens. */
+  declareNetworkPayment: (org: string, ids: string[], method: SettlementMethod, note?: string | null) =>
+    networkRpc("driver_declare_network_payment", { p_org: org, p_ids: ids, p_method: method, p_note: note?.trim() || null }),
+  /** « Je conteste » (une fois par ligne) : paiement non reconnu, versement non reçu ou annulé. */
+  disputeNetworkSettlement: (id: string, reason: string) => networkRpc("driver_dispute_network_settlement", { p_id: id, p_reason: reason.trim() }),
 };
+
+/** Conditions complètes des courses du réseau partagé (page publique du serveur web) ; null sans URL d'API. */
+export const networkTermsUrl = () => (appConfig.apiUrl ? `${appConfig.apiUrl}${NETWORK_DOCUMENTS.network_driver.path}` : null);
 
 /** Centrale derrière un lien d'inscription (GET /api/join/{code}). */
 export type JoinCentrale = {

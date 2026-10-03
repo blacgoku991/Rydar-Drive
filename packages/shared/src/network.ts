@@ -1822,3 +1822,29 @@ export type NetworkErrorCode = (typeof NETWORK_ERROR_CODES)[number];
 
 /** Tonalités d'affichage (jetons du design) : « violet » = réseau. */
 export const NETWORK_TONE: Tone = "violet";
+
+// =============================================================================
+// Ajouts de l'app chauffeur (lot 9) — à respecter par le SQL (lots 4 et 5)
+// =============================================================================
+
+/**
+ * `data` d'une notification de règlement d'une course partenaire (types existants settlement_due, settlement_payout,
+ * settlement_paid, settlement_payout_sent et relances ; ligne notifications chez A) : `network: true` fait ouvrir à
+ * l'app l'onglet « Courses partenaires » de l'écran Commissions (sinon : commissions de sa propre organisation).
+ * Jamais commission_cents, platform_fee_cents ni driver_payout_cents (U4, nettoyage de queue_notification).
+ */
+export interface NetworkSettlementNotificationData {
+  type: "settlement_due" | "settlement_payout" | "settlement_paid" | "settlement_payout_sent" | (string & {});
+  network: true;
+  settlement_id?: Uuid;
+  ride_id?: Uuid;
+}
+
+/**
+ * Lecture par l'app de driver_home().network (DriverHomeNetwork) : null ou absent = rien de réseau à montrer (réseau
+ * jamais ouvert, aucune somme partenaire) ; présent = bandeau d'accueil seulement si une somme est due, à recevoir ou
+ * bloquante. L'interrupteur, les conditions et la lisibilité viennent de driver_network_state() (organisation qui
+ * reçoit = `organization.receiving` : sens « in » EFFECTIF de B). DriverNetworkState.mode est ignoré par l'app
+ * (décision Q2 : tout chauffeur accepte et règle lui-même, jamais « J'ai compris »).
+ */
+export type DriverHomeNetworkReading = DriverHomeNetwork | null;

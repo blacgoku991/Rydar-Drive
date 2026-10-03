@@ -331,14 +331,27 @@ export function ScreenHeader({ title, right, onBack }: { title: string; right?: 
   );
 }
 
-/** Sélecteur à onglets (Ma centrale | Chauffeurs, Jour | Semaine | Mois), avec pastille de non-lus optionnelle. */
+/**
+ * Sélecteur à onglets (Ma centrale | Chauffeurs, Jour | Semaine | Mois), avec pastille optionnelle (non-lus ; ambre /
+ * rouge pour une somme à régler : `badgeColor`). Segment de 42 px dans un cadre de 52 : `hitSlop` porte la cible tactile
+ * à 48 px sans rien changer à l'affichage ; libellé sur une ligne (un nom d'organisation long est tronqué, jamais sur
+ * deux lignes dans 42 px).
+ */
 export function Segmented<T extends string>({
   options, value, onChange, style,
-}: { options: { value: T; label: string; badge?: number }[]; value: T; onChange: (v: T) => void; style?: StyleProp<ViewStyle> }) {
+}: {
+  /** accessibilityLabel : nom lu par le lecteur d'écran quand le libellé affiché est abrégé ; badgeLabel : sens de la pastille */
+  options: { value: T; label: string; accessibilityLabel?: string; badge?: number; badgeColor?: string; badgeLabel?: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
     <View style={[styles.segmented, style]} accessibilityRole="tablist">
       {options.map((o) => {
         const active = o.value === value;
+        const badge = o.badge && o.badge > 0 ? o.badge : 0;
+        const name = o.accessibilityLabel ?? o.label;
         return (
           <Pressable
             key={o.value}
@@ -346,14 +359,16 @@ export function Segmented<T extends string>({
               if (!active) haptic(Haptics.ImpactFeedbackStyle.Light);
               onChange(o.value);
             }}
+            hitSlop={SEGMENT_SLOP}
             style={[styles.segment, active && styles.segmentActive]}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
+            accessibilityLabel={badge > 0 && o.badgeLabel ? `${name}, ${o.badgeLabel}` : o.accessibilityLabel}
           >
-            <Text style={[styles.segmentText, active && { color: colors.fg }]}>{o.label}</Text>
-            {!!o.badge && o.badge > 0 && (
-              <View style={styles.segmentBadge}>
-                <Text style={styles.segmentBadgeText}>{o.badge > 99 ? "99+" : o.badge}</Text>
+            <Text style={[styles.segmentText, active && { color: colors.fg }]} numberOfLines={1}>{o.label}</Text>
+            {badge > 0 && (
+              <View style={[styles.segmentBadge, o.badgeColor ? { backgroundColor: o.badgeColor } : null]}>
+                <Text style={styles.segmentBadgeText}>{badge > 99 ? "99+" : badge}</Text>
               </View>
             )}
           </Pressable>
@@ -362,6 +377,9 @@ export function Segmented<T extends string>({
     </View>
   );
 }
+
+/** 42 px + 3 + 3 = 48 px de cible, dans le rembourrage de 4 px du cadre (aucun chevauchement). */
+const SEGMENT_SLOP = { top: 3, bottom: 3 } as const;
 
 /** Pastille de compteur (non-lus) posée sur un bouton rond. */
 export function CountBadge({ count, color = colors.brand }: { count: number; color?: string }) {
@@ -473,7 +491,7 @@ const styles = StyleSheet.create({
   segmented: { flexDirection: "row", padding: 4, borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line },
   segment: { flex: 1, height: 42, borderRadius: radius.sm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   segmentActive: { backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong },
-  segmentText: { color: colors.muted, fontSize: type.body, fontWeight: weight.semibold },
+  segmentText: { flexShrink: 1, color: colors.muted, fontSize: type.body, fontWeight: weight.semibold },
   segmentBadge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: "center", justifyContent: "center", backgroundColor: colors.brand },
   segmentBadgeText: { color: colors.brandFg, fontSize: 11, fontWeight: weight.bold, fontVariant: ["tabular-nums"] },
   countBadge: { position: "absolute", top: -3, right: -3, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: colors.bg },
