@@ -260,7 +260,7 @@ function ShellBody({
       <div className="lg:pl-[232px]">
         <main id="contenu" tabIndex={-1} className="outline-none">
           {/* Frais plateforme dus à Rydar (owner / admin : centrale, ou flotte avec des frais Rydar) */}
-          <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isAdmin && (isCentrale || fleetFees)} paths={feePaths} />
+          <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isAdmin && (isCentrale || fleetFees)} paths={feePaths} floating={!topBanner} />
           {topBanner}
           {children}
         </main>

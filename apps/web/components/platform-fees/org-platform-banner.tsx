@@ -117,12 +117,15 @@ export function OrgPlatformBanner({
   timeZone,
   enabled,
   paths,
+  floating: floatingAllowed = true,
 }: {
   orgId: string;
   timeZone: string;
   enabled: boolean;
   /** Où régler : « Encaissements » (centrale) ou « Frais Rydar » (flotte), et nom des frais */
   paths: Pick<PlatformFeesPaths, "account" | "page" | "label">;
+  /** false : toujours dans le flux (un bandeau de conditions à accepter est affiché juste en dessous : jamais recouvert) */
+  floating?: boolean;
 }) {
   const pathname = usePathname();
   const [account, setAccount] = useState<PlatformAccount | null>(null);
@@ -169,7 +172,7 @@ export function OrgPlatformBanner({
   // La carte « Frais plateforme » est déjà sur la page (Encaissements / Frais Rydar) ; Messages occupe toute la hauteur
   // de l'écran (h-dvh) : un bandeau dans le flux pousserait la zone de saisie hors de l'écran
   if (pathname === paths.page || pathname.startsWith("/dashboard/messages")) return null;
-  const floating = pathname === "/dashboard";
+  const floating = floatingAllowed && pathname === "/dashboard";
   const t = TONE[state.tone];
 
   const dismiss = () => {

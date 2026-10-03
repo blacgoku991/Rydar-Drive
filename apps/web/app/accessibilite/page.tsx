@@ -81,7 +81,7 @@ export default async function AccessibilityPage() {
           items={[
             <>Cartes interactives (centre de commande, suivi d&apos;une course, carte des chauffeurs, mini-site) : non utilisables au lecteur d&apos;écran. Les mêmes informations sont disponibles sous forme de listes et de texte : liste des courses avec leurs adresses et leur statut, liste des chauffeurs avec leur état et l&apos;heure de leur dernière position.</>,
             <>Graphiques des statistiques : les principaux chiffres sont aussi affichés en texte, mais toutes les valeurs d&apos;un graphique ne le sont pas.</>,
-            <>Bandeaux d&apos;acceptation des conditions du tableau de bord : leurs liens s&apos;ouvrent dans un nouvel onglet sans l&apos;annoncer. Sur le centre de commande, lorsque des frais plateforme sont à régler, le bandeau flottant des frais peut recouvrir le bandeau d&apos;acceptation sur un écran de largeur moyenne (tablette) : fermez le bandeau des frais pour lire les conditions.</>,
+            <>Bandeaux d&apos;acceptation des conditions du tableau de bord : leurs liens s&apos;ouvrent dans un nouvel onglet sans l&apos;annoncer.</>,
             <>Mini-sites de réservation : la couleur principale est choisie par chaque centrale ; le réglage signale une couleur trop sombre, sans l&apos;interdire.</>,
             <>Application mobile « Rydar Drive Chauffeur » : non évaluée.</>,
           ]}
