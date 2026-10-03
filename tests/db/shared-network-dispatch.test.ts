@@ -6,7 +6,8 @@
 // 20260924007100. L'interrupteur est rouvert avant chaque test et recoupé à la fin du fichier.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { networkTerms, type NetworkTermsGiverInput } from "../../packages/shared/src/network";
+import { ERROR_MESSAGES } from "../../packages/shared/src/domain";
+import { NETWORK_OFFER_NOTIFICATION_KEYS, networkTerms, type NetworkTermsGiverInput } from "../../packages/shared/src/network";
 import {
   acceptDriverTerms, approveNetwork, as, CDG, CHAMPS_ELYSEES, createDriver, createMember, createOrg, createRideAsOwner,
   enableNetwork, expectPgError, inMinutes, insertRideBypass, networkTermsJson, nextWave, north, pingApp, pool, rideState,
@@ -303,6 +304,8 @@ describe("Immédiate : réseau après les vagues propres (§14.1 n° 6)", () => 
     expect(n.body).toBe(`${aOrg.name} · 75008 Paris → arrivée communiquée après acceptation · 800 m du départ · 72 €`);
     expect(n.body).not.toContain("Champs");
     expect(n.data).toMatchObject({ network: true, pickup: "75008 Paris", giver: aOrg.name, price_cents: 7200 });
+    // Contrat NetworkOfferNotificationData : clés exactes
+    expect(Object.keys(n.data).sort()).toEqual([...NETWORK_OFFER_NOTIFICATION_KEYS].sort());
     for (const key of ["commission_cents", "platform_fee_cents", "driver_payout_cents", "pickup_lat", "pickup_lng"]) {
       expect(n.data).not.toHaveProperty(key);
     }
@@ -382,6 +385,61 @@ describe("Immédiate : réseau après les vagues propres (§14.1 n° 6)", () => 
     const [presence] = await sql(`select presence from public.drivers where id = $1`, [p.partner.id]);
     expect(presence.presence).toBe("available");
     expect(await pendingOffer(ride.id, p.partner.id)).toBeTruthy();
+  });
+});
+
+// =============================================================================
+// Offre réseau : départ et arrivée approximatifs (S7, matrice §11.1 : commune ou quartier seulement avant acceptation)
+// =============================================================================
+describe("Offre réseau : adresses approximatives (S7, §11.1)", () => {
+  it("commune (forme d'un nom de commune) seulement après le code postal et avant une virgule ou la fin ; sinon le code postal seul", async () => {
+    const cases: Array<[string | null, string | null, string | null]> = [
+      ["12 Avenue des Champs-Élysées, 75008 Paris", "75008 Paris", "Paris"],
+      ["12 Avenue des Champs-Élysées 75008 Paris", "75008 Paris", "Paris"],
+      ["12 Av. des Champs-Élysées, 75008 Paris, France", "75008 Paris", "Paris"],
+      ["Aéroport Paris-Charles de Gaulle, Terminal 2E, 95700 Roissy-en-France", "95700 Roissy-en-France", "Roissy-en-France"],
+      ["3 rue de la Paix, 94240 L'Haÿ-les-Roses, France", "94240 L'Haÿ-les-Roses", "L'Haÿ-les-Roses"],
+      ["Gare, 78100 Saint-Germain-en-Laye  ", "78100 Saint-Germain-en-Laye", "Saint-Germain-en-Laye"],
+      ["Gare, 78100 Saint Germain en Laye", "78100 Saint Germain en Laye", "Saint Germain en Laye"],
+      ["1 rue X, 92200 Neuilly sur Seine", "92200 Neuilly sur Seine", "Neuilly sur Seine"],
+      ["1 rue X, 72000 Le Mans", "72000 Le Mans", "Le Mans"],
+      ["1 rue X, 59650 Villeneuve d'Ascq", "59650 Villeneuve d'Ascq", "Villeneuve d'Ascq"],
+      ["1 rue X 75008 PARIS", "75008 PARIS", "PARIS"],
+      // Texte libre après la commune (nom du client, code d'accès, n° de chambre ou de rue) : jamais repris
+      ["5 rue X 75011 Paris - interphone DUPONT code 4589B", "75011", null],
+      ["5 rue X 75011 Paris - interphone DUPONT", "75011", null],
+      ["5 rue X 75011 Paris interphone DUPONT", "75011", null],
+      ["5 rue X 75011 Paris chez M. Dupont", "75011", null],
+      ["5 rue X 75011 Paris Dupont", "75011", null],
+      ["5 rue X 75011 Paris (Mme Martin)", "75011", null],
+      ["75011 Paris 14 rue Oberkampf, interphone Dupont", "75011", null],
+      ["Hôtel Lutetia 45 boulevard Raspail 75006 Paris chambre 312 M. Martin", "75006", null],
+      ["75008 Paris 8e Arrondissement", "75008", null],
+      // Cinq chiffres pris dans un numéro plus long : ce n'est pas un code postal
+      ["Code 0612345678 Dupont, 75011 Paris", "75011 Paris", "Paris"],
+      ["Aéroport Paris-Charles de Gaulle, Terminal 2E", null, null],
+      [null, null, null],
+    ];
+    for (const [address, area, city] of cases) {
+      const [row] = await sql(`select private.address_area($1) as area, private.address_city($1) as city`, [address]);
+      expect(row, String(address)).toEqual({ area, city });
+    }
+  });
+
+  it("notification d'offre partenaire : ni le texte libre ni le nom du client qui suivent le code postal", async () => {
+    const p = await networkPair();
+    const ride = await rideOf(p, {
+      pickup_address: "5 rue X 75011 Paris - interphone DUPONT code 4589B",
+      dropoff_address: "Hôtel Lutetia 45 boulevard Raspail 75006 Paris chez M. Martin",
+    });
+    await toNetworkStage(ride.id);
+    const offer = await pendingOffer(ride.id, p.partner.id);
+    expect(offer).toBeTruthy();
+    const [n] = await sql(`select title, body, data from public.notifications where offer_id = $1`, [offer!.id]);
+    expect(n.data).toMatchObject({ pickup: "75011", dropoff: "arrivée communiquée après acceptation" });
+    for (const secret of ["DUPONT", "interphone", "4589B", "Martin", "chez", "Raspail"]) {
+      expect(JSON.stringify(n), secret).not.toContain(secret);
+    }
   });
 });
 
@@ -816,15 +874,46 @@ describe("Planifiée : fenêtre réseau à prise en charge − 2 h (§14.1 n° 1
     expect(await pendingOffer(ride.id, p.partner.id)).toMatchObject({ mode: "fleet" });
   });
 
-  it("fenêtre après T-lead (course créée 70 min avant) : réseau seulement après les vagues GPS propres", async () => {
+  it("fenêtre après T-lead (course créée 70 min avant) : flotte de A, puis vagues GPS propres, puis réseau « scheduled_geo »", async () => {
     const p = await networkPair();
     const ride = await rideOf(p, { pickup_at: inMinutes(70) });
-    expect((await rideState(ride.id)).ride.type).toBe("scheduled");
-    await sql(`update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1`, [ride.id]);
-    await sql("select private.dispatch_tick()");
-    const st = await rideState(ride.id);
-    expect(st.ride.network_at).toBeNull();
+    let st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ type: "scheduled", dispatch_mode: "fleet" });
+    // Fenêtre réseau (début + 15 min) au-delà de T-lead (prise en charge − 60 min) : jamais ouverte pendant la flotte
+    const [w] = await sql(
+      `select private.network_window_at(r) >= r.pickup_at - interval '60 minutes' as after_lead from public.rides r where r.id = $1`,
+      [ride.id],
+    );
+    expect(w.after_lead).toBe(true);
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ dispatch_mode: "fleet", network_at: null });
     expect(st.offers.filter((o) => o.is_network)).toHaveLength(0);
+
+    // 11 min plus tard : T-lead dépassée (fenêtre réseau jamais atteinte) → bascule GPS, chauffeurs de A seuls
+    await sql(
+      `update public.rides set pickup_at = now() + interval '59 minutes', dispatch_started_at = now() - interval '11 minutes' where id = $1`,
+      [ride.id],
+    );
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ dispatch_mode: "geo", dispatch_wave: 1, network_at: null });
+    for (let wave = 2; wave <= 6; wave++) {
+      await nextWave(ride.id);
+      st = await rideState(ride.id);
+      expect(st.ride.dispatch_wave).toBe(wave);
+      expect(st.ride.network_at).toBeNull();
+      expect(st.offers.filter((o) => o.is_network)).toHaveLength(0);
+    }
+
+    // Après les vagues GPS propres : partage ouvert (« scheduled_geo », premier cycle), offre GPS au partenaire
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.network_at).not.toBeNull();
+    expect(st.events.filter((e) => e.type === "dispatch.network").map((e) => e.data)).toEqual([
+      { partners_nearby: 1, stage: "scheduled_geo", cycle: 1 },
+    ]);
+    expect(await pendingOffer(ride.id, p.partner.id)).toMatchObject({ mode: "geo", wave: 7 });
   });
 
   it("course devenue non partageable dans la fenêtre : offres partenaires fermées (C15)", async () => {
@@ -1118,6 +1207,39 @@ describe("Erreur dans l'étape réseau (C8)", () => {
       const { rows: [end] } = await client.query(
         `select message, data from public.ride_events where ride_id = $1 and type = 'dispatch.no_driver'`, [ride.id]);
       expect(end.data).toMatchObject({ network: true });
+    } finally {
+      await client.query("rollback").catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it("3 erreurs pendant les vagues réseau, partage déjà ouvert : partage clos « error », fin de la recherche", async () => {
+    const p = await networkPair();
+    const ride = await rideOf(p);
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const tick = async () => {
+        await client.query(`update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1`, [ride.id]);
+        await client.query("select private.dispatch_tick()");
+      };
+      const share = async () => (await client.query(
+        `select status, closed_reason, errors, cycle from public.ride_network_shares where ride_id = $1`, [ride.id])).rows[0];
+      // Vague 7 : partage ouvert, partenaire sollicité
+      await client.query(`update public.rides set dispatch_wave = 6 where id = $1`, [ride.id]);
+      await tick();
+      expect(await share()).toEqual({ status: "open", closed_reason: null, errors: 0, cycle: 1 });
+      // Panne des offres réseau à partir de la vague 8 (annulée avec la transaction)
+      await client.query(`create or replace function private.network_offer(r public.rides, p_mode public.dispatch_mode,
+          p_wave integer, p_radius integer, p_limit integer, p_expires timestamptz) returns integer language plpgsql
+          set search_path = '' as $$ begin raise exception 'panne simulée'; end; $$`);
+      await tick();
+      await tick();
+      expect(await share()).toMatchObject({ status: "open", errors: 2 });
+      await tick();
+      const { rows: [r] } = await client.query(`select status, network_at from public.rides where id = $1`, [ride.id]);
+      expect(r).toEqual({ status: "NO_DRIVER_FOUND", network_at: null });
+      expect(await share()).toEqual({ status: "closed", closed_reason: "error", errors: 3, cycle: 1 });
     } finally {
       await client.query("rollback").catch(() => undefined);
       client.release();
@@ -1729,6 +1851,209 @@ describe("Retraits et chien de garde (§14.1 n° 14)", () => {
     const [o] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [offer!.id]);
     expect(o).toEqual({ status: "expired", closed_reason: "redispatch" });
     expect(await sql(`select 1 from public.notifications where offer_id = $1`, [offer!.id])).toHaveLength(0);
+  });
+
+  it("client à bord d'un chauffeur partenaire : annulation refusée à tous (à bord comme prépayée) ; avant, permise", async () => {
+    const p = await networkPair();
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const samir = await readyPartner(p.B, { firstName: "Samir", at: north(p.site, 900) });
+    const card = await partnerAccepts(p, p.partner);
+    const online = await partnerAccepts(p, samir, { payment_method: "online" });
+    const refused = { ok: false, code: "NETWORK_RIDE_IN_PROGRESS", message: ERROR_MESSAGES.NETWORK_RIDE_IN_PROGRESS };
+    for (const [driver, rideId] of [[p.partner, card.ride.id], [samir, online.ride.id]] as const) {
+      for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD"]) {
+        await moveTo(driver.id, p.site);
+        expect(await stepAs(driver, rideId, s), s).toMatchObject({ ok: true });
+      }
+      expect(await callAs(dispatcher, "cancel_ride", [rideId, "Client absent"])).toEqual(refused);
+      expect(await callAs(p.A.ownerId, "cancel_ride", [rideId, "Client absent"])).toEqual(refused);
+      expect(await stepAs(driver, rideId, "IN_PROGRESS")).toMatchObject({ ok: true });
+      expect(await callAs(p.A.ownerId, "cancel_ride", [rideId, null])).toEqual(refused);
+      expect((await rideState(rideId)).ride).toMatchObject({ status: "IN_PROGRESS", driver_id: driver.id });
+      expect((await executionsOf(rideId))[0]).toMatchObject({ ended_at: null, end_reason: null });
+    }
+    // Le partenaire termine normalement (exécution « completed »)
+    await moveTo(p.partner.id, north(CDG, 300));
+    expect(await stepAs(p.partner, card.ride.id, "COMPLETED")).toMatchObject({ ok: true, status: "COMPLETED" });
+    expect((await executionsOf(card.ride.id))[0].end_reason).toBe("completed");
+
+    // Arrivé, client pas à bord (absent) : l'annulation reste permise, dispatcher compris
+    await moveTo(p.partner.id, north(p.site, 800));
+    const absent = await partnerAccepts(p, p.partner);
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED"]) {
+      await moveTo(p.partner.id, p.site);
+      expect(await stepAs(p.partner, absent.ride.id, s), s).toMatchObject({ ok: true });
+    }
+    expect(await callAs(dispatcher, "cancel_ride", [absent.ride.id, "Client absent"])).toMatchObject({ ok: true, code: "CANCELLED" });
+    expect((await executionsOf(absent.ride.id))[0]).toMatchObject({ id: absent.execution.id, end_reason: "cancelled_by_giver" });
+  });
+
+  it("close_network_ride : jamais avant la prise en charge (arrivé, client pas à bord) — à retirer, ou annuler si le client est absent", async () => {
+    const p = await networkPair();
+    const { ride, execution } = await partnerAccepts(p, p.partner);
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED"]) {
+      await moveTo(p.partner.id, p.site);
+      expect(await stepAs(p.partner, ride.id, s), s).toMatchObject({ ok: true });
+    }
+    // Plus de position depuis 35 min (coupure GPS) : clôture refusée, rien n'est dû
+    await moveTo(p.partner.id, p.site, 35 * 60);
+    const err = await expectPgError(callAs(p.A.ownerId, "close_network_ride", [ride.id]));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("NETWORK_CLOSE_NOT_ALLOWED")]);
+    expect(err.message).toContain("retirez-la");
+    expect((await rideState(ride.id)).ride).toMatchObject({ status: "DRIVER_ARRIVED", driver_id: p.partner.id, completed_at: null });
+    expect((await executionsOf(ride.id))[0]).toMatchObject({ id: execution.id, ended_at: null, suspect_reasons: [], hold_until: null });
+    // « Retirer » : course rendue à A sans argent
+    expect(await callAs(p.A.ownerId, "reassign_ride", [ride.id, "Injoignable", p.partner.id])).toMatchObject({ ok: true, network: true });
+    expect((await executionsOf(ride.id))[0].end_reason).toBe("removed_by_giver");
+  });
+
+  it("fiche suspendue côté serveur, client à bord d'une course de A et une autre acceptée : seule la seconde est rendue (Q5)", async () => {
+    const p = await networkPair();
+    const later = await scheduledPartnerAccepts(p, p.partner, 100);
+    const current = await partnerAccepts(p, p.partner);
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD"]) {
+      await moveTo(p.partner.id, p.site);
+      expect(await stepAs(p.partner, current.ride.id, s), s).toMatchObject({ ok: true });
+    }
+    // Pendant la course partenaire, B ne voit pas la position de son chauffeur (Q5)
+    const seenByB = () => as({ sub: p.B.ownerId }, (q) => q(`select driver_id from public.driver_locations where driver_id = $1`, [p.partner.id]));
+    expect(await seenByB()).toHaveLength(0);
+
+    // Suspension par un chemin serveur (bannissement plateforme, identité bannie : hors du garde G7)
+    await sql(`update public.drivers set status = 'suspended' where id = $1`, [p.partner.id]);
+    const w = await watch();
+    expect(w.network).toMatchObject({ released: 1, alerts: 1 });
+    expect((await rideState(later.ride.id)).ride).toMatchObject({ driver_id: null, status: "SEARCHING_DRIVER" });
+    // La course en cours reste la sienne : présence et course en cours inchangées, position toujours masquée à B
+    const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
+    expect(d).toEqual({ presence: "on_trip", current_ride_id: current.ride.id });
+    expect(await seenByB()).toHaveLength(0);
+
+    // Il termine (C3), puis passe hors ligne
+    expect(await stepAs(p.partner, current.ride.id, "IN_PROGRESS")).toMatchObject({ ok: true });
+    expect(await stepAs(p.partner, current.ride.id, "COMPLETED")).toMatchObject({ ok: true });
+    const [after] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
+    expect(after).toEqual({ presence: "offline", current_ride_id: null });
+  });
+
+  it("chauffeur de A qui accepte pendant les vagues réseau : network_at remis à NULL ; « Retirer » puis réouverture normale (cycle 2)", async () => {
+    const p = await networkPair();
+    const ride = await rideOf(p);
+    await toNetworkStage(ride.id);
+    expect(await pendingOffer(ride.id, p.partner.id)).toBeTruthy();
+    const own = await createDriver(p.A, { firstName: "Ahmed", at: north(p.site, 300) });
+    await nextWave(ride.id);
+    const ownOffer = await pendingOffer(ride.id, own.id);
+    expect(await accept(own, ownOffer!.id)).toMatchObject({ ok: true });
+    let st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ driver_id: own.id, driver_org_id: p.A.id, network_at: null });
+    expect(await shareOf(ride.id)).toEqual({ status: "closed", closed_reason: "reassigned_own", cycle: 1 });
+
+    // « Retirer » au chauffeur de A : la recherche repart, ses chauffeurs d'abord (aucune vague réseau)
+    expect(await callAs(p.A.ownerId, "reassign_ride", [ride.id, null, own.id])).toMatchObject({ ok: true, code: "RELAUNCHED" });
+    for (let wave = 2; wave <= 6; wave++) {
+      await nextWave(ride.id);
+      st = await rideState(ride.id);
+      expect(st.ride).toMatchObject({ dispatch_wave: wave, network_at: null });
+      expect(st.offers.filter((o) => o.is_network && o.status === "pending")).toHaveLength(0);
+    }
+    // Après elles : partage rouvert (dispatch.network, cycle 2), le partenaire accepte, partage « accepted »
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.network_at).not.toBeNull();
+    expect(st.events.filter((e) => e.type === "dispatch.network").map((e) => e.data.cycle)).toEqual([1, 2]);
+    expect(await shareOf(ride.id)).toEqual({ status: "open", closed_reason: null, cycle: 2 });
+    const again = await pendingOffer(ride.id, p.partner.id);
+    expect(await accept(p.partner, again!.id)).toMatchObject({ ok: true });
+    expect(await shareOf(ride.id)).toEqual({ status: "accepted", closed_reason: null, cycle: 2 });
+  });
+
+  it("planifiée prise par un chauffeur de A pendant la fenêtre, repoussée puis retirée : aucune offre partenaire avant la nouvelle fenêtre", async () => {
+    const p = await networkPair();
+    const own = await createDriver(p.A, { firstName: "Ahmed", at: north(p.site, 300) });
+    const ride = await rideOf(p, { pickup_at: inMinutes(100) });
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id);
+    expect(await pendingOffer(ride.id, p.partner.id)).toBeTruthy();
+    expect(await accept(own, (await pendingOffer(ride.id, own.id))!.id)).toMatchObject({ ok: true });
+    expect((await rideState(ride.id)).ride.network_at).toBeNull();
+    // Prise en charge repoussée (nouvelle fenêtre réseau dans 80 min), puis course retirée au chauffeur de A
+    await sql(`update public.rides set pickup_at = now() + interval '200 minutes' where id = $1`, [ride.id]);
+    expect(await callAs(p.A.ownerId, "reassign_ride", [ride.id, null, own.id])).toMatchObject({ ok: true });
+    await nextWave(ride.id);
+    const st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ dispatch_mode: "fleet", network_at: null });
+    expect(st.offers.filter((o) => o.is_network && o.status === "pending")).toHaveLength(0);
+  });
+
+  it("défenses : network_at resté posé d'avant la correction (partage clos) — remis à NULL par « Retirer » et par la fenêtre flotte", async () => {
+    /** État d'avant la correction d'accept_ride_offer : network_at posé, partage clos (déclencheurs coupés). */
+    const staleNetworkAt = async (rideId: string) => {
+      const client = await pool.connect();
+      try {
+        await client.query("set session_replication_role = replica");
+        await client.query(`update public.rides set network_at = now() - interval '1 minute' where id = $1`, [rideId]);
+      } finally {
+        await client.query("reset session_replication_role");
+        client.release();
+      }
+    };
+    const p = await networkPair();
+    const own = await createDriver(p.A, { firstName: "Ahmed", at: north(p.site, 300) });
+
+    // Immédiate : « Retirer » au chauffeur de A remet network_at à NULL (vagues propres d'abord, partage rouvert après)
+    const ride = await rideOf(p);
+    await toNetworkStage(ride.id);
+    await nextWave(ride.id);
+    expect(await accept(own, (await pendingOffer(ride.id, own.id))!.id)).toMatchObject({ ok: true });
+    await staleNetworkAt(ride.id);
+    expect(await callAs(p.A.ownerId, "reassign_ride", [ride.id, null, own.id])).toMatchObject({ ok: true, code: "RELAUNCHED" });
+    expect((await rideState(ride.id)).ride).toMatchObject({ network_at: null, dispatch_wave: 1 });
+    expect(await shareOf(ride.id)).toEqual({ status: "closed", closed_reason: "reassigned_own", cycle: 1 });
+
+    // Planifiée retirée (nouvelle fenêtre réseau 15 min après la relance) : aucune offre partenaire avant elle,
+    // network_at remis à NULL au passage suivant ; rouvert (cycle 2) à la fenêtre
+    const sched = await rideOf(p, { pickup_at: inMinutes(100) });
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [sched.id]);
+    await nextWave(sched.id);
+    expect(await pendingOffer(sched.id, p.partner.id)).toBeTruthy();
+    const fleetOffer = await pendingOffer(sched.id, own.id);
+    expect(await accept(own, fleetOffer!.id)).toMatchObject({ ok: true });
+    expect(await callAs(p.A.ownerId, "reassign_ride", [sched.id, null, own.id])).toMatchObject({ ok: true });
+    await staleNetworkAt(sched.id);
+    await nextWave(sched.id);
+    let st = await rideState(sched.id);
+    expect(st.ride).toMatchObject({ dispatch_mode: "fleet", network_at: null });
+    expect(st.offers.filter((o) => o.is_network && o.status === "pending")).toHaveLength(0);
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [sched.id]);
+    await nextWave(sched.id);
+    st = await rideState(sched.id);
+    expect(st.ride.network_at).not.toBeNull();
+    expect(await shareOf(sched.id)).toEqual({ status: "open", closed_reason: null, cycle: 2 });
+    expect(await pendingOffer(sched.id, p.partner.id)).toMatchObject({ mode: "fleet" });
+  });
+
+  it("prise en charge repoussée par A pendant la fenêtre réseau : partage clos jusqu'à la nouvelle fenêtre, puis rouvert", async () => {
+    const p = await networkPair();
+    const ride = await rideOf(p, { pickup_at: inMinutes(100) });
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id);
+    const offer = await pendingOffer(ride.id, p.partner.id);
+    expect(offer).toBeTruthy();
+    // Nouvelle heure : fenêtre réseau dans 3 h (G9 ferme l'offre « terms_changed »)
+    await sql(`update public.rides set pickup_at = now() + interval '300 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id);
+    let st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ dispatch_mode: "fleet", network_at: null });
+    expect(st.offers.filter((o) => o.is_network && o.status === "pending")).toHaveLength(0);
+    expect(await shareOf(ride.id)).toEqual({ status: "closed", closed_reason: "window_elapsed", cycle: 1 });
+    // Nouvelle fenêtre atteinte : partage rouvert (cycle 2), le partenaire de nouveau sollicité
+    await sql(`update public.rides set pickup_at = now() + interval '110 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.network_at).not.toBeNull();
+    expect(await shareOf(ride.id)).toEqual({ status: "open", closed_reason: null, cycle: 2 });
+    expect(await pendingOffer(ride.id, p.partner.id)).toMatchObject({ mode: "fleet" });
   });
 });
 

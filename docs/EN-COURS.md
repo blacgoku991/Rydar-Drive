@@ -268,6 +268,23 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
     chemin) : le lot administration part de cette version ;
   - fin d'une course partagée d'une A **centrale** : 23503 tant que le lot argent n'a pas routé `sync_ride_settlement`
     (A flotte : sans objet).
+- Règles posées par la revue du lot 3 :
+  - client à bord d'un partenaire (PASSENGER_ONBOARD, IN_PROGRESS) : `cancel_ride` refusé à tous sauf système / super
+    admin (`NETWORK_RIDE_IN_PROGRESS` ; `private.cancel_ride_internal` redéfinie en 006800, le lot suivant qui la touche
+    part de cette version) ; seule voie : `close_network_ride` puis la contestation (lot argent) ; jusqu'à
+    DRIVER_ARRIVED, annulation inchangée ;
+  - `close_network_ride` : client à bord seulement (jamais à DRIVER_ARRIVED : « Retirer », ou annuler si client absent) ;
+  - `network_at` ne reste jamais posé sur une course tenue par un chauffeur de A (`accept_ride_offer` le remet à NULL
+    avec le chauffeur ; `reassign_ride` aussi) ; `network_fleet_step` ne propose aux partenaires que si le partage est
+    `open` et la fenêtre atteinte, sinon partage clos « window_elapsed », rouvert à la fenêtre ;
+  - `private.network_release_driver` ne touche jamais `current_ride_id` (hors ligne seulement sans course en cours) :
+    le masquage Q5 repose dessus ;
+  - adresses approximatives (`private.address_area` / `address_city`, une seule expression dans
+    `private.address_postcode_city`, à réutiliser telles quelles par `driver_offers_v2`) : commune seulement juste après
+    un code postal isolé, en forme de nom de commune (article, « Saint », mots à particules) ET suivie d'une virgule ou
+    de la fin ; sinon code postal seul ; jamais le texte libre qui suit ;
+  - toute lecture de `ride_settlements` par `network_driver_id` porte `network_driver_org_id is not null` (index
+    partiel `ride_settlements_network_driver_idx`).
 - Règles posées par la revue du lot 2, pour les lots suivants :
   - course tenue par un partenaire : `network_at` ne change qu'avec le chauffeur (retrait, réattribution) ; prix,
     paiement, adresses, heure, catégorie, passagers, **bagages, n° de vol** verrouillés (G6) ; `apply_flight_status`

@@ -271,8 +271,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "Partage actif : proposez un lien de paiement ou un virement (RIB) aux chauffeurs partenaires, les espèces restent possibles en plus.",
   NETWORK_INSURANCE_REQUIRED: "Confirmez que votre assurance couvre les courses faites pour d'autres organisations.",
   NETWORK_RIDE_LOCKED: "Course confiée à un partenaire : retirez-la-lui pour la modifier.",
+  NETWORK_RIDE_IN_PROGRESS:
+    "Client à bord d'un chauffeur partenaire : annulation impossible. Il termine la course ; s'il ne le peut plus, clôturez-la (« Clôturer la course »), puis contestez-la si besoin.",
   NETWORK_CLOSE_NOT_ALLOWED:
-    "Clôture impossible : réservée à une course en cours dont le chauffeur partenaire n'est plus actif ou sans position depuis 30 min.",
+    "Clôture impossible : réservée à une course dont le client est à bord et dont le chauffeur partenaire n'est plus actif ou sans position depuis 30 min. Avant la prise en charge, retirez-la au chauffeur (ou annulez-la si le client est absent).",
   NETWORK_CONTEST_EXPIRED: "Délai dépassé : une course partagée se conteste dans les 7 jours qui suivent sa fin.",
   NETWORK_SETTLEMENT_ACTION_FORBIDDEN:
     "Action impossible sur un règlement du réseau partagé : un versement dû à un chauffeur partenaire ne s'annule pas (contestez la course).",

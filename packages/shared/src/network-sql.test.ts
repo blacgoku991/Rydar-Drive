@@ -6,8 +6,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  ACCEPT_OFFER_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES, NETWORK_EXECUTION_END_REASONS, NETWORK_PARAMS,
-  NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS, NETWORK_SUSPECT_REASONS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
+  ACCEPT_OFFER_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES, NETWORK_EXECUTION_END_REASONS,
+  NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS, NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS, NETWORK_SUSPECT_REASONS,
+  NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES, type NetworkOfferNotificationData,
 } from "./network";
 
 const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import.meta.url));
@@ -62,6 +63,38 @@ describe("Réseau partagé : textes SQL = @rydar/shared", () => {
   it("private.network_skip_label : mêmes libellés que NETWORK_SKIP_REASON_LABELS", () => {
     const sql = sqlCases(lastSqlDefinition("private.network_skip_label"));
     expect(sql).toEqual(NETWORK_SKIP_REASON_LABELS);
+  });
+
+  it("notification d'offre partenaire (private.network_offer) : clés = NetworkOfferNotificationData, jamais de montant interne", () => {
+    const body = lastSqlDefinition("private.network_offer");
+    const at = body.indexOf("jsonb_build_object(", body.indexOf("insert into public.notifications"));
+    expect(at).toBeGreaterThan(-1);
+    const data = body.slice(at, body.indexOf("'high'", at));
+    // Clés de jsonb_build_object : chaînes suivies d'une virgule (les valeurs littérales sont suivies de « end, » ou « ) »)
+    const keys = [...data.matchAll(/'([a-z_]+)',\s/g)].map((m) => m[1]!);
+    expect(keys.sort()).toEqual([...NETWORK_OFFER_NOTIFICATION_KEYS].sort());
+    const sample = {
+      type: "ride_offer", offer_id: "o", ride_id: "r", ride_type: "instant", network: true, giver: "Flotte A", pickup: "75008 Paris",
+      dropoff: "Roissy-en-France", pickup_at: "2026-10-03T10:00:00Z", price_cents: 7200, distance_m: 800, passengers: 2,
+      expires_at: "2026-10-03T09:00:30Z",
+    } satisfies NetworkOfferNotificationData;
+    expect(Object.keys(sample).sort()).toEqual([...NETWORK_OFFER_NOTIFICATION_KEYS].sort());
+    for (const key of ["commission_cents", "platform_fee_cents", "driver_payout_cents", "giver_cut_cents", "pickup_lat", "pickup_lng"]) {
+      expect(data, key).not.toContain(`'${key}'`);
+    }
+  });
+});
+
+describe("Réseau partagé : index partiel des lignes réseau (ride_settlements_network_driver_idx)", () => {
+  // L'index ne sert que si la requête porte son prédicat « network_driver_org_id is not null » : sans lui, chaque
+  // partenaire évalué parcourt tous les règlements ouverts propres de A (ride_settlements_org_status_idx).
+  it("private.network_blocker et private.network_identity_block : chaque lecture par network_driver_id porte le prédicat", () => {
+    const blocker = lastSqlDefinition("private.network_blocker");
+    expect(blocker.split("x.network_driver_id = p_driver").length - 1).toBe(3);
+    expect(blocker.split("x.network_driver_org_id is not null").length - 1).toBe(3);
+    const identity = lastSqlDefinition("private.network_identity_block");
+    expect(identity.split("x.network_driver_id = n.driver_id").length - 1).toBe(1);
+    expect(identity.split("x.network_driver_org_id is not null").length - 1).toBe(1);
   });
 });
 

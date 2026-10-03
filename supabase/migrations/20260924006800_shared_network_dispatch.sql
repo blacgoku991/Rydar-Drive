@@ -77,28 +77,49 @@ as $$
   select greatest(r.pickup_at - interval '120 minutes', r.dispatch_started_at + interval '15 minutes');
 $$;
 
--- Offre réseau (S7) : « code postal + commune » d'une adresse (« 12 Avenue X, 75008 Paris » → « 75008 Paris »),
--- NULL si aucun code postal reconnaissable ; commune seule pour l'arrivée.
+-- Offre réseau (S7, matrice §11.1 : commune ou quartier seulement avant l'acceptation) : code postal et commune d'une
+-- adresse saisie librement (tableau de bord, API, mini-site), jamais le texte qui suit la commune (nom du client, code
+-- d'accès, n° de chambre ou de rue). Dans le doute, le code postal seul : une commune n'est reconnue que
+--  * juste après un code postal isolé (5 chiffres, pas pris dans un numéro plus long),
+--  * de la forme d'un nom de commune : article facultatif (Le, La, Les), « Saint » / « Sainte » facultatif, un mot
+--    (lettres, latines accentuées comprises — classe explicite, même résultat quelle que soit la locale de la base —,
+--    traits d'union et apostrophes internes : « Roissy-en-France », « L'Haÿ-les-Roses »), puis seulement des mots
+--    introduits par une particule (« Neuilly sur Seine », « Issy les Moulineaux », « Villeneuve d'Ascq »), 60
+--    caractères au plus,
+--  * suivie d'une virgule ou de la fin de l'adresse.
+-- « 12 Avenue X, 75008 Paris » → 75008 / Paris ; « 5 rue X 75011 Paris - interphone DUPONT », « … 75011 Paris Dupont »,
+-- « … 75006 Paris chambre 312 » → code postal seul, commune NULL ; sans code postal : NULL et NULL (« … communiqué après
+-- acceptation »). Réutilisé tel quel par les offres du lot accès (driver_offers_v2).
+create or replace function private.address_postcode_city(p_address text, out postcode text, out city text)
+language sql
+immutable
+set search_path = ''
+as $$
+  select case when c.ok then c.m[1] else p.m[1] end, case when c.ok then c.m[2] end
+    from (select x.m, x.m is not null and char_length(x.m[2]) <= 60 as ok
+            from (select regexp_match(coalesce(p_address, ''),
+                    '(?:^|[^0-9])([0-9]{5}) +((?:(?:Le|La|Les) +)?(?:(?:Saint|Sainte|St|Ste) +)?[A-Za-zÀ-ÖØ-öø-ÿŒœŸ]+(?:[''’-][A-Za-zÀ-ÖØ-öø-ÿŒœŸ]+)*(?: +(?:(?:sur|sous|lès|lez|les|le|la|en|de|du|des|aux|au|et|à) +|[dl][''’])[A-Za-zÀ-ÖØ-öø-ÿŒœŸ]+(?:[''’-][A-Za-zÀ-ÖØ-öø-ÿŒœŸ]+)*)*) *(?:,|$)') as m) x) c,
+         (select regexp_match(coalesce(p_address, ''), '(?:^|[^0-9])([0-9]{5})(?:[^0-9]|$)') as m) p;
+$$;
+
+-- Départ d'une offre réseau : « 75008 Paris », ou le code postal seul (« 75011 »), sinon NULL.
 create or replace function private.address_area(p_address text)
 returns text
 language sql
 immutable
 set search_path = ''
 as $$
-  select nullif(left(x.m[1] || ' ' || btrim(x.m[2]), 80), '')
-    from (select regexp_match(coalesce(p_address, ''), '([0-9]{5})\s+([^,]+)') as m) x
-   where x.m is not null;
+  select coalesce(x.postcode || ' ' || x.city, x.postcode) from private.address_postcode_city(p_address) x;
 $$;
 
+-- Arrivée d'une offre réseau : la commune seule, sinon NULL.
 create or replace function private.address_city(p_address text)
 returns text
 language sql
 immutable
 set search_path = ''
 as $$
-  select nullif(left(btrim(x.m[2]), 80), '')
-    from (select regexp_match(coalesce(p_address, ''), '([0-9]{5})\s+([^,]+)') as m) x
-   where x.m is not null;
+  select x.city from private.address_postcode_city(p_address) x;
 $$;
 
 -- =============================================================================
@@ -281,6 +302,8 @@ begin
           and exists (select 1 from public.ride_settlements x
                        where x.organization_id = p_giver
                          and x.network_driver_id = n.driver_id
+                         -- prédicat de l'index partiel ride_settlements_network_driver_idx (lignes réseau seulement)
+                         and x.network_driver_org_id is not null
                          and x.direction = 'driver_owes'
                          and x.amount_cents > 0
                          and x.status in ('due', 'declared', 'disputed'))) then
@@ -335,10 +358,13 @@ begin
     return 'own_unpaid';
   end if;
   select * into s from public.organization_settings x where x.organization_id = p_giver;
+  -- « network_driver_org_id is not null » (lignes réseau, seules à avoir network_driver_id) : prédicat de l'index
+  -- partiel ride_settlements_network_driver_idx — sans lui, chaque partenaire évalué parcourt les règlements propres de A
   if coalesce(s.block_unpaid, true) and exists (
     select 1 from public.ride_settlements x
      where x.organization_id = p_giver
        and x.network_driver_id = p_driver
+       and x.network_driver_org_id is not null
        and x.direction = 'driver_owes'
        and x.amount_cents > 0
        and (x.status = 'disputed'
@@ -350,6 +376,7 @@ begin
     select coalesce(sum(x.amount_cents), 0) from public.ride_settlements x
      where x.organization_id = p_giver
        and x.network_driver_id = p_driver
+       and x.network_driver_org_id is not null
        and x.direction = 'driver_owes'
        and (x.status in ('due', 'disputed')
             or (x.status = 'declared'
@@ -819,9 +846,12 @@ end;
 $$;
 
 -- Fenêtre réseau d'une planifiée (§9.3), juste avant private.offer_to_fleet à chaque passage (toutes les 5 min) :
--- ouverture à private.network_window_at si elle précède T-lead ; course devenue non partageable (C15) : offres
--- partenaires fermées ; sinon offres aux nouveaux partenaires éligibles (sans présence exigée, du plus proche au plus
--- loin, quota max_offers_per_wave par passage), ouvertes jusqu'à T-lead comme celles de la flotte.
+-- ouverture à private.network_window_at si elle précède T-lead ; partage qui n'est plus ouvert (network_at resté posé)
+-- ou fenêtre pas encore atteinte (prise en charge repoussée pendant le partage) : offres partenaires fermées, partage
+-- clos (« window_elapsed » : rendue aux chauffeurs de A), rouvert à la fenêtre — la flotte de A garde l'exclusivité
+-- jusque-là ; course devenue non partageable (C15) : offres partenaires fermées ; sinon offres aux nouveaux partenaires
+-- éligibles (sans présence exigée, du plus proche au plus loin, quota max_offers_per_wave par passage), ouvertes jusqu'à
+-- T-lead comme celles de la flotte.
 create or replace function private.network_fleet_step(p_ride uuid)
 returns integer
 language plpgsql
@@ -851,6 +881,13 @@ begin
       return 0;
     end if;
     select * into r from public.rides where id = p_ride;
+  elsif now() < private.network_window_at(r)
+        or not exists (select 1 from public.ride_network_shares x where x.ride_id = r.id and x.status = 'open') then
+    perform private.close_network_offers(r.organization_id, null, null, 'terms_changed', r.id);
+    perform set_config('rydar.network_reason', 'window_elapsed', true);
+    update public.rides set network_at = null where id = r.id;
+    perform set_config('rydar.network_reason', '', true);
+    return 0;
   elsif private.network_ride_reason(r) is not null then
     perform private.close_network_offers(r.organization_id, null, null, 'network_unavailable', r.id);
     return 0;
@@ -912,8 +949,11 @@ begin
      where id = r.id;
   else
     v_closed := private.close_pending_offers(r.id, 'expired', 'timeout');
+    -- Partage clos d'abord, seul (« error ») : dans la même écriture que NO_DRIVER_FOUND, private.ride_network_share_sync
+    -- le clorait « no_driver » (motif tiré du statut)
+    update public.rides set network_at = null where id = r.id and network_at is not null;
     update public.rides
-       set status = 'NO_DRIVER_FOUND', no_driver_at = now(), next_dispatch_at = null, network_at = null
+       set status = 'NO_DRIVER_FOUND', no_driver_at = now(), next_dispatch_at = null
      where id = r.id;
     perform private.log_event(r.organization_id, r.id, 'dispatch.no_driver',
       'Personne n''a accepté la course (réseau partagé interrompu par des erreurs) — attribuez-la ou relancez',
@@ -1817,7 +1857,11 @@ begin
          vehicle_id = v_driver.vehicle_id,
          status = 'ACCEPTED',
          accepted_at = now(),
-         next_dispatch_at = null
+         next_dispatch_at = null,
+         -- Réseau partagé : un chauffeur de A prend la course pendant le partage → partage clos (« reassigned_own »,
+         -- private.ride_network_share_sync) ET network_at remis à NULL avec le chauffeur (G3) : jamais un network_at
+         -- périmé qui relancerait les vagues réseau ou la fenêtre sans réouverture (course retirée ensuite)
+         network_at = case when o.is_network then network_at end
    where id = r.id
      and driver_id is null
      and status in ('SEARCHING_DRIVER', 'OFFERED');
@@ -2238,6 +2282,7 @@ revoke all on function
   private.network_max_radius(integer[]),
   private.network_wants_share(uuid),
   private.network_window_at(public.rides),
+  private.address_postcode_city(text),
   private.address_area(text),
   private.address_city(text),
   private.network_terms(public.rides),
@@ -2268,6 +2313,7 @@ grant execute on function
   private.network_max_radius(integer[]),
   private.network_wants_share(uuid),
   private.network_window_at(public.rides),
+  private.address_postcode_city(text),
   private.address_area(text),
   private.address_city(text),
   private.network_terms(public.rides),
@@ -2326,8 +2372,10 @@ end;
 $$;
 
 -- Chauffeur partenaire libéré d'une course de A (retrait, clôture) : il enchaîne sur sa course suivante
--- (private.release_driver_ride), sinon disponible ; hors ligne si sa fiche ou son organisation n'est plus active (il ne
--- peut plus travailler : « disponible » fausserait la présence vue par son organisation).
+-- (private.release_driver_ride, seulement si p_ride était sa course en cours), sinon disponible ; hors ligne si sa fiche
+-- ou son organisation n'est plus active (il ne peut plus travailler : « disponible » fausserait la présence vue par son
+-- organisation) — SEULEMENT s'il n'a plus de course en cours : jamais current_ride_id touché ici (une course retirée
+-- n'est pas forcément sa course en cours ; client à bord d'une autre course de A, sa position reste masquée à B, Q5).
 create or replace function private.network_release_driver(p_driver uuid, p_ride uuid)
 returns void
 language plpgsql
@@ -2336,9 +2384,10 @@ as $$
 begin
   perform private.release_driver_ride(p_driver, p_ride, true);
   update public.drivers d
-     set presence = 'offline', current_ride_id = null
+     set presence = 'offline'
    where d.id = p_driver
-     and (d.presence <> 'offline' or d.current_ride_id is not null)
+     and d.current_ride_id is null
+     and d.presence <> 'offline'
      and (d.status <> 'active'
           or not exists (select 1 from public.organizations o where o.id = d.organization_id and o.status = 'active'));
 end;
@@ -2524,9 +2573,10 @@ end;
 $$;
 
 -- « Retirer » (fiche course, alerte « Relancer »)
--- Dernière définition : 20260924004500_audit_dispatch.sql. Réseau partagé : seul ajout, course tenue par un chauffeur
--- partenaire → private.unassign_network_ride (« removed_by_giver ») puis nouvelle recherche lancée tout de suite (même
--- réponse, sans l'identifiant du partenaire). Course propre : inchangée.
+-- Dernière définition : 20260924004500_audit_dispatch.sql. Réseau partagé : course tenue par un chauffeur partenaire →
+-- private.unassign_network_ride (« removed_by_giver ») puis nouvelle recherche lancée tout de suite (même réponse, sans
+-- l'identifiant du partenaire) ; course propre : seul ajout, network_at remis à NULL avec le chauffeur (défense : jamais
+-- de partage périmé à la relance ; NULL → NULL hors réseau).
 create or replace function public.reassign_ride(p_ride_id uuid, p_reason text default null, p_expected_driver uuid default null)
 returns jsonb
 language plpgsql
@@ -2639,7 +2689,9 @@ begin
          accepted_at = null,
          driver_en_route_at = null,
          driver_arrived_at = null,
-         no_driver_at = null
+         no_driver_at = null,
+         -- Réseau partagé (défense) : la recherche repart sans partage (réouvert après les vagues propres)
+         network_at = null
    where id = r.id;
 
   -- 6. alertes de la course : traitées par la relance
@@ -2671,6 +2723,76 @@ begin
   return jsonb_build_object('ok', true, 'code', 'RELAUNCHED', 'message', 'Course retirée au chauffeur — nouvelle recherche lancée.',
     'ride_id', r.id, 'previous_driver_id', r.driver_id, 'type', v_type, 'status', v_status,
     'notified', coalesce(v_count, 0), 'closed_alerts', v_alerts);
+end;
+$$;
+
+-- Annulation (tableau de bord, API, mini-site, système)
+-- Dernière définition : 20260924004500_audit_dispatch.sql. Réseau partagé : seul ajout, course tenue par un chauffeur
+-- partenaire avec le client à bord (PASSENGER_ONBOARD, IN_PROGRESS) : annulation refusée à tout acteur sauf le système et
+-- le super admin (NETWORK_RIDE_IN_PROGRESS) — elle effacerait la part du chauffeur (prépayée) et les frais Rydar dus par
+-- A, hors de la voie prévue : le chauffeur la termine ; s'il ne le peut plus, A (owner / admin) la clôture
+-- (public.close_network_ride, « à vérifier ») puis la conteste (lot argent). Jusqu'à l'arrivée du chauffeur (client
+-- absent), annulation inchangée (exécution close « cancelled_by_giver » par private.ride_network_share_sync). Course
+-- propre : inchangée.
+create or replace function private.cancel_ride_internal(
+  p_ride_id uuid,
+  p_reason text,
+  p_actor public.actor_type,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.rides;
+  v_closed uuid[];
+  v_reason text := nullif(trim(coalesce(p_reason, '')), '');
+begin
+  select * into r from public.rides where id = p_ride_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'RIDE_NOT_FOUND', 'message', 'Course introuvable.');
+  end if;
+  if r.status in ('COMPLETED', 'CANCELLED') then
+    return jsonb_build_object('ok', false, 'code', 'RIDE_CLOSED', 'message', 'Course déjà clôturée.');
+  end if;
+  if r.status in ('PASSENGER_ONBOARD', 'IN_PROGRESS') and p_actor in ('api', 'booking_site') then
+    return jsonb_build_object('ok', false, 'code', 'RIDE_IN_PROGRESS', 'message', 'Course en cours : annulation impossible.');
+  end if;
+  -- Réseau partagé : client à bord d'un chauffeur partenaire — le chauffeur termine, sinon A clôture puis conteste
+  if r.status in ('PASSENGER_ONBOARD', 'IN_PROGRESS') and r.driver_id is not null
+     and r.driver_org_id <> r.organization_id and p_actor not in ('system', 'super_admin') then
+    return jsonb_build_object('ok', false, 'code', 'NETWORK_RIDE_IN_PROGRESS',
+      'message', 'Client à bord d''un chauffeur partenaire : annulation impossible. Il termine la course ; s''il ne le peut plus, clôturez-la (« Clôturer la course »), puis contestez-la si besoin.');
+  end if;
+
+  perform private.set_actor(p_actor, p_actor_id);
+
+  update public.rides
+     set status = 'CANCELLED', cancelled_at = now(), cancel_reason = v_reason,
+         cancelled_by_type = p_actor, next_dispatch_at = null
+   where id = r.id;
+
+  v_closed := private.close_pending_offers(r.id, 'closed', 'ride_cancelled');
+  update public.ride_assignments
+     set is_active = false, released_at = now(), release_reason = 'cancelled'
+   where ride_id = r.id and is_active;
+  update public.notifications set status = 'cancelled' where ride_id = r.id and status = 'queued';
+
+  if r.driver_id is not null then
+    perform private.release_driver_ride(r.driver_id, r.id, true);
+    perform private.queue_notification(r.organization_id, r.driver_id, r.id, null, 'ride_cancelled', 'COURSE ANNULÉE',
+      format('#%s · %s → %s', r.number, coalesce(private.short_address(r.pickup_address), r.pickup_address),
+        coalesce(private.short_address(r.dropoff_address), r.dropoff_address)),
+      jsonb_build_object('type', 'ride_cancelled', 'ride_id', r.id), 'high', null);
+  end if;
+
+  perform private.log_event(r.organization_id, r.id, 'ride.cancelled',
+    coalesce('Course annulée — ' || v_reason, 'Course annulée'),
+    'timeline', 'warning', jsonb_build_object('reason', v_reason, 'closed_offers', cardinality(v_closed)), p_actor, p_actor_id);
+
+  return jsonb_build_object('ok', true, 'code', 'CANCELLED', 'status', 'CANCELLED');
 end;
 $$;
 
@@ -4256,11 +4378,14 @@ end;
 $$;
 
 -- « Clôturer la course » (§9.8, C3) : propriétaire ou administrateur de A (private.assert_network_creditor : A
--- suspendue ou archivée comprise). Course de A tenue par un chauffeur partenaire, arrivé ou client à bord, qui ne peut
--- plus la terminer : fiche du chauffeur ou organisation B inactive, ou aucune position depuis 30 min. La course est
--- terminée (déclencheurs de fin inchangés : exécution « completed », règlement, frais Rydar de A), « à vérifier »
--- (closed_by_giver ; versement prépayé retenu 72 h), chauffeur libéré, rappels annulés ; journal (« ride.network_closed »)
--- et audit (« network.ride_closed ») chez A. Sinon NETWORK_CLOSE_NOT_ALLOWED (55000).
+-- suspendue ou archivée comprise). Course de A tenue par un chauffeur partenaire, client à bord (PASSENGER_ONBOARD,
+-- IN_PROGRESS), qui ne peut plus la terminer : fiche du chauffeur ou organisation B inactive, ou aucune position depuis
+-- 30 min. La course est terminée (déclencheurs de fin inchangés : exécution « completed », règlement, frais Rydar de A),
+-- « à vérifier » (closed_by_giver ; versement prépayé retenu 72 h), chauffeur libéré, rappels annulés ; journal
+-- (« ride.network_closed ») et audit (« network.ride_closed ») chez A. Sinon NETWORK_CLOSE_NOT_ALLOWED (55000). Jamais
+-- avant la prise en charge (chauffeur arrivé, client pas à bord) : une course terminée sans client ferait naître une
+-- dette ou un versement pour une course jamais faite (coupure GPS de bonne foi) ; A la retire au chauffeur (« Retirer »,
+-- sans argent ; fiche ou B inactive : rendue d'elle-même par private.network_watch) ou l'annule si le client est absent.
 create or replace function public.close_network_ride(p_ride uuid)
 returns jsonb
 language plpgsql
@@ -4285,6 +4410,10 @@ begin
   if r.driver_id is null or r.driver_org_id = r.organization_id
      or r.status not in ('DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS') then
     raise exception 'NETWORK_CLOSE_NOT_ALLOWED: course non tenue par un chauffeur partenaire, ou pas en cours'
+      using errcode = '55000';
+  end if;
+  if r.status = 'DRIVER_ARRIVED' then
+    raise exception 'NETWORK_CLOSE_NOT_ALLOWED: client pas encore à bord : retirez-la au chauffeur partenaire, ou annulez-la si le client est absent'
       using errcode = '55000';
   end if;
 

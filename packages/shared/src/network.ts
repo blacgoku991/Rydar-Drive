@@ -671,7 +671,11 @@ export type NetworkUnassignReason = (typeof NETWORK_UNASSIGN_REASONS)[number];
 export const NETWORK_WATCH_CAUSES = ["driver_inactive", "executor_inactive", "executor_suspended", "driver_withdrawn"] as const;
 export type NetworkWatchCause = (typeof NETWORK_WATCH_CAUSES)[number];
 
-/** public.close_network_ride : clôture permise parce que la fiche ou l'organisation du chauffeur est inactive, ou sans position depuis 30 min. */
+/**
+ * public.close_network_ride : clôture d'une course dont le client est à bord (PASSENGER_ONBOARD, IN_PROGRESS), permise
+ * parce que la fiche ou l'organisation du chauffeur est inactive, ou sans position depuis 30 min. Jamais avant la prise en
+ * charge (NETWORK_CLOSE_NOT_ALLOWED : la retirer au chauffeur, ou l'annuler si le client est absent).
+ */
 export const NETWORK_CLOSE_CAUSES = ["driver_inactive", "executor_inactive", "no_position"] as const;
 export type NetworkCloseCause = (typeof NETWORK_CLOSE_CAUSES)[number];
 
@@ -737,6 +741,40 @@ export interface NetworkGiverSuspendedNotificationData {
   /** Course acceptée la plus proche, s'il y en a une */
   ride_id?: Uuid;
 }
+
+/**
+ * Notification d'offre partenaire (private.network_offer, 20260924006800) : types existants ride_offer / ride_offer_scheduled,
+ * titres « COURSE PARTENAIRE » / « COURSE PARTENAIRE PLANIFIÉE ». Se distingue d'une offre propre par network: true :
+ * départ et arrivée en LIBELLÉS approximatifs (jamais d'adresse précise ni de coordonnées), distance arrondie à 100 m,
+ * prix seul — jamais commission, frais Rydar ni part du chauffeur (montants de l'offre : driver_offers_v2). Clés exactes :
+ * NETWORK_OFFER_NOTIFICATION_KEYS (comparées au SQL par network-sql.test.ts).
+ */
+export interface NetworkOfferNotificationData {
+  type: "ride_offer" | "ride_offer_scheduled";
+  offer_id: Uuid;
+  ride_id: Uuid;
+  ride_type: RideType;
+  network: true;
+  /** Nom de A */
+  giver: string;
+  /**
+   * « 75008 Paris » (code postal + commune : private.address_area), « 75011 » (code postal seul : commune suivie d'un
+   * texte libre, jamais repris), sinon « départ communiqué après acceptation »
+   */
+  pickup: string;
+  /** Commune seule (private.address_city), sinon « arrivée communiquée après acceptation » */
+  dropoff: string;
+  pickup_at: Iso;
+  price_cents: number;
+  /** Distance au départ, arrondie à 100 m */
+  distance_m: number;
+  passengers: number;
+  expires_at: Iso;
+}
+export const NETWORK_OFFER_NOTIFICATION_KEYS = [
+  "type", "offer_id", "ride_id", "ride_type", "network", "giver", "pickup", "dropoff", "pickup_at", "price_cents", "distance_m",
+  "passengers", "expires_at",
+] as const satisfies ReadonlyArray<keyof NetworkOfferNotificationData>;
 
 /**
  * Codes de public.accept_ride_offer (offre propre ou réseau, 20260924006800). Ajoutés par le réseau : OFFER_CHANGED
@@ -1041,7 +1079,7 @@ export interface NetworkDriverMoney {
 /** Bloc « network » d'une offre partenaire (driver_offers_v2). */
 export interface NetworkOfferInfo {
   giver: NetworkGiverInfo;
-  /** « 75011 Paris » (private.address_area) ; null : NETWORK_PICKUP_HIDDEN_LABEL */
+  /** « 75011 Paris » ou « 75011 » (private.address_area : jamais le texte libre qui suit la commune) ; null : NETWORK_PICKUP_HIDDEN_LABEL */
   pickup_area: string | null;
   /** Commune d'arrivée seulement */
   dropoff_area: string | null;
@@ -1301,7 +1339,10 @@ export interface ContestNetworkRideResult {
   fee_reduction: { entry_id: Uuid; amount_cents: number } | null;
 }
 
-/** RPC close_network_ride(p_ride) (NETWORK_CLOSE_NOT_ALLOWED sinon). */
+/**
+ * RPC close_network_ride(p_ride) : client à bord seulement (NETWORK_CLOSE_NOT_ALLOWED sinon). Une course partenaire avec le
+ * client à bord ne s'annule plus (cancel_ride → { ok: false, code: "NETWORK_RIDE_IN_PROGRESS" }) : elle se clôture.
+ */
 export interface CloseNetworkRideResult {
   ok: true;
   ride_id: Uuid;
@@ -1669,7 +1710,8 @@ export const NETWORK_RPC_NAMES = Object.keys(NETWORK_RPC_ACCESS) as NetworkRpcNa
 export const NETWORK_ERROR_CODES = [
   "NETWORK_DISABLED", "NETWORK_SUSPENDED", "NETWORK_TERMS_REQUIRED", "NETWORK_TERMS_OUTDATED",
   "NETWORK_VTC_REGISTRATION_REQUIRED", "NETWORK_PAYMENT_METHODS_REQUIRED", "NETWORK_INSURANCE_REQUIRED",
-  "NETWORK_RIDE_LOCKED", "NETWORK_CLOSE_NOT_ALLOWED", "NETWORK_CONTEST_EXPIRED", "NETWORK_SETTLEMENT_ACTION_FORBIDDEN",
+  "NETWORK_RIDE_LOCKED", "NETWORK_RIDE_IN_PROGRESS", "NETWORK_CLOSE_NOT_ALLOWED", "NETWORK_CONTEST_EXPIRED",
+  "NETWORK_SETTLEMENT_ACTION_FORBIDDEN",
   "NETWORK_CONSENT_REQUIRED", "NETWORK_PAYOUT_ON_HOLD", "NETWORK_DISPUTE_NOT_ALLOWED", "OFFER_CHANGED",
   "DRIVER_BUSY_AT_TIME", "DRIVER_HAS_NETWORK_OBLIGATIONS", "PAYOUT_DETAILS_INVALID", "PAYOUT_DETAILS_IN_USE",
 ] as const;
