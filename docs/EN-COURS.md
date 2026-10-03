@@ -268,17 +268,28 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   `20260924007200`, non poussée). **Numéros pris** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration, 007200 corrections du lot 7, 007300 purges de conservation (conformité, hors réseau) ; prochaine
   migration : **007400** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
+- **État au 03/10 (finitions + contrôle complet)** : branche principale fusionnée (audit `20260924006650`, poussée,
+  intacte) ; les migrations réseau partent de ses versions (« Dernière définition : 20260924006650_audit_fixes.sql »)
+  et gardent ses corrections (test `shared-network-audit-merge`). Web : alertes « Chauffeur partenaire indisponible »
+  (« Clôturer la course », owner / admin), course rendue au partenaire puis relancée, course clôturée ; « Annuler »
+  masqué pour une course partenaire client à bord (comme la base). App : course partenaire annulée par A → planning ;
+  Gains : « Moins commission et frais de la centrale ». Contrôle complet vert (typecheck, unitaires, base complète,
+  base neuve + seed comme la CI, build de production, export de l'app). Déploiement : plafond de 1 Mo sur `/api/v1/*`
+  (Caddy) ; Supabase Auth (limites par IP, inscriptions coupées) et IPv6 : procédure dans DEPLOYMENT.md § 3,
+  « Exposition du serveur », à appliquer sur le VPS.
+- **Reste** : (1) lot 10 : relecture juriste (convention, onglet centrale, e-mails `network_review`, articulation de la
+  baisse « contestée » avec l'art. 5 des CGV) ; (2) lot 11 : bout en bout, audit final, fusion dans la branche
+  principale, push, commandes VPS (migrations 006700 à 007300) et EAS Update (app) ; (3) à valider par le propriétaire :
+  bon de réservation sur toutes les courses une fois le réseau ouvert, libellés de l'app (« Course partenaire · {A} »,
+  « J'accepte et j'active », onglet « Partenaires ») ; (4) VPS, lecture seule d'abord : justificatifs « medical »
+  restants (lot 7), procédure Supabase Auth / `Caddyfile.local` / AAAA (DEPLOYMENT § 3) ; (5) facultatif : bouton
+  « Signaler » masqué pendant une course partenaire (refus SQL déjà affiché).
 - Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
   liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
   publiques `/reseau-partage/conditions` et `/chauffeur` (servies sur les mini-sites) ; app = offres et courses
-  partenaires, conditions, « Courses partenaires », RIB, bon de réservation. Ils appellent des RPC des lots 4 à 6 pas
-  encore écrites (web : erreur non bloquante ; app : repli PGRST202) : conventions et ajouts au contrat = commentaires
-  « Ajout web » / « Ajouts de l'app » de `network.ts`, à respecter par le SQL. Reste au web (suite du lot 3b) : alerte
-  et libellé de `network.executor_unavailable` (« Clôturer la course »), `ride.network_unassigned`,
-  `ride.network_closed` ; « Annuler » encore proposé sur une course partenaire client à bord (refusé par la base). À
-  valider par le propriétaire : bon de réservation sur toutes les courses une fois le réseau ouvert, libellés de l'app
-  (« Course partenaire · {A} », « J'accepte et j'active », onglet « Partenaires »), textes centrale de l'onglet (juriste).
-- **Avant d'écrire 006800** : fusionner la branche principale une fois le chantier CGV (`20260924006600`) fusionné, puis
+  partenaires, conditions, « Courses partenaires », RIB, bon de réservation. Conventions et ajouts au contrat =
+  commentaires « Ajout web » / « Ajouts de l'app » de `network.ts`, tenus par le SQL des lots 4 à 7.
+- **Fait (lot 3)** — avant d'écrire 006800 : fusionner la branche principale une fois le chantier CGV (`20260924006600`) fusionné, puis
   partir de ses définitions (« Dernière définition : 20260924006600… », contrôlé par `migrations.test.ts`) :
   `public.assign_ride`, `public.redispatch_ride`, `private.apply_flight_status` (lot 3), `private.platform_account`
   (lot 4), `private.housekeeping` (lots 5 et 6 ; il applique les hausses de frais programmées), et
