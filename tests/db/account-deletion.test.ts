@@ -463,7 +463,8 @@ describe("Suppression du compte chauffeur — fiche, candidature, file", () => {
     ]) {
       const err = await expectPgError(as({ sub: org.ownerId }, (q) => q(`update public.drivers set ${set} where id = $1`, [cand.id])));
       expect(err.code, set).toBe("42501");
-      expect(err.message).toMatch(/DRIVER_DELETED/);
+      // statut et motif : plus d'écriture directe du tout (20260924006650) ; le reste : fiche supprimée figée
+      expect(err.message).toMatch(/^(status|suspended_reason) /.test(set) ? /permission denied/ : /DRIVER_DELETED/);
     }
     // … ni candidature rouverte, ni rattachement à un compte ou à un véhicule, ni « dé-suppression » (même en accès direct)
     const other = await createAuthUser(`${letters(8)}@example.test`, "Autre");
@@ -492,7 +493,9 @@ describe("Suppression du compte chauffeur — fiche, candidature, file", () => {
     expect(docErr.code).toBe("42501");
     expect(docErr.message).toMatch(/DRIVER_DELETED/);
     // Restent possibles : les effacements (notes vidées, statut « inactif », hors ligne) ; rien d'autre
-    await as({ sub: org.ownerId }, (q) => q(`update public.drivers set notes = null, status = 'inactive' where id = $1`, [cand.id]));
+    await as({ sub: org.ownerId }, (q) => q(`update public.drivers set notes = null where id = $1`, [cand.id]));
+    // (statut : plus d'écriture directe depuis 20260924006650 ; la fiche supprimée est déjà « inactive »)
+    expect((await sql(`select status from public.drivers where id = $1`, [cand.id]))[0].status).toBe("inactive");
     await sql(`update public.drivers set presence = 'offline', online_since = null, current_ride_id = null where id = $1`, [cand.id]);
 
     // Véhicule personnel jamais utilisé : supprimé, audit caviardé

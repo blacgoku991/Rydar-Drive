@@ -201,7 +201,7 @@ describe("Frais Rydar des flottes : dus par la flotte dès la fin de la course",
     // % seul et course sans prix : rien à la fin ; le prix fixé plus tard crée l'écriture, sans échéance rétroactive
     const pctOnly = await fleet("Flotte Pourcent Sans Prix", { percent: 10 });
     const d2 = await driverIn(pctOnly);
-    await svc("svc_platform_terms", [pctOnly.id, sa, "monthly", 5, 1]);
+    await svc("svc_platform_terms", [pctOnly.id, sa, "monthly", 5, 1, "Accord écrit (test)"]);
     const late = await completedRide(pctOnly, d2, null);
     expect(await entriesOf(late.id)).toHaveLength(0);
     await sql(`update public.rides set completed_at = now() - interval '62 days' where id = $1`, [late.id]);
@@ -362,7 +362,7 @@ describe("Frais Rydar des flottes : paiements, échéances, droits", () => {
     expect(new Date(acc.next_due_at).getTime()).toBe(new Date(third).getTime());
 
     // Levier du super admin : création de courses refusée après 1 jour de retard (flotte comme centrale)
-    expect((await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1])).code).toBe("SAVED");
+    expect((await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1, "Accord écrit (test)"])).code).toBe("SAVED");
     expect((await expectPgError(createRideAsOwner(org, { price_cents: 3000 }))).message).toContain("PLATFORM_FEES_OVERDUE");
 
     // « J'ai payé » de l'échu : blocage suspendu ; reçu en partie (2 €) → la plus ancienne échéance est soldée

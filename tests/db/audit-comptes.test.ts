@@ -102,7 +102,7 @@ describe("Compte partagé (fiche chauffeur + gestion)", () => {
     // « Déconnecter tous les appareils » : refus explicite, rien n'est fermé
     expect(await rpc(A.ownerId, "revoke_driver_sessions", [d.id])).toMatchObject({ ok: false, code: "SHARED_ACCOUNT" });
     // Suspension de la fiche : sessions de gestion conservées (la base coupe l'accès chauffeur)
-    await as({ sub: A.ownerId }, (q) => q("update public.drivers set status = 'suspended' where id = $1", [d.id]));
+    expect((await rpc(A.ownerId, "set_driver_status", [d.id, "suspended", null])).ok).toBe(true);
     expect(await sessionCount(d.userId)).toBe(2);
     const [{ id }] = await as({ sub: d.userId }, (q) => q("select private.current_driver_id() as id"));
     expect(id).toBeNull();

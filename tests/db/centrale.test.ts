@@ -421,7 +421,7 @@ describe("Bannissement définitif", () => {
 
     // Plus d'accès (compte inactif) ; réactivation refusée tant que le bannissement tient
     expect((await expectPgError(rpc(d.userId, "driver_home"))).code).toBe("42501");
-    const react = await expectPgError(as({ sub: org.ownerId }, (q) => q(`update public.drivers set status = 'active' where id = $1`, [d.id])));
+    const react = await expectPgError(rpc(org.ownerId, "set_driver_status", [d.id, "active", null]));
     expect(react.message).toMatch(/DRIVER_BANNED/);
     expect((await rpc(d.userId, "driver_account_state")).state).toBe("banned");
 

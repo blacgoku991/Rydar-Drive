@@ -80,7 +80,8 @@ describe("Chauffeurs : statut, confiance et suspension réservés aux owner / ad
     ] as const) {
       const e = await expectPgError(updateDriver(dispatcher, id, set, [...params]));
       expect(e.code, set).toBe("42501");
-      expect(e.message).toContain("FORBIDDEN_ROLE");
+      // status / suspended_reason : droit de colonne retiré (20260924006650) ; trust_level : garde-fou du rôle
+      expect(e.message).toMatch(/status|suspended_reason/.test(set) ? /permission denied/ : /FORBIDDEN_ROLE/);
     }
     expect(await driverRow(candidate.id)).toMatchObject({ status: "inactive", trust_level: "new" });
     expect(await driverRow(d.id)).toMatchObject({ status: "active", trust_level: "new", suspended_reason: null });
@@ -93,8 +94,8 @@ describe("Chauffeurs : statut, confiance et suspension réservés aux owner / ad
     ).toHaveLength(1);
     const [v] = await sql(`insert into public.vehicles (organization_id, model, plate) values ($1, 'Zoé', $2) returning id`, [org.id, `VH-${randomUUID().slice(0, 6)}`]);
     expect(await updateDriver(dispatcher, d.id, "vehicle_id = $2", [v.id])).toHaveLength(1);
-    // Valeur inchangée : acceptée (formulaire qui renvoie le statut courant)
-    expect(await updateDriver(dispatcher, d.id, "status = 'active'")).toHaveLength(1);
+    // Statut : jamais par écriture directe, même inchangé (set_driver_status seulement)
+    expect((await expectPgError(updateDriver(dispatcher, d.id, "status = 'active'"))).code).toBe("42501");
     expect(await driverRow(d.id)).toMatchObject({ first_name: "Yanis2", notes: "RAS", vehicle_id: v.id, status: "active" });
   });
 
@@ -103,14 +104,16 @@ describe("Chauffeurs : statut, confiance et suspension réservés aux owner / ad
     const admin = await createMember(org, "admin");
     const d = await driverIn(org, { trust: "new" });
 
-    expect(await updateDriver(org.ownerId, d.id, "status = 'suspended', suspended_reason = $2", ["Retards"])).toHaveLength(1);
-    expect(await updateDriver(org.ownerId, d.id, "status = 'active', suspended_reason = null")).toHaveLength(1);
+    // Statut : par set_driver_status (client à bord refusé, courses remises en recherche) ; jamais en écriture directe
+    expect((await expectPgError(updateDriver(org.ownerId, d.id, "status = 'suspended', suspended_reason = $2", ["Retards"]))).code).toBe("42501");
+    expect((await rpc(org.ownerId, "set_driver_status", [d.id, "suspended", "Retards"])).ok).toBe(true);
+    expect((await rpc(org.ownerId, "set_driver_status", [d.id, "active", null])).ok).toBe(true);
     expect(await updateDriver(admin, d.id, "trust_level = 'trusted'")).toHaveLength(1);
     expect(await driverRow(d.id)).toMatchObject({ status: "active", trust_level: "trusted", suspended_reason: null });
 
     // Owner d'une AUTRE centrale : la RLS le prive déjà de la ligne
     const other = await centrale("Droits Colonnes Autre");
-    expect(await updateDriver(other.ownerId, d.id, "status = 'inactive'")).toHaveLength(0);
+    expect(await updateDriver(other.ownerId, d.id, "trust_level = 'new'")).toHaveLength(0);
 
     // Service role (serveur) : non concerné
     await as({ role: "service_role" }, (q) => q(`update public.drivers set status = 'inactive' where id = $1`, [d.id]));

@@ -228,7 +228,7 @@ describe("Suivi des vols : relance d'une course sans chauffeur, mêmes règles q
     });
     // Frais échus depuis longtemps + « bloquer après 1 jour »
     await insertRideBypass(org, { completed_at: new Date(Date.now() - 75 * 86_400_000) });
-    const [terms] = await as({ role: "service_role" }, (q) => q("select public.svc_platform_terms($1, $2, 'monthly', 5, 1) as r", [org.id, sa]));
+    const [terms] = await as({ role: "service_role" }, (q) => q("select public.svc_platform_terms($1, $2, 'monthly', 5, 1, 'Accord écrit (test)') as r", [org.id, sa]));
     expect(terms.r.code).toBe("SAVED");
     expect(await rpc(org.ownerId, "redispatch_ride", [ride])).toMatchObject({ ok: false, code: "PLATFORM_FEES_OVERDUE" });
 

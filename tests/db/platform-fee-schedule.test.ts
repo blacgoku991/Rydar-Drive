@@ -118,6 +118,12 @@ async function notifyTerms(o: Org, effectiveOn = LEGAL_ON, version = VERSION) {
     `insert into public.org_terms_notices (organization_id, version, effective_on, emails_queued) values ($1, $2, $3, 1)`,
     [o.id, version, effectiveOn],
   );
+  // E-mail de cette version parti (20260924006650 : une annonce dont tous les e-mails sont en échec ne compte pas)
+  await sql(
+    `insert into public.email_outbox (kind, organization_id, org_terms_version, to_email, subject, body_text, status, sent_at)
+     values ('org_terms_update', $1, $2, 'owner@test.dev', 'CGV', 'Annonce des CGV', 'sent', now() - interval '1 day')`,
+    [o.id, version],
+  );
 }
 
 /** E-mails (annonce…) d'un changement de frais partis : envoyés par le mailer à l'instant SQL `at`. */
@@ -964,7 +970,7 @@ describe("Flottes : libellés neutres et relance WhatsApp", () => {
     const o = await org("Neutre Flotte", { fixed: 200 });
     const open = await insertRideBypass(o, { status: "NO_DRIVER_FOUND", completed_at: null, pickup_at: new Date(Date.now() + 3_600_000) });
     await insertRideBypass(o, { completed_at: new Date(Date.now() - 75 * 86_400_000) });
-    expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 5, 1])).code).toBe("SAVED");
+    expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 5, 1, "Accord écrit (test)"])).code).toBe("SAVED");
     const created = await expectPgError(createRideAsOwner(o));
     expect(created.message).toBe(typo(`PLATFORM_FEES_OVERDUE: frais plateforme en retard — ${NEUTRAL} pour créer de nouvelles courses`));
     const relaunch = await rpc(o.ownerId, "redispatch_ride", [open]);
@@ -1022,7 +1028,7 @@ describe("Facturation : délai de paiement, frais à facturer par cycle, baisses
     await as({ role: "service_role" }, (q) => q("update public.organizations set name = 'Délai Conservé' where id = $1", [o.id]));
     expect((await sql(`select platform_payment_days from public.organizations where id = $1`, [o.id]))[0].platform_payment_days).toBe(60);
     expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 60, null])).code).toBe("INVALID_DAYS");
-    expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 30, null])).code).toBe("SAVED");
+    expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 30, null, "Accord écrit (test)"])).code).toBe("SAVED");
   });
 
   it("frais à facturer : écritures prises en compte pendant le cycle (enregistrement ou baisse acceptée), jamais dans un cycle déjà clos", async () => {

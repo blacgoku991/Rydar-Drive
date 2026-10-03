@@ -363,7 +363,7 @@ describe("Frais plateforme : échéances, retard, blocage, relevé, super admin"
     await createRideAsOwner(org, { price_cents: 5900, commission_cents: 1400, payment_method: "cash" });
 
     // Levier : 1 jour de retard → création refusée
-    expect((await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1])).code).toBe("SAVED");
+    expect((await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1, "Accord écrit (test)"])).code).toBe("SAVED");
     expect((await svc("svc_platform_terms", [org.id, sa, "daily", 5, 1])).code).toBe("INVALID_CYCLE");
     const blocked = await expectPgError(createRideAsOwner(org, { price_cents: 5900, commission_cents: 1400, payment_method: "cash" }));
     expect(blocked.message).toContain("PLATFORM_FEES_OVERDUE");
@@ -551,7 +551,7 @@ describe("Frais plateforme : revue SQL (soldes justes, contrôles sans contourne
     const org = await centrale("Centrale Avoir Échu");
     const sa = await superAdmin();
     await insertRideBypass(org, { completed_at: daysAgo(75) }); // 5 € échus depuis longtemps
-    expect((await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1])).code).toBe("SAVED");
+    expect((await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1, "Accord écrit (test)"])).code).toBe("SAVED");
     expect((await account(org))).toMatchObject({ due_cents: 500, blocked: true });
 
     expect((await svc("svc_platform_adjust", [org.id, sa, -500, "Geste commercial"])).code).toBe("ADJUSTED");
@@ -580,7 +580,7 @@ describe("Frais plateforme : revue SQL (soldes justes, contrôles sans contourne
     const org = await centrale("Centrale Déclarations En Boucle");
     const sa = await superAdmin();
     await insertRideBypass(org, { completed_at: daysAgo(75) });
-    await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1]);
+    await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1, "Accord écrit (test)"]);
     expect((await account(org))).toMatchObject({ blocked: true, block_suspended: false });
 
     const first = await rpc(org.ownerId, "declare_platform_payment", [org.id, 500, "transfer", null, null, null]);
@@ -599,7 +599,7 @@ describe("Frais plateforme : revue SQL (soldes justes, contrôles sans contourne
     // Déclaration jamais traitée : elle ne suspend le blocage que 7 jours
     const stale = await centrale("Centrale Déclaration Ancienne");
     await insertRideBypass(stale, { completed_at: daysAgo(75) });
-    await svc("svc_platform_terms", [stale.id, sa, "monthly", 5, 1]);
+    await svc("svc_platform_terms", [stale.id, sa, "monthly", 5, 1, "Accord écrit (test)"]);
     await rpc(stale.ownerId, "declare_platform_payment", [stale.id, 500, "transfer", null, null, null]);
     expect((await account(stale)).blocked).toBe(false);
     await sql(`update public.platform_payments set declared_at = now() - interval '8 days' where organization_id = $1`, [stale.id]);
