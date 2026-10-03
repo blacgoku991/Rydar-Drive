@@ -40,9 +40,12 @@ export function joinErrorCopy(orgName: string, model: DispatchModel) {
   };
 }
 
-/** Entrée du menu du tableau de bord et titre de la page : « Réseau » (centrale) ou « Inscriptions » (flotte). */
-export function joinNavLabel(model: DispatchModel) {
-  return isFleet(model) ? "Inscriptions" : "Réseau";
+/**
+ * Entrée du menu du tableau de bord et titre de la page : « Réseau » (centrale) ou « Inscriptions » (flotte) ;
+ * « Inscriptions » pour les deux quand le réseau partagé est ouvert (pas de confusion avec « Réseau partagé »).
+ */
+export function joinNavLabel(model: DispatchModel, sharedNetwork = false) {
+  return isFleet(model) || sharedNetwork ? "Inscriptions" : "Réseau";
 }
 
 /** Message prêt à coller dans un groupe WhatsApp / Telegram. */

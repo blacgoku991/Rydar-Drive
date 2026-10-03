@@ -360,8 +360,8 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
 }
 
 // ---------------------------------------------------------------------------- indicateur
-type KpiTone = "red" | "blue" | "violet" | "green" | "brand";
-function Kpi({ label, value, sub, tone, href: to, icon }: { label: string; value: string; sub?: string; tone?: KpiTone; href?: string; icon?: React.ReactNode }) {
+export type KpiTone = "red" | "blue" | "violet" | "green" | "brand" | "amber";
+export function Kpi({ label, value, sub, tone, href: to, icon }: { label: string; value: string; sub?: string; tone?: KpiTone; href?: string; icon?: React.ReactNode }) {
   const body = (
     <>
       <div className="flex items-center justify-between gap-2">

@@ -7,11 +7,12 @@ import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts"
 import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-provider";
 import { CookieNotice } from "@/components/legal/cookie-notice";
 import { joinNavLabel } from "@/components/network/join-copy";
+import { networkNavItem, type NetworkNavState } from "@/components/network-share/nav";
 import { OrgPlatformBanner } from "@/components/platform-fees/org-platform-banner";
 import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
-import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, type CentraleCounts } from "@/components/settlements/counts";
+import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, fetchNetworkNav, type CentraleCounts } from "@/components/settlements/counts";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { SkipToContent } from "@/components/shell/skip-to-content";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,11 @@ type ShellProps = {
   bookingSites?: boolean;
   /** Flotte avec des frais Rydar (owner / admin, org_platform_fees_enabled) : entrée « Frais Rydar » + bandeau d'échéance */
   rydarFees?: boolean;
+  /**
+   * Réseau partagé ouvert par la plateforme (shared_network_enabled()) : entrée « Réseau partagé » + pastille (à confirmer
+   * + en retard + à vérifier). null / absent : réseau fermé, AUCUNE entrée (rien ne change pour personne).
+   */
+  sharedNetwork?: NetworkNavState | null;
 };
 
 export function DashboardShell(props: ShellProps) {
@@ -102,16 +108,59 @@ function useCentraleCounts(orgId: string, centrale: boolean, initial: CentraleCo
   return counts;
 }
 
+/**
+ * Pastille « Réseau partagé » : valeur serveur, relue (org_network_summary) après un événement du réseau ou d'un
+ * règlement, et régulièrement (un règlement passe « en retard » sans événement). Inactif quand le réseau est fermé.
+ */
+function useNetworkNav(orgId: string, initial: NetworkNavState | null | undefined) {
+  const [state, setState] = useState<NetworkNavState | null>(initial ?? null);
+  useEffect(() => setState(initial ?? null), [initial]);
+  const enabled = !!initial;
+  const timer = useRef<number | null>(null);
+  const reload = () => {
+    if (!enabled) return;
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      fetchNetworkNav(getBrowserClient(), orgId)
+        .then((next) => next && setState(next))
+        .catch(() => undefined);
+    }, 600);
+  };
+  useRealtimeEvent("network.updated", reload);
+  useRealtimeEvent("settlement.updated", reload);
+  useEffect(() => {
+    if (!enabled) return;
+    let missed = false;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "hidden") missed = true;
+      else reload();
+    }, 120_000);
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible" || !missed) return;
+      missed = false;
+      reload();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [enabled, orgId]);
+  return enabled ? state : null;
+}
+
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
 function ShellBody({
   children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin, bookingSites, rydarFees,
+  sharedNetwork,
 }: ShellProps) {
   const router = useRouter();
   const [, start] = useTransition();
   const { unread, openReports } = useChatUnread();
   const isCentrale = centrale.model === "centrale";
   const counts = useCentraleCounts(org.id, isCentrale, centraleCounts);
+  const networkNav = networkNavItem(useNetworkNav(org.id, sharedNetwork));
   const isAdmin = org.role === "owner" || org.role === "admin";
   // Frais dus à Rydar : centrale → carte d'« Encaissements » ; flotte avec des frais → entrée « Frais Rydar »
   const feePaths = platformFeesPaths(centrale.model);
@@ -181,6 +230,8 @@ function ShellBody({
               },
             ]
           : []),
+        // Réseau partagé (flottes et centrales) : seulement quand la plateforme l'a ouvert
+        ...(networkNav ? [networkNav] : []),
         {
           href: "/dashboard/drivers",
           label: "Chauffeurs",
@@ -190,11 +241,12 @@ function ShellBody({
           badgeLabel: `${pendingDocuments} document${pendingDocuments > 1 ? "s" : ""} à valider`,
         },
         // Lien d'inscription + candidatures : « Réseau » en centrale, « Inscriptions » en flotte (même page), juste
-        // sous « Chauffeurs », avec le nombre de candidatures à traiter
+        // sous « Chauffeurs », avec le nombre de candidatures à traiter ; « Inscriptions » pour les deux quand le réseau
+        // partagé est ouvert (pas de confusion avec « Réseau partagé »)
         {
           href: "/dashboard/network",
-          label: joinNavLabel(centrale.model),
-          icon: isCentrale ? "network" : "userPlus",
+          label: joinNavLabel(centrale.model, !!networkNav),
+          icon: isCentrale && !networkNav ? "network" : "userPlus",
           badge: counts.applications,
           badgeTone: "brand",
           badgeLabel: plural(counts.applications, "candidature en attente", "candidatures en attente"),

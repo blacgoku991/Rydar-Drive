@@ -3,20 +3,20 @@
 // délai de règlement, blocage des retardataires, plafonds, confirmation automatique, moyens et lien de paiement.
 // Les frais plateforme sont fixés par Rydar (super admin) : lecture seule.
 import {
-  SETTLEMENT_LINK_EXAMPLES, centraleSettingsSchema, formatIban, formatNumber, formatPrice, isValidIban, settlementPaymentLink,
-  settlementRequestMessage, type SettlementMethod,
+  centraleSettingsSchema, formatIban, formatNumber, formatPrice, isValidIban, settlementRequestMessage, type SettlementMethod,
 } from "@rydar/shared";
-import { Check, ExternalLink, HandCoins, Landmark, Lock, MessageCircle, Percent, ShieldCheck } from "lucide-react";
+import { HandCoins, Lock, MessageCircle, Percent, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { updateCentraleSettings } from "@/app/dashboard/settings/actions";
-import { METHOD_ICON, SplitBar, SplitLegend, methodLabel } from "@/components/settlements/settlement-ui";
+import { SAMPLE_AMOUNT, SAMPLE_REF, SettlementMethodsFields, settlementLinkPreview } from "@/components/settlements/settlement-methods-fields";
+import { SplitBar, SplitLegend } from "@/components/settlements/settlement-ui";
 import { centraleIssues } from "@/components/settlements/settings-schema";
 import { centsToInput, eurosToCents } from "@/components/settlements/split-preview";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Field, Input, Textarea } from "@/components/ui/input";
+import { Field, Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
@@ -53,17 +53,7 @@ type FormState = {
   bic: string;
 };
 
-const METHODS: SettlementMethod[] = ["link", "transfer", "cash", "other"];
-/** Bouton affiché au chauffeur dans l'onglet Commissions */
-const DRIVER_BUTTON: Record<SettlementMethod, string> = {
-  link: "Payer par lien",
-  transfer: "J'ai payé par virement",
-  cash: "J'ai payé en espèces",
-  other: "J'ai payé (autre moyen)",
-};
 const SAMPLE_PRICE = 5900;
-const SAMPLE_AMOUNT = 1900;
-const SAMPLE_REF = "C1783";
 
 const fromRow = (s: CentraleSettingsRow): FormState => ({
   pct: s.driver_commission_percent == null ? "" : String(s.driver_commission_percent).replace(".", ","),
@@ -139,13 +129,6 @@ export function CentraleSettingsForm({
     iban: f.iban,
     bic: f.bic,
   };
-  // Moyen coché mais non renseigné : le chauffeur ne le verrait pas
-  const ready: Record<SettlementMethod, boolean> = {
-    link: /^https:\/\/\S+$/.test(f.link.trim()),
-    transfer: isValidIban(f.iban),
-    cash: true,
-    other: f.instructions.trim().length > 0,
-  };
 
   // Exemple de répartition (même calcul que la base : frais plateforme puis commission, plafonnés au prix)
   const example = useMemo(() => {
@@ -156,7 +139,7 @@ export function CentraleSettingsForm({
     return { price: SAMPLE_PRICE, platform, commission, driver: SAMPLE_PRICE - platform - commission, pct, fixed };
   }, [input.commissionPercent, input.commissionFixedCents, platformFee.percent, platformFee.fixed_cents]);
 
-  const linkPreview = f.link.trim() && /^https:\/\/\S+$/.test(f.link.trim()) ? settlementPaymentLink(f.link.trim(), SAMPLE_AMOUNT, SAMPLE_REF) : null;
+  const linkPreview = settlementLinkPreview(f.link);
   const message = settlementRequestMessage({
     firstName: "Karim",
     organizationName: orgName,
@@ -244,150 +227,15 @@ export function CentraleSettingsForm({
               </p>
             </div>
 
-            <div>
-              <p className="mb-2 text-[12.5px] font-medium text-fg-muted">Moyens acceptés</p>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {METHODS.map((m) => {
-                  const Icon = METHOD_ICON[m];
-                  const on = f.methods.includes(m);
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      disabled={readOnly}
-                      aria-pressed={on}
-                      onClick={() => set("methods", on ? f.methods.filter((x) => x !== m) : METHODS.filter((x) => x === m || f.methods.includes(x)))}
-                      className={cn(
-                        "flex h-11 items-center gap-2.5 rounded-xl border px-3.5 text-left text-[13px] font-medium transition-colors disabled:opacity-60",
-                        on ? "border-brand/50 bg-brand/[0.07] text-fg" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
-                      )}
-                    >
-                      <Icon className={cn("size-4", on ? "text-brand" : "text-fg-subtle")} />
-                      <span className="flex-1">{methodLabel(m)}</span>
-                      {on && <Check className="size-4 text-brand" />}
-                    </button>
-                  );
-                })}
-              </div>
-              {errors.methods && <p className="mt-1.5 text-xs text-red">{errors.methods}</p>}
-            </div>
-
-            {f.methods.includes("link") && (
-              <div className="space-y-2">
-                <Field
-                  label="Lien de paiement"
-                  error={errors.link}
-                  hint={
-                    <>
-                      Variables : <code className="mono text-fg-muted">{"{montant}"}</code> (19.00), <code className="mono text-fg-muted">{"{montant_centimes}"}</code> (1900),{" "}
-                      <code className="mono text-fg-muted">{"{reference}"}</code> (C1783) — remplacées pour chaque règlement.
-                    </>
-                  }
-                >
-                  <Input
-                    value={f.link}
-                    disabled={readOnly}
-                    onChange={(e) => set("link", e.target.value)}
-                    placeholder="https://revolut.me/votre-identifiant/{montant}"
-                    aria-label="Lien de paiement"
-                    className="mono text-[13px]"
-                    aria-invalid={!!errors.link}
-                    spellCheck={false}
-                  />
-                </Field>
-                {!readOnly && (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[12px] text-fg-subtle">Exemples :</span>
-                    {SETTLEMENT_LINK_EXAMPLES.map((x) => (
-                      <button
-                        key={x.label}
-                        type="button"
-                        onClick={() => set("link", x.value)}
-                        title={x.value}
-                        className="rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
-                      >
-                        {x.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="rounded-xl border border-line bg-white/[0.02] px-3.5 py-3">
-                  <p className="text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Aperçu pour {formatPrice(SAMPLE_AMOUNT, currency)} · réf. {SAMPLE_REF}</p>
-                  {linkPreview ? (
-                    <a href={linkPreview} target="_blank" rel="noopener noreferrer" className="mono mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-blue hover:underline">
-                      <span className="truncate">{linkPreview}</span>
-                      <ExternalLink className="size-3.5 shrink-0" />
-                    </a>
-                  ) : (
-                    <p className="mt-1 text-[12.5px] text-fg-subtle">{f.link.trim() ? "Lien invalide : il doit commencer par https://" : "Collez le lien de votre compte (Revolut, PayPal, Lydia, Stripe…)."}</p>
-                  )}
-                  {linkPreview && !/\{montant(_centimes)?\}/.test(f.link) && (
-                    <p className="mt-1.5 text-[12px] text-amber">Sans {"{montant}"}, le chauffeur devra saisir le montant lui-même.</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {f.methods.includes("transfer") && (
-              <div className="space-y-3 rounded-xl border border-line bg-white/[0.02] p-4">
-                <p className="flex items-center gap-2 text-[13px] font-medium">
-                  <Landmark className="size-4 text-fg-subtle" />
-                  Virement : vos coordonnées bancaires (RIB)
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Bénéficiaire" optional hint="Nom du titulaire du compte, affiché au chauffeur." error={errors.payeeName}>
-                    <Input value={f.payeeName} disabled={readOnly} maxLength={120} onChange={(e) => set("payeeName", e.target.value)} placeholder={legalName || orgName} aria-label="Bénéficiaire du virement" aria-invalid={!!errors.payeeName} />
-                  </Field>
-                  <Field label="BIC" optional error={errors.bic}>
-                    <Input value={f.bic} disabled={readOnly} maxLength={14} onChange={(e) => set("bic", e.target.value.toUpperCase())} placeholder="AGRIFRPP" aria-label="BIC" className="mono" aria-invalid={!!errors.bic} spellCheck={false} />
-                  </Field>
-                </div>
-                <Field label="IBAN" error={errors.iban}>
-                  <Input
-                    value={f.iban}
-                    disabled={readOnly}
-                    maxLength={42}
-                    onChange={(e) => set("iban", e.target.value.toUpperCase())}
-                    onBlur={() => set("iban", formatIban(f.iban))}
-                    placeholder="FR76 3000 6000 0112 3456 7890 189"
-                    aria-label="IBAN"
-                    className="mono"
-                    aria-invalid={!!errors.iban}
-                    spellCheck={false}
-                  />
-                </Field>
-                <p className="text-[12px] text-fg-subtle">Le chauffeur copie l&apos;IBAN et la référence depuis l&apos;application, puis signale « J&apos;ai payé par virement ».</p>
-              </div>
-            )}
-
-            <Field
-              label={f.methods.includes("other") ? "Autre moyen : comment payer" : "Instructions au chauffeur"}
-              optional={!f.methods.includes("other")}
-              hint={f.methods.includes("other") ? "Ex. Wero ou Lydia au 06 12 34 56 78, ou au bureau du lundi au vendredi." : "Affichées avec le montant à régler (application et message WhatsApp)."}
-              error={errors.instructions}
-            >
-              <Textarea
-                value={f.instructions}
-                disabled={readOnly}
-                maxLength={500}
-                onChange={(e) => set("instructions", e.target.value)}
-                placeholder={f.methods.includes("other") ? "Ex. Wero au 06 12 34 56 78 en indiquant la référence (C1783)." : "Ex. indiquez la référence (C1783) dans le commentaire du paiement."}
-                aria-label={f.methods.includes("other") ? "Autre moyen de paiement" : "Instructions au chauffeur"}
-                className="min-h-[72px]"
-              />
-            </Field>
-
-            <div className="rounded-xl bg-white/[0.03] px-4 py-3">
-              <p className="mb-2 text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Dans l&apos;application, le chauffeur voit</p>
-              <div className="flex flex-wrap gap-1.5">
-                {f.methods.map((m) => (
-                  <span key={m} className={cn("rounded-lg border px-2.5 py-1 text-[12.5px]", ready[m] ? "border-line-strong text-fg" : "border-amber/40 text-amber")}>
-                    {DRIVER_BUTTON[m]}
-                    {!ready[m] && " — à renseigner"}
-                  </span>
-                ))}
-              </div>
-            </div>
+            <SettlementMethodsFields
+              value={{ methods: f.methods, link: f.link, instructions: f.instructions, payeeName: f.payeeName, iban: f.iban, bic: f.bic }}
+              onChange={(k, v) => set(k, v as FormState[typeof k])}
+              errors={errors}
+              readOnly={readOnly}
+              orgName={orgName}
+              legalName={legalName}
+              currency={currency}
+            />
           </CardBody>
         </Card>
 

@@ -799,6 +799,13 @@ export interface NetworkExecutionSummary {
   contested_reason: string | null;
   driver_disputed_at: Iso | null;
   driver_dispute_reason: string | null;
+  /**
+   * Ajout web (lot 8, facultatif) : course « à vérifier » validée par A (validate_network_ride), y compris une course
+   * payée à bord (aucune retenue). Absent : l'interface ne se fie qu'à on_hold.
+   */
+  validated_at?: Iso | null;
+  /** Ajout web (lot 8, facultatif) : ce chauffeur est déjà exclu par A (« Exclure ce chauffeur » masqué). */
+  driver_excluded?: boolean;
 }
 
 // =============================================================================
@@ -1122,7 +1129,11 @@ export interface OrgNetworkSummary {
     overdue_count: number;
     disputed_count: number;
   };
-  received: { in_progress: number; month_rides: number };
+  /**
+   * total_rides : ajout web (lot 8, facultatif) = toutes les exécutions de ses chauffeurs pour d'autres organisations
+   * (onglet « Courses reçues » masqué si la réception est coupée et qu'il vaut 0). Absent : l'onglet relit une ligne.
+   */
+  received: { in_progress: number; month_rides: number; total_rides?: number };
   /** Pastille : à confirmer + en retard + à vérifier */
   badge: number;
 }

@@ -35,6 +35,12 @@ describe("textes du lien d'inscription selon le modèle", () => {
     for (const text of allTexts("fleet")) expect(text).not.toMatch(COMMISSION_WORDS);
   });
 
+  it("réseau partagé ouvert : « Inscriptions » pour les deux modèles", () => {
+    expect(joinNavLabel("centrale", true)).toBe("Inscriptions");
+    expect(joinNavLabel("fleet", true)).toBe("Inscriptions");
+    expect(joinNavLabel("centrale", false)).toBe("Réseau");
+  });
+
   it("centrale : textes historiques inchangés", () => {
     expect(joinNavLabel("centrale")).toBe("Réseau");
     expect(joinMessage("Taxi Sud", URL, "centrale")).toBe(`Rejoignez le réseau Taxi Sud sur Rydar Drive : ${URL}`);
