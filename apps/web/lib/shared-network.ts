@@ -1,4 +1,6 @@
 import "server-only";
+import type { OrgNetworkSummary } from "@rydar/shared";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { cache } from "react";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -15,4 +17,14 @@ export const sharedNetworkEnabled = cache(async (): Promise<boolean> => {
   } catch {
     return false;
   }
+});
+
+/**
+ * Résumé réseau de l'organisation (org_network_summary : pastille du menu, bandeau de la convention, en-tête et
+ * indicateurs de l'onglet). Une lecture par requête : la mise en page et la page partagent le même client de session.
+ * null si la lecture échoue (pastille à zéro, en-tête indisponible).
+ */
+export const networkSummary = cache(async (supabase: SupabaseClient, orgId: string): Promise<OrgNetworkSummary | null> => {
+  const { data, error } = await supabase.rpc("org_network_summary", { p_org: orgId });
+  return error ? null : ((data ?? null) as OrgNetworkSummary | null);
 });

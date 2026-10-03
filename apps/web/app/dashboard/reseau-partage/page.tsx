@@ -1,7 +1,7 @@
 import {
   NETWORK_TERMS_VERSION,
   type DispatchModel, type NetworkDriverExclusion, type NetworkMembership, type NetworkPartnerNames, type OrgNetworkActivity,
-  type OrgNetworkDriver, type OrgNetworkGiven, type OrgNetworkReceived, type OrgNetworkSummary, type SettlementMethod,
+  type OrgNetworkDriver, type OrgNetworkGiven, type OrgNetworkReceived, type SettlementMethod,
 } from "@rydar/shared";
 import { CircleAlert } from "lucide-react";
 import type { Metadata } from "next";
@@ -18,7 +18,7 @@ import { showReceivedTab } from "@/components/network-share/received";
 import { ReceivedView } from "@/components/network-share/received-view";
 import { SettingsView, type NetworkPaymentRow } from "@/components/network-share/settings-view";
 import { isAdminRole, requireOrg } from "@/lib/auth";
-import { sharedNetworkEnabled } from "@/lib/shared-network";
+import { networkSummary, sharedNetworkEnabled } from "@/lib/shared-network";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Réseau partagé" };
@@ -42,13 +42,13 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
   const db = ctx.supabase;
   const serverNow = Date.now();
 
-  const [summaryRes, membershipRes, partnersRes, exclusionsRes] = await Promise.all([
-    db.rpc("org_network_summary", { p_org: orgId }),
+  const [summary, membershipRes, partnersRes, exclusionsRes] = await Promise.all([
+    // Même lecture que la mise en page (pastille, bandeau) : une seule requête (cache React)
+    networkSummary(db, orgId),
     db.from("network_memberships").select("*").eq("organization_id", orgId).maybeSingle(),
     db.rpc("network_partner_names", { p_org: orgId }),
     db.from("network_exclusions").select("excluded_org_id").eq("organization_id", orgId),
   ]);
-  const summary = (summaryRes.error ? null : summaryRes.data) as OrgNetworkSummary | null;
   const membership = (membershipRes.data ?? null) as NetworkMembership | null;
   const partners = Object.entries((partnersRes.error ? {} : (partnersRes.data ?? {})) as NetworkPartnerNames)
     .map(([id, name]) => ({ id, name }))

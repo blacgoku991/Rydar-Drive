@@ -1,4 +1,4 @@
-import type { OrgNetworkSummary, SettlementMethod } from "@rydar/shared";
+import type { SettlementMethod } from "@rydar/shared";
 import { networkNavState } from "@/components/network-share/nav";
 import { networkTermsDue } from "@/components/network-share/readiness";
 import { NetworkTermsBanner } from "@/components/network-share/terms-banner";
@@ -10,7 +10,7 @@ import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { LEGAL_VERSION } from "@/lib/legal";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
-import { sharedNetworkEnabled } from "@/lib/shared-network";
+import { networkSummary, sharedNetworkEnabled } from "@/lib/shared-network";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireOrg();
@@ -18,11 +18,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const admin = isAdminRole(ctx.role);
   // Réseau partagé : interrupteur plateforme, puis (seulement s'il est ouvert) le résumé de l'organisation pour la
   // pastille du menu et le bandeau « nouvelle convention » — en parallèle des autres lectures
-  const network = sharedNetworkEnabled().then(async (on) => {
-    if (!on) return null;
-    const { data, error } = await ctx.supabase.rpc("org_network_summary", { p_org: ctx.org.id });
-    return { summary: error ? null : (data as OrgNetworkSummary | null) };
-  });
+  const network = sharedNetworkEnabled().then(async (on) => (on ? { summary: await networkSummary(ctx.supabase, ctx.org.id) } : null));
   const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees, networkInfo] = await Promise.all([
     ctx.supabase
       .from("rides")
