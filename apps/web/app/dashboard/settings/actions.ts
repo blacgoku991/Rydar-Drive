@@ -25,6 +25,17 @@ const SETTINGS_LABELS: Record<string, string> = {
   location_max_age_seconds: "Fraîcheur de la position GPS", default_payment_method: "Paiement par défaut",
 };
 
+/** Libellés des champs pour les messages d'erreur (« E-mail : adresse invalide » au lieu de « Vérifiez les champs »). */
+const ORG_LABELS: Record<string, string> = {
+  name: "Nom", legalName: "Raison sociale", siret: "SIRET", email: "E-mail", phone: "Téléphone", address: "Adresse", city: "Ville",
+  postalCode: "Code postal", vtcRegistration: "Inscription au registre VTC",
+};
+const PRICING_LABELS: Record<string, string> = {
+  vehicle_category: "Catégorie", name: "Nom", base_fare_cents: "Prise en charge", per_km_cents: "Prix au km", per_minute_cents: "Prix à la minute",
+  minimum_fare_cents: "Course minimum", night_surcharge_percent: "Nuit %", fixed_fares: "Forfaits",
+};
+const INVITE_LABELS: Record<string, string> = { fullName: "Nom", email: "E-mail", role: "Rôle", password: "Mot de passe provisoire" };
+
 async function adminCtx() {
   const ctx = await getOrgContext();
   return ctx && isAdminRole(ctx.role) ? ctx : null;
@@ -34,7 +45,7 @@ export async function updateOrganization(input: z.input<typeof organizationUpdat
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = organizationUpdateSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Vérifiez les champs." };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, ORG_LABELS) };
   const v = parsed.data;
   const { error } = await ctx.supabase
     .from("organizations")
@@ -112,7 +123,7 @@ export async function savePricingRule(input: z.input<typeof pricingSchema>): Pro
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = pricingSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Tarif invalide." };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, PRICING_LABELS) };
   const v = parsed.data;
   const { data: existing } = await ctx.supabase
     .from("pricing_rules")
@@ -162,7 +173,7 @@ export async function inviteMember(
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = inviteSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Vérifiez les champs." };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, INVITE_LABELS) };
   const v = parsed.data;
   const admin = createAdminClient();
 

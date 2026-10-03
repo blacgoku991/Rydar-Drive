@@ -593,7 +593,8 @@ begin
            exists (select 1 from public.ride_offers p
                     where p.ride_id = r.id and p.driver_id = d.id and p.sent_at >= r.dispatch_started_at)
     from public.drivers d
-    join public.driver_locations l on l.driver_id = d.id
+    -- positions lues dans l'organisation de la course (audit 006650, index driver_locations_org_idx)
+    join public.driver_locations l on l.driver_id = d.id and l.organization_id = r.organization_id
     left join public.vehicles v on v.id = d.vehicle_id
     where d.organization_id = r.organization_id
       and d.status = 'active'
@@ -1135,7 +1136,8 @@ end;
 $$;
 
 -- ----------------------------------------------------------------- une vague GPS (une seule par appel)
--- Dernière définition : 20260924003200_dispatch_strict_waves.sql. Réseau partagé (partage ouvert : network_at) : plan
+-- Dernière définition : 20260924006650_audit_fixes.sql (corps gardé À L'IDENTIQUE : positions lues dans l'organisation
+-- de la course, aussi dans private.own_geo_candidates). Réseau partagé (partage ouvert : network_at) : plan
 -- prolongé des vagues réseau (rayons du premier passage de A, traitées comme un premier passage : une seule sonnerie
 -- par chauffeur) ; chauffeurs de A d'abord (mêmes candidats, private.own_geo_candidates), puis partenaires dans le reste
 -- du quota (private.network_offer) ; journal : compteur des partenaires seulement, jamais leurs identifiants ; seuls
@@ -1202,7 +1204,7 @@ begin
   if v_wave = 1 then
     select count(*) into v_online
     from public.drivers d
-    join public.driver_locations l on l.driver_id = d.id
+    join public.driver_locations l on l.driver_id = d.id and l.organization_id = r.organization_id
     where d.organization_id = r.organization_id
       and d.status = 'active'
       and d.presence <> 'offline'
@@ -1228,7 +1230,7 @@ begin
                             s.block_unpaid, s.settlement_credit_limit_cents, s.new_driver_max_price_cents) end) is not null)
     into v_eligible, v_blocked
   from public.drivers d
-  join public.driver_locations l on l.driver_id = d.id
+  join public.driver_locations l on l.driver_id = d.id and l.organization_id = r.organization_id
   left join public.vehicles v on v.id = d.vehicle_id
   where d.organization_id = r.organization_id
     and d.status = 'active'
@@ -1480,7 +1482,8 @@ end;
 $$;
 
 -- ----------------------------------------------------------------- tick : vague suivante ou fin
--- Dernière définition : 20260924003300_live_position.sql. Étape GPS extraite telle quelle dans
+-- Dernière définition : 20260924006650_audit_fixes.sql (organisations non actives ignorées, « processed » : gardés
+-- à l'identique). Étape GPS extraite telle quelle dans
 -- private.dispatch_geo_step. Réseau partagé (C8) : une course au réseau (partage ouvert, fin des vagues propres
 -- d'une organisation qui partage, fenêtre réseau d'une planifiée) est traitée dans un bloc protégé — une erreur
 -- n'arrête qu'elle (private.network_dispatch_failed) — 50 au plus par passage (les suivantes 10 s plus tard) ;
@@ -1503,6 +1506,7 @@ declare
   v_refreshed integer := 0;
   v_failed integer := 0;
   v_expired_count integer := 0;
+  v_processed integer := 0;
   -- Réseau partagé
   v_step record;
   v_lead timestamptz;
@@ -1516,10 +1520,12 @@ begin
     select id from public.rides
     where status in ('SEARCHING_DRIVER', 'OFFERED')
       and next_dispatch_at <= now()
+      and exists (select 1 from public.organizations o where o.id = rides.organization_id and o.status = 'active')
     order by next_dispatch_at
     limit p_limit
     for update skip locked
   loop
+    v_processed := v_processed + 1;
     select * into r from public.rides where id = v_ride.id;
     select * into s from public.organization_settings where organization_id = r.organization_id;
 
@@ -1599,7 +1605,7 @@ begin
     end if;
   end loop;
 
-  return jsonb_build_object('waves', v_waves, 'escalated', v_escalated, 'fleet_refreshed', v_refreshed,
+  return jsonb_build_object('processed', v_processed, 'waves', v_waves, 'escalated', v_escalated, 'fleet_refreshed', v_refreshed,
     'no_driver', v_failed, 'expired_offers', v_expired_count);
 end;
 $$;
@@ -1669,7 +1675,8 @@ begin
 end;
 $$;
 
--- Dernière définition : 20260924005400_contre_audit_sql.sql. Réseau partagé — offre d'un partenaire (is_network),
+-- Dernière définition : 20260924006650_audit_fixes.sql (acceptation rejouée = succès, gardée à l'identique : vaut
+-- aussi pour une offre partenaire). Réseau partagé — offre d'un partenaire (is_network),
 -- sous le verrou de la course : partage du cycle courant toujours ouvert, paire éligible, véhicule, chauffeur éligible
 -- (private.network_driver_reason) — sinon OFFER_CLOSED, offre fermée « network_unavailable » ; créneau pris :
 -- DRIVER_BUSY_AT_TIME, offre fermée « driver_busy » ; blocage (règles locales) : DRIVER_BLOCKED, offre laissée ouverte ;
@@ -1713,6 +1720,10 @@ begin
   -- Relecture sous verrou : l'offre a pu être retirée entre-temps (hors ligne, fin de recherche…)
   select * into o from public.ride_offers where id = p_offer_id for update;
   v_latency := (extract(epoch from (clock_timestamp() - o.sent_at)) * 1000)::bigint;
+
+  if o.status = 'accepted' and r.driver_id = v_driver.id then
+    return jsonb_build_object('ok', true, 'code', 'ACCEPTED', 'message', 'Course attribuée.', 'ride_id', r.id);
+  end if;
 
   if r.driver_id is not null or r.status not in ('SEARCHING_DRIVER', 'OFFERED') then
     -- Motif réel : annulée ; recherche terminée (aucun chauffeur, course retirée en attente d'attribution) ;
@@ -2116,8 +2127,8 @@ $$;
 -- =============================================================================
 -- 8. Attribution manuelle (§9.5 point 6, §9.7, C4, C14)
 -- =============================================================================
--- Dernière définition : 20260924006600_platform_fee_schedule.sql (corps gardé À L'IDENTIQUE : version provisoire du
--- chantier CGV). Réseau partagé, ajouts seulement : DRIVER_BUSY_AT_TIME quand le chauffeur choisi tient une course
+-- Dernière définition : 20260924006650_audit_fixes.sql (corps gardé À L'IDENTIQUE, chauffeur bloqué refusé :
+-- DRIVER_BLOCKED ; corps 006600 du chantier CGV en dessous). Réseau partagé, ajouts seulement : DRIVER_BUSY_AT_TIME quand le chauffeur choisi tient une course
 -- d'une autre organisation qui chevauche celle-ci (private.driver_time_conflict ; sans course partenaire : jamais) ;
 -- network_at remis à NULL dans tous les cas (partage clos « reassigned_own », C14) ; chauffeur précédent partenaire
 -- libéré, ses notifications de la course supprimées, prévenu sans adresse (« COURSE RETIRÉE — {A} »), jamais son
@@ -2137,6 +2148,7 @@ declare
   v_tz text;
   v_max bigint;
   v_count bigint;
+  v_block text;
   -- Réseau partagé
   v_previous_partner boolean;
   v_giver text;
@@ -2160,6 +2172,14 @@ begin
   end if;
   if r.driver_id = d.id then
     return jsonb_build_object('ok', true, 'code', 'UNCHANGED');
+  end if;
+  v_block := private.driver_blocker(d.id, r.price_cents, true);
+  if v_block is not null then
+    return jsonb_build_object('ok', false, 'code', 'DRIVER_BLOCKED', 'reason', v_block, 'message', private.fr_typo(case v_block
+      when 'unpaid' then 'Chauffeur bloqué : commission en retard ou contestée (menu « Encaissements »).'
+      when 'credit_limit' then 'Chauffeur bloqué : plafond de commissions à régler atteint (menu « Encaissements »).'
+      when 'new_driver' then 'Course au-dessus du plafond des chauffeurs « Nouveau » : choisissez un chauffeur confirmé.'
+      else 'Ce chauffeur ne peut pas recevoir cette course.' end));
   end if;
   -- Réseau partagé : créneau déjà pris par une course d'une autre organisation que ce chauffeur (course partenaire
   -- qu'il a acceptée, invisible ici ; ou course partenaire attribuée pendant une course de son organisation) : C4

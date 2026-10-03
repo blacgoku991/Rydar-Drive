@@ -1655,8 +1655,9 @@ create trigger drivers_admin_columns_guard
 -- =============================================================================
 -- 11. Policies (§8.5)
 -- =============================================================================
--- Dernières définitions : 20260924000300_security.sql (rides, ride_offers, ride_assignments, driver_locations,
--- driver_location_history) et 20260924004300_audit_droits.sql (notifications).
+-- Dernières définitions : 20260924000300_security.sql (ride_offers, ride_assignments, driver_locations,
+-- driver_location_history), 20260924004300_audit_droits.sql (notifications) et 20260924006650_audit_fixes.sql (rides :
+-- clause chauffeur limitée à 24 h après la fin, gardée à l'identique).
 -- Inchangées : ride_settlements_select (A lit ses lignes réseau, sans aucune donnée bancaire : l'empreinte du RIB est
 -- dans ride_network_executions) et ride_alerts_select. Identifiant résiduel accepté chez A (§8.5) : l'UUID de la fiche
 -- EXÉCUTANTE dans rides.driver_id, ride_settlements.network_driver_id et ride_alerts.driver_id (alerte de la course
@@ -1668,7 +1669,8 @@ drop policy rides_select on public.rides;
 create policy rides_select on public.rides for select to authenticated
   using (
     organization_id in (select private.member_org_ids())
-    or (driver_id is not null and driver_id = (select private.current_driver_id()) and driver_org_id = organization_id)
+    or (driver_id is not null and driver_id = (select private.current_driver_id()) and driver_org_id = organization_id
+        and (status not in ('COMPLETED', 'CANCELLED', 'NO_DRIVER_FOUND') or updated_at > now() - interval '24 hours'))
     or (select private.is_super_admin())
   );
 

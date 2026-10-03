@@ -7,6 +7,7 @@ import {
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { audit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth";
 import { actionError } from "@/lib/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -21,7 +22,7 @@ const uuid = z.string().uuid();
 /** Noms des champs pour les messages d'erreur (« Montant : montant requis »). */
 const PAYMENT_LABELS = { amountCents: "Montant", method: "Moyen de paiement", reference: "Référence", note: "Note", paidOn: "Date du paiement" };
 const ADJUST_LABELS = { amountCents: "Montant", reason: "Motif" };
-const TERMS_LABELS = { cycle: "Cycle de facturation", paymentDays: "Délai de paiement", blockAfterDays: "Blocage" };
+const TERMS_LABELS = { cycle: "Cycle de facturation", paymentDays: "Délai de paiement", blockAfterDays: "Blocage", consentNote: "Accord écrit" };
 const BILLING_LABELS = { payeeName: "Bénéficiaire", iban: "IBAN", bic: "BIC", paymentLink: "Lien de paiement", instructions: "Instructions" };
 
 /** « Champ : message », sans répéter le champ quand le message le nomme déjà (« IBAN invalide »). */
@@ -155,8 +156,17 @@ export async function removePlatformWhatsApp(): Promise<WhatsAppActionResult> {
 }
 
 export async function testPlatformWhatsApp(to: string): Promise<WhatsAppActionResult> {
-  await requireSuperAdmin();
+  const session = await requireSuperAdmin();
   const res = await testWhatsApp(null, "Centrale exemple", to);
+  // Message envoyé depuis le numéro WhatsApp de Rydar : tracé (numéro masqué, résultat)
+  const digits = String(to ?? "").replace(/\D/g, "");
+  await audit({
+    actorUserId: session.user.id,
+    actorType: "super_admin",
+    action: "whatsapp.test_sent",
+    severity: res.ok ? "info" : "warning",
+    metadata: { to: digits ? `…${digits.slice(-2)}` : null, ok: res.ok },
+  });
   revalidatePath("/admin/frais");
   return res;
 }
@@ -167,7 +177,11 @@ export async function updatePlatformTerms(orgId: string, input: z.input<typeof p
   const parsed = platformTermsSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: describe(parsed.error, TERMS_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
-  return svc("svc_platform_terms", { p_org: orgId, p_cycle: v.cycle, p_payment_days: v.paymentDays, p_block_after_days: v.blockAfterDays }, orgId);
+  return svc(
+    "svc_platform_terms",
+    { p_org: orgId, p_cycle: v.cycle, p_payment_days: v.paymentDays, p_block_after_days: v.blockAfterDays, p_consent_note: v.consentNote },
+    orgId,
+  );
 }
 
 /** Coordonnées de paiement de Rydar affichées aux centrales (IBAN, BIC, lien, instructions). */

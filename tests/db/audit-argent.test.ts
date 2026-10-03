@@ -337,7 +337,7 @@ describe("Frais plateforme", () => {
     const org = await centrale("Argent Redéclaration");
     const sa = await superAdmin();
     await insertRideBypass(org, { completed_at: daysAgo(75) }); // 5 € échus depuis longtemps
-    await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1]);
+    await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1, "Accord écrit (test)"]);
     expect(await account(org)).toMatchObject({ blocked: true });
 
     const d1 = await rpc(org.ownerId, "declare_platform_payment", [org.id, 500, "transfer", null, null, null]);
@@ -430,7 +430,7 @@ describe("Frais plateforme", () => {
   it("prix fixé après la fin de la course : échéance à partir de maintenant, jamais rétroactive", async () => {
     const org = await centrale("Argent Prix Tardif");
     const sa = await superAdmin();
-    await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1]);
+    await svc("svc_platform_terms", [org.id, sa, "monthly", 5, 1, "Accord écrit (test)"]);
     const d = await driverIn(org);
     const rideId = await apiRideWithoutPrice(org, "invoice");
     await advance(d, rideId);

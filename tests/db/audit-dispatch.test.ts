@@ -281,7 +281,7 @@ describe("Relance et attribution : mêmes règles que la création (flux-argent#
     // Frais échus depuis longtemps + levier « bloquer après 1 jour »
     await insertRideBypass(org, { completed_at: new Date(Date.now() - 75 * 86_400_000) });
     const [terms] = await as({ role: "service_role" }, (q) =>
-      q("select public.svc_platform_terms($1, $2, 'monthly', 5, 1) as r", [org.id, sa]));
+      q("select public.svc_platform_terms($1, $2, 'monthly', 5, 1, 'Accord écrit (test)') as r", [org.id, sa]));
     expect(terms.r.code).toBe("SAVED");
 
     const relaunch = await rpc(org.ownerId, "redispatch_ride", [open.id]);

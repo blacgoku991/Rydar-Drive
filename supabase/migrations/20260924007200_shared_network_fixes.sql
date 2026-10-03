@@ -12,6 +12,11 @@
 --     (paire évaluée une fois par organisation ; nouvelle surcharge à limite : contrôles arrêtés aux N plus proches
 --     éligibles), private.network_offer (limite de la vague), private.network_search_exhausted (un candidat suffit) et
 --     private.network_open (compteur « partenaires à proximité » plafonné à 50, NETWORK_PARTNERS_NEARBY_MAX).
+--  3. Fusion de l'audit 20260924006650 (fonctions nouvelles ou redéfinies par l'audit, sans version réseau) :
+--     public.svc_platform_ban rend une course partenaire à son organisation (private.unassign_network_ride, jamais
+--     private.platform_unassign_ride, UPDATE direct refusé par G6 ou laissant l'exécution ouverte) ;
+--     public.svc_platform_set_org_status compte aussi les courses d'autres organisations tenues par ses chauffeurs
+--     (DRIVER_ON_RIDE, même règle que ses propres courses).
 --
 -- Supabase hébergé : rien sur auth.*, storage.*, realtime.messages.
 -- =============================================================================
@@ -405,5 +410,246 @@ begin
     'timeline', 'info', jsonb_build_object('partners_nearby', v_nearby, 'stage', p_stage, 'cycle', v_cycle),
     'system', null);
   return true;
+end;
+$$;
+
+-- =============================================================================
+-- 3. Fusion de l'audit 20260924006650 : bannissement plateforme, suspension d'une organisation
+-- =============================================================================
+-- Dernière définition : 20260924006650_audit_fixes.sql (corps gardé À L'IDENTIQUE). Réseau partagé, seul ajout : une
+-- course d'une autre organisation tenue par une fiche bannie (attribuée, pas commencée) est rendue à son organisation
+-- par private.unassign_network_ride (« executor_unavailable » : exécution et partage clos, chauffeurs de A d'abord,
+-- journal de A sans identifiant) ; private.platform_unassign_ride (UPDATE direct de rides.driver_id, journal nominatif
+-- chez A) reste pour les courses de son organisation. Client à bord (DRIVER_ON_RIDE) : inchangé, toutes courses.
+create or replace function public.svc_platform_ban(
+  p_report_id uuid,
+  p_actor uuid,
+  p_note text default null,
+  p_extend_driver_ids uuid[] default '{}'
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  f public.fraud_reports;
+  x record;
+  v_count integer;
+  v_identities_skipped integer;
+  v_drivers integer := 0;
+  v_users uuid[] := '{}';
+  v_kept uuid[] := '{}';
+  v_note text := left(nullif(btrim(coalesce(p_note, '')), ''), 500);
+  v_extend uuid[] := coalesce(p_extend_driver_ids, '{}');
+  v_same uuid[];
+  v_confirmed uuid[];
+  v_skipped uuid[];
+  v_blocked text[];
+  v_ride record;
+  v_reassigned integer := 0;
+  v_onboard text;
+begin
+  perform private.assert_platform_actor(p_actor);
+  select * into f from public.fraud_reports where id = p_report_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Signalement introuvable.');
+  end if;
+  if f.status = 'platform_banned' then
+    return jsonb_build_object('ok', false, 'code', 'ALREADY_BANNED', 'message', 'Déjà banni de la plateforme.');
+  end if;
+  if exists (select 1 from public.drivers d where d.id = f.driver_id and d.deleted_at is null and d.banned_at is null) then
+    return jsonb_build_object('ok', false, 'code', 'REPORTED_DRIVER_NOT_BANNED',
+      'message', 'Sa centrale a levé le bannissement de ce chauffeur : classez le signalement.');
+  end if;
+  perform private.set_actor('super_admin', p_actor);
+
+  -- Fiches qui partagent une identité : même centrale (automatique), autres centrales confirmées / écartées
+  select coalesce(array_agg(distinct c.driver_id) filter (where c.same_org), '{}') into v_same
+  from private.fraud_report_carriers(f.id) c;
+  with c as (select * from private.fraud_report_carriers(f.id) k where not (k.driver_id = any (v_same)))
+  select coalesce(array_agg(distinct c.driver_id) filter (where c.driver_id = any (v_extend)), '{}'),
+         coalesce(array_agg(distinct c.driver_id) filter (where not (c.driver_id = any (v_extend))), '{}'),
+         coalesce(array_agg(distinct c.kind || ':' || c.value_hash) filter (where not (c.driver_id = any (v_extend))), '{}')
+    into v_confirmed, v_skipped, v_blocked
+  from c;
+
+  -- Client à bord d'une fiche visée : rien n'est fait (même règle que ban_driver)
+  select string_agg(distinct format('%s %s (#%s)', d.first_name, d.last_name, d.number), ', ') into v_onboard
+  from public.drivers d
+  join public.rides r on r.driver_id = d.id and r.status in ('PASSENGER_ONBOARD', 'IN_PROGRESS')
+  where d.deleted_at is null
+    and d.ban_scope is distinct from 'platform'
+    and (d.id = f.driver_id or d.id = any (v_same) or d.id = any (v_confirmed));
+  if v_onboard is not null then
+    return jsonb_build_object('ok', false, 'code', 'DRIVER_ON_RIDE',
+      'message', 'Client à bord (' || v_onboard || ') : attendez la fin de la course avant de bannir de la plateforme.');
+  end if;
+
+  insert into public.banned_identities (scope, organization_id, kind, value_hash, hint, driver_id, report_id, reason, created_by)
+  select 'platform', null, e ->> 'kind', e ->> 'hash', e ->> 'hint', f.driver_id, f.id, f.reason, p_actor
+  from jsonb_array_elements(f.identities) e
+  where e ->> 'kind' in ('phone', 'email', 'vtc_card', 'driving_license', 'identity_doc', 'plate', 'device')
+    and e ->> 'hash' ~ '^[0-9a-f]{64}$'
+    and not (((e ->> 'kind') || ':' || (e ->> 'hash')) = any (v_blocked))
+  on conflict do nothing;
+  get diagnostics v_count = row_count;
+
+  select count(*) into v_identities_skipped
+  from jsonb_array_elements(f.identities) e
+  where ((e ->> 'kind') || ':' || (e ->> 'hash')) = any (v_blocked);
+
+  update public.fraud_reports
+     set status = 'platform_banned', reviewed_by = p_actor, reviewed_at = now(), review_note = v_note
+   where id = f.id;
+
+  -- Chauffeur signalé, fiches de sa centrale et fiches confirmées d'autres centrales ; fiches supprimées exclues
+  -- (anonymes, non modifiables)
+  for x in
+    select d.id, d.user_id, d.organization_id
+    from public.drivers d
+    where d.deleted_at is null
+      and d.ban_scope is distinct from 'platform'
+      and (d.id = f.driver_id or d.id = any (v_same) or d.id = any (v_confirmed))
+  loop
+    for v_ride in
+      select r.id, r.organization_id from public.rides r
+      where r.driver_id = x.id and r.status in ('ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED')
+      order by r.pickup_at
+    loop
+      -- Réseau partagé : course d'une autre organisation (confiée à ce chauffeur) rendue à son organisation, qui la
+      -- relance (private.unassign_network_ride, « executor_unavailable ») ; jamais un UPDATE direct de rides.driver_id
+      if v_ride.organization_id <> x.organization_id then
+        if coalesce((private.unassign_network_ride(x.id, v_ride.id, 'executor_unavailable') ->> 'ok')::boolean, false) then
+          v_reassigned := v_reassigned + 1;
+        end if;
+      elsif coalesce((private.platform_unassign_ride(v_ride.id, 'Chauffeur banni de la plateforme Rydar', p_actor) ->> 'ok')::boolean, false) then
+        v_reassigned := v_reassigned + 1;
+      end if;
+    end loop;
+    update public.drivers
+       set status = case when status = 'inactive' then 'inactive' else 'suspended' end::public.driver_status,
+           presence = 'offline',
+           online_since = null,
+           current_ride_id = null,
+           banned_at = coalesce(banned_at, now()),
+           banned_by = coalesce(banned_by, p_actor),
+           ban_reason = coalesce(ban_reason, 'Banni de la plateforme Rydar'),
+           ban_scope = 'platform',
+           ban_report_id = f.id,
+           suspended_reason = 'Banni de la plateforme Rydar',
+           application_status = case when application_status = 'pending' then 'rejected' else application_status end
+     where id = x.id;
+    update public.ride_offers
+       set status = 'closed', closed_reason = 'driver_banned', responded_at = now()
+     where driver_id = x.id and status = 'pending';
+    if x.user_id is not null then
+      if private.keeps_login_account(x.user_id) then
+        v_kept := v_kept || x.user_id;
+      else
+        v_users := v_users || x.user_id;
+      end if;
+    end if;
+    v_drivers := v_drivers + 1;
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (x.organization_id, 'super_admin', p_actor, 'driver.platform_banned', 'drivers', x.id::text, 'critical',
+      jsonb_build_object('report_id', f.id, 'extended', x.id = any (v_confirmed),
+        'login_kept', x.user_id is not null and x.user_id = any (v_kept)));
+  end loop;
+
+  return jsonb_build_object('ok', true, 'code', 'PLATFORM_BANNED', 'identities', v_count,
+    'identities_skipped', v_identities_skipped, 'drivers', v_drivers, 'reassigned_rides', v_reassigned,
+    'extended', coalesce(cardinality(v_confirmed), 0), 'skipped_drivers', coalesce(cardinality(v_skipped), 0),
+    'user_ids', to_jsonb(v_users), 'kept_user_ids', to_jsonb(v_kept),
+    'message', case when v_identities_skipped > 0
+      then 'Banni de la plateforme, sauf les identités partagées avec des fiches d''autres centrales non confirmées.'
+      else 'Banni de toute la plateforme.' end);
+end;
+$$;
+
+-- Dernière définition : 20260924006650_audit_fixes.sql (corps gardé À L'IDENTIQUE). Réseau partagé, seul ajout : les
+-- courses d'autres organisations tenues par ses chauffeurs (en route, client à bord) comptent dans DRIVER_ON_RIDE —
+-- suspendue, l'organisation passerait ses chauffeurs hors ligne en pleine course partenaire (alerte chez A, course
+-- bloquée). Courses de l'organisation tenues par des partenaires : déjà comptées (r.organization_id).
+create or replace function public.svc_platform_set_org_status(p_org uuid, p_actor uuid, p_status text, p_reason text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  o public.organizations;
+  v_reason text := left(nullif(btrim(coalesce(p_reason, '')), ''), 500);
+  v_busy integer := 0;
+  v_offers uuid[] := '{}';
+  v_drivers integer := 0;
+  v_upcoming integer := 0;
+begin
+  perform private.assert_platform_actor(p_actor);
+  if p_status is null or p_status not in ('active', 'suspended', 'archived') then
+    return jsonb_build_object('ok', false, 'code', 'INVALID_STATUS', 'message', 'Statut invalide.');
+  end if;
+  select * into o from public.organizations where id = p_org for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Organisation introuvable.');
+  end if;
+  if p_status <> 'active' then
+    select count(*) into v_busy
+      from public.rides r
+     where (r.organization_id = p_org
+            -- Réseau partagé : course d'une autre organisation tenue par un de ses chauffeurs (même règle)
+            or r.driver_org_id = p_org)
+       and r.driver_id is not null
+       and (r.status in ('DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS')
+            or (r.status = 'ACCEPTED' and r.type = 'instant'));
+    if v_busy > 0 then
+      return jsonb_build_object('ok', false, 'code', 'DRIVER_ON_RIDE', 'count', v_busy,
+        'message', private.fr_typo(format('%s %s : chauffeur en route ou client à bord. Attendez la fin (ou faites annuler) avant de %s cette organisation.',
+          v_busy, private.pl(v_busy, 'course en cours', 'courses en cours'),
+          case p_status when 'archived' then 'archiver' else 'suspendre' end)));
+    end if;
+  end if;
+  perform private.set_actor('super_admin', p_actor);
+
+  update public.organizations
+     set status = p_status::public.org_status,
+         suspended_at = case p_status when 'suspended' then now() when 'active' then null else suspended_at end,
+         suspended_reason = case p_status when 'suspended' then v_reason when 'active' then null else suspended_reason end,
+         archived_at = case p_status when 'archived' then now() when 'active' then null else archived_at end
+   where id = p_org;
+
+  if p_status <> 'active' then
+    with closed as (
+      update public.ride_offers x
+         set status = 'closed', closed_reason = 'org_suspended', responded_at = now()
+       where x.organization_id = p_org and x.status = 'pending'
+      returning x.driver_id
+    )
+    select coalesce(array_agg(distinct closed.driver_id), '{}') into v_offers from closed;
+    update public.notifications n
+       set status = 'cancelled', last_error = 'org_suspended'
+     where n.organization_id = p_org and n.status = 'queued' and n.type in ('ride_offer', 'ride_offer_scheduled');
+    update public.drivers
+       set presence = 'offline', online_since = null
+     where organization_id = p_org and presence <> 'offline';
+    get diagnostics v_drivers = row_count;
+    select count(*) into v_upcoming
+      from public.rides r
+     where r.organization_id = p_org and r.status = 'ACCEPTED' and r.driver_id is not null;
+  end if;
+
+  insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+  values (p_org, 'super_admin', p_actor, 'organization.' || p_status, 'organizations', p_org::text,
+    case when p_status = 'active' then 'info' else 'warning' end,
+    jsonb_build_object('reason', v_reason, 'previous_status', o.status, 'closed_offers', cardinality(v_offers),
+      'drivers_offline', v_drivers, 'upcoming_rides', v_upcoming));
+
+  return jsonb_build_object('ok', true, 'code', 'UPDATED', 'status', p_status, 'closed_offers', cardinality(v_offers),
+    'drivers_offline', v_drivers, 'upcoming_rides', v_upcoming,
+    'message', case when v_upcoming > 0
+      then private.fr_typo(format('Statut enregistré. %s %s à venir %s attribuée%s : la centrale ne peut pas la%s servir tant qu''elle n''est pas réactivée.',
+        v_upcoming, private.pl(v_upcoming, 'course', 'courses'), private.pl(v_upcoming, 'reste', 'restent'),
+        case when v_upcoming > 1 then 's' else '' end, case when v_upcoming > 1 then 's' else '' end))
+      else 'Statut enregistré.' end);
 end;
 $$;

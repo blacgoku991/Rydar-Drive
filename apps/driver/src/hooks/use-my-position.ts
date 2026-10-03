@@ -247,7 +247,8 @@ async function start() {
       watchBroken = true;
     },
   ).catch(() => null);
-  if (users === 0) {
+  // Plus d'écran abonné, ou application passée en arrière-plan pendant le démarrage : flux coupé (relancé au retour)
+  if (users === 0 || AppState.currentState === "background") {
     sub?.remove();
     sub = null;
   }
@@ -295,6 +296,11 @@ function acquire() {
       if (state === "background") {
         wentBackground = true;
         stopCompass();
+        // Flux GPS de l'INTERFACE coupé aussi : sur iPhone EN LIGNE l'app reste vivante (tâche de suivi) et ce flux
+        // livrait ~1 point/s en arrière-plan (rendus, caméra de carte, recalculs d'itinéraire) pendant la conduite avec
+        // Waze. La position envoyée au serveur ne dépend que de la tâche de fond ; flux relancé au retour (restartWatch).
+        sub?.remove();
+        sub = null;
       } else if (state === "active" && users > 0) {
         if (wentBackground || !sub) {
           wentBackground = false;

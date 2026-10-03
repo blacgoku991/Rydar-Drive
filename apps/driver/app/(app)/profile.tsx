@@ -368,15 +368,26 @@ export default function Profile() {
               icon="log-out-outline"
               height={control.md}
               loading={leaving}
-              onPress={async () => {
-                setLeaving(true);
-                try {
-                  await signOut();
-                } finally {
-                  setLeaving(false);
-                }
-                router.replace("/login");
-              }}
+              onPress={() =>
+                // Confirmation : un appui (accessible pendant une course depuis l'accueil) ne déconnecte plus d'emblée
+                Alert.alert("Se déconnecter ?", frTypo("Vous passerez hors ligne et ne recevrez plus de courses sur ce téléphone."), [
+                  { text: "Annuler", style: "cancel" },
+                  {
+                    text: "Se déconnecter",
+                    style: "destructive",
+                    onPress: async () => {
+                      setLeaving(true);
+                      let out = false;
+                      try {
+                        out = await signOut();
+                      } finally {
+                        setLeaving(false);
+                      }
+                      if (out) router.replace("/login");
+                    },
+                  },
+                ])
+              }
             />
             <Text style={styles.version}>Rydar Drive {Constants.expoConfig?.version}</Text>
           </View>

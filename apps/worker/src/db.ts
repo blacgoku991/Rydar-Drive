@@ -1,9 +1,24 @@
 import pg from "pg";
 import { config, dbTlsHint, log } from "./config";
 
+/**
+ * Réglages réseau côté client (aucun paramètre de démarrage envoyé au serveur ou au pooler) : liaison coupée sans RST
+ * (partition, NAT) → requête en échec au bout de QUERY_TIMEOUT_MS au lieu d'une attente sans fin (dispatch arrêté sans
+ * erreur ni journal) ; la connexion fautive est retirée du pool, les suivantes sont neuves.
+ */
+export const QUERY_TIMEOUT_MS = 45_000;
+const NETWORK_OPTIONS = { keepAlive: true, keepAliveInitialDelayMillis: 10_000, connectionTimeoutMillis: 10_000 } as const;
+
 /** Pool de connexions (rôle propriétaire, DATABASE_URL) ; application_name visible dans pg_stat_activity. */
 export function createPool(applicationName: string, options: Omit<pg.PoolConfig, "connectionString" | "application_name"> = {}) {
-  const p = new pg.Pool({ max: 8, ...options, connectionString: config.databaseUrl, application_name: applicationName });
+  const p = new pg.Pool({
+    max: 8,
+    ...NETWORK_OPTIONS,
+    query_timeout: QUERY_TIMEOUT_MS,
+    ...options,
+    connectionString: config.databaseUrl,
+    application_name: applicationName,
+  });
   p.on("error", (e) => log("error", "pg pool error", { error: e.message }));
   return p;
 }
@@ -31,7 +46,7 @@ export async function listen(
   const connectLoop = async () => {
     if (stopped) return;
     try {
-      client = new pg.Client({ connectionString: config.databaseUrl, application_name: applicationName });
+      client = new pg.Client({ ...NETWORK_OPTIONS, connectionString: config.databaseUrl, application_name: applicationName });
       client.on("notification", (msg) => onNotify(msg.payload, msg.channel));
       client.on("error", () => undefined);
       client.on("end", () => reconnect(2000));

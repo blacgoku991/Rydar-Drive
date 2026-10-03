@@ -4,6 +4,7 @@ import { BellOff, CalendarClock } from "lucide-react";
 import { memo } from "react";
 import { ALERT_ICON, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
 import { FlightChip, pickupShiftMinutes } from "@/components/rides/flight-info";
+import { useCentrale } from "@/components/settlements/centrale-context";
 import { toneDot, toneText } from "@/components/ui/badge";
 import { useSharedNow } from "@/hooks/use-now";
 import type { LiveAlert, LiveDriver, LiveRide } from "@/lib/queries/live";
@@ -12,16 +13,17 @@ import { cn } from "@/lib/utils";
 export const SEARCHING = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED"]);
 export const TERMINAL = new Set(["COMPLETED", "CANCELLED", "NO_DRIVER_FOUND"]);
 
-const TZ = "Europe/Paris";
-const dayKey = (t: number) => dateTimeFormat("fr-CA", { timeZone: TZ }).format(new Date(t));
+/** Fuseau de la centrale (Réglages), comme la liste Courses et la fiche ; Paris hors tableau de bord. */
+const DEFAULT_TZ = "Europe/Paris";
+const dayKey = (t: number, tz: string) => dateTimeFormat("fr-CA", { timeZone: tz }).format(new Date(t));
 
-function dayLabel(iso: string, now: number) {
+function dayLabel(iso: string, now: number, tz: string) {
   const t = new Date(iso).getTime();
-  const k = dayKey(t);
-  if (k === dayKey(now)) return null;
-  if (k === dayKey(now + 86_400_000)) return "Demain";
-  if (k === dayKey(now - 86_400_000)) return "Hier";
-  return dateTimeFormat("fr-FR", { weekday: "short", day: "numeric", timeZone: TZ }).format(new Date(t));
+  const k = dayKey(t, tz);
+  if (k === dayKey(now, tz)) return null;
+  if (k === dayKey(now + 86_400_000, tz)) return "Demain";
+  if (k === dayKey(now - 86_400_000, tz)) return "Hier";
+  return dateTimeFormat("fr-FR", { weekday: "short", day: "numeric", timeZone: tz }).format(new Date(t));
 }
 
 const remainingS = (nextDispatchAt: string, now: number) => Math.max(0, (new Date(nextDispatchAt).getTime() - now) / 1000);
@@ -65,7 +67,8 @@ function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, a
   const searching = SEARCHING.has(status);
   const geo = ride.type === "instant" || ride.dispatch_mode === "geo";
   const countdown = searching && geo && ride.next_dispatch_at ? ride.next_dispatch_at : null;
-  const day = dayLabel(ride.pickup_at, now);
+  const tz = useCentrale()?.timeZone || DEFAULT_TZ;
+  const day = dayLabel(ride.pickup_at, now, tz);
   const shifted = pickupShiftMinutes(ride) != null;
   const openAlert = alert?.status === "open" ? alert : null;
   const alertColor = openAlert ? severityColor(openAlert.severity) : null;
@@ -101,13 +104,13 @@ function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, a
         <div className="w-11 shrink-0 pt-px">
           {shifted ? (
             <>
-              <p className="text-[14px] font-semibold tabular-nums tracking-tight text-amber">{formatTime(ride.pickup_at)}</p>
+              <p className="text-[14px] font-semibold tabular-nums tracking-tight text-amber">{formatTime(ride.pickup_at, tz)}</p>
               <p className="text-[11px] tabular-nums text-fg-subtle line-through decoration-fg-subtle/80" title="Heure demandée, décalée par le vol">
-                {formatTime(ride.pickup_at_original)}
+                {formatTime(ride.pickup_at_original, tz)}
               </p>
             </>
           ) : (
-            <p className="text-[14px] font-semibold tabular-nums tracking-tight text-fg">{formatTime(ride.pickup_at)}</p>
+            <p className="text-[14px] font-semibold tabular-nums tracking-tight text-fg">{formatTime(ride.pickup_at, tz)}</p>
           )}
           {day ? (
             <p className="text-[11px] text-violet">{day}</p>
@@ -130,7 +133,7 @@ function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, a
           </p>
           {ride.flight_number && (
             <div className="mt-1.5 flex min-w-0">
-              <FlightChip ride={ride} />
+              <FlightChip ride={ride} timeZone={tz} />
             </div>
           )}
           {alert && AlertIcon && (

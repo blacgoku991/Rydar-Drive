@@ -11,7 +11,7 @@ import { PRESENCE_COLOR } from "@/components/map/map-theme";
 import { LivePartnerCard } from "@/components/network-share/live-partner";
 import { FlightDetails, PickupTime } from "@/components/rides/flight-info";
 import { RideActions, type AssignableDriver } from "@/components/rides/ride-actions";
-import { useIsCentrale } from "@/components/settlements/centrale-context";
+import { useCentrale, useIsCentrale } from "@/components/settlements/centrale-context";
 import { RideMoneyPanel } from "@/components/settlements/ride-money";
 import { toneDot, toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import { SEARCHING, TERMINAL } from "./ride-row";
 type Event = { id: number; level: string; message: string; created_at: string; category: string };
 
 const ETA_STATUSES = new Set(["ACCEPTED", "DRIVER_EN_ROUTE"]);
+const DEFAULT_TZ = "Europe/Paris";
 /** Statuts où la centrale peut encore changer de chauffeur (assign_ride, migration 002200). */
 const ASSIGNABLE = new Set(["CREATED", "SEARCHING_DRIVER", "OFFERED", "NO_DRIVER_FOUND", "ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED"]);
 const LEVEL_DOT: Record<string, string> = { success: "bg-brand", warning: "bg-amber", error: "bg-red", info: "bg-fg-subtle", debug: "bg-fg-subtle" };
@@ -29,13 +30,14 @@ const LEVEL_DOT: Record<string, string> = { success: "bg-brand", warning: "bg-am
 /** Bandeau d'alerte de suivi : type, message du serveur, âge + Relancer / Réattribuer / Garder / Appeler. */
 function AlertBanner({ alert, ride, driver, now, onAssign }: { alert: LiveAlert; ride: LiveRide; driver?: LiveDriver; now: number; onAssign: () => void }) {
   const Icon = ALERT_ICON[alert.kind];
+  const tz = useCentrale()?.timeZone || DEFAULT_TZ;
   if (alert.status !== "open") {
     return (
       <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.035] px-3.5 py-2.5 text-[12.5px] text-fg-muted">
         <BellOff className="size-4 shrink-0 text-fg-subtle" />
         <span className="min-w-0 flex-1">
           <span className="font-medium text-fg">{alertLabel(alert.kind)}</span> · gardé par la centrale
-          {alert.muted_until ? `, sourdine jusqu'à ${formatTime(alert.muted_until)}` : ""}
+          {alert.muted_until ? `, sourdine jusqu'à ${formatTime(alert.muted_until, tz)}` : ""}
         </span>
       </div>
     );
@@ -111,6 +113,8 @@ export function RideFocus({
   const meta = RIDE_STATUS_META[status] ?? { label: status, tone: "neutral" as const };
   const [events, setEvents] = useState<Event[]>([]);
   const centrale = useIsCentrale();
+  // Heures dans le fuseau de la centrale (Réglages), comme la liste Courses et la fiche
+  const tz = useCentrale()?.timeZone || DEFAULT_TZ;
 
   useEffect(() => {
     let cancelled = false;
@@ -150,10 +154,10 @@ export function RideFocus({
         </Button>
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-semibold tracking-tight">Course #{ride.number}</p>
-          <p className="text-[12px] text-fg-subtle">{formatRideDate(ride.pickup_at)} · {ride.type === "instant" ? "immédiate" : "planifiée"}</p>
+          <p className="text-[12px] text-fg-subtle">{formatRideDate(ride.pickup_at, tz)} · {ride.type === "instant" ? "immédiate" : "planifiée"}</p>
         </div>
         <Button asChild variant="ghost" size="icon-sm" aria-label="Ouvrir la fiche complète">
-          <Link href={`/dashboard/rides/${ride.id}`}>
+          <Link href={`/dashboard/rides/${ride.id}`} prefetch={false}>
             <ExternalLink />
           </Link>
         </Button>
@@ -179,7 +183,7 @@ export function RideFocus({
               : network?.held && (status === "ACCEPTED" || status === "DRIVER_EN_ROUTE")
                 ? "Chauffeur partenaire en route (position non partagée)"
                 : eta != null
-                ? `Arrivée au départ dans ~${formatDuration(eta)} (${formatTime(new Date(Date.now() + eta * 1000))})`
+                ? `Arrivée au départ dans ~${formatDuration(eta)} (${formatTime(new Date(Date.now() + eta * 1000), tz)})`
                 : status === "DRIVER_ARRIVED"
                   ? "Le chauffeur attend le client au point de départ"
                   : ride.estimated_duration_s && (status === "IN_PROGRESS" || status === "PASSENGER_ONBOARD")
@@ -202,7 +206,7 @@ export function RideFocus({
           <div className="min-w-0 flex-1 space-y-3">
             <div>
               <p className="text-[11.5px] text-fg-subtle">
-                Départ · <PickupTime ride={ride} />
+                Départ · <PickupTime ride={ride} timeZone={tz} />
               </p>
               <p className="text-[13.5px] leading-snug text-fg">{ride.pickup_address}</p>
             </div>
@@ -214,7 +218,7 @@ export function RideFocus({
         </div>
 
         {/* Vol suivi */}
-        {ride.flight_number && <FlightDetails ride={ride} now={now} />}
+        {ride.flight_number && <FlightDetails ride={ride} now={now} timeZone={tz} />}
 
         <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-line">
           {[
@@ -275,6 +279,7 @@ export function RideFocus({
             </button>
             <Link
               href={`/dashboard/messages?driver=${driver.id}`}
+              prefetch={false}
               className="grid size-8 shrink-0 place-items-center rounded-lg text-fg-muted hover:bg-white/5 hover:text-fg"
               aria-label={`Écrire à ${driver.first_name}`}
               title={`Écrire à ${driver.first_name}`}
@@ -314,7 +319,7 @@ export function RideFocus({
             <ol className="space-y-1.5">
               {timeline.map((e) => (
                 <li key={e.id} className="flex items-start gap-2.5 text-[12.5px]">
-                  <span className="w-11 shrink-0 tabular-nums text-fg-subtle">{formatTime(e.created_at)}</span>
+                  <span className="w-11 shrink-0 tabular-nums text-fg-subtle">{formatTime(e.created_at, tz)}</span>
                   <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", LEVEL_DOT[e.level] ?? "bg-fg-subtle")} />
                   <span className="text-fg-muted">{e.message}</span>
                 </li>

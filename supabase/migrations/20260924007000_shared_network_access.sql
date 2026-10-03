@@ -2769,7 +2769,7 @@ $$;
 create index if not exists ride_network_executions_ended_idx on public.ride_network_executions (ended_at)
   where ended_at is not null;
 
--- Dernière définition : 20260924006900_shared_network_money.sql (corps 20260924006600 et ajout 006900 gardés À
+-- Dernière définition : 20260924006900_shared_network_money.sql (corps 20260924006650 et ajout 006900 gardés À
 -- L'IDENTIQUE). Réseau partagé, seuls ajouts : traces d'une course partenaire chez le chauffeur et son organisation
 -- 1 h après la fin (points GPS marqués, rappels, notifications de vol), comptées dans history_purged et
 -- notifications_purged (réponse inchangée).
@@ -2781,6 +2781,7 @@ set search_path = ''
 as $$
 declare
   v_history integer;
+  v_last_positions integer;
   v_logs integer;
   v_docs integer;
   v_notifs integer;
@@ -2814,6 +2815,10 @@ begin
 
   delete from public.driver_location_history where recorded_at < now() - interval '30 days';
   get diagnostics v_history = row_count;
+  delete from public.driver_locations l
+   where l.updated_at < now() - interval '30 days'
+     and not exists (select 1 from public.drivers d where d.id = l.driver_id and d.current_ride_id is not null);
+  get diagnostics v_last_positions = row_count;
   -- Réseau partagé (Q5, §11.6, S8) : points GPS d'une course partenaire (ride_org_id, invisibles pour l'organisation du
   -- chauffeur) 1 h après la fin de son exécution pour ce chauffeur (private.network_ended_traces) ; comptés avec
   -- l'historique purgé (réponse inchangée)
@@ -2947,7 +2952,7 @@ begin
 
   return jsonb_build_object('rides_expired', v_expired, 'platform_fee_changes_applied', v_fee_changes,
     'platform_reductions_accepted', v_reductions,
-    'history_purged', v_history, 'api_logs_purged', v_logs,
+    'history_purged', v_history, 'last_positions_purged', v_last_positions, 'api_logs_purged', v_logs,
     'documents_expired', v_docs, 'notifications_purged', v_notifs, 'chat_purged', v_chat,
     'fleet_events_purged', v_fleet, 'audit_network_purged', v_network, 'rides_purged', v_rides,
     'bans_purged', v_bans, 'alert_positions_purged', v_alert_positions, 'debtor_identities_purged', v_debtors,

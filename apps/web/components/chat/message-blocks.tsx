@@ -247,6 +247,7 @@ export function ReportCard({
                 {active && (
                   <Link
                     href={`/dashboard?report=${m.id}`}
+                    prefetch={false}
                     className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line-strong px-2.5 text-[12px] font-medium text-fg-muted transition-colors hover:border-white/20 hover:bg-white/[0.04] hover:text-fg"
                   >
                     <MapPinned className="size-3.5" /> Voir sur la carte

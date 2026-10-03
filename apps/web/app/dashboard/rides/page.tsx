@@ -1,6 +1,6 @@
 import {
   RIDE_FILTER_STATUSES, RIDE_FILTERS, RIDE_SOURCE_LABELS, SETTLEMENT_STATUS_META, VEHICLE_CATEGORY_META, formatDistance, formatPrice, formatRideDate,
-  settlementStatusLabel, shortAddress,
+  normalizePhone, settlementStatusLabel, shortAddress,
   type NetworkPartnerNames, type RideFilterKey, type RideSource, type SettlementDirection, type SettlementStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeftRight, ChevronLeft, ChevronRight, Route, Search } from "lucide-react";
@@ -9,6 +9,7 @@ import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { NETWORK_RIDES_FILTER, networkRidesOrFilter, partnerOrgOf, rideListNetworkCell } from "@/components/network-share/ride-network";
 import { ActiveFilterIntoView } from "@/components/rides/active-filter-into-view";
+import { LiveRefresh } from "@/components/rides/live-refresh";
 import { NewRideButton } from "@/components/rides/new-ride-button";
 import { RouteGlyph } from "@/components/rides/route-glyph";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
@@ -74,13 +75,28 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
   const statuses = networkFilter ? null : RIDE_FILTER_STATUSES[filter as RideFilterKey];
   if (statuses) query = query.in("status", statuses as string[]);
   if (networkFilter) query = query.or(networkFilter);
-  if (filter === "all" || filter === "completed" || filter === "cancelled" || networkFilter) query = query.gte("pickup_at", since);
+  // Même règle que les compteurs des onglets (org_ride_counts) : 30 derniers jours, plus toute course non terminée
+  // (filtre « Réseau partagé » compris : plusieurs or() se cumulent)
+  if (filter === "completed" || filter === "cancelled" || filter === "no_driver") query = query.gte("pickup_at", since);
+  else if (!statuses) query = query.or(`pickup_at.gte."${since}",status.not.in.(COMPLETED,CANCELLED,NO_DRIVER_FOUND)`);
   if (q) {
+    // Un seul or() : un numéro court reste aussi cherché dans les adresses (code postal « 75012 ») et un téléphone saisi
+    // comme on le lit (« 06 12 34 56 78 », « 0612… », « +33… ») est comparé au format enregistré (E.164 « +33612345678 »)
     const safe = q.replace(/[%,()]/g, " ");
-    const num = Number(q.replace("#", ""));
-    query = Number.isInteger(num) && num > 0
-      ? query.eq("number", num)
-      : query.or(`customer_name.ilike.%${safe}%,customer_phone.ilike.%${safe}%,pickup_address.ilike.%${safe}%,dropoff_address.ilike.%${safe}%`);
+    const terms = [
+      `customer_name.ilike.%${safe}%`,
+      `customer_phone.ilike.%${safe}%`,
+      `pickup_address.ilike.%${safe}%`,
+      `dropoff_address.ilike.%${safe}%`,
+    ];
+    const numText = q.replace(/^#\s*/, "");
+    if (/^\d{1,7}$/.test(numText)) terms.push(`number.eq.${Number(numText)}`);
+    const phone = normalizePhone(q);
+    if (phone) terms.push(`customer_phone.eq.${phone}`);
+    const compact = q.replace(/[\s.\-]/g, "");
+    if (/^\+?\d{4,15}$/.test(compact)) terms.push(`customer_phone.ilike.%${compact.replace(/^\+/, "").replace(/^0/, "")}%`);
+    // « #1678 » : numéro de course seul (recherche explicite)
+    query = /^#\s*\d{1,7}$/.test(q) ? query.eq("number", Number(numText)) : query.or(terms.join(","));
   }
   const [{ data: rides, count }, { data: counts }, pricing, networkOn] = await Promise.all([
     query.order("pickup_at", { ascending: false }).range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1),
@@ -103,6 +119,8 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
+      {/* Statuts relus au fil des changements (rafales regroupées, rien onglet caché) */}
+      <LiveRefresh events={["ride.updated"]} pollMs={30_000} debounceMs={2000} />
       <PageHeader
         eyebrow="Opérations"
         title="Courses"
@@ -146,7 +164,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
               type="search"
               name="q"
               defaultValue={q}
-              placeholder="N° de course, client, téléphone, adresse…"
+              placeholder="#N° de course, client, téléphone, adresse…"
               aria-label="Rechercher une course" title="Rechercher une course"
               className="h-10 w-full rounded-lg border border-line-field bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60 focus-visible:ring-2 focus-visible:ring-brand/40"
             />

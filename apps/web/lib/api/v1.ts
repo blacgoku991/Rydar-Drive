@@ -204,9 +204,31 @@ export async function handle(
   }
 }
 
+/**
+ * Corps JSON borné AVANT d'être mis en mémoire : Content-Length annoncé trop grand refusé d'emblée, lecture du flux
+ * coupée au premier dépassement (une clé navigateur est publique : des corps de plusieurs centaines de Mo satureraient
+ * sinon la mémoire du serveur web, /api/v1 échappant au proxy et à son tampon).
+ */
 export async function readJson(req: Request, maxBytes = 32_768): Promise<unknown> {
-  const text = await req.text();
-  if (text.length > maxBytes) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Corps de requête trop volumineux.");
+  const tooLarge = () => new ApiError(413, "PAYLOAD_TOO_LARGE", "Corps de requête trop volumineux.");
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();
+  const chunks: Uint8Array[] = [];
+  if (req.body) {
+    const reader = req.body.getReader();
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
   try {
     return text ? JSON.parse(text) : {};
   } catch {

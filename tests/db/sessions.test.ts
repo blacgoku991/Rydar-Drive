@@ -24,7 +24,7 @@ describe("Révocation des sessions", () => {
     await openSession(d.userId);
     expect(await sessionCount(d.userId)).toBe(4);
 
-    await as({ sub: org.ownerId }, (q) => q("update public.drivers set status = 'suspended' where id = $1", [d.id]));
+    await as({ sub: org.ownerId }, (q) => q("select public.set_driver_status($1, 'suspended', null)", [d.id]));
     expect(await sessionCount(d.userId)).toBe(0);
   });
 

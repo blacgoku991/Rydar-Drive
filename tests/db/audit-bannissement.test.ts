@@ -212,7 +212,7 @@ describe("Signalement plateforme fabriqué par une centrale (flux-comptes#11, sq
     // L'owner de A recopie le téléphone et la carte VTC (justificatif) du chauffeur de B sur sa propre fiche
     await as({ sub: orgA.ownerId }, (q) => q(`update public.drivers set phone = $1 where id = $2`, [leo.phone.replace(/^0/, "+33 "), pion.id]));
     await as({ sub: orgA.ownerId }, (q) =>
-      q(`insert into public.driver_documents (organization_id, driver_id, type, label, number, status) values ($1, $2, 'vtc_card', 'Carte VTC', $3, 'pending')`, [
+      q(`insert into public.driver_documents (organization_id, driver_id, type, label, number, status, expires_at) values ($1, $2, 'vtc_card', 'Carte VTC', $3, 'valid', current_date + 365)`, [
         orgA.id, pion.id, leoVtc.replace(/ /g, "-"),
       ]),
     );
@@ -310,7 +310,7 @@ describe("Levée d'un bannissement plateforme (actions-admin#3, sql-rpc-argent#7
     expect(after).toMatchObject({ status: "suspended", ban_scope: "org", ban_reason: "Vol de la recette", ban_report_id: null, suspended_reason: "Banni : Vol de la recette" });
     expect(after.banned_at).not.toBeNull();
     // La centrale C garde la main : réactivation refusée, levée possible
-    const react = await expectPgError(as({ sub: orgC.ownerId }, (q) => q(`update public.drivers set status = 'active' where id = $1`, [amine.id])));
+    const react = await expectPgError(rpc(orgC.ownerId, "set_driver_status", [amine.id, "active", null]));
     expect(react.message).toMatch(/DRIVER_BANNED/);
     expect((await rpc(orgC.ownerId, "lift_driver_ban", [amine.id, "Dette réglée"])).code).toBe("LIFTED");
     // Le chauffeur signalé reste banni par sa centrale

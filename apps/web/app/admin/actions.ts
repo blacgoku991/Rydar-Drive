@@ -320,6 +320,24 @@ export async function grantOrganizationAccess(
   if (current?.status === "active" && current.role === v.role) {
     return { ok: false, error: "Cette personne a déjà cet accès.", fieldErrors: { email: "Déjà membre avec ce rôle" } };
   }
+  // Jamais rétrograder le DERNIER propriétaire actif : plus personne ne gérerait l'équipe (réservé au propriétaire)
+  if (current?.status === "active" && current.role === "owner" && v.role !== "owner") {
+    const { data: owners, error: ownersError } = await admin
+      .from("organization_users")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("role", "owner")
+      .eq("status", "active")
+      .neq("id", current.id);
+    if (ownersError) return { ok: false, error: "Vérification des propriétaires impossible pour le moment. Réessayez." };
+    if (!((owners ?? []) as unknown[]).length) {
+      return {
+        ok: false,
+        error: "Seul propriétaire actif de l'organisation : donnez d'abord le rôle de propriétaire à une autre personne.",
+        fieldErrors: { role: "Dernier propriétaire actif" },
+      };
+    }
+  }
   // Compte existant jamais membre (sauf le super admin lui-même) ou invitation en attente : preuve par l'adresse exigée
   const pending = !created && (current ? current.status === "invited" : userId !== session.user.id);
   const { error } = current
@@ -683,20 +701,22 @@ export async function unlockMemberLogin(orgId: string, memberId: string): Promis
 export async function setOrganizationStatus(orgId: string, status: "active" | "suspended" | "archived", reason?: string): Promise<Result> {
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(orgId).success || !["active", "suspended", "archived"].includes(status)) return { ok: false, error: "Demande invalide." };
-  const admin = createAdminClient();
   const motive = note(reason);
-  const patch: Record<string, unknown> = { status };
-  if (status === "suspended") Object.assign(patch, { suspended_at: new Date().toISOString(), suspended_reason: motive });
-  if (status === "archived") Object.assign(patch, { archived_at: new Date().toISOString() });
-  if (status === "active") Object.assign(patch, { suspended_at: null, suspended_reason: null, archived_at: null });
-  const { error } = await admin.from("organizations").update(patch as never).eq("id", orgId);
-  if (error) return { ok: false, error: "Mise à jour impossible." };
+  // Une transaction (svc_platform_set_org_status, journal en base) : refus si un chauffeur est en route ou a un client à
+  // bord, offres en attente fermées, chauffeurs hors ligne ; le dispatch ignore ensuite l'organisation.
+  const { data, error } = await createAdminClient().rpc("svc_platform_set_org_status", {
+    p_org: orgId, p_actor: session.user.id, p_status: status, p_reason: motive,
+  });
+  if (error || !data) return { ok: false, error: "Mise à jour impossible." };
+  const res = data as { ok: boolean; message?: string };
+  if (!res.ok) return { ok: false, error: res.message ?? "Mise à jour impossible." };
 
-  let unbanned = 0;
-  if (status === "active") unbanned = await setAuthBan(await inheritedBanUserIds(orgId), false);
-  else await admin.from("drivers").update({ presence: "offline", online_since: null } as never).eq("organization_id", orgId);
-
-  await audit({ organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: `organization.${status}`, entityType: "organizations", entityId: orgId, severity: status === "active" ? "info" : "warning", metadata: { reason: motive, auth_unbanned: unbanned } });
+  if (status === "active") {
+    const unbanned = await setAuthBan(await inheritedBanUserIds(orgId), false);
+    if (unbanned > 0) {
+      await audit({ organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: "organization.auth_unbanned", entityType: "organizations", entityId: orgId, metadata: { auth_unbanned: unbanned } });
+    }
+  }
   revalidatePath(`/admin/organizations/${orgId}`);
   revalidatePath("/admin");
   return { ok: true };

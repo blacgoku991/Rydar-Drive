@@ -305,7 +305,7 @@ export function ApplicationsCard({
                     {toReview > 0 && <Badge tone="blue" dot={false} className="h-[18px] px-1.5">{toReview} à valider</Badge>}
                   </Button>
                   <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/dashboard/drivers/${c.id}`}><UserRound /> Fiche</Link>
+                    <Link href={`/dashboard/drivers/${c.id}`} prefetch={false}><UserRound /> Fiche</Link>
                   </Button>
                   {canManage && (
                     <div className="flex flex-wrap items-center gap-2 sm:ml-auto">

@@ -63,15 +63,26 @@ function single(name: string, fn: () => Promise<unknown>) {
   return job;
 }
 
-/** Toutes les 2 s : vagues d'offres et relances ; un tick lent n'est pas doublé par le suivant (single). */
+/**
+ * Toutes les 2 s : vagues d'offres et relances ; un tick lent n'est pas doublé par le suivant (single). Par lots courts
+ * (une transaction chacun) : les courses d'un lot restent verrouillées le temps du lot, pas de tout le tick (acceptation
+ * et annulation n'attendent plus) ; on enchaîne tant qu'un lot est plein, 1,5 s au plus.
+ */
+const DISPATCH_BATCH = 20;
 const dispatchTick = single("dispatchTick", async () => {
   try {
-    const { rows } = await pool.query<{ r: Record<string, number> }>("select private.dispatch_tick() as r");
-    const r = rows[0]?.r ?? {};
+    const started = Date.now();
+    const total: Record<string, number> = {};
+    for (;;) {
+      const { rows } = await pool.query<{ r: Record<string, number> }>("select private.dispatch_tick($1) as r", [DISPATCH_BATCH]);
+      const r = rows[0]?.r ?? {};
+      for (const [k, v] of Object.entries(r)) total[k] = (total[k] ?? 0) + (Number(v) || 0);
+      if (r.waves || r.escalated) run(processNotifications);
+      if ((r.processed ?? 0) < DISPATCH_BATCH || Date.now() - started > 1_500) break;
+    }
     state.lastTick = Date.now();
     state.ticks++;
-    if (r.waves || r.escalated || r.no_driver) log("info", "dispatch tick", r);
-    if (r.waves || r.escalated) run(processNotifications);
+    if (total.waves || total.escalated || total.no_driver) log("info", "dispatch tick", total);
   } catch (error) {
     state.errors++;
     log("error", "dispatch tick failed", { error: (error as Error).message, ...dbTlsHint(error) });
@@ -281,6 +292,22 @@ async function main() {
     res.writeHead(healthy ? 200 : 503, { "content-type": "application/json" });
     res.end(JSON.stringify({ healthy, ...state }));
   }).listen(config.healthPort);
+
+  // Chien de garde : aucun tick de dispatch réussi depuis WATCHDOG_MS (base injoignable, connexion figée) → sortie en
+  // erreur pour que Docker relance le conteneur (restart: unless-stopped ne relance qu'un processus terminé, jamais un
+  // conteneur « unhealthy »). WORKER_WATCHDOG=0 le coupe (développement).
+  const startedAt = Date.now();
+  if (process.env.WORKER_WATCHDOG !== "0") {
+    timers.push(
+      setInterval(() => {
+        if (stopping) return;
+        const since = Date.now() - (state.lastTick || startedAt);
+        if (since < config.watchdogMs) return;
+        log("error", "watchdog: no successful dispatch tick, exiting for restart", { since_ms: since, errors: state.errors });
+        process.exit(1);
+      }, 15_000),
+    );
+  }
 
   let stoppingAt = 0;
   const shutdown = async (signal: string) => {

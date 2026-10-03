@@ -59,6 +59,11 @@ const COOKIES: Line[] = [
     role: "Centrale sélectionnée dans le tableau de bord, pour un compte qui en gère plusieurs. Illisible par les scripts (httpOnly).",
     duration: "Jusqu'à la fermeture du navigateur",
   },
+  {
+    name: "rd_view",
+    role: "Centrale affichée par le tableau de bord (identifiant seulement) : une action n'est jamais enregistrée au nom d'une autre centrale que celle affichée, par exemple après le retrait de votre accès.",
+    duration: "Jusqu'à la fermeture du navigateur",
+  },
 ];
 
 /**

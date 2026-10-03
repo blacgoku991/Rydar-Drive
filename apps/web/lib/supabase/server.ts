@@ -10,6 +10,8 @@ export async function createClient() {
   return createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
     // Connexions gardées ouvertes et DNS mémorisé (voir lib/server-fetch.ts)
     global: { fetch: serverFetch },
+    // Session (jeton de rafraîchissement compris) jamais envoyée en clair sur http:// en production
+    cookieOptions: { secure: process.env.NODE_ENV === "production" },
     cookies: {
       getAll() {
         return cookieStore.getAll();

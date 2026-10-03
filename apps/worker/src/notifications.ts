@@ -1,8 +1,8 @@
-import { Expo } from "expo-server-sdk";
 import { config, log } from "./config";
 import { pool } from "./db";
 import { apnsProvider } from "./push/apns";
 import { expoProvider, expoReceiptTracker } from "./push/expo";
+import { expoHttpClient } from "./push/expo-http";
 import { fcmProvider } from "./push/fcm";
 import type { PushPayload, PushProvider, PushResult, PushTarget } from "./push/types";
 
@@ -17,7 +17,8 @@ type Claimed = {
   tokens: PushTarget[];
 };
 
-const expo = new Expo({ accessToken: config.expoAccessToken });
+// Requêtes Expo bornées et annulées à l'échéance (10 s), messages d'un même lot regroupés par 100 (push/expo-http.ts)
+const expo = expoHttpClient({ accessToken: config.expoAccessToken });
 const providers: Partial<Record<PushTarget["provider"], PushProvider>> = { expo: expoProvider(expo) };
 if (config.fcmServiceAccount) providers.fcm = fcmProvider(config.fcmServiceAccount);
 if (config.apns) providers.apns = apnsProvider(config.apns);
@@ -101,15 +102,25 @@ async function deliver(n: Claimed) {
 
 let running = false;
 let stopping = false;
+/** Réveil (NOTIFY) reçu pendant un lot : une nouvelle réservation suit, sans attendre le sondage suivant. */
+let rerun = false;
 /** Réserve un lot (SKIP LOCKED → plusieurs workers possibles) et l'envoie. */
 export async function processNotifications(): Promise<number> {
-  if (running || stopping) return 0;
+  if (stopping) return 0;
+  if (running) {
+    rerun = true;
+    return 0;
+  }
   running = true;
   let total = 0;
   try {
     while (!stopping) {
+      rerun = false;
       const { rows } = await pool.query<Claimed>("select * from private.claim_notifications($1)", [config.batchSize]);
-      if (!rows.length) break;
+      if (!rows.length) {
+        if (rerun) continue;
+        break;
+      }
       total += rows.length;
       await Promise.all(
         rows.map((n) =>
@@ -119,7 +130,7 @@ export async function processNotifications(): Promise<number> {
           }),
         ),
       );
-      if (rows.length < config.batchSize) break;
+      if (rows.length < config.batchSize && !rerun) break;
     }
     if (total) log("info", "notifications processed", { count: total });
   } finally {

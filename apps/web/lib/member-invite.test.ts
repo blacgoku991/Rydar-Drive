@@ -241,8 +241,14 @@ describe("Super admin : propriétaire et accès", () => {
   });
 
   it("suspension d'une centrale : aucun bannissement Auth ; réactivation : levée pour les membres (fiche chauffeur inactive ou suspendue comprise) et les chauffeurs autorisés, jamais pour une fiche bannie", async () => {
+    const orgStatus = (op: Op): Reply => (op.table === "rpc:svc_platform_set_org_status" ? { data: { ok: true, code: "UPDATED" } } : undefined);
+    h.handle = orgStatus;
     expect(await adminActions.setOrganizationStatus(ORG, "suspended", "Impayé")).toEqual({ ok: true });
+    expect(h.ops.find((o) => o.table === "rpc:svc_platform_set_org_status")?.values).toMatchObject({ p_org: ORG, p_status: "suspended", p_reason: "Impayé" });
     expect(authCalls("updateUserById")).toEqual([]);
+    // Refus en base (chauffeur en route ou client à bord) : message rendu tel quel, aucune levée Auth
+    h.handle = (op) => (op.table === "rpc:svc_platform_set_org_status" ? { data: { ok: false, code: "DRIVER_ON_RIDE", message: "1 course en cours" } } : undefined);
+    expect(await adminActions.setOrganizationStatus(ORG, "archived")).toEqual({ ok: false, error: "1 course en cours" });
     expect(await adminActions.setOrganizationStatus("x", "suspended")).toEqual({ ok: false, error: "Demande invalide." });
 
     const M = "99999999-9999-4999-8999-999999999999";
@@ -250,6 +256,7 @@ describe("Super admin : propriétaire et accès", () => {
     // bannissement hérité levé), « bm » (fiche bannie par sa centrale) et « bp » (banni de la plateforme) : vrais
     // bannissements, jamais levés ici
     h.handle = (op) => {
+      if (op.table === "rpc:svc_platform_set_org_status") return orgStatus(op);
       if (op.table === "organization_users") return { data: [{ user_id: M }, { user_id: EXISTING }, { user_id: "bm" }, { user_id: "bp" }] };
       if (op.table === "drivers" && op.filters["user_id[]"]) {
         return {
@@ -275,7 +282,7 @@ describe("Super admin : propriétaire et accès", () => {
     expect(await adminActions.setOrganizationStatus(ORG, "active")).toEqual({ ok: true });
     expect(authCalls("updateUserById").map((c) => c[1]).sort()).toEqual([DRIVER_USER, M, EXISTING, "p1"].sort());
     expect(authCalls("updateUserById").every((c) => (c[2] as { ban_duration: string }).ban_duration === "none")).toBe(true);
-    expect(h.audits.at(-1)).toMatchObject({ action: "organization.active", metadata: { auth_unbanned: 4 } });
+    expect(h.audits.at(-1)).toMatchObject({ action: "organization.auth_unbanned", metadata: { auth_unbanned: 4 } });
   });
 
   it("« Débloquer la connexion » d'un membre : verrou Auth levé et journalisé ; jamais pour une fiche bannie ni hors de la centrale", async () => {

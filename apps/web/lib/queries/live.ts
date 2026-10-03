@@ -199,7 +199,7 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
   const recent = new Date(Date.now() - 30 * 60_000).toISOString();
   const horizon = new Date(Date.now() + 7 * 86_400_000).toISOString();
 
-  const [drivers, active, finished, kpis, alerts, reports, onboardRoutes] = await Promise.all([
+  const [drivers, active, finished, kpis, alerts, reports, onboardRoutes, stranded] = await Promise.all([
     supabase
       .from("drivers")
       .select(
@@ -248,9 +248,24 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
       .in("status", ON_BOARD_STATUSES)
       .not("route_polyline", "is", null)
       .limit(400),
+    // Courses « Sans chauffeur » jamais servies : gardées (onglet Alertes, carte) tant que leur prise en charge n'est pas
+    // dépassée de 6 h (comme le compteur du menu), quel que soit leur dernier changement (pas seulement 30 min)
+    supabase
+      .from("rides")
+      .select(RIDE_FIELDS)
+      .eq("organization_id", orgId)
+      .eq("status", "NO_DRIVER_FOUND")
+      .gte("pickup_at", new Date(Date.now() - 6 * 3600_000).toISOString())
+      .order("pickup_at", { ascending: true })
+      .limit(100),
   ]);
 
-  const rideRows = [...((must(active, "courses actives") ?? []) as LiveRide[]), ...((must(finished, "courses terminées") ?? []) as LiveRide[])];
+  const seenRides = new Set<string>();
+  const rideRows = [
+    ...((must(active, "courses actives") ?? []) as LiveRide[]),
+    ...((must(finished, "courses terminées") ?? []) as LiveRide[]),
+    ...((must(stranded, "courses sans chauffeur") ?? []) as LiveRide[]),
+  ].filter((r) => (seenRides.has(r.id) ? false : (seenRides.add(r.id), true)));
   const routes = new Map(((must(onboardRoutes, "tracés") ?? []) as { id: string; route_polyline: string }[]).map((r) => [r.id, r.route_polyline]));
   // Client à bord : tracé connu (null = aucun) ; sinon la clé reste absente (« à charger »)
   for (const r of rideRows) if (ON_BOARD_STATUSES.includes(r.status)) r.route_polyline = routes.get(r.id) ?? null;

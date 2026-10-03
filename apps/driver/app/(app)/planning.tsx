@@ -170,7 +170,8 @@ export default function Planning() {
             const after = waitsForCurrentRide(r, currentRideId);
             const late = overdue(r, now);
             const lateHint = late ? overdueHint(late, tz, new Date(now)) : null;
-            // Sa part (centrale, course partenaire), sinon le prix
+            // Sa part (centrale, course partenaire), sinon le prix — part chauffeur en mode centrale seulement (une course
+            // créée avant un retour au mode flotte garde sa répartition, jamais affichée : money calculé par le serveur)
             const money = rideMoneyView(r);
             const amount = money.kind === "plain" ? formatPrice(r.price_cents, r.currency) : formatPrice(money.gainCents, money.currency);
             return (

@@ -30,9 +30,13 @@ type Tab = "live" | "upcoming" | "alerts";
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1 };
 
+/** Fuseau de la centrale (Réglages) : horloge, fil d'événements et panneau chauffeur, comme la liste Courses. */
+const useOrgTimeZone = () => useCentrale()?.timeZone || "Europe/Paris";
+
 function LiveClock() {
   const now = useNow(1000);
-  return <span className="text-[12.5px] tabular-nums text-fg-subtle">{now ? formatTime(new Date(now), undefined, true) : "--:--:--"}</span>;
+  const tz = useOrgTimeZone();
+  return <span className="text-[12.5px] tabular-nums text-fg-subtle">{now ? formatTime(new Date(now), tz, true) : "--:--:--"}</span>;
 }
 
 function stored(key: string, fallback: string) {
@@ -73,6 +77,7 @@ export function CommandCenter({
   const [state, dispatch] = useReducer(reducer, initial, (s) =>
     reducer({ drivers: {}, rides: {}, offers: {}, alerts: {}, reports: {}, kpis: null }, { type: "snapshot", snapshot: s }),
   );
+  const tz = useOrgTimeZone();
   const [selectedRide, setSelectedRide] = useState<string | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<string | null>(null);
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
@@ -681,7 +686,7 @@ export function CommandCenter({
               ) : (
                 <p className="text-[12.5px]" style={{ color: PRESENCE_COLOR[driver.presence] }}>
                   {PRESENCE_META[driver.presence].label}
-                  <span className="text-fg-subtle"> · {driver.location ? `vu à ${formatTime(driver.location.updated_at)}` : "position inconnue"}</span>
+                  <span className="text-fg-subtle"> · {driver.location ? `vu à ${formatTime(driver.location.updated_at, tz)}` : "position inconnue"}</span>
                 </p>
               )}
               <p className="truncate text-[12px] text-fg-muted">
@@ -710,12 +715,12 @@ export function CommandCenter({
               </a>
             </Button>
             <Button asChild variant="secondary" size="sm">
-              <Link href={`/dashboard/messages?driver=${driver.id}`}>
+              <Link href={`/dashboard/messages?driver=${driver.id}`} prefetch={false}>
                 <MessageSquareText /> Message
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm">
-              <Link href={`/dashboard/drivers/${driver.id}`}>Profil</Link>
+              <Link href={`/dashboard/drivers/${driver.id}`} prefetch={false}>Profil</Link>
             </Button>
           </div>
         </div>
@@ -728,7 +733,7 @@ export function CommandCenter({
             <ul className="space-y-0.5">
               {feed.slice(0, 3).map((e) => (
                 <li key={e.id} className="flex animate-rise gap-2.5 text-[12px]">
-                  <span className="shrink-0 tabular-nums text-fg-subtle">{formatTime(e.created_at, undefined, true)}</span>
+                  <span className="shrink-0 tabular-nums text-fg-subtle">{formatTime(e.created_at, tz, true)}</span>
                   <span className={cn("truncate", e.level === "error" ? "text-red" : e.level === "warning" ? "text-amber" : e.level === "success" ? "text-brand" : "text-fg-muted")}>
                     {e.message}
                   </span>

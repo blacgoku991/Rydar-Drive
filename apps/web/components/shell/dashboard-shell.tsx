@@ -2,7 +2,7 @@
 import type { PlatformEvent } from "@rydar/shared";
 import { useRouter } from "next/navigation";
 import { AlertDialog as A } from "radix-ui";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
 import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-provider";
 import { CookieNotice } from "@/components/legal/cookie-notice";
@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
 import { switchOrganization } from "@/app/dashboard/actions";
 import { announceOrgSwitch, onOrgSwitch } from "@/lib/org-switch";
+import { rememberViewedOrg } from "@/lib/org-view";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
 import { runAction } from "@/lib/run-action";
 import { getBrowserClient } from "@/lib/supabase/client";
@@ -205,6 +206,9 @@ function ShellBody({
   };
   useRealtimeEvent("driver.document", reloadPendingDocuments);
   useRealtimeEvent("driver.application", reloadPendingDocuments);
+  // Centrale affichée → cookie rd_view : le serveur refuse toute action résolue vers une autre centrale (accès retiré
+  // ou centrale archivée pendant la saisie). Avant les effets des écrans enfants (leurs requêtes partent avec la bonne valeur).
+  useLayoutEffect(() => rememberViewedOrg(org.id), [org.id]);
   // Centrale changée dans un autre onglet (cookie commun) : les actions de cet onglet partiraient vers elle
   const [switchedTo, setSwitchedTo] = useState<string | null>(null);
   useEffect(() => {

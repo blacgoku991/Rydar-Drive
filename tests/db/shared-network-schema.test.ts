@@ -537,7 +537,8 @@ describe("G3 : chauffeur d'une autre organisation posé sur une course", () => {
     // Course propre, chauffeur supprimé par son organisation : le véhicule reste (comme avant) ; véhicule supprimé : détaché
     const own = await createDriver(p.A);
     const rideId = await insertRideBypass(p.A, { status: "CANCELLED", cancelled_at: new Date(), driver_id: own.id, vehicle_id: own.vehicleId });
-    await as({ sub: p.A.ownerId }, (q) => q(`delete from public.drivers where id = $1`, [own.id]));
+    // (suppression directe d'une fiche : service role seulement depuis l'audit 20260924006650)
+    await as({ role: "service_role" }, (q) => q(`delete from public.drivers where id = $1`, [own.id]));
     expect(await ride(rideId)).toMatchObject({ driver_id: null, driver_org_id: null, vehicle_id: own.vehicleId });
     await as({ sub: p.A.ownerId }, (q) => q(`delete from public.vehicles where id = $1`, [own.vehicleId]));
     expect((await ride(rideId)).vehicle_id).toBeNull();
@@ -797,7 +798,10 @@ describe("G7 : fiche avec des obligations réseau", () => {
   it("B ne supprime pas un chauffeur qui tient une course de A ou doit / attend un règlement réseau ; ensuite, si", async () => {
     const p = await networkPair();
     const { ride: r, executionId } = await partnerRide(p);
-    const remove = () => as({ sub: p.B.ownerId }, (q) => q(`delete from public.drivers where id = $1 returning id`, [p.partner.id]));
+    // L'API ne supprime plus aucune fiche (audit 20260924006650 : 42501) ; G7 tient pour toute autre voie (service role)
+    expect((await expectPgError(as({ sub: p.B.ownerId }, (q) => q(`delete from public.drivers where id = $1`, [p.partner.id])))).code)
+      .toBe("42501");
+    const remove = () => as({ role: "service_role" }, (q) => q(`delete from public.drivers where id = $1 returning id`, [p.partner.id]));
     let e = await expectPgError(remove());
     expect(e.code).toBe("55000");
     expect(e.message).toContain("DRIVER_HAS_NETWORK_OBLIGATIONS");
@@ -817,6 +821,9 @@ describe("G7 : fiche avec des obligations réseau", () => {
     expect(s).toEqual({ network_driver_id: null, network_driver_org_id: p.B.id });
   });
 
+  // Depuis l'audit 20260924006650, le statut ne s'écrit plus directement (droit par colonne retiré à authenticated :
+  // 42501) : seulement par set_driver_status / ban_driver, qui rendent la course partagée ou refusent (client à bord).
+  // Le déclencheur G7 (clause current_user = 'authenticated') reste en défense si le droit revenait.
   it("B ne retire pas DIRECTEMENT le statut actif d'un chauffeur qui tient une course de A (droit par colonne) ; ensuite, si", async () => {
     const p = await networkPair();
     const admin = await createMember(p.B, "admin");
@@ -824,29 +831,26 @@ describe("G7 : fiche avec des obligations réseau", () => {
     const setStatus = (who: string, status: string) =>
       as({ sub: who }, (q) => q(`update public.drivers set status = $2 where id = $1 returning id`, [p.partner.id, status]));
     for (const [who, status] of [[p.B.ownerId, "inactive"], [admin, "suspended"], [p.B.ownerId, "invited"]] as const) {
-      const e = await expectPgError(setStatus(who, status));
-      expect(e.code, status).toBe("55000");
-      expect(e.message, status).toContain("DRIVER_HAS_NETWORK_OBLIGATIONS");
+      expect((await expectPgError(setStatus(who, status))).code, status).toBe("42501");
     }
     // Client à bord : de même
     await sql(`update public.rides set status = 'IN_PROGRESS', started_at = now() where id = $1`, [r.id]);
-    expect((await expectPgError(setStatus(p.B.ownerId, "suspended"))).code).toBe("55000");
+    expect((await expectPgError(setStatus(p.B.ownerId, "suspended"))).code).toBe("42501");
     // Autres colonnes de la fiche : inchangé
     await as({ sub: p.B.ownerId }, (q) => q(`update public.drivers set notes = 'RAS' where id = $1`, [p.partner.id]));
     expect((await sql(`select status from public.drivers where id = $1`, [p.partner.id]))[0].status).toBe("active");
-    // Course terminée : statut de nouveau libre
+    // Course terminée : statut changé par la RPC
     await sql(`update public.rides set status = 'COMPLETED', completed_at = now() where id = $1`, [r.id]);
-    expect(await setStatus(p.B.ownerId, "inactive")).toHaveLength(1);
-    // Chauffeur sans course partenaire : inchangé
-    const mate = await createDriver(p.B);
-    expect(await as({ sub: admin }, (q) => q(`update public.drivers set status = 'suspended' where id = $1 returning id`, [mate.id])))
-      .toHaveLength(1);
+    expect(await as({ sub: p.B.ownerId }, async (q) =>
+      (await q(`select public.set_driver_status($1, 'inactive', null) as r`, [p.partner.id]))[0].r)).toMatchObject({ ok: true });
+    expect((await sql(`select status from public.drivers where id = $1`, [p.partner.id]))[0].status).toBe("inactive");
   });
 
-  it("fiche sans lien réseau : suppression inchangée", async () => {
+  it("fiche sans lien réseau : suppression inchangée (service role ; l'API ne supprime plus de fiche)", async () => {
     const B = await createOrg(`G7 libre ${tag()}`);
     const d = await createDriver(B);
-    expect(await as({ sub: B.ownerId }, (q) => q(`delete from public.drivers where id = $1 returning id`, [d.id]))).toHaveLength(1);
+    expect((await expectPgError(as({ sub: B.ownerId }, (q) => q(`delete from public.drivers where id = $1`, [d.id])))).code).toBe("42501");
+    expect(await as({ role: "service_role" }, (q) => q(`delete from public.drivers where id = $1 returning id`, [d.id]))).toHaveLength(1);
   });
 });
 

@@ -3701,8 +3701,8 @@ begin
 end;
 $$;
 
--- Dernière définition : 20260924006600_platform_fee_schedule.sql. Corps 006600 gardé À L'IDENTIQUE ; seul ajout
--- (« Réseau partagé ») : empreintes réseau d'un compte supprimé purgées quand plus rien n'est dû à leur créancière
+-- Dernière définition : 20260924006650_audit_fixes.sql. Corps 006650 gardé À L'IDENTIQUE (006600 + dernière position
+-- purgée après 30 jours) ; seul ajout (« Réseau partagé ») : empreintes réseau d'un compte supprimé purgées quand plus rien n'est dû à leur créancière
 -- (comptées dans debtor_identities_purged : réponse de même forme).
 create or replace function private.housekeeping()
 returns jsonb
@@ -3712,6 +3712,7 @@ set search_path = ''
 as $$
 declare
   v_history integer;
+  v_last_positions integer;
   v_logs integer;
   v_docs integer;
   v_notifs integer;
@@ -3745,6 +3746,10 @@ begin
 
   delete from public.driver_location_history where recorded_at < now() - interval '30 days';
   get diagnostics v_history = row_count;
+  delete from public.driver_locations l
+   where l.updated_at < now() - interval '30 days'
+     and not exists (select 1 from public.drivers d where d.id = l.driver_id and d.current_ride_id is not null);
+  get diagnostics v_last_positions = row_count;
   delete from public.api_logs where created_at < now() - interval '90 days';
   get diagnostics v_logs = row_count;
   -- Échéance au jour LOCAL de l'organisation (comme private.document_reminders), pas au jour UTC du serveur
@@ -3862,7 +3867,7 @@ begin
 
   return jsonb_build_object('rides_expired', v_expired, 'platform_fee_changes_applied', v_fee_changes,
     'platform_reductions_accepted', v_reductions,
-    'history_purged', v_history, 'api_logs_purged', v_logs,
+    'history_purged', v_history, 'last_positions_purged', v_last_positions, 'api_logs_purged', v_logs,
     'documents_expired', v_docs, 'notifications_purged', v_notifs, 'chat_purged', v_chat,
     'fleet_events_purged', v_fleet, 'audit_network_purged', v_network, 'rides_purged', v_rides,
     'bans_purged', v_bans, 'alert_positions_purged', v_alert_positions, 'debtor_identities_purged', v_debtors,

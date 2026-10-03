@@ -51,6 +51,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           centrale ? (
             <Link
               href="/dashboard/settings?tab=centrale"
+              prefetch={false}
               className="surface flex items-center gap-3 rounded-xl px-5 py-4 transition-colors hover:border-line-strong hover:bg-ink-700"
             >
               <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted">
@@ -137,6 +138,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         {perRide && fee && (
           <Link
             href={platformFeesPaths("fleet").page}
+            prefetch={false}
             className="surface flex items-center gap-3 rounded-xl px-5 py-4 transition-colors hover:border-line-strong hover:bg-ink-700"
           >
             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted">

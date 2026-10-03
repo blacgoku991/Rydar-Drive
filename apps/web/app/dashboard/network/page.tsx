@@ -220,7 +220,7 @@ export default async function NetworkPage() {
                         <li key={r.id} className="space-y-1.5 px-5 py-3.5">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="min-w-0 truncate text-[13.5px] font-medium">
-                              {r.driver_id ? <Link href={`/dashboard/drivers/${r.driver_id}`} className="hover:text-brand">{r.driver_label}</Link> : r.driver_label}
+                              {r.driver_id ? <Link href={`/dashboard/drivers/${r.driver_id}`} prefetch={false} className="hover:text-brand">{r.driver_label}</Link> : r.driver_label}
                             </p>
                             <Badge tone={meta.tone} pulse={r.status === "open"}>{meta.label}</Badge>
                           </div>
@@ -245,7 +245,7 @@ export default async function NetworkPage() {
                   {decisions.map((d) => (
                     <li key={d.id} className="flex items-center justify-between gap-3 px-5 py-2.5">
                       <span className="min-w-0">
-                        <Link href={`/dashboard/drivers/${d.id}`} className="block truncate text-[13px] font-medium hover:text-brand">
+                        <Link href={`/dashboard/drivers/${d.id}`} prefetch={false} className="block truncate text-[13px] font-medium hover:text-brand">
                           {d.first_name} {d.last_name} <span className="num text-[11.5px] font-normal text-fg-subtle">#{d.number}</span>
                         </Link>
                         <span className="block truncate text-[11.5px] text-fg-subtle">

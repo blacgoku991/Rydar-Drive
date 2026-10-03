@@ -248,7 +248,10 @@ export function SlideToConfirm({
       accessibilityRole="adjustable"
       accessibilityLabel={label}
       accessibilityActions={[{ name: "activate", label }]}
-      onAccessibilityAction={() => onConfirm()}
+      // Pendant l'envoi : ignorée (même règle que le glissé, jamais deux demandes de suite)
+      onAccessibilityAction={() => {
+        if (!loading) onConfirmRef.current();
+      }}
     >
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: color, opacity: x.interpolate({ inputRange: [0, Math.max(1, max)], outputRange: [0, 0.18] }), borderRadius: height / 2 }]} />
       <Text style={[styles.slideText, { color: colors.fg }]}>{loading ? "…" : label}</Text>

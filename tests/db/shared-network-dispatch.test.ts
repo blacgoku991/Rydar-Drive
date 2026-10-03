@@ -1607,9 +1607,9 @@ describe("Retraits et chien de garde (§14.1 n° 14)", () => {
       ok: false, code: "DRIVER_ON_RIDE",
       message: "Client à bord d'une course partenaire : attendez la fin de la course avant de bannir ce chauffeur.",
     });
-    // Écriture directe du statut par B : refusée aussi (G7)
+    // Écriture directe du statut par B : refusée aussi (droit retiré par l'audit 20260924006650 ; G7 en défense)
     const err = await expectPgError(as({ sub: p.B.ownerId }, (q) => q(`update public.drivers set status = 'inactive' where id = $1`, [p.partner.id])));
-    expect(err.message).toContain("DRIVER_HAS_NETWORK_OBLIGATIONS");
+    expect(err.code).toBe("42501");
     expect((await rideState(ride.id)).ride).toMatchObject({ driver_id: p.partner.id, status: "PASSENGER_ONBOARD" });
   });
 

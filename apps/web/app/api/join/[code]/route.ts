@@ -3,7 +3,7 @@ import { JOIN_LINK_INACTIVE, joinInfoModel } from "@/components/network/join-cop
 import { driverAppCors } from "@/lib/driver-app-cors";
 import { applyWithJoinLink, loadJoinInfo } from "@/lib/join";
 import { rateLimit } from "@/lib/rate-limit";
-import { clientIp } from "@/lib/request";
+import { clientIp, ipBucket } from "@/lib/request";
 
 // Inscription d'un chauffeur depuis l'application, par le lien d'une centrale ou d'une flotte (même logique que
 // /rejoindre/{code}).
@@ -18,7 +18,7 @@ export function OPTIONS(req: Request) {
 /** Carte de l'organisation (flotte ou centrale) affichée dans l'app avant l'inscription. */
 export async function GET(req: Request, { params }: { params: Promise<{ code: string }> }) {
   const headers = { ...NO_STORE, ...driverAppCors(req) };
-  const limit = await rateLimit(`join:info:${await clientIp()}`, 60, 900);
+  const limit = await rateLimit(`join:info:${ipBucket(await clientIp())}`, 60, 900);
   if (!limit.ok) return NextResponse.json({ ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes." }, { status: 429, headers });
   const info = await loadJoinInfo((await params).code);
   if (!info?.organization) {

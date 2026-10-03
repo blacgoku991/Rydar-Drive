@@ -47,7 +47,7 @@ describe("Limites des offres SaaS", () => {
   it("audit : suspension d'un chauffeur journalisée", async () => {
     const org = await createOrg("Audit");
     const d = await createDriver(org);
-    await as({ sub: org.ownerId }, (q) => q("update public.drivers set status = 'suspended' where id = $1", [d.id]));
+    await as({ sub: org.ownerId }, (q) => q("select public.set_driver_status($1, 'suspended', null)", [d.id]));
     const logs = await sql("select action, severity from public.audit_logs where entity_id = $1 order by id", [d.id]);
     expect(logs.at(-1)).toEqual({ action: "drivers.update", severity: "warning" });
   });

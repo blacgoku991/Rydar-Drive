@@ -30,7 +30,7 @@ function HeaderButton({ href, label, icon, external }: { href: string; label: st
       {content}
     </a>
   ) : (
-    <Link href={href} className={cls} aria-label={label}>
+    <Link href={href} prefetch={false} className={cls} aria-label={label}>
       {content}
     </Link>
   );

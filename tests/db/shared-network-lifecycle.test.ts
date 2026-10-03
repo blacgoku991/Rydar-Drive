@@ -91,8 +91,11 @@ describe("Suppression d'un compte chauffeur partenaire (§10.10, §14.1 n° 29)"
     const eventsBefore = await sql(`select message from public.ride_events where ride_id = $1 and message like '%Karim T.%'`, [cash.ride.id]);
     expect(eventsBefore.length).toBeGreaterThan(0);
 
-    // G7 : l'organisation du chauffeur ne supprime pas une fiche qui doit encore une somme à une organisation partenaire
-    const g7 = await expectPgError(as({ sub: p.B.ownerId }, (q) => q(`delete from public.drivers where id = $1`, [p.partner.id])));
+    // G7 : une fiche qui doit encore une somme à une organisation partenaire n'est jamais supprimée (l'API ne supprime
+    // plus aucune fiche depuis l'audit 20260924006650 : 42501 ; G7 tient pour toute autre voie, service role compris)
+    expect((await expectPgError(as({ sub: p.B.ownerId }, (q) => q(`delete from public.drivers where id = $1`, [p.partner.id])))).code)
+      .toBe("42501");
+    const g7 = await expectPgError(as({ role: "service_role" }, (q) => q(`delete from public.drivers where id = $1`, [p.partner.id])));
     expect(g7.message).toMatch(/^DRIVER_HAS_NETWORK_OBLIGATIONS/);
 
     expect(await svc("svc_delete_driver_account", [p.partner.userId])).toMatchObject({ ok: true, code: "DELETED" });

@@ -40,6 +40,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
             <Link
               key={p.key}
               href={`/dashboard/stats?range=${p.key}`}
+              prefetch={false}
               className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium", p.key === preset.key ? "bg-ink-600 text-fg" : "text-fg-muted hover:bg-white/[0.03] hover:text-fg")}
             >
               {p.key === preset.key && <Check className="size-3.5 text-brand" strokeWidth={3} />}

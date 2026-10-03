@@ -54,7 +54,11 @@ export function SettlementBanner({
     tone = colors.amber;
     icon = "wallet-outline";
     title = `${formatPrice(s.owed_cents, currency)} à régler à la centrale`;
-    if (s.next_due_at) {
+    // Montant déjà en retard (next_due_at ne porte que les échéances à venir) : signalé en premier
+    if ((s.overdue_cents ?? 0) > 0) {
+      sub = `dont ${formatPrice(s.overdue_cents, currency)} en retard`;
+      late = true;
+    } else if (s.next_due_at) {
       const due = dueText(s.next_due_at, tz, now);
       sub = due.short;
       late = due.late;

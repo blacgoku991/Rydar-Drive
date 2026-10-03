@@ -431,8 +431,8 @@ describe("Documents — driver_documents", () => {
     expect(rows.every((r) => r.driver_id === d.id)).toBe(true);
     expect(rows).toHaveLength(1);
 
-    const updated = await as({ sub: d.userId }, (q) => q(`update public.driver_documents set status = 'valid' where id = $1 returning 1`, [theirs]));
-    expect(updated).toHaveLength(0);
+    const updated = await expectPgError(as({ sub: d.userId }, (q) => q(`update public.driver_documents set status = 'valid' where id = $1 returning 1`, [theirs])));
+    expect(updated.code).toBe("42501");
     const err = await expectPgError(
       as({ sub: d.userId }, (q) =>
         q(`insert into public.driver_documents (organization_id, driver_id, type, status) values ($1, $2, 'vtc_card', 'valid')`, [org.id, d.id]),
@@ -558,14 +558,16 @@ describe("Documents — review_driver_document", () => {
     const org = await createOrg("Docs Direct");
     const d = await createDriver(org);
     const id = await insertDoc(org, d, "vtc_card", { status: "pending", days: 100, source: "driver" });
-    await as({ sub: org.ownerId }, (q) => q(`update public.driver_documents set status = 'valid' where id = $1`, [id]));
+    // Plus d'écriture directe par le tableau de bord (20260924006650 : review_driver_document) ; le déclencheur reste
+    expect((await expectPgError(as({ sub: org.ownerId }, (q) => q(`update public.driver_documents set status = 'valid' where id = $1`, [id])))).code).toBe("42501");
+    await as({ role: "service_role", sub: org.ownerId }, (q) => q(`update public.driver_documents set status = 'valid' where id = $1`, [id]));
     const row = await doc(id);
     expect(row.reviewed_by).toBe(org.ownerId);
     expect(row.reviewed_at).not.toBeNull();
 
     const expired = await insertDoc(org, d, "insurance", { status: "expired", days: -3 });
     await sql(`update public.driver_documents set reminders_sent = '{30,7,0}' where id = $1`, [expired]);
-    await as({ sub: org.ownerId }, (q) =>
+    await as({ role: "service_role", sub: org.ownerId }, (q) =>
       q(`update public.driver_documents set expires_at = (now() at time zone '${TZ}')::date + 200 where id = $1`, [expired]),
     );
     expect(await doc(expired)).toMatchObject({ status: "valid", reminders_sent: [] });
@@ -689,7 +691,7 @@ describe("Documents — private.document_reminders", () => {
       .toEqual([30, 7]);
 
     // Renouvellement par la centrale (nouvelle date) : rappels réarmés
-    await as({ sub: org.ownerId }, (q) => q(`update public.driver_documents set expires_at = expires_at + 400 where id = $1`, [in5]));
+    await as({ role: "service_role", sub: org.ownerId }, (q) => q(`update public.driver_documents set expires_at = expires_at + 400 where id = $1`, [in5]));
     expect((await doc(in5)).reminders_sent).toEqual([]);
   });
 

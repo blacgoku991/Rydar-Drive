@@ -432,13 +432,20 @@ export function TermsForm({
   const [days, setDays] = useState(String(paymentDays));
   const [block, setBlock] = useState(blockAfterDays != null);
   const [blockDays, setBlockDays] = useState(String(blockAfterDays ?? 15));
+  const [consent, setConsent] = useState("");
   const [errors, setErrors] = useState<Errors>({});
   useEffect(() => {
     setValue(cycle);
     setDays(String(paymentDays));
     setBlock(blockAfterDays != null);
     setBlockDays(String(blockAfterDays ?? 15));
+    setConsent("");
   }, [cycle, paymentDays, blockAfterDays]);
+  // Même règle que svc_platform_terms : délai raccourci, mensuel → hebdomadaire, blocage ajouté ou plus tôt
+  const unfavorable =
+    (days.trim() !== "" && Number(days) < paymentDays) ||
+    (cycle === "monthly" && value === "weekly") ||
+    (block && blockDays.trim() !== "" && (blockAfterDays == null || Number(blockDays) < blockAfterDays));
   const dirty =
     value !== cycle ||
     days.trim() !== String(paymentDays) ||
@@ -453,8 +460,10 @@ export function TermsForm({
         const missing: Errors = {};
         if (!days.trim()) missing.paymentDays = "Entre 0 et 45 jours";
         if (block && !blockDays.trim()) missing.blockAfterDays = "Entre 1 et 90 jours";
+        if (unfavorable && consent.trim().length < 3) missing.consentNote = "Notez l'accord écrit de l'organisation";
         if (Object.keys(missing).length) return setErrors(missing);
-        run(() => updatePlatformTerms(orgId, { cycle: value, paymentDays: days, blockAfterDays: block ? blockDays : null }), {
+        const consentNote = unfavorable ? consent : null;
+        run(() => updatePlatformTerms(orgId, { cycle: value, paymentDays: days, blockAfterDays: block ? blockDays : null, consentNote }), {
           onDone: () => setErrors({}),
           onError: (res) => setErrors(res.fieldErrors ?? {}),
         });
@@ -536,6 +545,22 @@ export function TermsForm({
           </Field>
         )}
       </div>
+      {unfavorable && (
+        <Field
+          label="Accord écrit de l'organisation"
+          htmlFor="terms-consent"
+          error={errors.consentNote}
+          hint="Changement en sa défaveur (délai raccourci, cycle hebdomadaire, blocage ajouté ou plus tôt) : date et forme de son accord (CGV, article 5). Journalisé."
+        >
+          <Textarea
+            id="terms-consent"
+            value={consent}
+            onChange={(e) => setConsent(e.target.value.slice(0, 500))}
+            rows={2}
+            aria-invalid={!!errors.consentNote || undefined}
+          />
+        </Field>
+      )}
       <div className="flex items-center justify-between gap-3">
         <p className="text-[12px] text-fg-subtle">
           Les frais déjà enregistrés gardent leur échéance. Changement en défaveur de l&apos;organisation (délai raccourci,
