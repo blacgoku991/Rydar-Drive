@@ -1,6 +1,8 @@
 # Installation sur un VPS
 
-Tout Rydar Drive tourne sur **un VPS** (site, worker, HTTPS) + **un projet Supabase** (base de données, comptes, temps réel, documents). Le VPS ne garde aucune donnée métier : il peut être remplacé à tout moment.
+Tout Rydar Drive tourne sur **un VPS** (site, worker, HTTPS) + **Supabase** (base de données, comptes, temps réel, documents).
+
+> **Production (rydardrive.com) : Supabase est auto-hébergé sur le même VPS** (`/opt/supabase`, voir `docs/DEPLOYMENT.md`, « Montage en production ») : toutes les données, les fichiers et les sauvegardes sont sur le VPS, et les pages légales le décrivent ainsi (`/confidentialite` § 7 à 9, `/dpa` art. 5 à 7, `/mentions-legales`). Les étapes « projet Supabase » ci-dessous décrivent l'autre montage possible (projet cloud) : l'adopter ajoute un sous-traitant, il faut d'abord modifier `/dpa` (annonce aux centrales 30 jours avant, art. 6) et `/confidentialite`.
 
 Serveur conseillé : Ubuntu **24.04 ou 26.04 LTS**, 2 vCPU ou plus, **4 à 8 Go de RAM**, datacenter en France.
 
@@ -123,6 +125,6 @@ docker compose restart worker                           # redémarrer un service
 sudo bash /opt/rydar/deploy/configure.sh                # changer une clé, puis relancer install.sh
 ```
 
-- **Sauvegardes** : la base est chez Supabase (sauvegardes du plan Pro). Sur le VPS, seul `deploy/.env` est à conserver précieusement.
+- **Sauvegardes** : montage cloud, la base est chez Supabase (sauvegardes du plan Pro) et seul `deploy/.env` est à conserver sur le VPS. Supabase auto-hébergé (production) : sauvegarde nocturne de la base et des fichiers sur le VPS, gardée 14 jours, **plus une copie chiffrée hors du VPS** (stockage objet en Union européenne, clé de chiffrement gardée hors du stockage, restauration testée) : voir `docs/DEPLOYMENT.md`, « Checklist de mise en production ».
 - **Itinéraires** : par défaut, serveur de démo OSRM (limité). Pour votre propre serveur (gratuit, rapide) : `bash deploy/osrm-prepare.sh` puis `OSRM_URL=http://osrm:5000` dans `deploy/.env` et `docker compose --profile osrm up -d`.
 - **Plusieurs sites sur le même VPS** : Caddy occupe les ports 80 et 443. Si un autre site (nginx…) les utilise déjà, faites passer Rydar derrière lui (proxy vers le conteneur `web`, port 3000) ou utilisez un VPS dédié.

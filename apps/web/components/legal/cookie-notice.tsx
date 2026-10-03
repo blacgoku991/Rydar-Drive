@@ -6,7 +6,9 @@
 //  - espaces connectés (tableau de bord, super admin) : dans la barre latérale, au-dessus du menu du compte
 //    (placement « sidebar », rendu par les shells ; aussi dans le menu mobile) ;
 //  - pages publiques (accueil, connexion, mini-site…) : flottant en bas, SOUS les dialogues et menus (z-40), avec une
-//    réserve de même hauteur en fin de page pour que le bas de page puisse toujours défiler au-dessus du bandeau.
+//    réserve de même hauteur en fin de page pour que le bas de page puisse toujours défiler au-dessus du bandeau, et
+//    une marge de défilement (scroll-padding-bottom) de même hauteur : un élément qui reçoit le focus au clavier
+//    n'est jamais caché dessous (WCAG 2.2, 2.4.11).
 import { Cookie, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -65,11 +67,25 @@ export function CookieNotice({ href, placement = "floating" }: { href: string; p
   return slot === "sidebar" ? <SidebarNotice href={href} onClose={close} /> : <FloatingNotice href={href} onClose={close} />;
 }
 
+/**
+ * Fermer le bandeau retire le bouton qui avait le focus : il passe au contenu principal (#contenu, sinon <main>), au
+ * lieu de tomber sur <body> (la tabulation suivante sortait de la page, WCAG 2.4.3).
+ */
+function focusMainContent() {
+  const main = document.getElementById("contenu") ?? document.querySelector("main");
+  if (!main) return;
+  if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+  main.focus({ preventScroll: true });
+}
+
 function CloseButton({ onClose, className }: { onClose: () => void; className: string }) {
   return (
     <button
       type="button"
-      onClick={onClose}
+      onClick={() => {
+        onClose();
+        focusMainContent();
+      }}
       className={cn("grid size-7 shrink-0 place-items-center rounded-md text-fg-subtle hover:bg-white/[0.06] hover:text-fg", className)}
       aria-label="Fermer l'information sur les cookies"
     >
@@ -90,7 +106,7 @@ export function SidebarNotice({ href, onClose }: { href: string; onClose: () => 
         <p className="min-w-0 flex-1 py-0.5">
           Cookies nécessaires uniquement (connexion, préférences) : aucune publicité ni mesure d&apos;audience.{" "}
           <a href={href} className="text-fg underline underline-offset-2">
-            En savoir plus
+            En savoir plus<span className="sr-only"> sur les cookies</span>
           </a>
         </p>
         <CloseButton onClose={onClose} className="-mt-0.5" />
@@ -116,22 +132,34 @@ export function FloatingNotice({ href, onClose }: { href: string; onClose: () =>
       window.removeEventListener("resize", measure);
     };
   }, []);
+  // Focus au clavier jamais caché sous le bandeau : la page réserve sa hauteur quand elle fait défiler un élément
+  useEffect(() => {
+    if (!height) return;
+    const root = document.documentElement;
+    const previous = root.style.scrollPaddingBottom;
+    root.style.scrollPaddingBottom = `${height + 24}px`;
+    return () => {
+      root.style.scrollPaddingBottom = previous;
+    };
+  }, [height]);
   return (
     <>
       {/* Réserve en fin de page (bandeau + marges) : le dernier contrôle de la page défile au-dessus du bandeau */}
-      <div aria-hidden="true" style={{ height: height ? height + 24 : 0 }} />
+      {/* Écran bas (zoom 400 %, téléphone à l'horizontale) : bandeau dans le flux, en fin de page, au lieu de couvrir
+          une grande part de l'écran (WCAG 1.4.10) ; la réserve devient inutile */}
+      <div aria-hidden="true" className="[@media(max-height:30rem)]:hidden" style={{ height: height ? height + 24 : 0 }} />
       <div
         ref={ref}
         role="region"
         aria-label="Information sur les cookies"
-        className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] p-3.5 text-[12.5px] leading-relaxed text-fg-muted shadow-float backdrop-blur-xl sm:inset-x-auto sm:left-4 sm:mx-0"
+        className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] p-3.5 text-[12.5px] leading-relaxed text-fg-muted shadow-float backdrop-blur-xl sm:inset-x-auto sm:left-4 sm:mx-0 [@media(max-height:30rem)]:static [@media(max-height:30rem)]:m-3"
       >
         <Cookie className="mt-0.5 size-4 shrink-0 text-fg-subtle" />
         <p className="flex-1">
           Ce site n&apos;utilise que des cookies nécessaires à son fonctionnement (connexion, préférences). Aucun cookie publicitaire ni de mesure
           d&apos;audience.{" "}
           <a href={href} className="text-fg underline underline-offset-2">
-            En savoir plus
+            En savoir plus<span className="sr-only"> sur les cookies</span>
           </a>
         </p>
         <CloseButton onClose={onClose} className="-m-1.5" />

@@ -93,7 +93,7 @@ export function BannedDriversCard({ drivers, canManage, timeZone }: { drivers: B
                               <button
                                 type="button"
                                 onClick={() => setUnblock({ ...i, driver: fullName(d) })}
-                                className="grid size-4 place-items-center rounded text-fg-subtle hover:bg-white/10 hover:text-fg"
+                                className="-my-1 grid size-6 place-items-center rounded text-fg-subtle hover:bg-white/10 hover:text-fg"
                                 aria-label={`Débloquer : ${IDENTITY_KIND_LABELS[i.kind]}`}
                                 title="Débloquer cette identité"
                               >

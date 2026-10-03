@@ -8,6 +8,7 @@ import {
 } from "@rydar/shared";
 import { HandCoins, Lock, MessageCircle, Percent, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
+import * as React from "react";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { updateCentraleSettings } from "@/app/dashboard/settings/actions";
@@ -17,7 +18,7 @@ import { centraleIssues } from "@/components/settlements/settings-schema";
 import { centsToInput, eurosToCents } from "@/components/settlements/split-preview";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Field, Input } from "@/components/ui/input";
+import { Field, Input, asFieldControl } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
@@ -78,15 +79,29 @@ const cents = (v: string) => {
   return c == null ? "" : c;
 };
 
-/** Entrée avec unité à droite (« % », « € », « h »). */
-function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
+/** Entrée avec unité à droite (« % », « € », « h ») ; reliée par Field (id, aide, erreur). */
+/** Unité lue par les lecteurs d'écran (le symbole affiché à droite du champ ne l'est pas). */
+const UNIT_WORDS: Record<string, string> = { "%": "en pourcentage", "€": "en euros", h: "en heures", courses: "en nombre de courses" };
+
+/**
+ * Champ avec unité : nom accessible = libellé visible de Field (WCAG 2.5.3), unité annoncée en description
+ * (aria-describedby, après l'aide ou l'erreur de Field).
+ */
+const UnitInput = asFieldControl(function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
+  const unitId = React.useId();
   return (
     <div className="relative">
-      <Input inputMode="decimal" {...props} className={cn("mono pr-10", className)} />
-      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-fg-subtle">{unit}</span>
+      <Input
+        inputMode="decimal"
+        {...props}
+        aria-describedby={[props["aria-describedby"], unitId].filter(Boolean).join(" ")}
+        className={cn("mono pr-10", className)}
+      />
+      <span aria-hidden className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-fg-subtle">{unit}</span>
+      <span id={unitId} className="sr-only">{UNIT_WORDS[unit] ?? unit}</span>
     </div>
   );
-}
+});
 
 export function CentraleSettingsForm({
   settings,
@@ -185,10 +200,10 @@ export function CentraleSettingsForm({
           <CardBody className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Pourcentage du prix" hint="Vide = aucun pourcentage." error={errors.commissionPercent}>
-                <UnitInput unit="%" aria-label="Commission : pourcentage du prix" value={f.pct} placeholder="0" disabled={readOnly} onChange={(e) => set("pct", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} aria-invalid={!!errors.commissionPercent} />
+                <UnitInput unit="%" value={f.pct} placeholder="0" disabled={readOnly} onChange={(e) => set("pct", e.target.value.replace(/[^\d.,]/g, "").slice(0, 6))} aria-invalid={!!errors.commissionPercent} />
               </Field>
               <Field label="Montant fixe par course" hint="S'ajoute au pourcentage." error={errors.commissionFixedCents}>
-                <UnitInput unit="€" aria-label="Commission : montant fixe par course" value={f.fixed} placeholder="0" disabled={readOnly} onChange={(e) => set("fixed", e.target.value.replace(/[^\d.,]/g, "").slice(0, 9))} aria-invalid={!!errors.commissionFixedCents} />
+                <UnitInput unit="€" value={f.fixed} placeholder="0" disabled={readOnly} onChange={(e) => set("fixed", e.target.value.replace(/[^\d.,]/g, "").slice(0, 9))} aria-invalid={!!errors.commissionFixedCents} />
               </Field>
             </div>
             <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-white/[0.02] px-4 py-3">
@@ -219,7 +234,7 @@ export function CentraleSettingsForm({
           <CardBody className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-[220px_1fr] sm:items-start">
               <Field label="Délai de règlement" error={errors.graceHours}>
-                <UnitInput unit="h" aria-label="Délai de règlement en heures" value={f.grace} disabled={readOnly} onChange={(e) => set("grace", e.target.value.replace(/\D/g, "").slice(0, 3))} aria-invalid={!!errors.graceHours} />
+                <UnitInput unit="h" value={f.grace} disabled={readOnly} onChange={(e) => set("grace", e.target.value.replace(/\D/g, "").slice(0, 3))} aria-invalid={!!errors.graceHours} />
               </Field>
               <p className="rounded-xl bg-white/[0.03] px-3.5 py-2.5 text-[12.5px] leading-[19px] text-fg-muted sm:mt-[26px]">
                 {Number(f.grace) === 0
@@ -253,13 +268,13 @@ export function CentraleSettingsForm({
             </label>
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Plafond d'encours" hint="Au-delà, plus d'offres. Vide = aucun." error={errors.creditLimitCents}>
-                <UnitInput unit="€" aria-label="Plafond d'encours" value={f.credit} placeholder="Aucun" disabled={readOnly} onChange={(e) => set("credit", e.target.value.replace(/[^\d.,]/g, "").slice(0, 9))} aria-invalid={!!errors.creditLimitCents} />
+                <UnitInput unit="€" value={f.credit} placeholder="Aucun" disabled={readOnly} onChange={(e) => set("credit", e.target.value.replace(/[^\d.,]/g, "").slice(0, 9))} aria-invalid={!!errors.creditLimitCents} />
               </Field>
               <Field label="Prix max. des nouveaux" hint="Courses plus chères : confirmés seulement." error={errors.newDriverMaxPriceCents}>
-                <UnitInput unit="€" aria-label="Prix maximum des nouveaux chauffeurs" value={f.newMax} placeholder="Aucun" disabled={readOnly} onChange={(e) => set("newMax", e.target.value.replace(/[^\d.,]/g, "").slice(0, 9))} aria-invalid={!!errors.newDriverMaxPriceCents} />
+                <UnitInput unit="€" value={f.newMax} placeholder="Aucun" disabled={readOnly} onChange={(e) => set("newMax", e.target.value.replace(/[^\d.,]/g, "").slice(0, 9))} aria-invalid={!!errors.newDriverMaxPriceCents} />
               </Field>
               <Field label="Confirmé après" hint="Courses réglées, sans impayé. Vide = manuel." error={errors.trustAfterRides}>
-                <UnitInput unit="courses" aria-label="Confirmation automatique après N courses réglées" value={f.trust} placeholder="Manuel" disabled={readOnly} onChange={(e) => set("trust", e.target.value.replace(/\D/g, "").slice(0, 4))} className="pr-20" aria-invalid={!!errors.trustAfterRides} />
+                <UnitInput unit="courses" value={f.trust} placeholder="Manuel" disabled={readOnly} onChange={(e) => set("trust", e.target.value.replace(/\D/g, "").slice(0, 4))} className="pr-20" aria-invalid={!!errors.trustAfterRides} />
               </Field>
             </div>
           </CardBody>

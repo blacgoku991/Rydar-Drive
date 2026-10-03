@@ -60,10 +60,12 @@ export function FleetPanel({
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
           <input
+            type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Nom, plaque, n°"
-            className="h-8 w-full rounded-lg bg-white/[0.04] pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:bg-white/[0.06]"
+            aria-label="Rechercher un chauffeur" title="Rechercher un chauffeur"
+            className="h-8 w-full rounded-lg border border-line-field bg-white/[0.04] pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-brand/70"
           />
         </div>
       </div>

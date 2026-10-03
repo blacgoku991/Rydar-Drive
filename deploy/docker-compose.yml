@@ -1,18 +1,24 @@
 # Rydar Drive sur un VPS : site (Next.js), worker (dispatch + notifications), expéditeur d'e-mails (formulaire de
 # contact, via le serveur mail du VPS), Redis, Caddy (HTTPS automatique). La base de données, l'authentification,
-# le temps réel et le stockage des documents sont chez Supabase (projet cloud, région Europe) : le VPS ne garde
-# aucune donnée métier.
+# le temps réel et le stockage des documents sont fournis par Supabase.
+# PRODUCTION (rydardrive.com) : Supabase AUTO-HÉBERGÉ sur ce même VPS (/opt/supabase, docs/DEPLOYMENT.md « Montage en
+# production ») : toutes les données et leurs sauvegardes sont sur le VPS, et les pages légales le décrivent ainsi
+# (/confidentialite § 7 à 9, /dpa art. 5 à 7, /mentions-legales). Passer à un projet Supabase cloud = nouveau
+# sous-traitant : modifier d'abord /dpa (annonce aux centrales 30 jours avant, art. 6) et /confidentialite.
 #   sudo bash deploy/install.sh        (installation, migrations, construction, démarrage)
 #   cd deploy && docker compose logs -f web worker mailer
 name: rydar
 
+# Journaux des conteneurs dans journald : leur durée est bornée par l'hôte (MaxRetentionSec=1year, docs/DEPLOYMENT.md
+# § 6, « Journaux du serveur »), comme l'annonce la politique de confidentialité (§ 9 : 1 an au plus). Une rotation par
+# taille seule (json-file) gardait sans limite de temps les journaux d'un service peu bavard. `docker compose logs`
+# fonctionne de la même façon.
 x-service: &service
   restart: unless-stopped
   logging:
-    driver: json-file
+    driver: journald
     options:
-      max-size: "10m"
-      max-file: "5"
+      tag: "rydar/{{.Name}}"
 
 services:
   web:

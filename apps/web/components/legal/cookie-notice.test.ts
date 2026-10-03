@@ -12,6 +12,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
 vi.mock("@/lib/utils", async () => await import("../../lib/utils"));
 vi.mock("@/components/brand/logo", async () => await import("../brand/logo"));
 vi.mock("@/components/ui/misc", async () => await import("../ui/misc"));
+vi.mock("@/components/legal/legal-links", async () => await import("./legal-links"));
 
 const { cookieNoticeSlot, FloatingNotice, SidebarNotice } = await import("./cookie-notice");
 const { Sidebar } = await import("../shell/sidebar");

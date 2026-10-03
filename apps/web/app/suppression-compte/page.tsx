@@ -27,7 +27,17 @@ export default async function AccountDeletionPage() {
     <LegalPage title="Supprimer son compte chauffeur" updatedAt={LEGAL_UPDATED_AT}>
       <p>
         Cette page concerne l&apos;application <span className={strong}>Rydar Drive</span> destinée aux chauffeurs, éditée par{" "}
-        <span className={strong}>{legal.name}</span>
+        {legal.nameSet ? (
+          <span className={strong}>{legal.name}</span>
+        ) : (
+          // Raison sociale pas encore renseignée : jamais le nom commercial à la place de l'éditeur
+          <>
+            la société identifiée dans les{" "}
+            <Link href="/mentions-legales" className={link}>
+              mentions légales
+            </Link>
+          </>
+        )}
         {legal.address ? ` (${legal.address})` : ""}. Rydar Drive est un logiciel de dispatch utilisé par votre centrale : les
         courses, les clients, les prix et les règlements appartiennent à la centrale, qui vous confie les courses.
       </p>

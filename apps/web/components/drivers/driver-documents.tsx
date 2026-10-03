@@ -21,7 +21,7 @@ function Preview({ doc }: { doc: DocumentView }) {
   const base = "grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg border border-line-strong bg-ink-700 text-fg-subtle [&_svg]:size-5";
   if (doc.url && doc.kind === "image") {
     return (
-      <a href={doc.url} target="_blank" rel="noreferrer" className={cn(base, "hover:border-brand/40")} aria-label={`Ouvrir ${doc.label}`}>
+      <a href={doc.url} target="_blank" rel="noreferrer" className={cn(base, "hover:border-brand/40")} aria-label={`Ouvrir ${doc.label} (nouvel onglet)`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={doc.url} alt="" className="size-full object-cover" />
       </a>
@@ -29,7 +29,7 @@ function Preview({ doc }: { doc: DocumentView }) {
   }
   if (doc.url) {
     return (
-      <a href={doc.url} target="_blank" rel="noreferrer" className={cn(base, "flex-col gap-0.5 text-[9.5px] font-semibold text-fg-muted hover:border-brand/40")} aria-label={`Ouvrir ${doc.label}`}>
+      <a href={doc.url} target="_blank" rel="noreferrer" className={cn(base, "flex-col gap-0.5 text-[9.5px] font-semibold text-fg-muted hover:border-brand/40")} aria-label={`Ouvrir ${doc.label} (nouvel onglet)`}>
         <FileText className="!size-4" />
         PDF
       </a>

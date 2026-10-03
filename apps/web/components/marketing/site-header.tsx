@@ -52,8 +52,9 @@ export function SiteHeader() {
     };
   }, [open]);
 
+  // Écran bas (zoom 400 %, téléphone à l'horizontale) : en-tête dans le flux, pour laisser la place au contenu
   return (
-    <header className="sticky top-0 z-50 border-b border-line bg-ink-900/90 backdrop-blur-xl">
+    <header className="sticky top-0 z-50 border-b border-line bg-ink-900/90 backdrop-blur-xl [@media(max-height:30rem)]:static">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
         <Link href="/" aria-label="Rydar Drive, accueil" aria-current={pathname === "/" ? "page" : undefined} className="shrink-0 rounded-lg">
           <Logo size={28} />

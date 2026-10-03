@@ -117,12 +117,15 @@ export function Avatar({
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase())
     .join("");
+  // Toujours affiché à côté du nom de la personne : décoratif pour les lecteurs d'écran (ni initiales ni nom lus deux
+  // fois), image en alt vide (WCAG 1.1.1)
   return (
     <span
+      aria-hidden
       className={cn("relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full border border-line-strong bg-gradient-to-b from-ink-500 to-ink-700 font-semibold text-fg", className)}
       style={{ width: size, height: size, fontSize: size * 0.36, boxShadow: tone ? `0 0 0 2px ${tone}33` : undefined }}
     >
-      {src ? <img src={src} alt={name} className="size-full object-cover" /> : initials}
+      {src ? <img src={src} alt="" className="size-full object-cover" /> : initials}
     </span>
   );
 }

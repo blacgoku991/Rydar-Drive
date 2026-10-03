@@ -1,4 +1,5 @@
 import { formatDate, legalAcceptanceState, legalDateLabel, localIsoDay, noticeMinDay, type LegalAcceptanceState } from "@rydar/shared";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalInfoForm } from "@/components/admin/legal-form";
@@ -6,8 +7,10 @@ import { OrgTermsNotifyButton } from "@/components/admin/org-terms-notify";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { LEGAL_LINKS } from "@/components/legal/legal-links";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { requireSuperAdmin } from "@/lib/auth";
-import { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION } from "@/lib/legal";
+import { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
+import { legalNoticeGaps } from "@/lib/legal-notice";
 
 export const metadata: Metadata = { title: "Informations légales" };
 export const dynamic = "force-dynamic";
@@ -29,6 +32,10 @@ export default async function AdminLegalPage() {
   ]);
   const row = (data ?? {}) as Record<string, string | null>;
   const initial = Object.fromEntries(KEYS.map((k) => [k, row[k] ?? ""])) as Record<(typeof KEYS)[number], string>;
+  // Mentions obligatoires manquantes (valeurs publiées : /admin/legal, à défaut LEGAL_NAME, LEGAL_EMAIL, LEGAL_ADDRESS)
+  const published = await getLegalInfo();
+  const gaps = legalNoticeGaps({ ...published, companyName: published.nameSet ? published.name : "" });
+  const requiredGaps = gaps.filter((g) => g.required);
   const versions = new Map<string, string[]>();
   for (const a of (accepted ?? []) as { organization_id: string; version: string }[]) {
     versions.set(a.organization_id, [...(versions.get(a.organization_id) ?? []), a.version]);
@@ -57,7 +64,35 @@ export default async function AdminLegalPage() {
       />
       <PageBody>
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <LegalInfoForm initial={initial} />
+          <div className="space-y-6">
+            <Card className={requiredGaps.length ? "border-amber/40" : undefined}>
+              <CardHeader
+                icon={requiredGaps.length ? <TriangleAlert className="text-amber" /> : <CircleCheck className="text-brand" />}
+                title={requiredGaps.length ? `Mentions obligatoires manquantes : ${requiredGaps.length}` : "Mentions obligatoires renseignées"}
+                description={
+                  requiredGaps.length
+                    ? "Affichées « à compléter par l'éditeur » sur /mentions-legales. LCEN, article 1-1 : jusqu'à 375 000 € d'amende pour une personne morale (article 1-2)."
+                    : "Éditeur, directeur de la publication, contact et hébergeur figurent sur /mentions-legales."
+                }
+              />
+              {gaps.length > 0 && (
+                <CardBody>
+                  <ul className="space-y-1.5 text-[13px]">
+                    {gaps.map((g) => (
+                      <li key={g.key} className="flex items-start gap-2">
+                        <span aria-hidden className={g.required ? "mt-1.5 size-1.5 shrink-0 rounded-full bg-amber" : "mt-1.5 size-1.5 shrink-0 rounded-full bg-fg-muted"} />
+                        <span className={g.required ? "text-fg" : "text-fg-muted"}>
+                          {g.label}
+                          {g.required ? "" : " (recommandé)"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </CardBody>
+              )}
+            </Card>
+            <LegalInfoForm initial={initial} />
+          </div>
           <div className="space-y-6">
             <Card>
               <CardHeader
@@ -67,11 +102,13 @@ export default async function AdminLegalPage() {
               <CardBody className="space-y-1.5 text-[13px]">
                 {LEGAL_LINKS.map((l) => (
                   <Link key={l.href} href={l.href} target="_blank" className="block text-brand hover:underline">
-                    {l.label} ↗
+                    {l.label} <span aria-hidden>↗</span>
+                    <NewTabHint />
                   </Link>
                 ))}
                 <Link href="/suppression-compte" target="_blank" className="block text-brand hover:underline">
-                  Supprimer son compte ↗
+                  Supprimer son compte <span aria-hidden>↗</span>
+                  <NewTabHint />
                 </Link>
               </CardBody>
             </Card>

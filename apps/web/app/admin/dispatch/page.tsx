@@ -22,7 +22,7 @@ export default async function AdminDispatchPage() {
       <PageBody className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
         <Card className="overflow-hidden">
           <CardHeader title="Avertissements & erreurs" description={`${events?.length ?? 0} événements`} />
-          <div className="max-h-[70vh] divide-y divide-line overflow-y-auto font-mono text-[12px]">
+          <div className="max-h-[70vh] divide-y divide-line overflow-y-auto font-mono text-[12px]" tabIndex={0} role="region" aria-label="Avertissements et erreurs">
             {(events ?? []).map((e) => (
               <div key={e.id} className="grid grid-cols-[110px_150px_1fr] gap-3 px-5 py-2">
                 <span className="text-fg-subtle">{formatRelative(e.created_at)}</span>
@@ -34,7 +34,7 @@ export default async function AdminDispatchPage() {
         </Card>
         <Card className="overflow-hidden">
           <CardHeader title="Courses sans chauffeur" description="À analyser : couverture de flotte, catégories, horaires." />
-          <div className="max-h-[70vh] divide-y divide-line overflow-y-auto">
+          <div className="max-h-[70vh] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Courses sans chauffeur">
             {(noDriver ?? []).map((r) => (
               <div key={r.id} className="px-5 py-2.5 text-[13px]">
                 <p><span className="num font-semibold">#{r.number}</span> · {shortAddress(r.pickup_address)} → {shortAddress(r.dropoff_address)}</p>

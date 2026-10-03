@@ -16,6 +16,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 /** Copie dans le presse-papiers (repli execCommand hors contexte sécurisé). */
 export async function copyText(text: string) {
@@ -122,10 +123,11 @@ export function JoinLinkCard({
           <div className={cn("space-y-2", !state.join_enabled && "opacity-60")}>
             <div className="flex items-center gap-2 rounded-xl border border-line-strong bg-ink-850 py-1.5 pl-3 pr-1.5">
               <Link2 className="size-4 shrink-0 text-brand" />
-              <a href={url} target="_blank" rel="noreferrer" className="num min-w-0 flex-1 truncate text-[13px] text-fg hover:text-brand" title={url}>
+              <a href={url} target="_blank" rel="noreferrer" className="num relative min-w-0 flex-1 truncate text-[13px] text-fg hover:text-brand" title={url}>
                 {url.replace(/^https?:\/\//, "")}
+                <NewTabHint />
               </a>
-              <a href={url} target="_blank" rel="noreferrer" className="grid size-8 shrink-0 place-items-center rounded-md text-fg-subtle hover:bg-white/5 hover:text-fg" aria-label="Ouvrir la page d'inscription">
+              <a href={url} target="_blank" rel="noreferrer" className="grid size-8 shrink-0 place-items-center rounded-md text-fg-subtle hover:bg-white/5 hover:text-fg" aria-label="Ouvrir la page d'inscription (nouvel onglet)">
                 <ExternalLink className="size-4" />
               </a>
               <CopyButton text={url} label="Copier" done="Lien copié" />
@@ -141,11 +143,13 @@ export function JoinLinkCard({
               <Button asChild size="sm" variant="outline">
                 <a href={`https://wa.me/?text=${encodeURIComponent(message)}`} target="_blank" rel="noreferrer">
                   <MessageCircle /> WhatsApp
+                  <NewTabHint />
                 </a>
               </Button>
               <Button asChild size="sm" variant="outline">
                 <a href={`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(joinShareText(orgName, model))}`} target="_blank" rel="noreferrer">
                   <Send /> Telegram
+                  <NewTabHint />
                 </a>
               </Button>
             </div>

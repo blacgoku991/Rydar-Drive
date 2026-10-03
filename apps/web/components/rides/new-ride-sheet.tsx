@@ -247,11 +247,12 @@ export function NewRideSheet({
             <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
               <section className="space-y-2">
                 <div className="relative space-y-2">
-                  <Field error={errors["pickup.address"] ?? errors["pickup.lat"]}>
-                    <AddressInput marker="pickup" value={pickup} onChange={setPickup} placeholder="Adresse de départ" invalid={!!errors["pickup.address"]} autoFocus near={center} />
+                  {/* Libellés visibles (RGAA 11.1.3 : un texte indicatif disparaît à la saisie) */}
+                  <Field label="Départ" error={errors["pickup.address"] ?? errors["pickup.lat"]}>
+                    <AddressInput labelled marker="pickup" value={pickup} onChange={setPickup} placeholder="Adresse, gare, aéroport…" invalid={!!errors["pickup.address"]} autoFocus near={center} />
                   </Field>
-                  <Field error={errors["dropoff.address"]}>
-                    <AddressInput marker="dropoff" value={dropoff} onChange={setDropoff} placeholder="Destination" invalid={!!errors["dropoff.address"]} near={near} />
+                  <Field label="Destination" error={errors["dropoff.address"]}>
+                    <AddressInput labelled marker="dropoff" value={dropoff} onChange={setDropoff} placeholder="Adresse, gare, aéroport…" invalid={!!errors["dropoff.address"]} near={near} />
                   </Field>
                   <button
                     type="button"
@@ -259,7 +260,7 @@ export function NewRideSheet({
                       setPickup(dropoff);
                       setDropoff(pickup);
                     }}
-                    className="absolute -right-2 top-[30px] z-10 grid size-7 place-items-center rounded-full border border-line bg-ink-700 text-fg-muted hover:text-fg"
+                    className="absolute -right-2 top-[70px] z-10 grid size-7 place-items-center rounded-full border border-line bg-ink-700 text-fg-muted hover:text-fg"
                     aria-label="Inverser départ et destination"
                   >
                     <ArrowDownUp className="size-3.5" />
@@ -305,11 +306,11 @@ export function NewRideSheet({
                 </div>
                 {when === "scheduled" && (
                   <div className="grid grid-cols-2 gap-2">
-                    <Field error={errors.pickupAt}>
-                      <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="[color-scheme:dark]" aria-label="Date" />
+                    <Field label="Date" error={errors.pickupAt}>
+                      <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="[color-scheme:dark]" />
                     </Field>
-                    <Field>
-                      <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="[color-scheme:dark]" aria-label="Heure" />
+                    <Field label="Heure">
+                      <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="[color-scheme:dark]" />
                     </Field>
                     {zoneName && <p className="col-span-2 text-[12px] text-fg-muted">Heure de la centrale ({zoneName})</p>}
                   </div>
@@ -357,20 +358,20 @@ export function NewRideSheet({
               </section>
 
               <section className="grid grid-cols-2 gap-2">
-                <Field error={errors.customerName} className="col-span-2 sm:col-span-1">
-                  <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Nom du client" aria-label="Nom du client" aria-invalid={!!errors.customerName} />
+                <Field label="Nom du client" error={errors.customerName} className="col-span-2 sm:col-span-1">
+                  <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} autoComplete="off" aria-invalid={!!errors.customerName} />
                 </Field>
-                <Field error={errors.customerPhone} className="col-span-2 sm:col-span-1">
-                  <Input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="Téléphone" aria-label="Téléphone" inputMode="tel" aria-invalid={!!errors.customerPhone} />
+                <Field label="Téléphone" error={errors.customerPhone} className="col-span-2 sm:col-span-1">
+                  <Input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} inputMode="tel" autoComplete="off" aria-invalid={!!errors.customerPhone} />
                 </Field>
-                <Field error={errors.flightNumber} className="col-span-2 sm:col-span-1">
+                <Field label="N° de vol" optional error={errors.flightNumber} className="col-span-2 sm:col-span-1">
                   <div className="relative">
-                    <Plane className={cn("pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2", isAirport ? "text-cyan" : "text-fg-subtle")} />
-                    <Input value={flight} onChange={(e) => setFlight(e.target.value.toUpperCase())} placeholder={isAirport ? "N° de vol (aéroport)" : "N° de vol"} aria-label="Numéro de vol" className="pl-9" />
+                    <Plane aria-hidden className={cn("pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2", isAirport ? "text-cyan" : "text-fg-subtle")} />
+                    <Input value={flight} onChange={(e) => setFlight(e.target.value.toUpperCase())} placeholder={isAirport ? "Départ d'un aéroport" : "AF1234"} className="pl-9" />
                   </div>
                 </Field>
-                <Field className="col-span-2 sm:col-span-1">
-                  <NativeSelect value={payment} onChange={(e) => setPayment(e.target.value)} aria-label="Paiement">
+                <Field label="Paiement" className="col-span-2 sm:col-span-1">
+                  <NativeSelect value={payment} onChange={(e) => setPayment(e.target.value)}>
                     {PAYMENT_METHODS.map((m) => (
                       <option key={m} value={m}>
                         {PAYMENT_METHOD_LABELS[m]}
@@ -394,15 +395,17 @@ export function NewRideSheet({
                     </p>
                   </div>
                 )}
-                <Field className="col-span-2" error={errors.customerEmail}>
-                  <Input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="E-mail du client (facultatif)" type="email" aria-label="E-mail du client" />
+                <Field label="E-mail du client" optional className="col-span-2" error={errors.customerEmail}>
+                  <Input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} type="email" autoComplete="off" />
                 </Field>
                 <Field
+                  label="Note pour le chauffeur"
+                  optional
                   className="col-span-2"
                   // Réseau partagé (partage demandé) : le commentaire suit la course chez un chauffeur partenaire (S18)
                   hint={org?.network?.shareOut ? "Visible par un chauffeur partenaire si la course part au réseau partagé." : undefined}
                 >
-                  <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Note pour le chauffeur : pancarte, siège bébé…" aria-label="Commentaire" className="min-h-[64px]" />
+                  <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Pancarte, siège bébé…" className="min-h-[64px]" />
                 </Field>
               </section>
             </div>
@@ -438,7 +441,6 @@ export function NewRideSheet({
                           }}
                           inputMode="decimal"
                           placeholder={suggested != null ? centsToInput(suggested) : "Obligatoire"}
-                          aria-label="Prix en euros"
                           aria-invalid={!!errors.priceCents}
                           className="mono h-11 pr-7 text-[16px] font-semibold"
                         />
@@ -463,7 +465,6 @@ export function NewRideSheet({
                           }}
                           inputMode="decimal"
                           placeholder={autoCommission != null ? centsToInput(autoCommission) : "Auto"}
-                          aria-label="Commission de la centrale en euros (vide : automatique)"
                           aria-invalid={!!errors.commissionCents || split.data?.error === "COMMISSION_TOO_HIGH"}
                           className="mono h-11 pr-7 text-[16px] font-semibold"
                         />
@@ -477,15 +478,14 @@ export function NewRideSheet({
                   </Button>
                 </>
               ) : (
-                <div className="flex items-center gap-3">
-                  <Field error={errors.priceCents} className="w-32">
+                <div className="flex items-end gap-3">
+                  <Field label="Prix" error={errors.priceCents} className="w-32">
                     <div className="relative">
                       <Input
                         value={price}
                         onChange={(e) => setPrice(e.target.value)}
                         inputMode="decimal"
-                        placeholder={suggested != null ? String(suggested / 100) : "Prix"}
-                        aria-label="Prix en euros"
+                        placeholder={suggested != null ? String(suggested / 100) : undefined}
                         className="h-11 pr-7 text-[16px] font-semibold"
                       />
                       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>

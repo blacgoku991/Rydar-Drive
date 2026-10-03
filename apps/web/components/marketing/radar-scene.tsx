@@ -58,7 +58,8 @@ export function RadarScene({ className, showLabels = true }: { className?: strin
         <div
           key={i}
           className="absolute left-1/2 top-1/2 size-[56%] -translate-x-1/2 -translate-y-1/2 animate-ping-ring rounded-full border border-brand/50 motion-reduce:hidden"
-          style={{ animationDelay: `${i * 0.8}s` }}
+          // Un seul passage par onde décalée : mouvement fini avant 5 s (1,6 s + 2,4 s ; WCAG 2.2.2)
+          style={{ animationDelay: `${i * 0.8}s`, animationIterationCount: 1 }}
         />
       ))}
       {/* chauffeurs */}
@@ -66,7 +67,8 @@ export function RadarScene({ className, showLabels = true }: { className?: strin
         <div key={i} className="absolute" style={{ left: `${b.x}%`, top: `${b.y}%` }}>
           <span
             className="absolute -left-3 -top-3 size-6 animate-breathe rounded-full motion-reduce:animate-none"
-            style={{ background: `radial-gradient(circle, ${tone(b.c, 33)}, transparent 70%)`, animationDelay: b.d }}
+            // Un seul passage par halo décalé : mouvement fini avant 5 s (2,3 s + 2,4 s ; WCAG 2.2.2)
+            style={{ background: `radial-gradient(circle, ${tone(b.c, 33)}, transparent 70%)`, animationDelay: b.d, animationIterationCount: 1 }}
           />
           <span
             className="absolute -left-[5px] -top-[5px] size-2.5 rounded-full border-2 bg-ink-900"

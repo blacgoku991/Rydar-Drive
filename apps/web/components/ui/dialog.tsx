@@ -7,6 +7,64 @@ import { cn } from "@/lib/utils";
 export const Dialog = D.Root;
 export const DialogClose = D.Close;
 
+type ContentProps = React.ComponentProps<typeof D.Content>;
+
+/**
+ * Dernier élément focalisé HORS d'une fenêtre : repli quand le focus est déjà entré dans la fenêtre au moment où elle
+ * s'ouvre (champ autoFocus, focalisé par React avant Radix, qui n'appelle alors pas onOpenAutoFocus).
+ */
+let lastOutsideFocus: HTMLElement | null = null;
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "focusin",
+    (e) => {
+      const t = e.target;
+      if (t instanceof HTMLElement && !t.closest("[role=dialog],[role=alertdialog]")) lastOutsideFocus = t;
+    },
+    true,
+  );
+}
+
+/**
+ * Focus et Échap des fenêtres (motif ARIA « dialog ») :
+ *  - à la fermeture, le focus revient à l'élément qui l'avait à l'ouverture (bouton ordinaire, sans Dialog.Trigger :
+ *    Radix ne sait le rendre qu'à son déclencheur et le laissait sinon sur <body>, WCAG 2.4.3) ;
+ *  - Échap dans une liste de suggestions ouverte (combobox, AddressInput) ferme la liste seule, jamais la fenêtre et
+ *    sa saisie (Radix écoute Échap en phase de capture, avant le champ).
+ * Les gestionnaires passés par l'appelant passent d'abord ; event.preventDefault() de leur part garde le comportement
+ * de Radix.
+ */
+function useDialogFocus({ onOpenAutoFocus, onCloseAutoFocus, onEscapeKeyDown }: ContentProps) {
+  const opener = React.useRef<HTMLElement | null>(null);
+  return {
+    onOpenAutoFocus: (e: Event) => {
+      // Appelé avant que Radix ne place le focus : l'élément actif est celui qui a ouvert la fenêtre, sauf si un champ
+      // autoFocus de la fenêtre l'a déjà pris (repli : dernier élément focalisé hors d'une fenêtre)
+      const active = document.activeElement;
+      const content = e.currentTarget instanceof Node ? e.currentTarget : null;
+      opener.current =
+        active instanceof HTMLElement && active !== document.body && !content?.contains(active) ? active : lastOutsideFocus;
+      onOpenAutoFocus?.(e);
+    },
+    onCloseAutoFocus: (e: Event) => {
+      onCloseAutoFocus?.(e);
+      if (e.defaultPrevented) return;
+      // Fenêtre dont un champ autoFocus a pris le focus dès l'ouverture : Radix n'appelle pas onOpenAutoFocus
+      const el = opener.current ?? lastOutsideFocus;
+      opener.current = null;
+      if (el?.isConnected) {
+        e.preventDefault();
+        el.focus({ preventScroll: true });
+      }
+    },
+    onEscapeKeyDown: (e: KeyboardEvent) => {
+      onEscapeKeyDown?.(e);
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      if (t?.getAttribute("role") === "combobox" && t.getAttribute("aria-expanded") === "true") e.preventDefault();
+    },
+  };
+}
+
 export function DialogContent({
   className,
   children,
@@ -15,6 +73,7 @@ export function DialogContent({
   size = "md",
   ...props
 }: React.ComponentProps<typeof D.Content> & { title: React.ReactNode; description?: React.ReactNode; size?: "sm" | "md" | "lg" }) {
+  const focus = useDialogFocus(props);
   return (
     <D.Portal>
       <D.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
@@ -27,6 +86,7 @@ export function DialogContent({
           className,
         )}
         {...props}
+        {...focus}
       >
         <div className="mb-5 pr-8">
           <D.Title className="text-lg font-semibold tracking-tight">{title}</D.Title>
@@ -55,6 +115,7 @@ export function SheetContent({
   side = "right",
   ...props
 }: React.ComponentProps<typeof D.Content> & { title: React.ReactNode; description?: React.ReactNode; side?: "right" | "left" }) {
+  const focus = useDialogFocus(props);
   return (
     <D.Portal>
       <D.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
@@ -67,6 +128,7 @@ export function SheetContent({
           className,
         )}
         {...props}
+        {...focus}
       >
         <div className="hairline-top flex items-start justify-between border-b border-line px-6 py-5">
           <div>
@@ -94,6 +156,7 @@ export function WorkspaceContent({
   description,
   ...props
 }: React.ComponentProps<typeof D.Content> & { title: React.ReactNode; description?: React.ReactNode }) {
+  const focus = useDialogFocus(props);
   return (
     <D.Portal>
       <D.Overlay className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[3px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
@@ -103,6 +166,7 @@ export function WorkspaceContent({
           className,
         )}
         {...props}
+        {...focus}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
           <div>

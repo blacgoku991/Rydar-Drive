@@ -1,6 +1,7 @@
-import { estimatePrice, matchFixedFare, vehicleCategorySchema, type PricingRule } from "@rydar/shared";
+import { vehicleCategorySchema } from "@rydar/shared";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { bookingSitePrice } from "@/lib/booking-price";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { coordinateProblem, orgAnchor } from "@/lib/geo/anchor";
 import { computeRoute } from "@/lib/geo/routing";
@@ -14,8 +15,9 @@ const place = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-
 const schema = z.object({ pickup: place, dropoff: place, category: vehicleCategorySchema, pickupAt: z.iso.datetime({ offset: true }).optional() });
 
 /**
- * Devis public du mini-site (aucun compte) : itinéraire réel + prix indicatif
- * (forfait reconnu, sinon grille) si l'organisation l'affiche. Aucune donnée interne.
+ * Devis public du mini-site (aucun compte) : itinéraire réel + prix TTC (forfait reconnu, sinon grille) si
+ * l'organisation l'affiche, calculé comme à la réservation (lib/booking-price.ts) : c'est ce prix que le client
+ * s'engage à payer (« Réserver avec obligation de paiement »). Aucune donnée interne.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -48,22 +50,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   }
 
   // Budget des fournisseurs payants : part du visiteur (IP /64), du mini-site et de l'ensemble des anonymes
-  const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500, consumer: { kind: "visitor", ip, org: (org as any).id } });
+  const consumer = { kind: "visitor" as const, ip, org: (org as any).id as string };
+  const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500, consumer });
   let priceCents: number | null = null;
   let fixedFare: string | null = null;
   if (site.show_price_estimate && site.vehicle_categories.includes(v.category)) {
-    const { data: rule } = await admin
-      .from("pricing_rules")
-      .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end, fixed_fares")
-      .eq("organization_id", (org as any).id)
-      .eq("vehicle_category", v.category)
-      .eq("is_active", true)
-      .maybeSingle();
-    if (rule) {
-      const fixed = matchFixedFare(rule as PricingRule, v.pickup.address, v.dropoff.address);
-      fixedFare = fixed?.label ?? null;
-      priceCents = fixed?.price_cents ?? estimatePrice(rule as PricingRule, route.distanceM, route.durationS, v.pickupAt ? new Date(v.pickupAt) : new Date(), (org as any).timezone ?? "Europe/Paris");
-    }
+    ({ priceCents, fixedFare } = await bookingSitePrice(admin, {
+      orgId: (org as any).id,
+      timeZone: (org as any).timezone || "Europe/Paris",
+      category: v.category,
+      pickup: v.pickup,
+      dropoff: v.dropoff,
+      route,
+      pickupAt: v.pickupAt ? new Date(v.pickupAt) : new Date(),
+      consumer,
+    }));
   }
   return NextResponse.json(
     { distanceM: route.distanceM, durationS: route.durationS, polyline: route.polyline, approximate: route.approximate, priceCents, fixedFare },

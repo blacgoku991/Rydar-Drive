@@ -17,9 +17,9 @@ const FEED = [
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   const { next } = await searchParams;
   return (
-    <main className="grid min-h-dvh lg:grid-cols-[1.15fr_1fr]">
-      {/* Visuel */}
-      <section className="grain relative hidden overflow-hidden border-r border-line bg-ink-950 lg:flex lg:flex-col">
+    <main id="contenu" tabIndex={-1} className="grid min-h-dvh outline-none lg:grid-cols-[1.15fr_1fr]">
+      {/* Visuel décoratif (aucun élément focalisable) : masqué aux lecteurs d'écran, qui lisent directement le formulaire */}
+      <section aria-hidden="true" className="grain relative hidden overflow-hidden border-r border-line bg-ink-950 lg:flex lg:flex-col">
         <div className="grid-bg absolute inset-0 [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_75%)]" />
         <div className="absolute -left-40 -top-40 size-[520px] rounded-full bg-brand/[0.07] blur-[120px]" />
         <div className="absolute -bottom-48 right-0 size-[480px] rounded-full bg-blue/[0.06] blur-[120px]" />
@@ -72,7 +72,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             Espace réservé aux rattacheurs, centrales et à l'équipe Rydar. Chauffeurs : connectez-vous depuis l'application
             mobile Rydar Drive.
           </p>
-          <LegalLinks className="mt-4 text-[12px]" only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies"]} />
+          <LegalLinks className="mt-4 text-[12px]" only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies", "/accessibilite"]} />
         </div>
       </section>
     </main>

@@ -31,7 +31,10 @@ export type LegalInfo = {
   hostName: string;
   hostAddress: string;
   hostPhone: string;
-  /** Hébergeur des données (base de données, fichiers) */
+  /**
+   * Hébergement des données (base de données, fichiers, sauvegardes) : texte libre de /admin/legal, par exemple le
+   * pays du datacenter. Vide = non renseigné (jamais de valeur par défaut : la production est auto-hébergée sur le VPS).
+   */
   dataHost: string;
   /** Raison sociale réellement renseignée (/admin/legal ou LEGAL_NAME) : sinon `name` vaut le nom du service par défaut */
   nameSet: boolean;
@@ -71,7 +74,7 @@ export const getLegalInfo = cache(async (): Promise<LegalInfo> => {
     hostName: row.host_name || "",
     hostAddress: row.host_address || "",
     hostPhone: row.host_phone || "",
-    dataHost: row.data_host || "Supabase (base de données et fichiers, région Union européenne)",
+    dataHost: row.data_host || "",
     nameSet: !!setName,
     complete: !!setName && !!email,
   };
@@ -88,11 +91,27 @@ export const getLegalInfo = cache(async (): Promise<LegalInfo> => {
  */
 export { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION } from "@rydar/shared";
 
-/** Date de dernière mise à jour affichée sur les pages légales (CGU, mentions légales, cookies, suppression de compte). */
+/** Date de dernière mise à jour affichée sur les pages légales (CGU, suppression de compte). */
 export const LEGAL_UPDATED_AT = "27 septembre 2026";
 /** CGV (version ORG_LEGAL_VERSION) : frais plateforme par course pour les deux modèles, cumulables avec l'abonnement. */
 export const CGV_UPDATED_AT = "2 octobre 2026";
-/** Accord de traitement : contenu inchangé depuis le 27 septembre 2026 (sa version suit celle des CGV). */
-export const DPA_UPDATED_AT = "27 septembre 2026";
-/** Politique de confidentialité : formulaire de contact ajouté (données, finalité, destinataires, durée). */
-export const PRIVACY_UPDATED_AT = "28 septembre 2026";
+/**
+ * Accord de traitement (sa version suit celle des CGV) : 3 octobre 2026, tableau des sous-traitants corrigé
+ * (hébergement réel : serveur de l'éditeur, base auto-hébergée, e-mails envoyés par ce serveur ; services publics
+ * tiers hors du tableau), sauvegardes, TLS, contact. Corrections d'exactitude, sans nouvelle ORG_LEGAL_VERSION : le
+ * texte accepté avant elles reste consultable (/dpa/2026-10-02) ; à reprendre dans la prochaine ORG_LEGAL_VERSION.
+ */
+export const DPA_UPDATED_AT = "3 octobre 2026";
+/**
+ * Politique de confidentialité : 3 octobre 2026, hébergement réel, sauvegardes, journaux techniques, bases légales
+ * (WhatsApp, mini-site), batterie, champs obligatoires. Corrections d'information, sans nouvelle LEGAL_VERSION.
+ */
+export const PRIVACY_UPDATED_AT = "3 octobre 2026";
+/** Mentions légales : point de contact du règlement sur les services numériques, hébergement des données. */
+export const NOTICE_UPDATED_AT = "3 octobre 2026";
+/** Cookies : inventaire complété (rd_org_switch), absence de consentement expliquée. */
+export const COOKIES_UPDATED_AT = "3 octobre 2026";
+/** Abonnement, résiliation et remboursement (reprise des CGV, sans engagement nouveau). */
+export const SUBSCRIPTION_TERMS_UPDATED_AT = "3 octobre 2026";
+/** Déclaration d'accessibilité (contrôle automatique du 3 octobre 2026). */
+export const ACCESSIBILITY_UPDATED_AT = "3 octobre 2026";

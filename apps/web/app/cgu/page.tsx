@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { legalContact } from "@/components/legal/legal-contact";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
 import { LEGAL_UPDATED_AT, LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
 
@@ -13,17 +14,25 @@ export const metadata: Metadata = {
 
 export default async function TermsOfUsePage() {
   const legal = await getLegalInfo();
-  const contact = legal.email ? (
-    <a href={`mailto:${legal.email}`} className="text-fg underline underline-offset-2">{legal.email}</a>
-  ) : (
-    "l'adresse indiquée dans les mentions légales"
-  );
+  const contact = legalContact(legal.email);
   const link = "text-fg underline underline-offset-2";
   return (
     <LegalPage title="Conditions générales d'utilisation" updatedAt={LEGAL_UPDATED_AT}>
       <p>
         Les présentes conditions générales d&apos;utilisation (CGU) encadrent l&apos;utilisation des services Rydar
-        Drive, édités par <span className="text-fg">{legal.name}</span> (l&apos;« éditeur ») : le tableau de bord des
+        Drive, édités par{" "}
+        {legal.nameSet ? (
+          <span className="text-fg">{legal.name}</span>
+        ) : (
+          // Raison sociale pas encore renseignée : jamais le nom commercial comme partie au contrat
+          <>
+            la société identifiée dans les{" "}
+            <Link href="/mentions-legales" className={link}>
+              mentions légales
+            </Link>
+          </>
+        )}{" "}
+        (l&apos;« éditeur ») : le tableau de bord des
         centrales, l&apos;application mobile « Rydar Drive Chauffeur », les mini-sites de réservation et l&apos;API.
         Elles s&apos;appliquent à toute personne qui les utilise. Le chauffeur les accepte dans l&apos;application, avec la
         politique de confidentialité, avant de l&apos;utiliser (à l&apos;inscription par le lien d&apos;une centrale ou à sa
@@ -135,7 +144,7 @@ export default async function TermsOfUsePage() {
             <>Le fil « Chauffeurs » et les signalements sont visibles par les chauffeurs de votre centrale et par son équipe (propriétaire, administrateurs, dispatchers). L&apos;éditeur peut y accéder pour le support, la sécurité et le traitement des signalements (voir la <Link href="/confidentialite" className={link}>politique de confidentialité</Link>).</>,
             <>Restez courtois et limitez-vous à l&apos;activité : trafic, contrôles, entraide. <span className="text-fg">Aucune tolérance pour les contenus choquants ni pour les comportements abusifs</span> : sont interdits les propos injurieux, discriminatoires, menaçants ou à caractère sexuel, le harcèlement, les données personnelles de tiers (clients notamment), la publicité et les faux signalements.</>,
             <>Par un appui long sur un message, vous pouvez le signaler à la centrale (il disparaît aussitôt de votre fil) ou masquer les messages de son auteur : vous ne les voyez plus, et il n&apos;en est pas informé.</>,
-            <>La centrale modère le fil : elle traite les signalements, peut supprimer un message pour tous, suspendre ou exclure l&apos;auteur. Pour un contenu illicite, ou si la centrale ne traite pas un abus, écrivez à l&apos;éditeur : {contact} (voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>).</>,
+            <>La centrale modère le fil : elle traite les signalements, peut supprimer un message pour tous, suspendre ou exclure l&apos;auteur. Pour un contenu illicite, ou si la centrale ne traite pas un abus, écrivez à l&apos;éditeur : {contact.noun} (voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>).</>,
             <>Ces règles sont affichées et doivent être acceptées dans l&apos;application avant votre première publication dans le fil (message ou signalement).</>,
           ]}
         />
@@ -221,7 +230,7 @@ export default async function TermsOfUsePage() {
       <LegalSection title="17. Droit applicable">
         <p>
           Les présentes CGU sont soumises au droit français. En cas de litige, une solution amiable est recherchée en
-          priorité en écrivant à {contact}. À défaut, les tribunaux français sont compétents ; entre professionnels, le
+          priorité en écrivant {contact.to}. À défaut, les tribunaux français sont compétents ; entre professionnels, le
           tribunal de commerce du siège de l&apos;éditeur. Un consommateur conserve la protection des règles impératives
           de son pays de résidence et peut saisir le tribunal de son domicile.
         </p>

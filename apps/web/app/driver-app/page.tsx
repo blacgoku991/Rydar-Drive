@@ -1,7 +1,10 @@
 import { Smartphone } from "lucide-react";
+import type { Metadata } from "next";
 import { StatusScreen } from "@/components/auth/status-screen";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
+
+export const metadata: Metadata = { title: "Espace chauffeur" };
 
 export default function DriverAppPage() {
   return (

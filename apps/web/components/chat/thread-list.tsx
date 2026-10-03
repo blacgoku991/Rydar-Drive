@@ -133,8 +133,8 @@ export function ThreadList({
             value={query}
             onChange={(e) => onQuery(e.target.value)}
             placeholder="Rechercher un chauffeur"
-            aria-label="Rechercher un chauffeur"
-            className="h-9 w-full rounded-lg border border-line bg-white/[0.03] pl-8.5 pr-8 text-[13px] outline-none placeholder:text-fg-subtle focus:border-brand/40 focus:bg-white/[0.05]"
+            aria-label="Rechercher un chauffeur" title="Rechercher un chauffeur"
+            className="h-9 w-full rounded-lg border border-line-field bg-white/[0.03] pl-8.5 pr-8 text-[13px] outline-none placeholder:text-fg-subtle focus:border-brand/40 focus:bg-white/[0.05] focus-visible:ring-2 focus-visible:ring-brand/40"
           />
           {query && (
             <button

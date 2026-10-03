@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Field, Input, NativeSelect } from "@/components/ui/input";
+import { Field, Input, NativeSelect, asFieldControl } from "@/components/ui/input";
 import { Avatar, Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
@@ -112,7 +112,7 @@ function RadiiEditor({ value, onChange, readOnly, min, max, addLabel }: {
   addLabel: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div role="group" aria-label={`Rayons : ${addLabel.toLowerCase()}s, en km`} className="flex flex-wrap items-center gap-2">
       {value.map((m, i) => (
         <div key={i} className="flex items-center gap-1">
           <Input
@@ -121,15 +121,25 @@ function RadiiEditor({ value, onChange, readOnly, min, max, addLabel }: {
             min={0.5}
             value={m / 1000}
             disabled={readOnly}
+            aria-label={`${addLabel} ${i + 1}, rayon en km`}
             onChange={(e) => onChange(value.map((x, j) => (j === i ? Math.round(Number(e.target.value) * 1000) : x)))}
             className="num h-9 w-20 text-center"
           />
           {!readOnly && value.length > min && (
-            <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-fg-subtle hover:text-red" aria-label="Retirer">
-              <Trash2 className="size-3.5" />
+            <button
+              type="button"
+              onClick={() => onChange(value.filter((_, j) => j !== i))}
+              className="grid size-8 place-items-center rounded-md text-fg-subtle hover:bg-white/5 hover:text-red"
+              aria-label={`Retirer ${addLabel.toLowerCase()} ${i + 1}`}
+            >
+              <Trash2 aria-hidden className="size-3.5" />
             </button>
           )}
-          {i < value.length - 1 && <span className="px-1 text-fg-subtle">→</span>}
+          {i < value.length - 1 && (
+            <span aria-hidden className="px-1 text-fg-subtle">
+              →
+            </span>
+          )}
         </div>
       ))}
       {!readOnly && value.length < max && (
@@ -151,8 +161,8 @@ const SETTINGS_DEFAULTS = {
   driver_commission_percent: null,
 } satisfies Partial<OrgSettings>;
 
-/** Entrée numérique avec unité à droite (« min », « % »). */
-function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
+/** Entrée numérique avec unité à droite (« min », « % ») ; reliée par Field (id, aide, erreur). */
+const UnitInput = asFieldControl(function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
   return (
     <div className="relative">
       <Input
@@ -163,7 +173,7 @@ function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof In
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-fg-subtle">{unit}</span>
     </div>
   );
-}
+});
 
 function SwitchRow({ title, hint, checked, onChange, disabled }: { title: string; hint: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
@@ -461,7 +471,11 @@ export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boo
   const byCat = new Map(rules.map((r) => [r.vehicle_category, r]));
   return (
     <Card>
-      <CardHeader title="Grille tarifaire" description="Sert à suggérer le prix à la saisie et à l'estimation du mini-site. Le prix final reste modifiable." />
+      {/* Montants TTC : le mini-site affiche ce prix aux particuliers comme « Prix TTC » (C. conso. L112-1) */}
+      <CardHeader
+        title="Grille tarifaire"
+        description="Montants toutes taxes comprises (prix payé par le client). Sert à suggérer le prix à la saisie et au prix affiché sur le mini-site. Le prix final reste modifiable."
+      />
       <div className="divide-y divide-line">
         {VEHICLE_CATEGORIES.map((cat) => {
           const r = byCat.get(cat) ?? { base_fare_cents: 1000, per_km_cents: 200, per_minute_cents: 50, minimum_fare_cents: 3000, night_surcharge_percent: 15, fixed_fares: [] };
@@ -490,10 +504,10 @@ export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boo
                 <p className="text-[13.5px] font-semibold">{VEHICLE_CATEGORY_META[cat].label}</p>
                 <p className="text-[11.5px] text-fg-subtle">{byCat.has(cat) ? `min. ${formatPrice(r.minimum_fare_cents)}` : "non configuré"}</p>
               </div>
-              <Field label="Prise en charge €"><Input name="base" defaultValue={r.base_fare_cents / 100} className="num" disabled={readOnly} /></Field>
-              <Field label="€ / km"><Input name="km" defaultValue={r.per_km_cents / 100} className="num" disabled={readOnly} /></Field>
-              <Field label="€ / min"><Input name="min" defaultValue={r.per_minute_cents / 100} className="num" disabled={readOnly} /></Field>
-              <Field label="Minimum €"><Input name="minimum" defaultValue={r.minimum_fare_cents / 100} className="num" disabled={readOnly} /></Field>
+              <Field label="Prise en charge € TTC"><Input name="base" defaultValue={r.base_fare_cents / 100} className="num" disabled={readOnly} /></Field>
+              <Field label="€ TTC / km"><Input name="km" defaultValue={r.per_km_cents / 100} className="num" disabled={readOnly} /></Field>
+              <Field label="€ TTC / min"><Input name="min" defaultValue={r.per_minute_cents / 100} className="num" disabled={readOnly} /></Field>
+              <Field label="Minimum € TTC"><Input name="minimum" defaultValue={r.minimum_fare_cents / 100} className="num" disabled={readOnly} /></Field>
               <Field label="Nuit %"><Input name="night" defaultValue={r.night_surcharge_percent} className="num" disabled={readOnly} /></Field>
               {!readOnly && <Button type="submit" variant="secondary" loading={pending}>Enregistrer</Button>}
             </form>

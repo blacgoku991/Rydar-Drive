@@ -197,26 +197,27 @@ export default async function AdminContactsPage({ searchParams }: { searchParams
           <Card>
             <CardHeader icon={<MailCheck />} title="Envoi des e-mails" description={`Service mailer du VPS, serveur mail ${server}.`} />
             <CardBody className="space-y-5">
+              {/* Liste de définitions valide : chaque groupe (div) ne contient que dt et dd ; l'état est dans un dd */}
               <dl className="space-y-3 text-[13px]">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <dt className="text-fg">Service d&apos;envoi</dt>
-                    <dd className="num mt-0.5 text-[12px] text-fg-muted">
-                      {mailer ? `Signe de vie ${formatRelative(mailer.seen_at, new Date(now))}` : "Aucun signe de vie"}
-                    </dd>
-                  </div>
-                  <Badge tone={service === "up" ? "green" : service === "down" ? "red" : "amber"} dot>
-                    {service === "up" ? "Actif" : service === "down" ? "Arrêté" : "Jamais démarré"}
-                  </Badge>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3">
+                  <dt className="text-fg">Service d&apos;envoi</dt>
+                  <dd className="col-start-2 row-span-2 row-start-1">
+                    <Badge tone={service === "up" ? "green" : service === "down" ? "red" : "amber"} dot>
+                      {service === "up" ? "Actif" : service === "down" ? "Arrêté" : "Jamais démarré"}
+                    </Badge>
+                  </dd>
+                  <dd className="num mt-0.5 text-[12px] text-fg-muted">
+                    {mailer ? `Signe de vie ${formatRelative(mailer.seen_at, new Date(now))}` : "Aucun signe de vie"}
+                  </dd>
                 </div>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <dt className="text-fg">Serveur mail</dt>
-                    <dd className="num mt-0.5 break-all text-[12px] text-fg-muted">{server}</dd>
-                  </div>
-                  <Badge tone={smtp === "ready" ? "green" : smtp === "down" ? "red" : "neutral"} dot>
-                    {smtp === "ready" ? "Joignable" : smtp === "down" ? "Injoignable" : service === "up" ? "Vérification…" : "Inconnu"}
-                  </Badge>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3">
+                  <dt className="text-fg">Serveur mail</dt>
+                  <dd className="col-start-2 row-span-2 row-start-1">
+                    <Badge tone={smtp === "ready" ? "green" : smtp === "down" ? "red" : "neutral"} dot>
+                      {smtp === "ready" ? "Joignable" : smtp === "down" ? "Injoignable" : service === "up" ? "Vérification…" : "Inconnu"}
+                    </Badge>
+                  </dd>
+                  <dd className="num mt-0.5 break-all text-[12px] text-fg-muted">{server}</dd>
                 </div>
               </dl>
 

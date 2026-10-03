@@ -151,6 +151,10 @@ export function PricingFacts() {
               <Link href="/cgv" className={link}>
                 Lire les CGV
               </Link>
+              {" · "}
+              <Link href="/abonnement-resiliation" className={link}>
+                {fr("Résiliation et remboursement")}
+              </Link>
             </>
           }
         />

@@ -83,7 +83,7 @@ export function DispatchJournal({ initial, tenant, timeZone, rideNumbers }: { in
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="#course, message…" className="h-8 w-48 rounded-lg border border-line bg-ink-850 pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:border-brand/50" />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="#course, message…" aria-label="Rechercher dans le journal" title="Rechercher dans le journal" className="h-8 w-48 rounded-lg border border-line-field bg-ink-850 pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/40" />
           </div>
           <div className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[12px]">
             {(["all", "warning", "error"] as const).map((l) => (
@@ -109,12 +109,13 @@ export function DispatchJournal({ initial, tenant, timeZone, rideNumbers }: { in
           return (
             <div key={e.id}>
               {header && <div className="px-3 pb-1 pt-3 text-[12px] text-fg-subtle">— {day} —</div>}
-              <div className={cn("group grid grid-cols-[84px_38px_76px_1fr] gap-3 rounded-md px-3 hover:bg-white/[0.03]", e.level === "error" && "bg-red/[0.05]")}>
+              <div className={cn("group grid min-h-7 grid-cols-[84px_38px_76px_1fr] items-center gap-3 rounded-md px-3 hover:bg-white/[0.03]", e.level === "error" && "bg-red/[0.05]")}>
                 <span className="text-fg-subtle">{formatTime(e.created_at, timeZone, true)}</span>
                 <span className={cn("text-[11px] font-semibold", LEVEL_STYLE[e.level])}>{LEVEL_TAG[e.level]}</span>
                 <span className="truncate">
                   {e.ride_id && num ? (
-                    <Link href={`/dashboard/rides/${e.ride_id}`} className="text-blue hover:underline">#{num}</Link>
+                    // Cible de 24 px au moins (WCAG 2.5.8) ; sans préchargement (règle du tableau de bord)
+                    <Link href={`/dashboard/rides/${e.ride_id}`} prefetch={false} className="inline-flex min-h-6 items-center text-blue hover:underline">#{num}</Link>
                   ) : (
                     <span className="text-fg-subtle">{e.category === "system" ? "fleet" : "—"}</span>
                   )}

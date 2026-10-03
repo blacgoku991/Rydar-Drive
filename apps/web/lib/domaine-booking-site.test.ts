@@ -82,8 +82,11 @@ const OTHER = "22222222-2222-4222-8222-222222222222";
 const site = () => h.rows.find((r) => r.organization_id === ORG)!;
 const form = (over: Record<string, unknown> = {}) => ({
   enabled: true, subdomain: "centrale-a", custom_domain: "", title: "Centrale A", tagline: "", description: "", logo_url: "",
-  hero_image_url: "", primary_color: "#C8F03C", phone: "", email: "", whatsapp: "", service_area: "",
-  vehicle_categories: ["standard" as const], show_price_estimate: true, ...over,
+  hero_image_url: "", primary_color: "#C8F03C", phone: "01 23 45 67 89", email: "contact@centrale.example", whatsapp: "", service_area: "",
+  vehicle_categories: ["standard" as const], show_price_estimate: true,
+  // Mise en ligne : conditions pour les clients, téléphone et e-mail obligatoires (bookingSitePublishable)
+  legal_mentions: "Centrale SAS, 1 rue de l'Exemple, Paris. Paiement : carte ou espèces à bord. Médiateur : CM2C.",
+  ...over,
 });
 
 beforeEach(() => {

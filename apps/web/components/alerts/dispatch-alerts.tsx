@@ -46,6 +46,7 @@ import { runAction } from "@/lib/run-action";
 import { playSound, unlockAudio, type SoundKind } from "@/lib/sounds";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 export type AlertKind =
   | "new" | "accepted" | "no_driver" | "escalated" | "cancelled" | "ride_alert" | "flight" | "message" | "report" | "document" | "moderation"
@@ -1084,6 +1085,7 @@ function SettlementToastActions({ item, api, onClose, btn }: { item: AlertItem; 
       {whatsapp && (
         <a href={whatsapp} target="_blank" rel="noopener noreferrer" onClick={onClose} className={cn(btn, "border border-green/30 text-green hover:bg-green/10")}>
           <MessageSquareText className="size-3.5" /> WhatsApp
+          <NewTabHint />
         </a>
       )}
     </div>

@@ -9,7 +9,7 @@ Architecture cible :
 - **Stripe**.
 - **EAS** : builds de l'app chauffeur.
 
-> **Tout sur un VPS** (site + worker + Redis + HTTPS automatique, base chez Supabase) : kit clé en main dans [`deploy/`](../deploy/README.md) — `sudo bash deploy/install.sh`.
+> **Tout sur un VPS** (site + worker + Redis + HTTPS automatique) : kit clé en main dans [`deploy/`](../deploy/README.md) — `sudo bash deploy/install.sh`. **Production (rydardrive.com) : Supabase auto-hébergé sur le même VPS** (§ « Montage en production ») : base, fichiers et sauvegardes sur le VPS, comme le décrivent les pages légales. Un projet Supabase cloud (§ 1 ci-dessous) ajouterait un sous-traitant : modifier d'abord `/dpa` (annonce aux centrales 30 jours avant, art. 6) et `/confidentialite`.
 
 ## 1. Supabase
 
@@ -280,9 +280,9 @@ Hors kit VPS : `docker run -e DATABASE_SSLMODE=verify-full -e DATABASE_CA_FILE=/
 
 | E-mail (`kind`) | Destinataire | Quand |
 | --- | --- | --- |
-| Notification (`contact_notify`) | le Super Admin : `CONTACT_NOTIFY_EMAIL`, à défaut l'e-mail de `/admin/legal`, puis `LEGAL_EMAIL`. « Répondre » écrit au demandeur (Reply-To) | à chaque demande |
+| Notification (`contact_notify`) | le Super Admin : `CONTACT_NOTIFY_EMAIL`, à défaut l'e-mail de `/admin/legal`, puis `LEGAL_EMAIL`. **Aucune donnée personnelle** (sujet, offre, référence et lien seulement) ni Reply-To : la demande se lit et se traite dans `/admin/contacts` (minimisation : la boîte de messagerie est hors du serveur, la purge ne l'atteint pas) | à chaque demande |
 | Accusé de réception (`contact_ack`) | le demandeur. Texte fixe, sans rien de ce qu'il a saisi (anti-abus : le formulaire ne peut pas servir à écrire à un tiers) ; un seul par adresse et par 24 h | à chaque demande |
-| Réponse (`contact_reply`) | le demandeur | réponse du Super Admin depuis `/admin/contacts` |
+| Réponse (`contact_reply`) | le demandeur (Reply-To : la boîte de contact, s'il répond par e-mail) | réponse du Super Admin depuis `/admin/contacts` |
 | E-mail de test (`test`) | l'adresse choisie | bouton de `/admin/contacts` |
 
 **Par où** : le site n'envoie rien lui-même, il écrit dans la file. Le service `mailer` (même image que le worker,
@@ -437,18 +437,22 @@ Aperçu navigateur (démo) : `pnpm --filter @rydar/driver web`, ou `export:web` 
 ## 6. Pages légales
 
 Les pages publiques `/mentions-legales`, `/cgu`, `/cgv`, `/confidentialite`, `/cookies`, `/dpa` (accord de
-traitement des données) et `/suppression-compte` lisent l'identité de l'éditeur et des hébergeurs dans la base :
+traitement des données), `/suppression-compte`, `/abonnement-resiliation` (résumé des CGV, sans rien y ajouter) et
+`/accessibilite` (déclaration « non conforme » tant qu'aucun audit RGAA) lisent l'identité de l'éditeur et des
+hébergeurs dans la base :
 
 - **avant l'ouverture au public**, le Super Admin remplit **`/admin/legal`** (raison sociale, forme, capital, siège,
   RCS, TVA, directeur de la publication, contacts, hébergeur du serveur et des données). Tant qu'un champ manque,
-  `/mentions-legales` affiche « à compléter par l'éditeur ». `LEGAL_NAME`, `LEGAL_EMAIL` et `LEGAL_ADDRESS`
+  `/mentions-legales` affiche « à compléter par l'éditeur » et `/admin/legal` le liste en tête (« Mentions
+  obligatoires manquantes »). `LEGAL_NAME`, `LEGAL_EMAIL` et `LEGAL_ADDRESS`
   (`deploy/configure.sh`) ne servent que de repli ;
 - les textes sont des modèles fidèles au fonctionnement du logiciel (Rydar = éditeur de logiciel, les courses
   appartiennent aux centrales) : **faites-les relire par un juriste** avant l'ouverture ;
 - après toute modification importante des textes, changez la version du document concerné
   (`packages/shared/src/features.ts`, reprise par `apps/web/lib/legal.ts`) et sa date affichée
-  (`apps/web/lib/legal.ts` : `LEGAL_UPDATED_AT` pour les CGU, mentions et cookies, `CGV_UPDATED_AT`, `DPA_UPDATED_AT`,
-  `PRIVACY_UPDATED_AT`). Deux versions, pour ne faire ré-accepter que les personnes concernées :
+  (`apps/web/lib/legal.ts` : `LEGAL_UPDATED_AT` pour les CGU et la suppression de compte, `CGV_UPDATED_AT`,
+  `DPA_UPDATED_AT`, `PRIVACY_UPDATED_AT`, `NOTICE_UPDATED_AT`, `COOKIES_UPDATED_AT`, `SUBSCRIPTION_TERMS_UPDATED_AT`,
+  `ACCESSIBILITY_UPDATED_AT`). Deux versions, pour ne faire ré-accepter que les personnes concernées :
   - **`LEGAL_VERSION`** (CGU + politique de confidentialité, à titre personnel) : un bandeau (non bloquant) du
     tableau de bord la fait accepter à chaque membre, dispatchers compris ; dans l'application chauffeur, un écran
     plein la fait accepter à chaque chauffeur, invité par sa centrale ou inscrit par lien (jamais pendant une offre
@@ -524,6 +528,52 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
   5. restent : la fiche archivée, l'abonnement et ses factures, le registre des frais et les paiements avec leurs
      lignes d'audit (10 ans au moins, obligations comptables) et les preuves d'acceptation.
 
+### Ce que les pages légales affirment du serveur (à vérifier sur le VPS, en lecture seule d'abord)
+
+Ces engagements ne sont pas appliqués par le code de l'application : ils dépendent de la configuration du VPS.
+Tant qu'un point n'est pas vérifié, la phrase correspondante des pages légales est fausse.
+
+- **Journaux techniques : 1 an au plus** (`/confidentialite` § 9). Les conteneurs du kit écrivent dans journald
+  (`deploy/docker-compose.yml`, `logging: journald`) ; ceux de `/opt/supabase` aussi si le pilote par défaut de
+  Docker est journald. Sur le VPS, une fois :
+  `sudo mkdir -p /etc/systemd/journald.conf.d` puis, dans `/etc/systemd/journald.conf.d/90-rydar.conf` :
+  `[Journal]`, `Storage=persistent`, `MaxRetentionSec=1year`, `SystemMaxUse=2G`, puis
+  `sudo systemctl restart systemd-journald` ; dans `/etc/docker/daemon.json` : `{"log-driver": "journald"}` (fusionner
+  avec le contenu existant), `sudo systemctl restart docker`, puis recréer les conteneurs (`docker compose up -d
+  --force-recreate` dans `/opt/supabase` et `/opt/rydar/deploy`). Contrôle : `docker inspect -f '{{.HostConfig.LogConfig.Type}}' $(docker ps -q)`
+  n'affiche que `journald` ; `journalctl --disk-usage`. Postfix (`/var/log/mail.log`) : rotation Ubuntu par défaut
+  (`/etc/logrotate.d/rsyslog`, 4 semaines) — ne jamais dépasser 52 semaines. Supabase auto-hébergé : les services
+  `analytics` (Logflare) et `vector` copient les journaux de tous les conteneurs dans leur propre base, sans durée
+  réglée ici : les arrêter (ils ne servent qu'à l'onglet « Logs » de Studio) ou borner leur conservation à 1 an.
+- **Aucun journal des pages consultées** (`/confidentialite` § 4) : Caddy n'a pas de directive `log` (pas de journal
+  d'accès) ; n'en ajoutez pas sans modifier d'abord `/confidentialite` § 4 et § 9 (durée, sans adresse IP si
+  possible). Kong (passerelle de Supabase) journalise les appels à l'API avec l'adresse IP : c'est un journal
+  technique, couvert par la durée d'1 an ci-dessus.
+- **Sauvegardes** (`/dpa` art. 5, `/confidentialite` § 9) : chaque nuit, base et fichiers, gardées 14 jours, **sur le
+  VPS seulement** aujourd'hui. Une panne, une suppression ou un chiffrement du VPS ferait perdre les données ET leurs
+  sauvegardes (RGPD art. 32.1.c : pouvoir rétablir la disponibilité) : ajouter une **copie chiffrée hors du VPS**
+  (stockage objet en Union européenne, par exemple OVH Object Storage ; chiffrement avant l'envoi, clé gardée hors
+  du stockage ; même durée de 14 jours), puis **tester une restauration** sur une machine vide et noter la date du
+  test. Ensuite seulement, décrire la copie dans `/dpa` (art. 5 et tableau des sous-traitants si le prestataire
+  diffère de l'hébergeur du serveur, avec l'annonce aux centrales 30 jours avant prévue à l'art. 6) et dans
+  `/confidentialite` § 7 à 9 (lieu, durée).
+- **Boîte de messagerie de contact** (`CONTACT_NOTIFY_EMAIL`, `/confidentialite` § 7 et § 9) : la notification ne
+  contient plus aucune donnée de la demande, mais les réponses que les demandeurs envoient par e-mail y arrivent.
+  Supprimer de cette boîte les échanges de plus de 3 ans (règle de suppression automatique de la messagerie, ou
+  tri manuel chaque mois). Nommer son prestataire (raison sociale, pays) dans `/confidentialite` § 7 s'il est situé
+  hors de l'Union européenne (transfert à déclarer au § 8).
+- **Correction de l'accord de traitement du 3 octobre 2026** (hébergement réel, sous-traitants) : texte accepté
+  avant la correction consultable sur `/dpa/2026-10-02`. Prévenir les propriétaires des organisations (e-mail et
+  message), avec leur droit de s'opposer et de résilier sans frais (art. 6), et reprendre la correction dans la
+  prochaine `ORG_LEGAL_VERSION`.
+- **Retrait ou restriction décidés par l'éditeur** (règlement sur les services numériques, art. 17 ;
+  `/mentions-legales`, « Signaler un contenu illicite ») : chaque bannissement plateforme, retrait d'un message ou
+  d'un contenu de mini-site par l'éditeur est motivé par écrit à la personne concernée (e-mail), au plus tard au
+  moment où il prend effet : décision prise (retrait, suspension, bannissement) et sa portée, faits et
+  circonstances, éventuel signalement à l'origine (sans identifier son auteur), recours à des moyens automatisés
+  (correspondance d'empreintes) le cas échéant, base de la décision (règle des CGU ou loi enfreinte) et voies de
+  recours (répondre à l'éditeur pour contester, juge compétent).
+
 ## 7. Checklist de mise en production
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
@@ -533,7 +583,8 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
 - [ ] Premier Super Admin créé, offres Stripe reliées
 - [ ] `API_KEY_PEPPER` long et secret, `SUPABASE_SERVICE_ROLE_KEY` uniquement côté serveur
 - [ ] `REDIS_URL` configuré (sinon le rate limiting reste en mémoire, instance par instance)
-- [ ] OSRM auto-hébergé (ou Mapbox / Google) à la place du serveur de démo
+- [ ] OSRM auto-hébergé (ou Mapbox / Google) à la place du serveur de démo (FOSSGIS n'accepte un produit commercial
+      que s'il est public et le cite ; retirer alors la ligne OSRM des services publics tiers de `/dpa`)
 - [ ] Worker déployé (connexion directe) et healthcheck surveillé
 - [ ] Worker : `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` transmis (journal de démarrage `"accountDeletions":"on"`).
       Sinon : erreur `account deletions cannot be completed` dans le journal du worker et suppressions « en retard »
@@ -546,3 +597,13 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
 - [ ] Domaine wildcard pour les mini-sites, domaines personnalisés ajoutés
 - [ ] Builds EAS signés, pushs testés sur un vrai téléphone Android et un vrai iPhone
 - [ ] `/admin/legal` rempli (aucun « à compléter par l'éditeur » sur `/mentions-legales`), textes légaux relus par un juriste
+- [ ] Textes fidèles à l'installation : serveur dans l'Union européenne (sinon changer `/confidentialite` § 8 et `/dpa`
+      art. 7), sauvegardes nocturnes gardées 14 jours, journaux techniques gardés 1 an au plus (Docker de
+      `/opt/supabase` compris, journald), aucune copie hors du serveur non décrite dans `/dpa` (docs/SECURITY.md,
+      « Documents légaux ») : § 6, « Ce que les pages légales affirment du serveur »
+- [ ] Copie chiffrée des sauvegardes hors du VPS (UE) et restauration testée, puis `/dpa` et `/confidentialite` mis à
+      jour (§ 6)
+- [ ] Stripe : portail client en annulation à la fin de la période, sans remboursement ni prorata automatiques (CGV
+      art. 4) ; mentions légales des factures (SIREN, TVA, échéance, pénalités, indemnité de 40 €)
+- [ ] Mini-sites, avant de les rouvrir (`booking_sites_enabled()`) : conditions de chaque centrale renseignées
+      (médiateur de la consommation, annulation, moyens de paiement), parcours relu par un juriste

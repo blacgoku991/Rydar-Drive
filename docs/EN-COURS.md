@@ -33,7 +33,10 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   supprimées (fiche course, liste centrale, fiche admin), compteur Messages léger (`chat_counts`), 3 index (migration
   006500), IPv4 d'abord vers Supabase, worker de carte en cache, keep-alive Next au-dessus de celui de Caddy. Détail :
   HISTORIQUE.md. Côté VPS (à faire par l'utilisateur, contrôles en lecture seule d'abord) : services Supabase
-  inutilisés (Studio, meta, imgproxy, functions, analytics), OSRM local, journal d'accès Caddy avec durées.
+  inutilisés (Studio, meta, imgproxy, functions, analytics), OSRM local. Pas de journal d'accès Caddy : la politique
+  de confidentialité annonce qu'aucun journal des pages consultées n'est tenu (en ajouter un = modifier d'abord
+  `/confidentialite` § 4 et § 9, sans adresse IP) ; journaux des conteneurs dans journald, 1 an au plus
+  (`docs/DEPLOYMENT.md` § 6, « Ce que les pages légales affirment du serveur »).
 - **Frais Rydar aussi pour les flottes** (propriétaire : « un abonnement de 49,99 € et 2 € de commission sur chaque
   course ») : le super admin règle % et / ou € par course pour une flotte comme pour une centrale (fiche du rattacheur,
   création). Dus par la flotte dès la fin de chaque course ; sans prix, seuls les frais fixes ; taux figés à la fin de

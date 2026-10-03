@@ -197,8 +197,9 @@ export function OrgHeadcountTable({ rows }: { rows: OrgHeadcount[] }) {
                 {o.drivers_online > 0 ? (
                   <Link
                     href={`/admin/carte?org=${o.id}`}
-                    className="relative z-10 inline-flex h-8 items-center rounded-md px-1.5 font-medium text-brand hover:bg-brand/10"
+                    className="relative z-10 inline-flex h-8 min-w-8 items-center justify-center rounded-md px-1.5 font-medium text-brand hover:bg-brand/10"
                     title="Voir ses chauffeurs sur la carte en direct"
+                    aria-label={`${formatNumber(o.drivers_online)} en ligne : voir ses chauffeurs sur la carte en direct`}
                   >
                     <span className="num">{formatNumber(o.drivers_online)}</span>
                   </Link>

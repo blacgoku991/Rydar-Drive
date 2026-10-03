@@ -6,6 +6,7 @@ import { SETTLEMENT_LINK_EXAMPLES, formatIban, formatPrice, isValidIban, settlem
 import { Check, ExternalLink, Landmark } from "lucide-react";
 import { METHOD_ICON, methodLabel } from "@/components/settlements/settlement-ui";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { cn } from "@/lib/utils";
 
 export type SettlementMethodsValue = {
@@ -135,7 +136,6 @@ export function SettlementMethodsFields({
               disabled={readOnly}
               onChange={(e) => set("link", e.target.value)}
               placeholder="https://revolut.me/votre-identifiant/{montant}"
-              aria-label="Lien de paiement"
               className="mono text-[13px]"
               aria-invalid={!!errors.link}
               spellCheck={false}
@@ -162,7 +162,8 @@ export function SettlementMethodsFields({
             {linkPreview ? (
               <a href={linkPreview} target="_blank" rel="noopener noreferrer" className="mono mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-blue hover:underline">
                 <span className="truncate">{linkPreview}</span>
-                <ExternalLink className="size-3.5 shrink-0" />
+                <ExternalLink aria-hidden className="size-3.5 shrink-0" />
+                <NewTabHint />
               </a>
             ) : (
               <p className="mt-1 text-[12.5px] text-fg-subtle">{f.link.trim() ? "Lien invalide : il doit commencer par https://" : "Collez le lien de votre compte (Revolut, PayPal, Lydia, Stripe…)."}</p>
@@ -182,10 +183,10 @@ export function SettlementMethodsFields({
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Bénéficiaire" optional hint="Nom du titulaire du compte, affiché au chauffeur." error={errors.payeeName}>
-              <Input name="payeeName" value={f.payeeName} disabled={readOnly} maxLength={120} onChange={(e) => set("payeeName", e.target.value)} placeholder={legalName || orgName} aria-label="Bénéficiaire du virement" aria-invalid={!!errors.payeeName} />
+              <Input name="payeeName" value={f.payeeName} disabled={readOnly} maxLength={120} onChange={(e) => set("payeeName", e.target.value)} placeholder={legalName || orgName} aria-invalid={!!errors.payeeName} />
             </Field>
             <Field label="BIC" optional error={errors.bic}>
-              <Input name="bic" value={f.bic} disabled={readOnly} maxLength={14} onChange={(e) => set("bic", e.target.value.toUpperCase())} placeholder="AGRIFRPP" aria-label="BIC" className="mono" aria-invalid={!!errors.bic} spellCheck={false} />
+              <Input name="bic" value={f.bic} disabled={readOnly} maxLength={14} onChange={(e) => set("bic", e.target.value.toUpperCase())} placeholder="AGRIFRPP" className="mono" aria-invalid={!!errors.bic} spellCheck={false} />
             </Field>
           </div>
           <Field label="IBAN" error={errors.iban}>
@@ -197,7 +198,6 @@ export function SettlementMethodsFields({
               onChange={(e) => set("iban", e.target.value.toUpperCase())}
               onBlur={() => set("iban", formatIban(f.iban))}
               placeholder="FR76 3000 6000 0112 3456 7890 189"
-              aria-label="IBAN"
               className="mono"
               aria-invalid={!!errors.iban}
               spellCheck={false}
@@ -226,7 +226,6 @@ export function SettlementMethodsFields({
           maxLength={500}
           onChange={(e) => set("instructions", e.target.value)}
           placeholder={f.methods.includes("other") ? "Ex. Wero au 06 12 34 56 78 en indiquant la référence (C1783)." : "Ex. indiquez la référence (C1783) dans le commentaire du paiement."}
-          aria-label={f.methods.includes("other") ? "Autre moyen de paiement" : `Instructions au ${noun}`}
           className="min-h-[72px]"
         />
       </Field>

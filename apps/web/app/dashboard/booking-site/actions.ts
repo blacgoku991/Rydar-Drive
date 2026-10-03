@@ -1,5 +1,5 @@
 "use server";
-import { bookingSiteSchema, bookingSiteSchemaFor, describeError, extractErrorCode, humanizeError } from "@rydar/shared";
+import { bookingSiteSchema, bookingSiteSchemaFor, describeError, extractErrorCode, fieldErrors, humanizeError } from "@rydar/shared";
 import { createHash } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { revalidatePath } from "next/cache";
@@ -12,7 +12,7 @@ import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result = { ok: true } | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 /** Mini-sites coupés par la plateforme (super admin) : réglages figés, la base refuse aussi (BOOKING_SITES_DISABLED). */
 const SWITCHED_OFF = (): Result => ({ ok: false, error: humanizeError("BOOKING_SITES_DISABLED") });
@@ -31,6 +31,7 @@ const BOOKING_LABELS: Record<string, string> = {
   subdomain: "Sous-domaine", custom_domain: "Domaine personnalisé", title: "Titre", tagline: "Accroche", description: "Description",
   logo_url: "Logo", hero_image_url: "Image d'en-tête", primary_color: "Couleur principale", phone: "Téléphone", email: "E-mail",
   whatsapp: "WhatsApp", service_area: "Zone desservie", vehicle_categories: "Catégories de véhicules",
+  legal_mentions: "Conditions pour vos clients",
 };
 
 export async function domainToken(orgId: string) {
@@ -50,12 +51,13 @@ export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>
     .single();
   if (readError) return { ok: false, error: humanizeError(readError.message, actionError(readError)) };
   const parsed = bookingSiteSchemaFor((current as { subdomain: string | null } | null)?.subdomain).safeParse(input);
-  if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS) };
+  // Erreurs aussi rattachées à leurs champs (conditions, téléphone, e-mail exigés pour la mise en ligne)
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   if (v.custom_domain && isPlatformDomain(v.custom_domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
   const { error } = await ctx.supabase
     .from("booking_sites")
-    .update({ ...v, email: v.email || null, custom_domain: v.custom_domain || null })
+    .update({ ...v, email: v.email || null, custom_domain: v.custom_domain || null, legal_mentions: v.legal_mentions ?? null })
     .eq("organization_id", ctx.org.id);
   if (error) {
     // Seuls les domaines VÉRIFIÉS sont uniques (migration 20260924005000) : un conflit ne peut venir que du sous-domaine

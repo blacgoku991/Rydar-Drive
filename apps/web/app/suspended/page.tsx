@@ -1,5 +1,6 @@
 import type { OrgPlatformAccount } from "@rydar/shared";
 import { ArrowLeftRight, ChevronRight, PauseCircle } from "lucide-react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { StatusScreen } from "@/components/auth/status-screen";
 import { NETWORK_SUSPENDED_PATH } from "@/components/network-share/paths";
@@ -12,6 +13,7 @@ import { signOut } from "@/app/login/actions";
 import { SwitchOrganization } from "./switch-organization";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Compte suspendu" };
 
 export default async function SuspendedPage() {
   // Centrale suspendue qui doit des frais plateforme : montant et « J'ai payé » (owner / admin seulement)

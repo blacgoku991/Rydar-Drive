@@ -45,6 +45,10 @@ la centrale doit les frais plateforme à Rydar.
   Fichier `"use server"` : n'exporter que des fonctions async.
 - Tailwind v4 : classes custom = `@utility`. PG regex : répétition ≤ 255 (`{1,512}` interdit).
 - Web : relectures temps réel par `useLiveSync` (rien onglet caché) ; Intl via `dateTimeFormat`/`numberFormat` (shared), jamais `new Intl.*` en rendu.
+- Conformité (`docs/SECURITY.md`, « Documents légaux ») : aucun traceur non nécessaire ni script/police/vidéo tiers sans
+  gestionnaire de consentement CNIL ; nouveau cookie ou clé de stockage → tableau de `/cookies` ; changement
+  d'hébergement ou de sous-traitant → `/dpa`, `/confidentialite`, `/mentions-legales` d'abord. Champ de formulaire :
+  `Field` (libellé, aide et erreur reliés) ; texte jamais sous 4,5:1 ; lien `target="_blank"` → `NewTabHint`.
 - IP client : toujours `ipFromHeaders` (`lib/request.ts`) + `rateLimitAll` ; jamais lire CF-Connecting-IP / X-Real-IP soi-même.
 - Perf : `<Link>` du tableau de bord en `prefetch={false}` ; proxy sans appel à Auth sauf jeton HS256 face à un JWKS asymétrique (getUser : /login et rendu).
 - Export CSV : BOM UTF-8, « ; », cellule commençant par = + - @ tab CR préfixée d'une apostrophe (modèle
@@ -117,6 +121,9 @@ la centrale doit les frais plateforme à Rydar.
 - Suppression de compte chauffeur : `svc_delete_driver_account` (mig 004000) + file `private.account_deletions` (worker 5 min,
   besoin de SUPABASE_URL/SERVICE_ROLE_KEY) ; fiche supprimée figée (DRIVER_DELETED) ; outil /admin/suppressions.
 - Mini-sites : interrupteur `booking_sites_enabled()` (coupé par 006200, /admin/plans), réglages des centrales intacts ; hôte non résolu → 404 neutre (`proxy.ts`).
+  « Réserver avec obligation de paiement » seulement avec un prix affiché, enregistré à l'identique (`lib/booking-price.ts`
+  = devis ET réservation, sinon `PRICE_CHANGED`) ; sans prix affiché = demande sans prix ; en ligne = conditions +
+  téléphone + e-mail (`bookingSitePublishable`) ; images publiques servies par la plateforme seulement (`platformImageUrl`).
 - Messagerie flotte modérée (004100) ; registre des frais `on delete restrict` (004200) : une centrale avec frais s'archive.
 - Bannissement plateforme : les fiches d'AUTRES centrales partageant une identité ne sont bannies que si le super admin les coche
   (`admin_fraud_report_matches`) ; justificatif « Visite médicale » plus déposable (aucune donnée de santé collectée).

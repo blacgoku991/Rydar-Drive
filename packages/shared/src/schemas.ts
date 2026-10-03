@@ -182,7 +182,12 @@ export const bookingRequestSchema = z.object({
     .optional()
     .transform((v) => (v ? v.replace(/\s/g, "") : undefined)),
   comment: optionalText(500),
-  consent: z.literal(true, { error: "Merci d'accepter le traitement de vos données" }),
+  // Prix affiché au client au moment de réserver (centimes, TTC) : seul un prix affiché engage le client (« Réserver avec
+  // obligation de paiement », C. conso. L221-14) ; le serveur l'enregistre s'il est identique au sien, sinon refuse
+  // (PRICE_CHANGED). Absent : demande sans prix, que la centrale confirme au client.
+  expectedPriceCents: z.coerce.number().int().min(0).max(10_000_000).nullish(),
+  // Plus de case « J'accepte… » : les coordonnées servent à exécuter la course demandée (RGPD art. 6.1.b), le client en
+  // est informé sous le formulaire ; un ancien champ « consent » encore envoyé est ignoré
   // Pot de miel anti-robot : accepté par le schéma (sinon l'erreur de validation prévient le robot),
   // l'action répond « ok » sans rien créer s'il est rempli
   website: z.string().max(200).optional(),
@@ -362,12 +367,28 @@ const bookingSiteObjectSchema = z.object({
   service_area: optionalText(300),
   vehicle_categories: z.array(vehicleCategorySchema).min(1),
   show_price_estimate: z.boolean(),
+  // Informations précontractuelles de la centrale pour ses clients particuliers (conditions de réservation,
+  // d'annulation et de paiement, médiateur de la consommation) : affichées avant le bouton de réservation
+  legal_mentions: optionalText(2000),
 });
+
+/** Longueur minimale des « Conditions pour vos clients » d'un mini-site en ligne. */
+export const BOOKING_SITE_MIN_CONDITIONS = 40;
+
+/**
+ * Mini-site publiable auprès de particuliers : conditions de la centrale (identité, paiement, annulation, médiateur :
+ * C. conso. L111-1, L221-5, L221-14, L612-1), téléphone et e-mail de la centrale. Contrôlé à l'enregistrement
+ * (bookingSiteSchemaFor) ET à chaque réservation (mini-site publié avant la règle : réservation en ligne refusée).
+ */
+export function bookingSitePublishable(site: { legal_mentions?: string | null; phone?: string | null; email?: string | null }): boolean {
+  return (site.legal_mentions ?? "").trim().length >= BOOKING_SITE_MIN_CONDITIONS && !!site.phone?.trim() && !!site.email?.trim();
+}
 
 /**
  * Réglages du mini-site. `currentSubdomain` = sous-domaine enregistré : un nom réservé n'est refusé que s'il CHANGE
  * (comme le trigger SQL booking_sites_reserved_subdomain, migration 004900) ; une centrale dont le sous-domaine
- * existant est réservé (pris avant la règle) enregistre ses autres réglages sans devoir le renommer.
+ * existant est réservé (pris avant la règle) enregistre ses autres réglages sans devoir le renommer. Mise en ligne
+ * (enabled) : conditions pour les clients, téléphone et e-mail obligatoires (bookingSitePublishable).
  */
 export function bookingSiteSchemaFor(currentSubdomain: string | null | undefined) {
   const current = currentSubdomain?.trim().toLowerCase() || null;
@@ -375,6 +396,16 @@ export function bookingSiteSchemaFor(currentSubdomain: string | null | undefined
     if (v.subdomain && v.subdomain !== current && isReservedSubdomain(v.subdomain)) {
       ctx.addIssue({ code: "custom", path: ["subdomain"], message: "Nom réservé à la plateforme" });
     }
+    if (!v.enabled) return;
+    if ((v.legal_mentions ?? "").trim().length < BOOKING_SITE_MIN_CONDITIONS) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["legal_mentions"],
+        message: `Pour mettre le mini-site en ligne : vos conditions pour les clients (identité, moyens de paiement, annulation, médiateur), ${BOOKING_SITE_MIN_CONDITIONS} caractères au moins`,
+      });
+    }
+    if (!v.phone?.trim()) ctx.addIssue({ code: "custom", path: ["phone"], message: "Pour mettre le mini-site en ligne : téléphone de la centrale" });
+    if (!v.email?.trim()) ctx.addIssue({ code: "custom", path: ["email"], message: "Pour mettre le mini-site en ligne : e-mail de la centrale" });
   });
 }
 

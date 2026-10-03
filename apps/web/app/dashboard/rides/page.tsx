@@ -143,10 +143,12 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
             <input
+              type="search"
               name="q"
               defaultValue={q}
               placeholder="N° de course, client, téléphone, adresse…"
-              className="h-10 w-full rounded-lg border border-line-strong bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60"
+              aria-label="Rechercher une course" title="Rechercher une course"
+              className="h-10 w-full rounded-lg border border-line-field bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60 focus-visible:ring-2 focus-visible:ring-brand/40"
             />
           </div>
           <Button type="submit" variant="secondary">Rechercher</Button>
@@ -240,16 +242,29 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
               Page <span className="num text-fg">{page}</span> / <span className="num">{totalPages}</span> · <span className="num">{count}</span> courses
             </span>
             <div className="flex gap-2">
-              <Button asChild variant="outline" size="sm" className={cn(page <= 1 && "pointer-events-none opacity-40")}>
-                <Link href={href(filter, page - 1)} prefetch={false}>
+              {/* Première ou dernière page : bouton désactivé (plus un lien atteignable au clavier vers une page vide) */}
+              {page <= 1 ? (
+                <Button variant="outline" size="sm" disabled>
                   <ChevronLeft /> Précédent
-                </Link>
-              </Button>
-              <Button asChild variant="outline" size="sm" className={cn(page >= totalPages && "pointer-events-none opacity-40")}>
-                <Link href={href(filter, page + 1)} prefetch={false}>
+                </Button>
+              ) : (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={href(filter, page - 1)} prefetch={false}>
+                    <ChevronLeft /> Précédent
+                  </Link>
+                </Button>
+              )}
+              {page >= totalPages ? (
+                <Button variant="outline" size="sm" disabled>
                   Suivant <ChevronRight />
-                </Link>
-              </Button>
+                </Button>
+              ) : (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={href(filter, page + 1)} prefetch={false}>
+                    Suivant <ChevronRight />
+                  </Link>
+                </Button>
+              )}
             </div>
           </div>
         )}

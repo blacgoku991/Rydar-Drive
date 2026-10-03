@@ -14,11 +14,30 @@ import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
+/**
+ * Contraste de la couleur principale sur le fond du mini-site (ink-950, #060709) : texte et repères colorés lisibles
+ * à partir de 4,5:1 (WCAG 1.4.3). null : couleur illisible (saisie en cours).
+ */
+export function brandContrastOnDark(hex: string): number | null {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return null;
+  const lum = (h: string) => {
+    const n = parseInt(h.slice(1), 16);
+    const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const [a, b] = [lum(hex), lum("#060709")].sort((x, y) => y - x);
+  return (a! + 0.05) / (b! + 0.05);
+}
+
 export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit, planAllows, customDomainAllowed }: { site: any; slug: string; rootDomain: string; appUrl: string; token: string; canEdit: boolean; planAllows: boolean; customDomainAllowed: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [s, setS] = useState({ ...site, email: site.email ?? "", custom_domain: site.custom_domain ?? "" });
   const [frameKey, setFrameKey] = useState(0);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const set = (k: string, v: unknown) => setS((c: any) => ({ ...c, [k]: v }));
   const publicUrl = s.custom_domain_verified_at && s.custom_domain ? `https://${s.custom_domain}` : `https://${s.subdomain ?? slug}.${rootDomain}`;
   const previewUrl = `${appUrl}/book/${slug}?preview=1`;
@@ -29,8 +48,9 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
         enabled: s.enabled, subdomain: s.subdomain || null, custom_domain: s.custom_domain || null, title: s.title ?? "", tagline: s.tagline ?? "",
         description: s.description ?? "", logo_url: s.logo_url ?? "", hero_image_url: s.hero_image_url ?? "", primary_color: s.primary_color,
         phone: s.phone ?? "", email: s.email ?? "", whatsapp: s.whatsapp ?? "", service_area: s.service_area ?? "",
-        vehicle_categories: s.vehicle_categories, show_price_estimate: s.show_price_estimate,
+        vehicle_categories: s.vehicle_categories, show_price_estimate: s.show_price_estimate, legal_mentions: s.legal_mentions ?? "",
       });
+      setErrors(res.ok ? {} : (res.fieldErrors ?? {}));
       if (!res.ok) return void toast.error(res.error);
       toast.success("Mini-site enregistré");
       setFrameKey((k) => k + 1);
@@ -46,7 +66,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
             title="Publication"
             icon={<Globe />}
             description={s.enabled ? publicUrl : "Le mini-site n'est pas en ligne."}
-            action={<Switch checked={s.enabled} disabled={!canEdit || !planAllows} onCheckedChange={(v) => set("enabled", v)} />}
+            action={<Switch aria-label="Mini-site en ligne" checked={s.enabled} disabled={!canEdit || !planAllows} onCheckedChange={(v) => set("enabled", v)} />}
           />
           <CardBody className="grid gap-4 sm:grid-cols-2">
             <Field label="Sous-domaine" hint={`${s.subdomain || slug}.${rootDomain}`}>
@@ -82,18 +102,25 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
           <CardHeader title="Contenu & identité" />
           <CardBody className="grid gap-4 sm:grid-cols-2">
             <Field label="Nom affiché"><Input value={s.title ?? ""} onChange={(e) => set("title", e.target.value)} disabled={!canEdit} /></Field>
-            <Field label="Couleur principale">
+            <Field
+              label="Couleur principale"
+              hint={
+                (brandContrastOnDark(s.primary_color) ?? 21) < 4.5
+                  ? `Couleur trop sombre sur le fond du mini-site (contraste ${(brandContrastOnDark(s.primary_color) ?? 0).toFixed(1).replace(".", ",")}:1, 4,5:1 au moins) : certains textes seraient peu lisibles, choisissez une teinte plus claire.`
+                  : undefined
+              }
+            >
               <div className="flex gap-2">
                 <input type="color" value={s.primary_color} onChange={(e) => set("primary_color", e.target.value.toUpperCase())} disabled={!canEdit} className="h-10 w-12 cursor-pointer rounded-lg border border-line-strong bg-ink-850 p-1" />
-                <Input value={s.primary_color} onChange={(e) => set("primary_color", e.target.value)} className="num" disabled={!canEdit} />
+                <Input value={s.primary_color} onChange={(e) => set("primary_color", e.target.value)} className="num" disabled={!canEdit} aria-label="Couleur principale, code hexadécimal" />
               </div>
             </Field>
             <Field label="Accroche" className="sm:col-span-2"><Input value={s.tagline ?? ""} onChange={(e) => set("tagline", e.target.value)} disabled={!canEdit} /></Field>
             <Field label="Description" className="sm:col-span-2"><Textarea value={s.description ?? ""} onChange={(e) => set("description", e.target.value)} disabled={!canEdit} /></Field>
-            <Field label="Logo (URL)" optional><Input value={s.logo_url ?? ""} onChange={(e) => set("logo_url", e.target.value)} disabled={!canEdit} /></Field>
-            <Field label="Photo de fond (URL)" optional><Input value={s.hero_image_url ?? ""} onChange={(e) => set("hero_image_url", e.target.value)} disabled={!canEdit} /></Field>
-            <Field label="Téléphone"><Input value={s.phone ?? ""} onChange={(e) => set("phone", e.target.value)} disabled={!canEdit} /></Field>
-            <Field label="E-mail" optional><Input value={s.email ?? ""} onChange={(e) => set("email", e.target.value)} disabled={!canEdit} /></Field>
+            <Field label="Logo (URL)" optional error={errors.logo_url} hint="Affiché seulement s'il est hébergé par Rydar Drive : une image d'un autre site n'est jamais chargée (elle transmettrait l'adresse IP de vos visiteurs à ce site)."><Input value={s.logo_url ?? ""} onChange={(e) => set("logo_url", e.target.value)} disabled={!canEdit} /></Field>
+            <Field label="Photo de fond (URL)" optional error={errors.hero_image_url} hint="Même règle que le logo."><Input value={s.hero_image_url ?? ""} onChange={(e) => set("hero_image_url", e.target.value)} disabled={!canEdit} /></Field>
+            <Field label="Téléphone" error={errors.phone} hint="Obligatoire pour mettre le mini-site en ligne."><Input value={s.phone ?? ""} onChange={(e) => set("phone", e.target.value)} disabled={!canEdit} /></Field>
+            <Field label="E-mail" error={errors.email} hint="Obligatoire pour mettre le mini-site en ligne."><Input value={s.email ?? ""} onChange={(e) => set("email", e.target.value)} disabled={!canEdit} /></Field>
             <Field label="Zone couverte" className="sm:col-span-2"><Input value={s.service_area ?? ""} onChange={(e) => set("service_area", e.target.value)} disabled={!canEdit} /></Field>
             <div className="sm:col-span-2">
               <p className="mb-2 text-[12.5px] font-medium text-fg-muted">Catégories proposées</p>
@@ -101,7 +128,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
                 {VEHICLE_CATEGORIES.map((c) => {
                   const on = s.vehicle_categories.includes(c);
                   return (
-                    <button key={c} type="button" disabled={!canEdit} onClick={() => set("vehicle_categories", on ? s.vehicle_categories.filter((x: VehicleCategory) => x !== c) : [...s.vehicle_categories, c])} className={cn("rounded-lg border px-3 py-1.5 text-[12.5px]", on ? "border-brand/50 bg-brand/[0.08] text-brand" : "border-line text-fg-muted")}>
+                    <button key={c} type="button" aria-pressed={on} disabled={!canEdit} onClick={() => set("vehicle_categories", on ? s.vehicle_categories.filter((x: VehicleCategory) => x !== c) : [...s.vehicle_categories, c])} className={cn("rounded-lg border px-3 py-1.5 text-[12.5px]", on ? "border-brand/50 bg-brand/[0.08] text-brand" : "border-line text-fg-muted")}>
                       {VEHICLE_CATEGORY_META[c].label}
                     </button>
                   );
@@ -109,9 +136,22 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
               </div>
             </div>
             <label className="flex items-center justify-between gap-4 rounded-xl border border-line bg-white/[0.02] px-4 py-3 sm:col-span-2">
-              <span className="text-[13px]">Afficher une estimation de prix (grille tarifaire)</span>
+              <span>
+                <span className="block text-[13px]">Afficher le prix avant la réservation (grille tarifaire, montants toutes taxes comprises)</span>
+                <span className="block text-[12px] text-fg-subtle">
+                  Le client réserve à ce prix, « avec obligation de paiement ». Désactivé : il envoie une demande sans prix, que vous lui confirmez.
+                </span>
+              </span>
               <Switch checked={s.show_price_estimate} onCheckedChange={(v) => set("show_price_estimate", v)} disabled={!canEdit} />
             </label>
+            <Field
+              label="Conditions pour vos clients"
+              className="sm:col-span-2"
+              error={errors.legal_mentions}
+              hint="Obligatoires pour mettre le mini-site en ligne (40 caractères au moins), affichées en tête du formulaire de réservation. Pour des clients particuliers : votre identité (raison sociale, adresse, immatriculation, directeur de la publication du mini-site), conditions de réservation et d'annulation, moyens de paiement acceptés, et nom et site web de votre médiateur de la consommation (Code de la consommation, articles L111-1, L221-5, L221-14 et L612-1). Rydar ne les rédige pas pour vous."
+            >
+              <Textarea value={s.legal_mentions ?? ""} onChange={(e) => set("legal_mentions", e.target.value)} disabled={!canEdit} maxLength={2000} />
+            </Field>
             {canEdit && <div className="flex justify-end sm:col-span-2"><Button variant="primary" loading={pending} onClick={save}>Enregistrer</Button></div>}
           </CardBody>
         </Card>
@@ -129,7 +169,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
           action={
             <div className="flex gap-1">
               <Button size="icon-sm" variant="ghost" onClick={() => setFrameKey((k) => k + 1)} aria-label="Rafraîchir l'aperçu"><RefreshCw /></Button>
-              <Button asChild size="icon-sm" variant="ghost"><a href={previewUrl} target="_blank" rel="noreferrer" aria-label="Ouvrir"><ExternalLink /></a></Button>
+              <Button asChild size="icon-sm" variant="ghost"><a href={previewUrl} target="_blank" rel="noreferrer" aria-label="Ouvrir le mini-site (nouvel onglet)"><ExternalLink /></a></Button>
             </div>
           }
         />

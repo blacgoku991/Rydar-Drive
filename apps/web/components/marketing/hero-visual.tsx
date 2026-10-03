@@ -1,5 +1,6 @@
 "use client";
 
+import { Pause, Play } from "lucide-react";
 import dynamic from "next/dynamic";
 import { Component, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
@@ -57,50 +58,64 @@ class GlobeBoundary extends Component<{ onError: () => void; children: ReactNode
 /**
  * Visuel du héro : globe 3D (radar de dispatch sur la France) chargé à la demande, silhouette CSS pendant le
  * chargement, radar CSS si WebGL est indisponible, si le module 3D ne se charge pas, en cas d'erreur de la scène
- * ou si le contexte est perdu. Image figée si l'utilisateur a demandé moins d'animations.
+ * ou si le contexte est perdu. Image figée si l'utilisateur a demandé moins d'animations, ou après « Mettre en
+ * pause » (animation continue : commande de pause obligatoire, WCAG 2.2.2 / RGAA 13.8).
  */
 export function HeroVisual({ label, children, className }: { label: string; children?: ReactNode; className?: string }) {
   const reducedMotion = useSyncExternalStore(subscribeReducedMotion, reducedMotionSnapshot, () => false);
   const canRender = useSyncExternalStore<boolean | null>(subscribeNever, webgl2Snapshot, () => null);
   const [failed, setFailed] = useState(false);
   const [ready, setReady] = useState(false);
+  const [paused, setPaused] = useState(false);
   const mode = canRender === null ? "pending" : canRender && !failed ? "globe" : "fallback";
 
   return (
-    <div role="img" aria-label={label} className={cn("relative aspect-[20/23] w-full sm:aspect-square", className)}>
-      {/* Scène carrée en haut du visuel ; sur mobile, la place en dessous accueille la carte d'offre */}
-      <div className="absolute inset-x-0 top-0 aspect-square">
-        {mode !== "fallback" && (
-          <div
-            aria-hidden
-            className={cn(
-              "absolute inset-0 grid place-items-center transition-opacity duration-1000 ease-out motion-reduce:transition-none",
-              ready ? "opacity-0" : "opacity-100",
-            )}
-          >
-            {/* Silhouette du globe (mêmes proportions que la scène : 84 % du côté) */}
-            <div className="relative size-[84%] rounded-full bg-[radial-gradient(circle_at_34%_30%,var(--color-ink-700),var(--color-ink-850)_58%,var(--color-ink-900))] shadow-[0_0_0_1px_rgb(200_240_60/0.08),0_0_80px_-10px_rgb(200_240_60/0.22)]">
-              <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,rgb(158_165_177/0.16)_1px,transparent_1.6px)] bg-[length:11px_11px] [mask-image:radial-gradient(circle_at_40%_36%,black,transparent_72%)]" />
+    <div className={cn("relative aspect-[20/23] w-full sm:aspect-square", className)}>
+      {mode === "globe" && !reducedMotion && (
+        <button
+          type="button"
+          onClick={() => setPaused((p) => !p)}
+          className="absolute left-1 top-1 z-30 grid size-9 place-items-center rounded-full border border-line-strong bg-ink-800/80 text-fg-muted transition-colors hover:text-fg"
+        >
+          {paused ? <Play aria-hidden className="size-4" /> : <Pause aria-hidden className="size-4" />}
+          <span className="sr-only">{paused ? "Relancer l'animation du globe" : "Mettre en pause l'animation du globe"}</span>
+        </button>
+      )}
+      <div role="img" aria-label={label} className="absolute inset-0">
+        {/* Scène carrée en haut du visuel ; sur mobile, la place en dessous accueille la carte d'offre */}
+        <div className="absolute inset-x-0 top-0 aspect-square">
+          {mode !== "fallback" && (
+            <div
+              aria-hidden
+              className={cn(
+                "absolute inset-0 grid place-items-center transition-opacity duration-1000 ease-out motion-reduce:transition-none",
+                ready ? "opacity-0" : "opacity-100",
+              )}
+            >
+              {/* Silhouette du globe (mêmes proportions que la scène : 84 % du côté) */}
+              <div className="relative size-[84%] rounded-full bg-[radial-gradient(circle_at_34%_30%,var(--color-ink-700),var(--color-ink-850)_58%,var(--color-ink-900))] shadow-[0_0_0_1px_rgb(200_240_60/0.08),0_0_80px_-10px_rgb(200_240_60/0.22)]">
+                <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,rgb(158_165_177/0.16)_1px,transparent_1.6px)] bg-[length:11px_11px] [mask-image:radial-gradient(circle_at_40%_36%,black,transparent_72%)]" />
+              </div>
             </div>
-          </div>
-        )}
-        {mode === "globe" && (
-          <div
-            aria-hidden
-            className={cn("absolute inset-0 transition-opacity duration-1000 ease-out motion-reduce:transition-none", ready ? "opacity-100" : "opacity-0")}
-          >
-            <GlobeBoundary onError={() => setFailed(true)}>
-              <GlobeScene reducedMotion={reducedMotion} onReady={() => setReady(true)} onFail={() => setFailed(true)} />
-            </GlobeBoundary>
-          </div>
-        )}
-        {mode === "fallback" && (
-          <div aria-hidden className="absolute inset-0 grid place-items-center">
-            <RadarScene className="w-[88%]" />
-          </div>
-        )}
+          )}
+          {mode === "globe" && (
+            <div
+              aria-hidden
+              className={cn("absolute inset-0 transition-opacity duration-1000 ease-out motion-reduce:transition-none", ready ? "opacity-100" : "opacity-0")}
+            >
+              <GlobeBoundary onError={() => setFailed(true)}>
+                <GlobeScene reducedMotion={reducedMotion || paused} onReady={() => setReady(true)} onFail={() => setFailed(true)} />
+              </GlobeBoundary>
+            </div>
+          )}
+          {mode === "fallback" && (
+            <div aria-hidden className="absolute inset-0 grid place-items-center">
+              <RadarScene className="w-[88%]" />
+            </div>
+          )}
+        </div>
+        {children}
       </div>
-      {children}
     </div>
   );
 }

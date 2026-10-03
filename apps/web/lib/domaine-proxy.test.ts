@@ -151,15 +151,20 @@ describe("proxy.ts : hôte de mini-site sans mini-site servi", () => {
   });
 
   it("chemins jamais réécrits (API, /book, /rejoindre, pages légales) : inchangés", async () => {
-    // /cgv/2026-09-27 : version précédente des CGV (page figée), servie comme /cgv ; pages publiques du réseau partagé
+    // /cgv/2026-09-27 et /dpa/2026-10-02 : textes précédents (pages figées), servis comme /cgv et /dpa ; pages
+    // « Abonnement, résiliation et remboursement » et « Accessibilité » ; pages publiques du réseau partagé
     for (const path of [
-      "/api/book/elite/quote", "/book/elite", "/rejoindre/ABC123", "/cgu", "/cgv", "/cgv/2026-09-27",
+      "/api/book/elite/quote", "/book/elite", "/rejoindre/ABC123",
+      "/mentions-legales", "/cgu", "/cgv", "/cgv/2026-09-27", "/confidentialite", "/cookies", "/dpa", "/dpa/2026-10-02",
+      "/suppression-compte", "/abonnement-resiliation", "/accessibilite",
       "/reseau-partage/conditions", "/reseau-partage/chauffeur",
     ]) {
-      expect(rewrittenTo(await visit("coupe.exemple-vtc.fr", path))).toBeNull();
+      expect(rewrittenTo(await visit("coupe.exemple-vtc.fr", path)), path).toBeNull();
     }
-    // Autre chemin sous /cgv : page du mini-site (404 neutre ici), jamais servi comme page légale
-    expect(new URL(rewrittenTo(await visit("coupe.exemple-vtc.fr", "/cgv/autre"))!).pathname).toBe(UNSERVED);
+    // Autre chemin sous /cgv, /dpa ou /reseau-partage : page du mini-site (404 neutre ici), jamais servi comme page légale
+    for (const path of ["/cgv/autre", "/dpa/autre", "/dpa/2026-10-02/x", "/reseau-partage", "/reseau-partage/autre"]) {
+      expect(new URL(rewrittenTo(await visit("coupe.exemple-vtc.fr", path))!).pathname, path).toBe(UNSERVED);
+    }
   });
 
   it("hôtes de la plateforme : jamais concernés (aucune résolution)", async () => {

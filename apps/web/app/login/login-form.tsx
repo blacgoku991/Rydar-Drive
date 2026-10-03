@@ -1,12 +1,18 @@
 "use client";
 import { ArrowRight, LockKeyhole, Mail } from "lucide-react";
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { signIn, type LoginState } from "./actions";
 
 export function LoginForm({ next }: { next?: string }) {
   const [state, action, pending] = useActionState<LoginState, FormData>(signIn, {});
+  // Échec : le focus revient au mot de passe (sinon il retombe sur la page), et l'erreur est reliée aux deux champs
+  const password = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (state.error) password.current?.focus();
+  }, [state]);
+  const errorProps = state.error ? { "aria-invalid": true, "aria-describedby": "login-error" } : {};
   return (
     <form action={action} className="flex flex-col gap-4">
       <input type="hidden" name="next" value={next ?? ""} />
@@ -14,7 +20,7 @@ export function LoginForm({ next }: { next?: string }) {
         <Label htmlFor="email">Adresse e-mail</Label>
         <div className="relative">
           <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
-          <Input id="email" name="email" type="email" autoComplete="email" required defaultValue={state.email} placeholder="vous@centrale.fr" className="h-11 pl-9" />
+          <Input id="email" name="email" type="email" autoComplete="email" required defaultValue={state.email} placeholder="vous@centrale.fr" className="h-11 pl-9" {...errorProps} />
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
@@ -26,11 +32,11 @@ export function LoginForm({ next }: { next?: string }) {
         </div>
         <div className="relative">
           <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
-          <Input id="password" name="password" type="password" autoComplete="current-password" required placeholder="••••••••••" className="h-11 pl-9" />
+          <Input ref={password} id="password" name="password" type="password" autoComplete="current-password" required placeholder="••••••••••" className="h-11 pl-9" {...errorProps} />
         </div>
       </div>
       {state.error && (
-        <p role="alert" className="rounded-lg border border-red/25 bg-red/10 px-3 py-2 text-[13px] text-red">
+        <p id="login-error" role="alert" className="rounded-lg border border-red/25 bg-red/10 px-3 py-2 text-[13px] text-red">
           {state.error}
         </p>
       )}

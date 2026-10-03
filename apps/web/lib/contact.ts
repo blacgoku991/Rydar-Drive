@@ -135,13 +135,11 @@ export async function submitContactRequest(input: ContactInput): Promise<Contact
   const recipients = await contactRecipients();
   const emails: QueuedEmail[] = [];
   if (recipients.length) {
-    const notify = contactNotifyEmail(
-      { id, topic: v.topic, name: v.name, email: v.email, message: v.message, planCode, company: v.company ?? null, phone: v.phone ?? null, fleetSize },
-      { appUrl, planName },
-    );
-    // « Répondre » depuis la messagerie de l'admin écrit directement au demandeur
+    // Notification sans donnée personnelle (sujet, offre, lien) ni Reply-To : la demande se lit et se traite dans
+    // /admin/contacts, d'où partent les réponses (purgées avec elle) ; rien de la demande dans la messagerie de l'admin
+    const notify = contactNotifyEmail({ id, topic: v.topic, planCode }, { appUrl, planName });
     for (const to of recipients) {
-      emails.push({ kind: "contact_notify", to_email: to, reply_to: v.email, subject: notify.subject, body_text: notify.text });
+      emails.push({ kind: "contact_notify", to_email: to, reply_to: null, subject: notify.subject, body_text: notify.text });
     }
   } else {
     console.warn("[contact] aucun destinataire valide : renseignez CONTACT_NOTIFY_EMAIL ou l'e-mail de contact dans /admin/legal");

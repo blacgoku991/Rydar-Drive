@@ -1,4 +1,5 @@
 "use client";
+import { ORG_ROLE_LABELS, type OrgRole } from "@rydar/shared";
 import {
   BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Mail, Menu, MessageCircle, Radar,
   Route, ScrollText, Settings, ShieldCheck, Sparkles, UserPlus, UserX, Users,
@@ -9,6 +10,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Dialog as D } from "radix-ui";
 import { Logo } from "@/components/brand/logo";
+import { LegalLinks } from "@/components/legal/legal-links";
 import {
   Avatar, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/misc";
@@ -75,7 +77,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-semibold text-fg">{current.name}</span>
-                <span className="block text-[11px] capitalize text-fg-subtle">{current.role}</span>
+                <span className="block text-[11px] text-fg-subtle">{ORG_ROLE_LABELS[current.role as OrgRole] ?? current.role}</span>
               </span>
               <ChevronsUpDown className="size-4 text-fg-subtle group-hover:text-fg-muted" />
             </DropdownMenuTrigger>
@@ -92,7 +94,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
         </div>
       )}
 
-      <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
+      <nav aria-label="Menu principal" className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
         {sections.map((section) => (
           <div key={section.title}>
             <p className="mb-1 px-3 text-[11.5px] text-fg-subtle">{section.title}</p>
@@ -109,6 +111,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
                       href={item.href}
                       prefetch={false}
                       onClick={onNavigate}
+                      aria-current={active ? "page" : undefined}
                       className={cn(
                         "group relative flex h-8 items-center gap-2.5 rounded-lg px-3 text-[13.5px] transition-colors",
                         active ? "bg-white/[0.07] font-medium text-fg" : "text-fg-muted hover:bg-white/[0.035] hover:text-fg",
@@ -135,6 +138,9 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
 
       {footer && <div className="px-3 pb-3">{footer}</div>}
       {notice}
+      {/* Pages légales toujours atteignables depuis les espaces connectés (RGPD art. 12, politique cookies,
+          déclaration d'accessibilité), y compris dans le menu mobile */}
+      <LegalLinks className="gap-x-3 gap-y-0 px-5 pb-2 text-[11.5px] leading-snug" linkClassName="inline-flex min-h-6 items-center" prefetch={false} />
 
       <div className="border-t border-line p-2">
         <DropdownMenu>
@@ -166,7 +172,7 @@ export function Sidebar(props: Props) {
         <NavContent {...props} />
       </aside>
       {/* Mobile */}
-      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-ink-950/90 px-4 backdrop-blur lg:hidden">
+      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-ink-950/90 px-4 backdrop-blur lg:hidden [@media(max-height:30rem)]:static">
         <Logo size={24} />
         <div className="flex items-center gap-2">
           {props.headerAction}

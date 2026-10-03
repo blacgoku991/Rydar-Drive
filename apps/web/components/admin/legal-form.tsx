@@ -15,22 +15,28 @@ import { submitWith } from "@/lib/utils";
 type Values = Record<keyof LegalInfoInput, string>;
 
 const EDITOR: { key: keyof Values; label: string; placeholder?: string; hint?: string; wide?: boolean }[] = [
-  { key: "company_name", label: "Raison sociale", placeholder: "Rydar SAS" },
-  { key: "legal_form", label: "Forme juridique", placeholder: "SAS" },
-  { key: "share_capital", label: "Capital social", placeholder: "1 000 €" },
-  { key: "registration", label: "Immatriculation", placeholder: "RCS Paris 912 345 678", hint: "RCS (ville + SIREN) ou n° SIREN." },
-  { key: "vat_number", label: "N° de TVA intracommunautaire", placeholder: "FR12 912345678" },
+  { key: "company_name", label: "Raison sociale", placeholder: "Nom de la société", hint: "Entreprise individuelle : nom, prénom et la mention « EI »." },
+  { key: "legal_form", label: "Forme juridique", placeholder: "SAS, SARL, EI…" },
+  { key: "share_capital", label: "Capital social", placeholder: "Montant en euros", hint: "Société seulement (sans objet pour une entreprise individuelle)." },
+  { key: "registration", label: "Immatriculation", placeholder: "RCS Ville 000 000 000", hint: "RCS (ville + SIREN) ou n° SIREN, tels qu'inscrits au registre." },
+  { key: "vat_number", label: "N° de TVA intracommunautaire", placeholder: "FR00 000000000", hint: "Non assujetti : « TVA non applicable, art. 293 B du CGI »." },
   { key: "publication_director", label: "Directeur de la publication", placeholder: "Prénom Nom" },
-  { key: "address", label: "Adresse du siège", placeholder: "12 rue …, 75008 Paris", wide: true },
-  { key: "email", label: "E-mail de contact", placeholder: "contact@…" },
-  { key: "phone", label: "Téléphone", placeholder: "01 23 45 67 89" },
-  { key: "privacy_email", label: "E-mail « données personnelles »", placeholder: "rgpd@…", hint: "Vide : e-mail de contact." },
+  { key: "address", label: "Adresse du siège", placeholder: "Numéro, rue, code postal, ville", wide: true },
+  { key: "email", label: "E-mail de contact", placeholder: "contact@…", hint: "Aussi point de contact du règlement sur les services numériques." },
+  { key: "phone", label: "Téléphone", placeholder: "01 00 00 00 00" },
+  { key: "privacy_email", label: "E-mail « données personnelles »", placeholder: "rgpd@…", hint: "Vide : e-mail de contact." },
 ];
 const HOST: typeof EDITOR = [
-  { key: "host_name", label: "Hébergeur du serveur", placeholder: "Hetzner Online GmbH", hint: "Société qui loue le VPS." },
-  { key: "host_phone", label: "Téléphone de l'hébergeur", placeholder: "+49 9831 505-0" },
-  { key: "host_address", label: "Adresse de l'hébergeur", placeholder: "Industriestr. 25, 91710 Gunzenhausen, Allemagne", wide: true },
-  { key: "data_host", label: "Hébergeur des données", placeholder: "Supabase (base de données et fichiers, région Union européenne)", wide: true },
+  { key: "host_name", label: "Hébergeur du site", placeholder: "Raison sociale de l'hébergeur", hint: "Société qui loue le serveur (VPS), recopiée de son contrat ou de sa facture." },
+  { key: "host_phone", label: "Téléphone de l'hébergeur", placeholder: "Téléphone indiqué par l'hébergeur" },
+  { key: "host_address", label: "Adresse de l'hébergeur", placeholder: "Adresse postale du siège de l'hébergeur", wide: true },
+  {
+    key: "data_host",
+    label: "Hébergement des données",
+    placeholder: "Même serveur que le site, datacenter de … (pays)",
+    hint: "Où sont la base, les fichiers et les sauvegardes (pays du datacenter) : repris par les mentions légales et l'accord de traitement.",
+    wide: true,
+  },
 ];
 
 export function LegalInfoForm({ initial }: { initial: Values }) {
@@ -70,7 +76,7 @@ export function LegalInfoForm({ initial }: { initial: Values }) {
         <CardBody>{fields(EDITOR)}</CardBody>
       </Card>
       <Card>
-        <CardHeader icon={<Server />} title="Hébergement" description="Hébergeur du site (obligatoire dans les mentions légales) et des données." />
+        <CardHeader icon={<Server />} title="Hébergement" description="Hébergeur du site (nom, adresse et téléphone obligatoires dans les mentions légales) et lieu des données." />
         <CardBody>{fields(HOST)}</CardBody>
       </Card>
       <div className="flex justify-end">

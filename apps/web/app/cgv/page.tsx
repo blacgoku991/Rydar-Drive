@@ -33,7 +33,14 @@ export default async function TermsOfSalePage() {
   return (
     <LegalPage title="Conditions générales de vente" updatedAt={CGV_UPDATED_AT}>
       <p>
-        Les présentes conditions générales de vente (CGV) s&apos;appliquent entre <span className="text-fg">{legal.name}</span>{" "}
+        Les présentes conditions générales de vente (CGV) s&apos;appliquent entre {legal.nameSet ? (
+          <span className="text-fg">{legal.name}</span>
+        ) : (
+          // Raison sociale pas encore renseignée : jamais le nom commercial comme partie au contrat
+          <>
+            la société identifiée dans les <Link href="/mentions-legales" className={link}>mentions légales</Link>
+          </>
+        )}{" "}
         (l&apos;« éditeur ») et toute entreprise cliente qui utilise Rydar Drive pour organiser ses courses : centrale de
         réservation, exploitant de VTC ou flotte (la « centrale »), quel que soit son modèle d&apos;exploitation (article 3).
         Elles sont réservées aux professionnels. Version {ORG_LEGAL_VERSION}.

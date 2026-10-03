@@ -164,17 +164,19 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         title="Réglages"
         description={centrale ? "Moteur de dispatch, commission et encaissement, identité, tarifs, équipe et abonnement." : "Moteur de dispatch, identité, tarifs, équipe et abonnement."}
       >
-        <div className="-mb-px flex gap-1 overflow-x-auto">
+        <nav aria-label="Rubriques des réglages" className="-mb-px flex gap-1 overflow-x-auto">
           {tabs.map((x) => (
             <Link
               key={x.key}
               href={`/dashboard/settings?tab=${x.key}`}
+              prefetch={false}
+              aria-current={tab === x.key ? "page" : undefined}
               className={cn("shrink-0 whitespace-nowrap border-b-2 px-3 pb-3 pt-1 text-[13px] font-medium", tab === x.key ? "border-brand text-fg" : "border-transparent text-fg-muted hover:text-fg")}
             >
               {x.label}
             </Link>
           ))}
-        </div>
+        </nav>
       </PageHeader>
       <PageBody>
         {!admin && <p className="mb-4 rounded-lg border border-line bg-white/[0.02] px-4 py-2.5 text-[12.5px] text-fg-muted">Lecture seule : seuls les administrateurs peuvent modifier ces réglages.</p>}

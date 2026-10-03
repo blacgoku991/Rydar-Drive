@@ -1,12 +1,14 @@
 "use client";
 import { ERROR_MESSAGES, formatDate, formatPrice } from "@rydar/shared";
 import { Check, CreditCard, ExternalLink } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { annualFreeMonths } from "./billing-offers";
 
 function Meter({ label, used, max }: { label: string; used: number; max: number | null | undefined }) {
   const pct = max ? Math.min(100, (used / max) * 100) : 0;
@@ -41,6 +43,7 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
     window.location.href = json.url;
   };
   const limits = usage?.limits ?? {};
+  const freeMonths = annualFreeMonths(plans);
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[1fr_1.4fr]">
@@ -89,7 +92,7 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
                 <span className="text-fg-muted">{formatDate(i.period_start)}</span>
                 <span className="num font-semibold">{formatPrice(i.amount_due_cents, i.currency)}</span>
                 <Badge tone={i.status === "paid" ? "green" : i.status === "payment_failed" ? "red" : "amber"}>{i.status === "paid" ? "Payée" : i.status === "payment_failed" ? "Échec" : i.status}</Badge>
-                {i.hosted_invoice_url ? <a href={i.hosted_invoice_url} target="_blank" rel="noreferrer" className="text-fg-subtle hover:text-fg"><ExternalLink className="size-4" /></a> : <span className="w-4" />}
+                {i.hosted_invoice_url ? <a href={i.hosted_invoice_url} target="_blank" rel="noreferrer" className="text-fg-subtle hover:text-fg" aria-label={`Ouvrir la facture ${i.number ?? ""} (nouvel onglet)`}><ExternalLink aria-hidden className="size-4" /></a> : <span className="w-4" />}
               </div>
             ))}
           </div>
@@ -97,11 +100,18 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
       </div>
 
       <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-semibold">Offres Rydar Drive</h3>
-        <div className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[12.5px]">
+        <h2 className="text-[15px] font-semibold">Offres Rydar Drive</h2>
+        {/* Choix exposé (aria-pressed) et visible autrement que par une nuance de fond : contour lime (WCAG 1.4.11) */}
+        <div role="group" aria-label="Périodicité des prix" className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[12.5px]">
           {(["month", "year"] as const).map((v) => (
-            <button key={v} type="button" onClick={() => setInterval(v)} className={cn("rounded-md px-3 py-1", interval === v ? "bg-ink-600 text-fg" : "text-fg-muted")}>
-              {v === "month" ? "Mensuel" : "Annuel · 2 mois offerts"}
+            <button
+              key={v}
+              type="button"
+              aria-pressed={interval === v}
+              onClick={() => setInterval(v)}
+              className={cn("rounded-md px-3 py-1", interval === v ? "bg-ink-600 text-fg ring-1 ring-brand/60" : "text-fg-muted hover:text-fg")}
+            >
+              {v === "month" ? "Mensuel" : freeMonths ? `Annuel · ${freeMonths} mois offert${freeMonths > 1 ? "s" : ""}` : "Annuel"}
             </button>
           ))}
         </div>
@@ -148,6 +158,24 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
           );
         })}
       </div>
+      {/* Conditions présentées avant tout engagement (C. civ. 1119) : le paiement est refusé tant que les CGV en vigueur
+          ne sont pas acceptées au nom de l'organisation (/api/billing/checkout) */}
+      <p className="text-[12.5px] leading-relaxed text-fg-muted">
+        En choisissant une offre, vous souscrivez un abonnement au nom de votre organisation, selon les{" "}
+        <Link href="/cgv" prefetch={false} className="text-fg underline underline-offset-2">
+          conditions générales de vente
+        </Link>{" "}
+        et l&apos;
+        <Link href="/dpa" prefetch={false} className="text-fg underline underline-offset-2">
+          accord de traitement des données
+        </Link>
+        , acceptés au préalable par le propriétaire ou un administrateur. Arrêt du renouvellement, résiliation et
+        remboursement{"\u00a0"}:{" "}
+        <Link href="/abonnement-resiliation" prefetch={false} className="text-fg underline underline-offset-2">
+          Abonnement, résiliation et remboursement
+        </Link>
+        .
+      </p>
     </div>
   );
 }

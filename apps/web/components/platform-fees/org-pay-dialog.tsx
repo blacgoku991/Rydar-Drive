@@ -15,6 +15,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 export function PlatformPayDialog({
   open,
@@ -117,6 +118,7 @@ export function PlatformPayDialog({
                   <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
                     <a href={pay.link} target="_blank" rel="noopener noreferrer">
                       <ExternalLink /> {declaredCents > 0 ? "Payer en ligne" : `Payer ${formatPrice(pay.amount_cents, currency)} en ligne`}
+                      <NewTabHint />
                     </a>
                   </Button>
                   <p className="mt-1.5 text-[12px] text-fg-muted">

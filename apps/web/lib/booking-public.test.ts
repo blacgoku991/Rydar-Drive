@@ -48,6 +48,7 @@ vi.mock("@/lib/rate-limit", () => {
   };
 });
 vi.mock("@/lib/geo/cache", async () => await import("./geo/cache"));
+vi.mock("@/lib/booking-price", async () => await import("./booking-price"));
 vi.mock("@/lib/geo/anchor", async () => ({ ...(await import("./geo/anchor")), orgAnchor: async () => h.anchor }));
 vi.mock("@/lib/geocode", () => ({ geocodeOne: async () => (h.geocoded ? { ...h.geocoded, label: "x", address: "x", kind: "address" } : null) }));
 vi.mock("@/lib/geo/routing", async () => {
@@ -119,7 +120,16 @@ function booking(over: Row = {}) {
 
 beforeEach(() => {
   h.ip = "203.0.113.10";
-  h.org = { id: ORG, status: "active", timezone: "Europe/Paris", booking: { enabled: true, show_price_estimate: true, vehicle_categories: ["standard"] } };
+  h.org = {
+    id: ORG,
+    status: "active",
+    timezone: "Europe/Paris",
+    settings: { default_payment_method: "cash" },
+    booking: {
+      enabled: true, show_price_estimate: true, vehicle_categories: ["standard"], phone: "01 23 45 67 89", email: "contact@centrale-b.example",
+      legal_mentions: "Centrale B SAS, Paris. Paiement : espèces ou carte à bord. Annulation gratuite. Médiateur : CM2C.",
+    },
+  };
   h.rule = { ...RULE };
   h.anchor = { lat: 48.86, lng: 2.35 };
   h.geocoded = null;
@@ -212,19 +222,55 @@ describe("submitBooking : prix et zone", () => {
     expect(h.inserts).toHaveLength(0);
   });
 
-  it("coordonnées de destination sans rapport avec l'adresse (Nice à 13 m du départ) : prix laissé à la centrale", async () => {
+  // Revue de conformité (L221-14) : seul un prix AFFICHÉ engage le client ; le serveur l'enregistre s'il retrouve le
+  // même, sinon il refuse et renvoie le nouveau prix ; sans prix affiché, la demande part sans prix.
+  const gridPrice = (from = PARIS_GARE_DE_LYON, to = PARIS_OPERA, at = new Date(), tz = "Europe/Paris") => {
+    const route = estimateRoute(from, to);
+    return estimatePrice(RULE, route.distanceM, route.durationS, at, tz)!;
+  };
+
+  it("coordonnées de destination sans rapport avec l'adresse (Nice à 13 m du départ) : aucun prix en ligne (PRICE_CHANGED, null)", async () => {
     h.geocoded = NICE_AIRPORT;
     const fake = { address: "Aéroport de Nice Côte d'Azur, 06200 Nice", lat: 48.8444, lng: 2.3744 };
-    const res = await submitBooking("centrale-b", booking({ dropoff: fake }));
-    expect(res.ok).toBe(true);
+    const res = await submitBooking("centrale-b", booking({ dropoff: fake, expectedPriceCents: 2500 }));
+    expect(res).toMatchObject({ ok: false, code: "PRICE_CHANGED", priceCents: null });
+    expect(h.inserts).toHaveLength(0);
+    // Sans prix affiché : simple demande, sans prix
+    const req = await submitBooking("centrale-b", booking({ dropoff: fake }));
+    expect(req.ok).toBe(true);
     expect(h.inserts[0]).toMatchObject({ dropoff_address: fake.address, price_cents: null });
   });
 
-  it("adresse cohérente avec les coordonnées : prix de la grille enregistré", async () => {
+  it("prix affiché identique au calcul du serveur : enregistré tel quel, moyen de paiement de la centrale", async () => {
     h.geocoded = { lat: PARIS_OPERA.lat + 0.001, lng: PARIS_OPERA.lng };
+    const expected = gridPrice();
+    const res = await submitBooking("centrale-b", booking({ expectedPriceCents: expected }));
+    expect(res.ok).toBe(true);
+    expect(h.inserts[0]).toMatchObject({ price_cents: expected, payment_method: "cash" });
+    expect(expected).toBeGreaterThanOrEqual(RULE.minimum_fare_cents);
+  });
+
+  it("prix affiché différent (devis périmé ou falsifié) : refus PRICE_CHANGED avec le nouveau prix, rien de créé", async () => {
+    const expected = gridPrice();
+    const res = await submitBooking("centrale-b", booking({ expectedPriceCents: expected - 500 }));
+    expect(res).toMatchObject({ ok: false, code: "PRICE_CHANGED", priceCents: expected, error: expect.stringMatching(/Le prix a changé/) });
+    expect(h.inserts).toHaveLength(0);
+  });
+
+  it("aucun prix affiché (grille masquée ou devis absent) : demande enregistrée SANS prix, jamais un prix que le client n'a pas vu", async () => {
     const res = await submitBooking("centrale-b", booking());
     expect(res.ok).toBe(true);
-    expect(h.inserts[0]!.price_cents).toBeGreaterThanOrEqual(RULE.minimum_fare_cents);
+    expect(h.inserts[0]!.price_cents).toBeNull();
+    h.org = { ...h.org!, booking: { ...h.org!.booking, show_price_estimate: false } };
+    const masked = await submitBooking("centrale-b", booking({ expectedPriceCents: gridPrice() }));
+    expect(masked).toMatchObject({ ok: false, code: "PRICE_CHANGED", priceCents: null });
+  });
+
+  it("mini-site publié sans conditions, téléphone ou e-mail : réservation en ligne refusée", async () => {
+    h.org = { ...h.org!, booking: { ...h.org!.booking, legal_mentions: "" } };
+    const res = await submitBooking("centrale-b", booking());
+    expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/^Réservation en ligne indisponible\. Appelez la centrale/) });
+    expect(h.inserts).toHaveLength(0);
   });
 
   it("majoration de nuit calculée dans le fuseau de la centrale (La Réunion), comme le devis", async () => {
@@ -234,10 +280,11 @@ describe("submitBooking : prix et zone", () => {
     const stPierre = { address: "Saint-Pierre, 97410 La Réunion", lat: -21.3393, lng: 55.4781 };
     const pickupAt = new Date(Date.now() + 2 * 86_400_000);
     pickupAt.setUTCHours(19, 0, 0, 0); // 23:00 à La Réunion, 21:00 (été) ou 20:00 (hiver) à Paris
-    const res = await submitBooking("centrale-b", booking({ pickup: stDenis, dropoff: stPierre, when: "scheduled", pickupAt }));
-    expect(res.ok).toBe(true);
     const route = estimateRoute(stDenis, stPierre);
-    expect(h.inserts[0]!.price_cents).toBe(estimatePrice(RULE, route.distanceM, route.durationS, pickupAt, "Indian/Reunion"));
+    const reunion = estimatePrice(RULE, route.distanceM, route.durationS, pickupAt, "Indian/Reunion")!;
+    const res = await submitBooking("centrale-b", booking({ pickup: stDenis, dropoff: stPierre, when: "scheduled", pickupAt, expectedPriceCents: reunion }));
+    expect(res.ok).toBe(true);
+    expect(h.inserts[0]!.price_cents).toBe(reunion);
     expect(h.inserts[0]!.price_cents).not.toBe(estimatePrice(RULE, route.distanceM, route.durationS, pickupAt, "Europe/Paris"));
   });
 });
@@ -263,6 +310,17 @@ describe("devis du mini-site", () => {
       ["bookquote:2001:0db8:85a3:0012::/64", 30, 60],
       ["bookquote:day:2001:0db8:85a3:0012::/64", 600, 86_400],
     ]);
+  });
+
+  it("même calcul que la réservation : prix de la grille ; destination incohérente avec ses coordonnées : aucun prix", async () => {
+    h.geocoded = { lat: PARIS_OPERA.lat + 0.001, lng: PARIS_OPERA.lng };
+    const q = await (await call({ pickup: PARIS_GARE_DE_LYON, dropoff: PARIS_OPERA, category: "standard" })).json();
+    const route = estimateRoute(PARIS_GARE_DE_LYON, PARIS_OPERA);
+    expect(q.priceCents).toBe(estimatePrice(RULE, route.distanceM, route.durationS, new Date(), "Europe/Paris"));
+    h.geocoded = NICE_AIRPORT;
+    const fake = { address: "Aéroport de Nice Côte d'Azur, 06200 Nice", lat: 48.8444, lng: 2.3744 };
+    const q2 = await (await call({ pickup: PARIS_GARE_DE_LYON, dropoff: fake, category: "standard" })).json();
+    expect(q2.priceCents).toBeNull();
   });
 
   it("trajet hors zone : 422, aucun itinéraire calculé", async () => {

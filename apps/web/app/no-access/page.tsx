@@ -1,7 +1,10 @@
 import { Lock } from "lucide-react";
+import type { Metadata } from "next";
 import { StatusScreen } from "@/components/auth/status-screen";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
+
+export const metadata: Metadata = { title: "Aucun espace associé" };
 
 export default function NoAccessPage() {
   return (

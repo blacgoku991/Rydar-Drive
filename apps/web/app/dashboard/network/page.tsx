@@ -269,7 +269,7 @@ export default async function NetworkPage() {
                 <HandCoins className="mt-0.5 size-4 shrink-0 text-brand" />
                 <p>
                   Un nouveau chauffeur reçoit d&apos;abord des courses plafonnées, puis passe « Confirmé » après quelques courses réglées. Réglez ces seuils dans{" "}
-                  <Link href="/dashboard/settings" className="text-brand hover:underline">Réglages</Link>.
+                  <Link href="/dashboard/settings" prefetch={false} className="text-brand underline underline-offset-2">Réglages</Link>.
                 </p>
               </div>
             ) : (
@@ -277,7 +277,7 @@ export default async function NetworkPage() {
                 <Users className="mt-0.5 size-4 shrink-0 text-brand" />
                 <p>
                   Un chauffeur validé apparaît dans{" "}
-                  <Link href="/dashboard/drivers" className="text-brand hover:underline">Chauffeurs</Link>, comme ceux que vous créez vous-même
+                  <Link href="/dashboard/drivers" prefetch={false} className="text-brand underline underline-offset-2">Chauffeurs</Link>, comme ceux que vous créez vous-même
                   {" "}: suspension, documents et messages depuis sa fiche.
                 </p>
               </div>

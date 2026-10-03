@@ -12,7 +12,7 @@ import {
 } from "@rydar/shared";
 import { CircleCheck, Send } from "lucide-react";
 import Link from "next/link";
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { sendContactRequest } from "@/app/contact/actions";
 import { Button } from "@/components/ui/button";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
@@ -31,6 +31,12 @@ type Values = {
   message: string;
   website: string;
 };
+
+/** Ordre des champs à l'écran (clé d'erreur → suffixe de l'id du champ) : le premier champ en erreur reçoit le focus. */
+const FIELD_IDS: [string, string][] = [
+  ["planCode", "plan"], ["fleetSize", "fleet"], ["name", "name"], ["company", "company"], ["email", "email"], ["phone", "phone"],
+  ["message", "message"],
+];
 
 const PLACEHOLDER: Record<ContactTopic, string> = {
   pricing: "Votre activité, le nombre de chauffeurs, ce que vous utilisez aujourd'hui (WhatsApp, autre logiciel)…",
@@ -92,8 +98,12 @@ export function ContactForm({
             website: v.website || undefined,
           });
           if (!res.ok) {
-            setErrors(res.fieldErrors ?? {});
+            const fe = res.fieldErrors ?? {};
+            setErrors(fe);
             setFormError(res.error);
+            // Focus sur le premier champ en erreur (son message lui est relié) ; sinon il reste sur le bouton d'envoi
+            const first = FIELD_IDS.find(([k]) => fe[k]);
+            if (first) document.getElementById(id(first[1]))?.focus();
             return;
           }
           setSent({ email: v.email.trim().toLowerCase(), ackQueued: res.ackQueued });
@@ -104,12 +114,12 @@ export function ContactForm({
 
   if (sent) {
     return (
-      <div role="status" className="flex flex-col items-start gap-4 py-4">
+      <div className="flex flex-col items-start gap-4 py-4">
         <span className="grid size-11 place-items-center rounded-full border border-brand/40 bg-brand/10">
           <CircleCheck className="size-5 text-brand" aria-hidden />
         </span>
         <div>
-          <p className="text-[20px] font-semibold tracking-tight">Demande envoyée</p>
+          <SentHeading />
           <p className="mt-2 max-w-md text-[14.5px] leading-relaxed text-fg-muted">
             {fr(`Merci ! Nous vous répondons à l'adresse ${sent.email}.`)}
             {sent.ackQueued ? ` ${fr("Un e-mail de confirmation vient de vous être envoyé.")}` : ""}
@@ -282,5 +292,19 @@ export function ContactForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Confirmation : le formulaire (et son bouton, qui avait le focus) disparaît ; le titre reçoit le focus pour que la
+ * confirmation soit lue (WCAG 4.1.3, 2.4.3) au lieu d'un focus perdu sur <body>.
+ */
+function SentHeading() {
+  const ref = useRef<HTMLHeadingElement>(null);
+  useEffect(() => ref.current?.focus(), []);
+  return (
+    <h2 ref={ref} tabIndex={-1} className="text-[20px] font-semibold tracking-tight outline-none">
+      Demande envoyée
+    </h2>
   );
 }

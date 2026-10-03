@@ -77,11 +77,14 @@ const PROTECTED = ["/dashboard", "/admin"];
  * réseau partagé compris (convention et conditions des chauffeurs).
  */
 const LEGAL_PATHS = new Set([
-  "/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte",
-  "/reseau-partage/conditions", "/reseau-partage/chauffeur",
+  "/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte", "/abonnement-resiliation",
+  "/accessibilite", "/reseau-partage/conditions", "/reseau-partage/chauffeur",
 ]);
-/** Pages légales, versions précédentes des CGV comprises (/cgv/AAAA-MM-JJ : pages figées, lien « Version précédente »). */
-const isLegalPath = (pathname: string) => LEGAL_PATHS.has(pathname) || /^\/cgv\/\d{4}-\d{2}-\d{2}$/.test(pathname);
+/**
+ * Pages légales, textes précédents compris (/cgv/AAAA-MM-JJ et /dpa/AAAA-MM-JJ : pages figées, liens « Version
+ * précédente » / « Texte accepté avant la correction »).
+ */
+const isLegalPath = (pathname: string) => LEGAL_PATHS.has(pathname) || /^\/(cgv|dpa)\/\d{4}-\d{2}-\d{2}$/.test(pathname);
 /**
  * Hôte de mini-site sans mini-site servi (désactivé par sa centrale, centrale suspendue, mini-sites coupés par la
  * plateforme, Supabase injoignable) : chemin qu'aucune route ne sert (dossier « _ » privé de l'App Router) → page 404
