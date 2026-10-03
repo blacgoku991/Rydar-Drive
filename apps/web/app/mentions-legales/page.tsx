@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
-import { LEGAL_UPDATED_AT, getLegalInfo } from "@/lib/legal";
+import { NOTICE_UPDATED_AT, getLegalInfo } from "@/lib/legal";
+import { capitalRequired } from "@/lib/legal-notice";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: { absolute: "Mentions légales — Rydar Drive" },
-  description: "Éditeur, hébergeurs, propriété intellectuelle, signalement de contenu illicite et crédits du service Rydar Drive.",
+  description:
+    "Éditeur, hébergement, point de contact, propriété intellectuelle, signalement de contenu illicite et crédits du service Rydar Drive.",
 };
 
 /** Valeur renseignée, ou mention visible « à compléter par l'éditeur ». */
@@ -29,16 +31,18 @@ export default async function LegalNoticePage() {
   const legal = await getLegalInfo();
   // Raison sociale non renseignée (ni /admin/legal ni LEGAL_NAME) : « à compléter », pas le nom du service
   const companyName = legal.nameSet ? legal.name : "";
+  // Capital social : exigé d'une société, sans objet pour une entreprise individuelle (EI, micro-entreprise)
+  const showCapital = !!legal.capital || capitalRequired(legal.form);
   const email = legal.email ? (
     <a href={`mailto:${legal.email}`} className="text-fg underline underline-offset-2">{legal.email}</a>
   ) : (
     <Value>{""}</Value>
   );
   return (
-    <LegalPage title="Mentions légales" updatedAt={LEGAL_UPDATED_AT}>
+    <LegalPage title="Mentions légales" updatedAt={NOTICE_UPDATED_AT}>
       <p>
         Informations publiées en application de la loi n° 2004-575 du 21 juin 2004 pour la confiance dans
-        l&apos;économie numérique (LCEN). Elles concernent le site Rydar Drive, ses sous-domaines, le tableau de bord
+        l&apos;économie numérique (LCEN, article 1-1). Elles concernent le site Rydar Drive, ses sous-domaines, le tableau de bord
         des centrales, l&apos;API, les mini-sites de réservation qu&apos;il héberge et l&apos;application mobile
         « Rydar Drive Chauffeur ».
       </p>
@@ -48,7 +52,7 @@ export default async function LegalNoticePage() {
           items={[
             <Row label="Raison sociale" value={companyName} />,
             <Row label="Forme juridique" value={legal.form} />,
-            <Row label="Capital social" value={legal.capital} />,
+            ...(showCapital ? [<Row label="Capital social" value={legal.capital} />] : []),
             <Row label="Siège social" value={legal.address} />,
             <Row label="Immatriculation (RCS ou SIREN)" value={legal.registration} />,
             <Row label="N° de TVA intracommunautaire" value={legal.vat} />,
@@ -65,8 +69,16 @@ export default async function LegalNoticePage() {
         </p>
       </LegalSection>
 
+      <LegalSection title="Point de contact">
+        <p>
+          Point de contact unique de l&apos;éditeur pour les autorités des États membres, la Commission européenne et
+          les utilisateurs du service (règlement (UE) 2022/2065 sur les services numériques, articles 11 et 12) :{" "}
+          {email}. Langue acceptée : français.
+        </p>
+      </LegalSection>
+
       <LegalSection title="Hébergeur du site">
-        <p>Serveur qui héberge le site, l&apos;API et les traitements automatiques :</p>
+        <p>Serveur qui héberge le site, l&apos;API et les traitements automatiques (dispatch, notifications, e-mails) :</p>
         <LegalList
           items={[
             <Row label="Hébergeur" value={legal.hostName} />,
@@ -76,10 +88,10 @@ export default async function LegalNoticePage() {
         />
       </LegalSection>
 
-      <LegalSection title="Hébergeur des données">
+      <LegalSection title="Hébergement des données">
         <p>
-          Base de données, comptes de connexion et fichiers : <Value>{legal.dataHost}</Value>. La liste complète des
-          prestataires techniques figure dans l&apos;
+          Base de données, comptes de connexion, fichiers et sauvegardes : <Value>{legal.dataHost}</Value>. La liste
+          complète des prestataires techniques figure dans l&apos;
           <Link href="/dpa" className="text-fg underline underline-offset-2">accord de traitement des données</Link>.
         </p>
       </LegalSection>
@@ -122,12 +134,13 @@ export default async function LegalNoticePage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="Données personnelles et cookies">
+      <LegalSection title="Données personnelles, cookies et accessibilité">
         <p>
           Voir la{" "}
           <Link href="/confidentialite" className="text-fg underline underline-offset-2">politique de confidentialité</Link>, la{" "}
-          <Link href="/cookies" className="text-fg underline underline-offset-2">politique cookies</Link> et l&apos;
-          <Link href="/dpa" className="text-fg underline underline-offset-2">accord de traitement des données</Link>.
+          <Link href="/cookies" className="text-fg underline underline-offset-2">politique cookies</Link>, l&apos;
+          <Link href="/dpa" className="text-fg underline underline-offset-2">accord de traitement des données</Link> et la{" "}
+          <Link href="/accessibilite" className="text-fg underline underline-offset-2">déclaration d&apos;accessibilité</Link>.
         </p>
       </LegalSection>
 
