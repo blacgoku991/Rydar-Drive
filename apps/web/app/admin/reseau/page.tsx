@@ -10,6 +10,7 @@ import { MissingIdentity, NetworkReviewActions, NetworkSuspendButton, NetworkSwi
 import { APPROVAL_META, FLAG_META, acceptanceRatio, feeLabel, rowFlags, sortOrgRows, termsLines } from "@/components/network-share/admin";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
@@ -93,9 +94,11 @@ export default async function AdminNetworkPage() {
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]">
                 <Link href={NETWORK_DOCUMENTS.network.path} target="_blank" prefetch={false} className="text-fg-muted underline-offset-2 hover:text-fg hover:underline">
                   {NETWORK_DOCUMENTS.network.label}
+                  <NewTabHint />
                 </Link>
                 <Link href={NETWORK_DOCUMENTS.network_driver.path} target="_blank" prefetch={false} className="text-fg-muted underline-offset-2 hover:text-fg hover:underline">
                   Conditions des chauffeurs
+                  <NewTabHint />
                 </Link>
               </div>
             </CardBody>

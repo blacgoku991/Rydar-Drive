@@ -5,6 +5,7 @@ import { ArrowRight, CircleAlert, Info } from "lucide-react";
 import Link from "next/link";
 import type { OrgReadinessView, ReadinessSide, SideState } from "@/components/network-share/readiness";
 import { Button } from "@/components/ui/button";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { cn } from "@/lib/utils";
 
 const DOT: Record<SideState, string> = { active: "bg-green", pending: "bg-amber", off: "bg-fg-subtle" };
@@ -25,7 +26,7 @@ export function ReadinessPanel({ view, canManage }: { view: OrgReadinessView; ca
               </p>
               {canManage && s.action && (
                 <Link href={s.action.href} prefetch={false} className="inline-flex items-center gap-1 text-[12.5px] font-medium text-brand hover:underline">
-                  {s.action.label} <ArrowRight className="size-3.5" />
+                  {s.action.label} <ArrowRight aria-hidden className="size-3.5" />
                 </Link>
               )}
             </div>
@@ -52,7 +53,10 @@ export function ReadinessPanel({ view, canManage }: { view: OrgReadinessView; ca
                   {item.action.href.startsWith("/dashboard") ? (
                     <Link href={item.action.href} prefetch={false}>{item.action.label}</Link>
                   ) : (
-                    <a href={item.action.href} target="_blank" rel="noopener">{item.action.label}</a>
+                    <a href={item.action.href} target="_blank" rel="noopener">
+                      {item.action.label}
+                      <NewTabHint />
+                    </a>
                   )}
                 </Button>
               )}

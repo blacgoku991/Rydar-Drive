@@ -37,6 +37,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
 import { Avatar, Switch } from "@/components/ui/misc";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { cn, submitWith } from "@/lib/utils";
 
 export type NetworkPaymentRow = {
@@ -539,7 +540,7 @@ function DriverRow({ d, model, timeZone }: { d: OrgNetworkDriver; model: Dispatc
         )}
         <label className="flex items-center gap-2 text-[12.5px] text-fg-muted">
           Autorisé
-          <Switch checked={allowed} disabled={pending} onCheckedChange={(v) => run(() => setDriverNetworkAllowed(d.driver.id, v))} aria-label={`Autoriser ${name} à recevoir les courses du réseau`} />
+          <Switch checked={allowed} disabled={pending} onCheckedChange={(v) => run(() => setDriverNetworkAllowed(d.driver.id, v))} aria-label={`Autorisé : ${name} peut recevoir les courses du réseau`} />
         </label>
       </div>
       {/* Centrale : n° d'exploitant VTC du chauffeur indépendant (champ « exploitant » du bon de réservation) */}
@@ -547,7 +548,9 @@ function DriverRow({ d, model, timeZone }: { d: OrgNetworkDriver; model: Dispatc
         (d.vtc_operator_registration && !editingOp ? (
           <p className="mt-1 flex flex-wrap items-center gap-x-2 pl-[42px] text-[12px] text-fg-muted">
             N° d&apos;exploitant VTC <span className="mono text-fg">{d.vtc_operator_registration}</span>
-            <Button variant="ghost" size="xs" onClick={() => setEditingOp(true)}>Modifier</Button>
+            <Button variant="ghost" size="xs" onClick={() => setEditingOp(true)} aria-label={`Modifier le n° d'exploitant VTC de ${name}`}>
+              Modifier
+            </Button>
           </p>
         ) : (
           <form className="mt-2 pl-[42px]" onSubmit={submitWith((data) => saveOperator(String(data.get("operator") ?? "")))}>
@@ -685,6 +688,8 @@ function PartnerExclusions(p: Props) {
                     size="xs"
                     disabled={pending}
                     onClick={() => (out ? run(() => setNetworkPartnerExcluded(o.id, false)) : setConfirm(o))}
+                    // Organisation nommée : un bouton par ligne de la liste
+                    aria-label={out ? `Réintégrer ${o.name}` : `Exclure ${o.name}`}
                   >
                     {out ? <><Undo2 /> Réintégrer</> : "Exclure"}
                   </Button>
@@ -727,7 +732,7 @@ function DriverExclusions(p: Props) {
                   {x.reason ? ` · « ${x.reason} »` : ""}
                 </span>
               </span>
-              <Button variant="ghost" size="xs" disabled={pending} onClick={() => run(() => liftNetworkDriverExclusion(x.id))}>
+              <Button variant="ghost" size="xs" disabled={pending} onClick={() => run(() => liftNetworkDriverExclusion(x.id))} aria-label={`Lever l'exclusion de ${x.label}`}>
                 <Undo2 /> Lever
               </Button>
             </li>
@@ -765,7 +770,8 @@ function TermsCard({
       </p>
       {!current && grace && <p className="text-[12.5px] text-amber">Nouvelle version à accepter avant le {grace}{NB}: l&apos;ancienne reste valable jusque-là.</p>}
       <a href={NETWORK_DOCUMENTS.network.path} target="_blank" rel="noopener" className="inline-flex items-center gap-1.5 text-[13px] text-brand hover:underline">
-        Lire la convention <ExternalLink className="size-3.5" />
+        Lire la convention <ExternalLink aria-hidden className="size-3.5" />
+        <NewTabHint />
       </a>
       {!current && canManage && (
         <form
@@ -840,6 +846,7 @@ function ActivateDialog({
               J&apos;accepte la{" "}
               <a href={NETWORK_DOCUMENTS.network.path} target="_blank" rel="noopener" className="text-brand underline underline-offset-2">
                 convention du réseau partagé
+                <NewTabHint />
               </a>{" "}
               (version {version}) au nom de mon organisation.
             </span>

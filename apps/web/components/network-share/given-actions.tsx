@@ -103,7 +103,7 @@ export function GivenActions({
       {menu && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Plus d'actions" disabled={pending}>
+            <Button variant="ghost" size="icon-sm" aria-label={`Plus d'actions : course #${item.ride.number}`} disabled={pending}>
               <EllipsisVertical />
             </Button>
           </DropdownMenuTrigger>
@@ -442,7 +442,11 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
             ) : !info ? (
               <div className="mt-3 space-y-3">
                 <p className="text-[12.5px] text-fg-muted">Le chauffeur est prévenu de chaque consultation de son RIB.</p>
-                {error && <p className="text-[12.5px] text-red">{error}</p>}
+                {error && (
+                  <p role="alert" className="text-[12.5px] text-red">
+                    {error}
+                  </p>
+                )}
                 <Button variant="secondary" size="sm" loading={loading} onClick={reveal}>
                   Afficher le RIB
                 </Button>

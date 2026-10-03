@@ -11,6 +11,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { acceptNetworkTerms } from "@/app/dashboard/reseau-partage/actions";
 import { Button } from "@/components/ui/button";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { runAction } from "@/lib/run-action";
 import { submitWith } from "@/lib/utils";
 
@@ -57,6 +58,7 @@ export function NetworkTermsBanner({
               J&apos;accepte, au nom de <span className="text-fg">{orgName}</span>, la{" "}
               <a href={NETWORK_DOCUMENTS.network.path} target="_blank" rel="noopener" className="text-fg underline underline-offset-2">
                 convention du réseau partagé
+                <NewTabHint />
               </a>{" "}
               (version {version}).
             </span>

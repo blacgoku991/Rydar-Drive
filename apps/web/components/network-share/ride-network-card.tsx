@@ -271,7 +271,7 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
         )}
 
         <Link href={networkShareHref({ tab: "confiees" })} prefetch={false} className="inline-block text-[12px] text-fg-subtle underline-offset-2 hover:text-fg hover:underline">
-          Toutes les courses confiées →
+          Toutes les courses confiées <span aria-hidden>→</span>
         </Link>
       </CardBody>
 

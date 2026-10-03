@@ -93,15 +93,15 @@ export function NetworkSwitchCard({
           <ul className="space-y-2 text-[13px] text-fg-muted">
             {enabled ? (
               <>
-                <li className="flex gap-2"><span className="text-amber">•</span> Plus aucune course n&apos;est proposée au réseau ; les offres en attente sont retirées.</li>
-                <li className="flex gap-2"><span className="text-amber">•</span> Les courses déjà acceptées par un partenaire vont à leur terme.</li>
-                <li className="flex gap-2"><span className="text-amber">•</span> Réglages, validations et règlements conservés.</li>
+                <li className="flex gap-2"><span aria-hidden className="text-amber">•</span> Plus aucune course n&apos;est proposée au réseau ; les offres en attente sont retirées.</li>
+                <li className="flex gap-2"><span aria-hidden className="text-amber">•</span> Les courses déjà acceptées par un partenaire vont à leur terme.</li>
+                <li className="flex gap-2"><span aria-hidden className="text-amber">•</span> Réglages, validations et règlements conservés.</li>
               </>
             ) : (
               <>
-                <li className="flex gap-2"><span className="text-brand">•</span> Onglet « Réseau partagé » visible dans les tableaux de bord (deux interrupteurs, désactivés par défaut).</li>
-                <li className="flex gap-2"><span className="text-brand">•</span> Chaque organisation accepte la convention, puis attend votre validation.</li>
-                <li className="flex gap-2"><span className="text-brand">•</span> Aucune course n&apos;est partagée tant qu&apos;une organisation n&apos;a rien activé.</li>
+                <li className="flex gap-2"><span aria-hidden className="text-brand">•</span> Onglet « Réseau partagé » visible dans les tableaux de bord (deux interrupteurs, désactivés par défaut).</li>
+                <li className="flex gap-2"><span aria-hidden className="text-brand">•</span> Chaque organisation accepte la convention, puis attend votre validation.</li>
+                <li className="flex gap-2"><span aria-hidden className="text-brand">•</span> Aucune course n&apos;est partagée tant qu&apos;une organisation n&apos;a rien activé.</li>
               </>
             )}
           </ul>

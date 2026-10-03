@@ -77,7 +77,7 @@ export function OrgNetworkCard({
           </div>
         )}
         <Link href={`/admin/reseau#org-${orgId}`} prefetch={false} className="inline-block text-[12.5px] text-fg-muted underline-offset-2 hover:text-fg hover:underline">
-          Réseau partagé de la plateforme →
+          Réseau partagé de la plateforme <span aria-hidden>→</span>
         </Link>
       </CardBody>
     </Card>

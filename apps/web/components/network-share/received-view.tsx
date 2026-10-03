@@ -81,7 +81,7 @@ export function ReceivedView(p: Props) {
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-white/[0.02] px-4 py-3 text-[13px] text-fg-muted">
           <Info className="size-4 shrink-0 text-fg-subtle" />
           Réception désactivée&nbsp;: vos chauffeurs ne reçoivent plus les courses du réseau. Historique ci-dessous.
-          <Link href={networkShareHref({ tab: "reglages" }, SETTINGS_ANCHORS.receive)} prefetch={false} className="text-brand hover:underline">
+          <Link href={networkShareHref({ tab: "reglages" }, SETTINGS_ANCHORS.receive)} prefetch={false} className="text-brand underline underline-offset-2">
             Réglages
           </Link>
         </p>

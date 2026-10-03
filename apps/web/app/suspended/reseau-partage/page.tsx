@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Logo } from "@/components/brand/logo";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { GivenView } from "@/components/network-share/given-view";
 import { NETWORK_LIST_MAX, parseNetworkShareParams, recentMonths, type NetworkShareSearchParams } from "@/components/network-share/paths";
 import { NETWORK_CLOSED_NOTICE } from "@/components/network-share/access";
@@ -46,7 +47,9 @@ export default async function SuspendedNetworkPage({ searchParams }: { searchPar
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
 
   return (
-    <main className="min-h-dvh px-5 py-8 sm:px-8">
+    // Contenu principal focalisable (#contenu) : le focus y passe à la fermeture du bandeau cookies, comme sur les autres
+    // écrans (sans tabIndex, il retombait sur <body>)
+    <main id="contenu" tabIndex={-1} className="min-h-dvh px-5 py-8 outline-none sm:px-8">
       <div className="mx-auto w-full max-w-[1200px]">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <Logo size={24} />
@@ -89,6 +92,10 @@ export default async function SuspendedNetworkPage({ searchParams }: { searchPar
           failed={!!given.error}
           suspended
         />
+        {/* Pages légales atteignables depuis chaque écran, comme « Compte suspendu » (StatusScreen) */}
+        <footer className="mt-12 border-t border-line pt-6">
+          <LegalLinks className="text-[12px]" only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies", "/accessibilite"]} prefetch={false} />
+        </footer>
       </div>
     </main>
   );
