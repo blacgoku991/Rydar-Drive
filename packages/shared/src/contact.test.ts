@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -23,12 +23,19 @@ function expectFrenchTypography(text: string) {
   expect(text).not.toMatch(/« /);
   expect(text).not.toMatch(/[^\s\u{a0}][:;!?](\s|$)/u);
 }
-/** Types d'e-mails : dernière contrainte email_outbox_kind_check (20260924006600 : annonces aux organisations). */
+/**
+ * Types d'e-mails : DERNIÈRE contrainte email_outbox_kind_check des migrations (20260924006600 : annonces aux
+ * organisations ; 20260924007100 : décision sur une demande de participation au réseau partagé).
+ */
 function emailKindsInSql(): string[] {
-  const sql = readFileSync(join(__dirname, "../../../supabase/migrations/20260924006600_platform_fee_schedule.sql"), "utf8");
-  const m = /add constraint email_outbox_kind_check\s+check \(kind in \(([^)]*)\)\)/.exec(sql);
-  if (!m) throw new Error("Contrainte email_outbox_kind_check introuvable");
-  return [...m[1]!.matchAll(/'([^']*)'/g)].map((x) => x[1]!);
+  const dir = join(__dirname, "../../../supabase/migrations");
+  let last: string | null = null;
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) {
+    const sql = readFileSync(join(dir, f), "utf8");
+    for (const m of sql.matchAll(/add constraint email_outbox_kind_check\s+check \(kind in \(([^)]*)\)\)/g)) last = m[1]!;
+  }
+  if (!last) throw new Error("Contrainte email_outbox_kind_check introuvable");
+  return [...last.matchAll(/'([^']*)'/g)].map((x) => x[1]!);
 }
 const codePoints = (s: string) => Array.from(s).length;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}]/u;

@@ -61,8 +61,13 @@ export const EMAIL_STATUS_META: Record<EmailStatus, { label: string; tone: Tone 
   failed: { label: "Échec", tone: "red" },
 };
 
-/** Types de public.email_outbox (dernière contrainte : 20260924006600, annonces aux organisations). */
-export const EMAIL_KINDS = ["contact_notify", "contact_ack", "contact_reply", "test", "platform_fee_change", "org_terms_update"] as const;
+/**
+ * Types de public.email_outbox (dernière contrainte : 20260924007100, décision de Rydar sur une demande de participation
+ * au réseau partagé ; 20260924006600 : annonces aux organisations).
+ */
+export const EMAIL_KINDS = [
+  "contact_notify", "contact_ack", "contact_reply", "test", "platform_fee_change", "org_terms_update", "network_review",
+] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
 export const EMAIL_KIND_META: Record<EmailKind, { label: string }> = {
@@ -72,6 +77,7 @@ export const EMAIL_KIND_META: Record<EmailKind, { label: string }> = {
   test: { label: "E-mail de test" },
   platform_fee_change: { label: "Frais Rydar par course" },
   org_terms_update: { label: "Nouvelles CGV" },
+  network_review: { label: "Réseau partagé : validation" },
 };
 
 /** Longueurs maximales (contraintes de public.contact_requests et public.email_outbox) : attributs maxLength. */

@@ -13,7 +13,8 @@ import {
   NETWORK_SUSPECT_REASONS, NETWORK_SUSPENDED_CREDITOR_RPCS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
   NETWORK_RPC_ACCESS, ORG_NETWORK_READINESS_CODES, type DriverNetworkSettlementItem, type NetworkDriverMoney,
   type NetworkOfferNotificationData, type NetworkPayoutWarning, type NetworkRpcs, type RemindNetworkDriverResult,
-  type NetworkDriverBroadcastFields, type NetworkRideBroadcastFields,
+  type NetworkDriverBroadcastFields, type NetworkRideBroadcastFields, NETWORK_ADMIN_THRESHOLDS, type NetworkAdminFlag,
+  type SvcNetworkApproveResult,
 } from "./network";
 import type { PublicRide } from "./api-ride";
 import type { EarningsPeriod, RideAlertBroadcast, RideAlertData } from "./types";
@@ -479,5 +480,61 @@ describe("Réseau partagé, partie 5b (20260924007000) : journaux, temps réel, 
     expect(lastSqlDefinition("private.log_event")).toContain("private.network_event_scrub(p_org, v_message, v_data)");
     expect(lastSqlDefinition("private.log_event")).toContain("private.event_actor(p_org, p_ride, v_type, v_actor)");
     expect(lastSqlDefinition("private.track_ride_status")).toContain("private.event_actor(new.organization_id, new.id,");
+  });
+});
+
+describe("Réseau partagé, administration (lot 6, 20260924007100) : SQL = contrats de @rydar/shared", () => {
+  type Args<K extends keyof NetworkRpcs> = Record<keyof NetworkRpcs[K]["args"], true>;
+  const contract = {
+    svc_set_shared_network_enabled: { p_actor: true, p_enabled: true } satisfies Args<"svc_set_shared_network_enabled">,
+    svc_network_approve: {
+      p_actor: true, p_org: true, p_approved: true, p_fee_waiver: true, p_reason: true,
+    } satisfies Args<"svc_network_approve">,
+    svc_network_suspend: { p_actor: true, p_org: true, p_suspended: true, p_reason: true } satisfies Args<"svc_network_suspend">,
+    admin_network_overview: {} satisfies Args<"admin_network_overview">,
+    org_network_readiness: { p_org: true } satisfies Args<"org_network_readiness">,
+    network_driver_readiness: { p_driver: true } satisfies Args<"network_driver_readiness">,
+    set_network_settings: {
+      p_org: true, p_share_out: true, p_share_in: true, p_terms_version: true, p_insurance_confirmed: true,
+      p_executor_credit_limit_cents: true,
+    } satisfies Args<"set_network_settings">,
+    set_network_exclusion: { p_org: true, p_partner: true, p_excluded: true } satisfies Args<"set_network_exclusion">,
+  };
+
+  it("noms des paramètres = NetworkRpcs (appels du web) ; contrôle d'accès dans la fonction ; réseau fermé : NETWORK_DISABLED, sauf le super admin", () => {
+    for (const [fn, args] of Object.entries(contract)) {
+      const body = lastSqlDefinition(`public.${fn}`);
+      const signature = body.slice(body.indexOf("(") + 1, body.indexOf("\nreturns")).replace(/\)\s*$/, "");
+      const params = signature.trim() === "" ? [] : signature.split(",").map((x) => x.trim().split(/\s+/)[0]!);
+      expect(params, fn).toEqual(Object.keys(args));
+      expect(body, fn).toContain("security definer");
+      const access = NETWORK_RPC_ACCESS[fn as keyof NetworkRpcs];
+      if (access === "service_role") expect(body, fn).toContain("private.assert_platform_actor(p_actor)");
+      else if (access === "super_admin") expect(body, fn).toContain("private.is_super_admin()");
+      else if (access === "owner_admin") expect(body, fn).toContain("private.assert_org_member(p_org, array['owner', 'admin']::public.org_role[])");
+      else if (access === "owner_admin_or_driver") {
+        expect(body, fn).toContain("private.current_driver_id()");
+        expect(body, fn).toContain("array['owner', 'admin']::public.org_role[]");
+      } else expect(body, fn).toContain("private.assert_org_member(p_org)");
+      const platform = access === "service_role" || access === "super_admin";
+      expect(body.includes("private.assert_network_open()"), fn).toBe(!platform);
+      expect((NETWORK_CLOSED_RPCS as readonly string[]).includes(fn), fn).toBe(false);
+    }
+  });
+
+  it("super admin : seuils signalés = NETWORK_ADMIN_THRESHOLDS ; validation : codes et champs manquants = SvcNetworkApproveResult", () => {
+    const row = lastSqlDefinition("private.admin_network_org_row");
+    const T = NETWORK_ADMIN_THRESHOLDS;
+    expect(row).toContain(`v_offers.received >= ${T.minOffersForRatio} and v_offers.accepted::numeric / v_offers.received < ${T.minAcceptanceRatio}`);
+    expect(row).toContain(`v_releases >= ${T.releases}`);
+    expect(row).toContain(`v_contested >= ${T.contests}`);
+    expect(row).toContain(`x.due_at < now() - interval '${T.payoutOverdueDays} days'`);
+    const flags = [...row.matchAll(/v_flags := v_flags \|\| '([a-z_]+)'::text/g)].map((m) => m[1]);
+    expect(flags).toEqual(["low_acceptance", "releases", "contests", "payout_overdue"] satisfies NetworkAdminFlag[]);
+    const approve = lastSqlDefinition("public.svc_network_approve");
+    const codes = new Set([...approve.matchAll(/'code', (?:case when p_approved then )?'([A-Z_]+)'(?: else '([A-Z_]+)' end)?/g)].flatMap((m) => [m[1], m[2]].filter(Boolean)));
+    expect([...codes].sort()).toEqual((["APPROVED", "IDENTITY_INCOMPLETE", "NOT_FOUND", "REASON_REQUIRED", "REFUSED"] satisfies SvcNetworkApproveResult["code"][]).sort());
+    const missing = [...approve.matchAll(/v_missing := v_missing \|\| '([a-z_]+)'::text/g)].map((m) => m[1]);
+    expect(missing).toEqual(["legal_name", "siret", "vtc_registration"] satisfies NonNullable<SvcNetworkApproveResult["missing"]>);
   });
 });
