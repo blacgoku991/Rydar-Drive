@@ -123,4 +123,22 @@ describe("réducteur — réseau partagé", () => {
     state = reducer(state, { type: "locations", payloads: [{ driver_id: "a", lat: 48.9, lng: 2.3, heading: 0, speed: 3, updated_at: "2026-10-01T08:30:00Z" }] });
     expect(state.drivers.a!.location).toMatchObject({ lat: 48.9, lng: 2.3 });
   });
+
+  it("A : alerte d'un chauffeur partenaire diffusée sans identifiant (network: true) — celui de l'instantané est gardé", () => {
+    const base = {
+      id: "al1", ride_id: "r1", kind: "late" as const, severity: "warning" as const, message: "Karim T. · Flotte B sera en retard d'environ 6 min",
+      data: { alert_id: "al1", ride_number: 12, driver_name: "Karim T. · Flotte B", network: true as const, actions: ["keep", "reassign", "relaunch"] as ("keep" | "reassign" | "relaunch")[] },
+      status: "open" as const, resolution: null, muted_until: null, created_at: "2026-10-01T08:00:00Z", updated_at: "2026-10-01T08:00:00Z",
+      resolved_at: null, resolved_by: null,
+    };
+    let state = reducer(empty, { type: "snapshot", snapshot: snapshot({ alerts: [{ ...base, driver_id: "d-partenaire" }] }) });
+    state = reducer(state, { type: "alert", payload: { ...base, op: "update", severity: "critical", driver_id: null, network: true } });
+    expect(state.alerts.al1).toMatchObject({ driver_id: "d-partenaire", severity: "critical" });
+    expect(state.alerts.al1).not.toHaveProperty("network");
+    // Première diffusion (aucun instantané) : rien à garder ; alerte propre : identifiant diffusé, comme avant
+    state = reducer(state, { type: "alert", payload: { ...base, id: "al2", op: "insert", driver_id: null, network: true } });
+    expect(state.alerts.al2!.driver_id).toBeNull();
+    state = reducer(state, { type: "alert", payload: { ...base, id: "al3", op: "insert", driver_id: "d-propre" } });
+    expect(state.alerts.al3!.driver_id).toBe("d-propre");
+  });
 });

@@ -262,8 +262,8 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   non poussée), 3 (dispatch, migration `20260924006800`, non poussée : 3a éligibilité, étape réseau des immédiates et
   des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin), 4 (argent, migration
   `20260924006900`, non poussée : 4a côté chauffeur ; 4b côté A, blocages, relances, frais Rydar, dette et
-  suppression), 5a (accès : RPC du chauffeur, de A et de B, migration `20260924007000`, non poussée, à compléter par
-  la suite du lot 5). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  suppression), 5a (accès : RPC du chauffeur, de A et de B, migration `20260924007000`, non poussée), 5b (journaux,
+  alertes, positions, temps réel, notifications, webhooks : même migration `20260924007000`). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
   liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
@@ -372,6 +372,38 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   - statistiques : `driver_stats` / `org_stats` (redéfinies, dernière version : 007000) = chiffres de l'organisation
     seulement, offres réseau hors des taux, clé `network_rides` seulement s'il y en a ;
   - web : « à vérifier » seulement pour une course partagée terminée (`givenToCheck`, fiche course).
+- Règles posées par le lot 5b (journaux, alertes, positions, temps réel, `20260924007000`, non poussée) :
+  - lignes lisibles par A (journal, historique des statuts, alertes, temps réel org:{A}) : un chauffeur de B n'y figure
+    qu'en libellé court (« Prénom I. · B ») — `private.log_event` (devenue plpgsql) passe par
+    `private.network_event_scrub` (clés driver_id / previous_driver_id / assigned_driver_id / driver_ids d'un chauffeur
+    d'une autre organisation retirées, compteur network_count, driver_number / driver_name / lat / lng retirés, message
+    nettoyé) et `private.event_actor` (acteur d'une autre organisation sans identifiant), comme
+    `private.track_ride_status` ; tout nouveau message qui cite un chauffeur passe quand même par
+    `private.driver_label_for` (le filet ne reconnaît que « Prénom NOM (#n) », « Prénom (#n) » et le nom de famille) ;
+  - alertes (`private.apply_ride_alert`, `private.watch_rides`) : chauffeur partenaire → libellé court, ni driver_id ni
+    driver_number ni lat / lng dans les données, distance arrondie à 100 m, `network: true` ; diffusion `ride.alert`
+    (`private.ride_alert_payload`) sans driver_id (la colonne ride_alerts.driver_id reste : identifiant résiduel) ;
+  - annulation d'une course tenue par un partenaire : « COURSE ANNULÉE — {A} » sans n° ni adresse, ses notifications
+    précédentes de la course supprimées (comme un retrait) ;
+  - positions (Q5) : `update_driver_location` marque `ride_org_id` (organisation de la course en cours si ce n'est pas
+    celle du chauffeur ; NULL sinon) ; aucune `driver.location` pendant une course d'une autre organisation ;
+    `driver.updated` sur org:{B} : current_ride_id NULL + network + network_giver ; `private.housekeeping` (dernière
+    version : 007000) supprime 1 h après la fin de l'exécution (`private.network_ended_traces`) les points marqués et
+    les notifications `ride_reminder` / `flight_update` du partenaire, comptés dans history_purged /
+    notifications_purged ;
+  - temps réel org:{A} : `ride.updated` d'une course tenue par un partenaire = driver_id NULL + network +
+    network_execution_id ; jamais de message vers org:{B} / fleet:{B} avec une donnée de A ;
+  - notifications : déclencheur `notifications_scrub_money` (BEFORE INSERT, après G1) — commission_cents,
+    platform_fee_cents, driver_payout_cents retirés chez un partenaire, et chez un chauffeur de flotte s'ils sont
+    renseignés (NULL en flotte aujourd'hui : rien ne change) ; point unique pour toute insertion ;
+  - API v1 et webhooks : objet « driver » = colonne calculée `public.ride_public_driver` (EXECUTE service role ;
+    `PUBLIC_RIDE_SELECT` se termine par `driver:ride_public_driver`, vérifié avec PostgREST 12.2) — chauffeur de
+    l'organisation : objet inchangé (véhicule de sa fiche) ; partenaire : prénom, véhicule de l'instantané, `operator`
+    { name : raison sociale validée de B }, NULL 24 h après la fin ; une course partagée n'existe que dans l'API et les
+    webhooks de A ;
+  - lots suivants : partir des versions 007000 de log_event, track_ride_status, apply_ride_alert, ride_alert_payload,
+    watch_rides, cancel_ride_internal, update_driver_location, broadcast_driver_location, broadcast_driver,
+    broadcast_ride, housekeeping, webhook_ride_json.
 - Règles posées par la revue du lot 4 (corrections dans 006900, non poussée) :
   - la baisse des frais Rydar demandée par « Contester la course » n'est JAMAIS acceptée d'office : redéfinition de
     `private.accept_stale_platform_reductions` (corps 006600 à l'identique + exclusion des courses partagées contestées) ;

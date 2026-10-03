@@ -1814,7 +1814,13 @@ describe("Retraits et chien de garde (§14.1 n° 14)", () => {
     expect(await callAs(p.A.ownerId, "cancel_ride", [ride.id, "Client absent"])).toMatchObject({ ok: true, code: "CANCELLED" });
     expect((await executionsOf(ride.id))[0]).toMatchObject({ id: execution.id, end_reason: "cancelled_by_giver" });
     expect(await shareOf(ride.id)).toMatchObject({ status: "closed", closed_reason: "cancelled" });
-    expect((await notificationsOf(ride.id, p.partner.id)).at(-1)).toMatchObject({ type: "ride_cancelled", title: "COURSE ANNULÉE" });
+    // Lot 5b (§11.5) : message du partenaire au nom de A, sans n° ni adresse ; ses notifications précédentes de la course
+    // (offre acceptée) retirées de son historique
+    const [{ name: aName }] = await sql(`select name from public.organizations where id = $1`, [p.A.id]);
+    const notes = await notificationsOf(ride.id, p.partner.id);
+    expect(notes.map((n) => n.type)).toEqual(["ride_cancelled"]);
+    expect(notes[0]).toMatchObject({ type: "ride_cancelled", title: `COURSE ANNULÉE — ${aName}`, data: { network: true, giver: aName } });
+    expect(notes[0].body).not.toMatch(/Champs|Élysées|#\d/);
     const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
     expect(d).toEqual({ presence: "available", current_ride_id: null });
   });

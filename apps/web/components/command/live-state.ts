@@ -125,8 +125,12 @@ export function reducer(state: State, action: Action): State {
       const alerts = { ...state.alerts };
       if (a.status === "resolved") delete alerts[a.id];
       else {
-        const { op: _op, ...rest } = a;
-        alerts[a.id] = { ...(alerts[a.id] ?? {}), ...rest } as LiveAlert;
+        const { op: _op, network, ...rest } = a;
+        const prev = alerts[a.id];
+        // Réseau partagé : chauffeur partenaire diffusé sans identifiant (driver_id null, network: true) — celui de
+        // l'instantané (RLS) est gardé : « Relancer » ne retire la course qu'à ce chauffeur-là (p_expected_driver)
+        if (network === true && rest.driver_id == null && prev?.driver_id) rest.driver_id = prev.driver_id;
+        alerts[a.id] = { ...(prev ?? {}), ...rest } as LiveAlert;
       }
       return { ...state, alerts };
     }

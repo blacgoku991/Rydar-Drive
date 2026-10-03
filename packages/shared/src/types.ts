@@ -236,13 +236,22 @@ export type RideAlertResolution = "kept" | "reassigned" | "relaunched" | "auto_r
 /** keep → acknowledge_ride_alert(alert_id) · reassign → assign_ride(ride_id, driver_id) · relaunch → reassign_ride(ride_id, reason, expected_driver_id) (DRIVER_CHANGED si le chauffeur a changé ; UNASSIGNED si dispatch auto désactivé) */
 export type RideAlertAction = "keep" | "reassign" | "relaunch";
 
+/**
+ * Réseau partagé (20260924007000, §11.5) — alerte d'une course tenue par un chauffeur partenaire (autre organisation) :
+ * `network: true`, `driver_name` = libellé court « Prénom I. · {organisation} », ni `driver_id`, ni `driver_number`,
+ * ni `lat` / `lng`, `distance_m` arrondie à 100 m. Chauffeur de l'organisation : toutes les clés, comme avant.
+ */
 export interface RideAlertData {
   alert_id: Uuid;
   ride_number: number;
-  driver_id: Uuid;
+  /** absent pour un chauffeur partenaire */
+  driver_id?: Uuid;
   driver_name: string;
-  driver_number: number;
+  /** absent pour un chauffeur partenaire */
+  driver_number?: number;
   actions: RideAlertAction[];
+  /** chauffeur partenaire (réseau partagé) */
+  network?: true;
   /** late */
   delay_minutes?: number;
   eta_minutes?: number;
@@ -286,9 +295,13 @@ export interface RideAlert {
   resolved_by: Uuid | null;
 }
 
-/** Diffusion temps réel `ride.alert` sur `org:{organization_id}` (et champ `alert` des RPC). */
+/**
+ * Diffusion temps réel `ride.alert` sur `org:{organization_id}` (et champ `alert` des RPC). Réseau partagé : alerte d'un
+ * chauffeur partenaire diffusée sans son identifiant (`driver_id` null, `network: true` ; la ligne ride_alerts le garde).
+ */
 export interface RideAlertBroadcast extends Omit<RideAlert, "organization_id"> {
   op: "insert" | "update" | "resolve";
+  network?: true;
 }
 
 // Messagerie centrale ⇄ chauffeurs + signalements flotte (migration 20260924002300_chat)

@@ -217,9 +217,14 @@ export async function readJson(req: Request, maxBytes = 32_768): Promise<unknown
 /** Représentation publique d'une course (aucun champ interne) : partagée avec les webhooks du worker (@rydar/shared). */
 export { publicRide } from "@rydar/shared";
 
-/** Colonnes lues pour publicRide ; private.claim_webhook_deliveries construit la même ligne en SQL (mêmes noms). */
+/**
+ * Colonnes lues pour publicRide ; private.claim_webhook_deliveries construit la même ligne en SQL (mêmes noms).
+ * « driver » : colonne calculée public.ride_public_driver (20260924007000, EXECUTE service role : client admin
+ * seulement), même objet que les webhooks — chauffeur de l'organisation : prénom et véhicule ; chauffeur partenaire
+ * du réseau partagé : prénom, véhicule figé à l'acceptation, exploitant (« operator »), null 24 h après la fin.
+ */
 export const PUBLIC_RIDE_SELECT =
-  "id, number, type, status, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, passengers, luggage, vehicle_category, price_cents, currency, payment_method, flight_number, external_reference, estimated_distance_m, estimated_duration_s, route_polyline, created_at, accepted_at, driver_arrived_at, started_at, completed_at, cancelled_at, driver:drivers!rides_organization_id_driver_id_fkey(first_name, vehicle:vehicles(brand, model, color, plate))";
+  "id, number, type, status, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, passengers, luggage, vehicle_category, price_cents, currency, payment_method, flight_number, external_reference, estimated_distance_m, estimated_duration_s, route_polyline, created_at, accepted_at, driver_arrived_at, started_at, completed_at, cancelled_at, driver:ride_public_driver";
 
 /** Accès inter-tenant : 403 + trace de sécurité si la ressource existe ailleurs, 404 sinon. */
 export async function notFoundOrForbidden(ctx: ApiContext, rideId: string): Promise<never> {

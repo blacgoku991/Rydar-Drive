@@ -92,6 +92,22 @@ describe("publicRide (API v1 et webhooks)", () => {
     expect(partial.timestamps.started_at).toBeNull();
   });
 
+  it("chauffeur partenaire (réseau partagé, public.ride_public_driver) : prénom, véhicule figé, exploitant ; jamais d'autre champ", () => {
+    const partner = {
+      ...row,
+      driver: { first_name: "Karim", vehicle: { brand: "Toyota", model: "Prius", color: "Gris", plate: "GH-456-JK" }, operator: { name: "Flotte B SAS", siret: "123" } },
+    };
+    expect(publicRide(partner, APP).driver).toEqual({
+      first_name: "Karim",
+      vehicle: { model: "Toyota Prius", color: "Gris", plate: "GH-456-JK" },
+      operator: { name: "Flotte B SAS" },
+    });
+    // Chauffeur de l'organisation : aucune clé « operator » (objet d'avant)
+    expect(Object.keys(publicRide(row, APP).driver!)).toEqual(["first_name", "vehicle"]);
+    // 24 h après la fin de la course partenaire : plus de chauffeur
+    expect(publicRide({ ...partner, driver: null }, APP).driver).toBeNull();
+  });
+
   it("chaque colonne de PUBLIC_RIDE_SELECT est lue, et seulement elles (ligne SQL des webhooks : mêmes noms)", () => {
     const src = readFileSync(join(__dirname, "../../../apps/web/lib/api/v1.ts"), "utf8");
     const select = /PUBLIC_RIDE_SELECT\s*=\s*"([^"]+)"/.exec(src)?.[1];
@@ -102,5 +118,7 @@ describe("publicRide (API v1 et webhooks)", () => {
     publicRide(spy, APP);
     read.delete("driver");
     expect([...read].sort()).toEqual([...columns].sort());
+    // « driver » : colonne calculée public.ride_public_driver (même objet que private.webhook_ride_json)
+    expect(select!.trim().endsWith("driver:ride_public_driver")).toBe(true);
   });
 });

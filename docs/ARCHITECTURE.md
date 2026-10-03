@@ -254,7 +254,9 @@ ses courses ; contrat public dans [API.md](API.md#webhooks).
    plus ancien dû d'abord), tour de rôle entre centrales ; les envois d'une centrale suspendue ou archivée restent en
    file. La ligne renvoyée porte l'adresse, le secret (`webhook_endpoint_secrets`) et l'état ACTUEL de la course
    (`private.webhook_ride_json`, mêmes colonnes que `PUBLIC_RIDE_SELECT` de l'API v1 : `publicRide` de `@rydar/shared`
-   sert aux deux, toute colonne ajoutée l'est des deux côtés).
+   sert aux deux, toute colonne ajoutée l'est des deux côtés ; objet « driver » des deux côtés : colonne calculée
+   `public.ride_public_driver`, service role seulement — chauffeur partenaire du réseau partagé : prénom, véhicule figé à
+   l'acceptation, `operator`, `null` 24 h après la fin).
 3. **Envoi** (worker, `apps/worker/src/webhooks*`) : garde SSRF (nom résolu, refus si une seule adresse est privée,
    connexion à l'adresse vérifiée), corps signé HMAC-SHA256 (`X-Rydar-Signature`), réponse 2xx attendue en 10 s, aucune
    redirection suivie.

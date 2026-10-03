@@ -13,8 +13,10 @@ import {
   NETWORK_SUSPECT_REASONS, NETWORK_SUSPENDED_CREDITOR_RPCS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
   NETWORK_RPC_ACCESS, ORG_NETWORK_READINESS_CODES, type DriverNetworkSettlementItem, type NetworkDriverMoney,
   type NetworkOfferNotificationData, type NetworkPayoutWarning, type NetworkRpcs, type RemindNetworkDriverResult,
+  type NetworkDriverBroadcastFields, type NetworkRideBroadcastFields,
 } from "./network";
-import type { EarningsPeriod } from "./types";
+import type { PublicRide } from "./api-ride";
+import type { EarningsPeriod, RideAlertBroadcast, RideAlertData } from "./types";
 
 const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import.meta.url));
 
@@ -417,5 +419,64 @@ describe("Réseau partagé, accès (partie 5a, 20260924007000) : SQL = contrats 
     for (const k of ["route_polyline", "flight_number", "comment", "commission_cents", "platform_fee_cents", "dispatch_model"]) {
       expect(body, k).toContain(`'${k}', null`);
     }
+  });
+});
+
+describe("Réseau partagé, partie 5b (20260924007000) : journaux, temps réel, notifications, webhooks = contrats", () => {
+  const keysOf = (body: string, after: string) =>
+    [...body.slice(body.indexOf(after)).split(")")[0]!.matchAll(/'([a-z_]+)', /g)].map((m) => m[1]!);
+
+  it("diffusions org:{A} / org:{B} : clés « network* » = NetworkRideBroadcastFields / NetworkDriverBroadcastFields", () => {
+    const ride = lastSqlDefinition("private.broadcast_ride");
+    const rideKeys = ["network", "network_execution_id"] as const satisfies ReadonlyArray<keyof NetworkRideBroadcastFields>;
+    expect(keysOf(ride, "then jsonb_build_object('network'")).toEqual([...rideKeys]);
+    expect(ride).toContain("'driver_id', case when v_partner then null else v.driver_id end");
+    const driver = lastSqlDefinition("private.broadcast_driver");
+    const driverKeys = ["network", "network_giver"] as const satisfies ReadonlyArray<keyof NetworkDriverBroadcastFields>;
+    expect(keysOf(driver, "then jsonb_build_object('network'")).toEqual([...driverKeys]);
+    expect(driver).toContain("'current_ride_id', case when v_giver is null then new.current_ride_id end");
+    // Q5 : aucune position diffusée pendant une course d'une autre organisation
+    expect(lastSqlDefinition("private.broadcast_driver_location")).toContain("if private.driver_on_foreign_ride(new.driver_id) then");
+  });
+
+  it("alertes d'un chauffeur partenaire : clés retirées et ajoutées = RideAlertData / RideAlertBroadcast (facultatives)", () => {
+    const apply = lastSqlDefinition("private.apply_ride_alert");
+    const removed = [...apply.slice(apply.indexOf("v_data := (v_data - array[")).split("]")[0]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    const optional = ["driver_id", "driver_number", "lat", "lng"] as const satisfies ReadonlyArray<keyof RideAlertData>;
+    expect(removed).toEqual([...optional]);
+    // Jamais requises par le contrat (clés absentes pour un partenaire) ; « network » ajoutée
+    const sample: RideAlertData = { alert_id: "a", ride_number: 1, driver_name: "Karim T. · Flotte B", actions: ["keep"], network: true };
+    expect(sample.driver_id).toBeUndefined();
+    expect(apply).toContain("'network', true");
+    const payload = lastSqlDefinition("private.ride_alert_payload");
+    const broadcast: Pick<RideAlertBroadcast, "driver_id" | "network"> = { driver_id: null, network: true };
+    expect(Object.keys(broadcast).every((k) => payload.includes(`'${k}'`))).toBe(true);
+  });
+
+  it("notifications : montants retirés (déclencheur notifications_scrub_money) = ceux jamais montrés à un partenaire", () => {
+    const scrub = lastSqlDefinition("private.notifications_scrub_money");
+    const keys = [...scrub.slice(scrub.indexOf("new.data - array[")).split("]")[0]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    expect(keys).toEqual(["commission_cents", "platform_fee_cents", "driver_payout_cents"]);
+    for (const k of keys) expect(NETWORK_OFFER_NOTIFICATION_KEYS as readonly string[], k).not.toContain(k);
+  });
+
+  it("API et webhooks : objet « driver » de public.ride_public_driver = PublicRide.driver (operator du partenaire seulement)", () => {
+    const fn = lastSqlDefinition("public.ride_public_driver");
+    const keys = [...new Set([...fn.matchAll(/'(first_name|vehicle|operator)'/g)].map((m) => m[1]!))].sort();
+    const contract = ["first_name", "operator", "vehicle"] as const satisfies ReadonlyArray<keyof NonNullable<PublicRide["driver"]>>;
+    expect(keys).toEqual([...contract]);
+    expect(fn).toContain("interval '24 hours'");
+    expect(lastSqlDefinition("private.webhook_ride_json")).toContain("'driver', public.ride_public_driver(r)");
+    const api = readFileSync(fileURLToPath(new URL("../../../apps/web/lib/api/v1.ts", import.meta.url)), "utf8");
+    expect(/PUBLIC_RIDE_SELECT\s*=\s*"([^"]+)"/.exec(api)?.[1]?.endsWith("driver:ride_public_driver")).toBe(true);
+  });
+
+  it("journal : clés de chauffeur filtrées par private.network_event_scrub (filet de sécurité de private.log_event)", () => {
+    const scrub = lastSqlDefinition("private.network_event_scrub");
+    for (const k of ["driver_id", "previous_driver_id", "assigned_driver_id", "driver_ids", "driver_number", "driver_name", "lat", "lng", "network_count"]) {
+      expect(scrub, k).toContain(`'${k}'`);
+    }
+    expect(lastSqlDefinition("private.log_event")).toContain("private.network_event_scrub(p_org, v_message, v_data)");
+    expect(lastSqlDefinition("private.track_ride_status")).toContain("private.event_actor(new.organization_id,");
   });
 });

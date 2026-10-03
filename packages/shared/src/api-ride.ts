@@ -2,6 +2,9 @@
 // (apps/web/lib/api/v1.ts, ligne lue avec PUBLIC_RIDE_SELECT) et pour « data.ride » des webhooks (apps/worker,
 // ligne construite en SQL par private.claim_webhook_deliveries avec les mêmes noms de colonnes). Fonction pure, sans
 // dépendance : aucun champ interne (client, notes, commissions, identifiant du chauffeur) n'en sort.
+// « driver » (les deux côtés) : public.ride_public_driver (20260924007000) — chauffeur de l'organisation : prénom et
+// véhicule ; chauffeur partenaire du réseau partagé : prénom, véhicule figé à l'acceptation et exploitant (« operator »,
+// raison sociale de son organisation), null 24 h après la fin de sa course.
 
 export type PublicRideVehicle = { model: string; color: unknown; plate: unknown };
 
@@ -22,7 +25,8 @@ export type PublicRide = {
   flight_number: unknown;
   external_reference: unknown;
   route: { distance_m: unknown; duration_s: unknown; polyline: unknown } | null;
-  driver: { first_name: unknown; vehicle: PublicRideVehicle | null } | null;
+  /** operator : seulement pour un chauffeur partenaire (réseau partagé) — exploitant qui exécute la course. */
+  driver: { first_name: unknown; vehicle: PublicRideVehicle | null; operator?: { name: unknown } } | null;
   timestamps: {
     created_at: unknown;
     accepted_at: unknown;
@@ -39,7 +43,8 @@ const one = (v: any) => (Array.isArray(v) ? v[0] : v);
 
 /**
  * Représentation publique d'une course (aucun champ interne). `r` : ligne de rides avec les colonnes de
- * PUBLIC_RIDE_SELECT et « driver » = { first_name, vehicle: { brand, model, color, plate } | null } | null.
+ * PUBLIC_RIDE_SELECT et « driver » = { first_name, vehicle: { brand, model, color, plate } | null, operator?: { name } }
+ * | null (public.ride_public_driver).
  * `appUrl` : URL publique du site, sans « / » final (lien « self »).
  */
 export function publicRide(r: any, appUrl: string): PublicRide {
@@ -62,7 +67,14 @@ export function publicRide(r: any, appUrl: string): PublicRide {
     flight_number: r.flight_number,
     external_reference: r.external_reference,
     route: r.estimated_distance_m != null ? { distance_m: r.estimated_distance_m, duration_s: r.estimated_duration_s, polyline: r.route_polyline ?? null } : null,
-    driver: d ? { first_name: d.first_name, vehicle: v ? { model: `${v.brand ?? ""} ${v.model}`.trim(), color: v.color, plate: v.plate } : null } : null,
+    driver: d
+      ? {
+          first_name: d.first_name,
+          vehicle: v ? { model: `${v.brand ?? ""} ${v.model}`.trim(), color: v.color, plate: v.plate } : null,
+          // Réseau partagé : exploitant d'un chauffeur partenaire (clé absente pour un chauffeur de l'organisation)
+          ...(one(d.operator) ? { operator: { name: one(d.operator).name ?? null } } : {}),
+        }
+      : null,
     timestamps: {
       created_at: r.created_at,
       accepted_at: r.accepted_at ?? null,

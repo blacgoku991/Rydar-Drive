@@ -69,7 +69,7 @@ curl https://app.rydar.app/api/v1/rides \
 | `luggage` | 0–30 | non | Défaut 0 |
 | `vehicle_category` | `standard` · `business` · `first` · `van` · `green` | non | Défaut `standard` |
 | `price_cents` | entier | non | Prix annoncé au client, affiché au chauffeur. Absent : calculé avec la grille de l'organisation (forfait reconnu, par ex. « Paris ↔ CDG », sinon tarif au km et à la minute). Compte en mode centrale : la part chauffeur, la commission et les frais sont calculés automatiquement à partir de ce prix |
-| `payment_method` | `card` · `cash` · `online` · `invoice` · `account` | non | Défaut `card` |
+| `payment_method` | `card` · `cash` · `online` · `invoice` · `account` | non | Défaut `card` : carte payée **au chauffeur, à bord** (son terminal). Course déjà payée en ligne par le client : `online` ; facture ou compte client : `invoice` / `account` |
 | `flight_number`, `comment`, `external_reference` | string | non | `external_reference` : votre identifiant de réservation (100 car. max) |
 
 Tout champ inconnu est refusé (422). Une prise en charge dans moins de 45 min (seuil réglable) donne une course **instantanée**, dispatchée tout de suite par GPS. Au-delà, la course est **planifiée** et proposée à la flotte.
@@ -102,13 +102,22 @@ L'itinéraire routier (`route`) est calculé par Rydar à la création : distanc
 
 | Requête | Permission | Détail |
 | --- | --- | --- |
-| `GET /rides/{id}` | `rides:read` | Une fois le chauffeur attribué, `driver` vaut `{ first_name, vehicle: { model, color, plate } }` |
+| `GET /rides/{id}` | `rides:read` | Une fois le chauffeur attribué, `driver` vaut `{ first_name, vehicle: { model, color, plate } }` ; course faite par un chauffeur partenaire (réseau partagé, voir plus bas) : `{ first_name, vehicle, operator: { name } }` |
 | `GET /rides?external_reference=WEB-8842&status=COMPLETED&limit=20` | `rides:read` | 100 résultats au plus, les plus récents d'abord |
 | `POST /rides/{id}/cancel` `{ "reason": "…" }` | `rides:cancel` | 409 si la course est déjà terminée ou annulée |
 
 Statuts : `CREATED`, `SEARCHING_DRIVER`, `OFFERED`, `ACCEPTED`, `DRIVER_EN_ROUTE`, `DRIVER_ARRIVED`, `PASSENGER_ONBOARD`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`, `NO_DRIVER_FOUND`.
 
 Lire ou annuler la course d'une **autre** organisation renvoie **403 `FORBIDDEN_TENANT`**. La tentative est enregistrée dans l'audit, avec la gravité *critique*.
+
+**Réseau partagé** (organisation qui partage ses courses non prises) : la course reste la vôtre (même identifiant, mêmes
+webhooks, même prix), mais un chauffeur d'une organisation partenaire peut la faire. `driver` vaut alors
+`{ first_name, vehicle: { model, color, plate }, operator: { name } }` : prénom du chauffeur, véhicule **enregistré à
+l'acceptation** (il ne change pas ensuite), `operator.name` = raison sociale de l'organisation qui exécute la course
+(exploitant). Ni son nom de famille, ni son téléphone, ni son identifiant. `driver` repasse à `null` **24 h après la fin**
+de la course. Une course faite par l'un de vos chauffeurs garde exactement la forme habituelle (pas de clé `operator`).
+Le client final peut ainsi recevoir le nom d'une autre organisation que la vôtre : mentionnez-le dans votre politique de
+confidentialité. Une course partagée n'apparaît jamais dans l'API ni dans les webhooks de l'organisation partenaire.
 
 ## Erreurs
 
@@ -157,7 +166,7 @@ Rydar Drive prévient votre serveur à chaque changement de statut d'une course 
 | `ride.in_progress` | Trajet vers la destination | `IN_PROGRESS` |
 | `ride.completed` | Course terminée | `COMPLETED` |
 | `ride.cancelled` | Course annulée (dashboard, API, ou « Non effectuée » 6 h après l'heure d'une course planifiée jamais démarrée) | `CANCELLED` |
-| `ride.no_driver_found` | Recherche terminée sans chauffeur | `NO_DRIVER_FOUND` |
+| `ride.no_driver_found` | Recherche terminée sans chauffeur (réseau partagé activé : après la recherche auprès des chauffeurs partenaires, environ 2 min plus tard qu'une recherche sans réseau quand un partenaire est à proximité) | `NO_DRIVER_FOUND` |
 | `ride.search_restarted` | La course restée sans chauffeur repart en recherche (« Relancer », vol retardé qui la remet en service) ; `data.previous_status` = `NO_DRIVER_FOUND` | `CREATED`, `SEARCHING_DRIVER` ou `OFFERED` |
 | `ride.rescheduled` | Heure de prise en charge modifiée (course ni terminée, ni annulée ; course sans chauffeur comprise, son heure suit le vol) ; peut accompagner un autre événement de la même modification | statut courant |
 | `ping` | Envoi de test (bouton du dashboard ou `POST /webhooks/{id}/test`), jamais abonnable | `data` vide (`{}`) |
@@ -207,6 +216,8 @@ X-Rydar-Signature: v1=5d1c0f…e94a
 - `created_at` : moment de l'événement. `data.status` et `data.previous_status` : la transition qui l'a provoqué (`previous_status` vaut `null` pour `ride.created`).
 - `data.ride` : la course telle que la renvoie `GET /rides/{id}`, plus `updated_at`, **dans son état au moment de l'envoi** (le plus récent), pas au moment de l'événement. Elle vaut `null` si la course n'existe plus. Aucune charge utile n'est conservée par Rydar : elle est construite à l'envoi.
 - Aucune donnée du client (nom, téléphone, e-mail) n'est envoyée : retrouvez votre réservation grâce à `external_reference`.
+- `data.ride.driver` : même objet que `GET /rides/{id}` (chauffeur partenaire du réseau partagé : `operator`, `null` 24 h
+  après la fin de la course).
 
 ### Vérifier la signature
 

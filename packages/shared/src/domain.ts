@@ -261,6 +261,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   WEBHOOK_TEST_RATE_LIMITED: "Trop de tests et de renvois de webhooks en une minute (10 au plus par centrale) : réessayez dans un instant.",
   // Statistiques (public.org_stats, redéfinie par 20260924007000 : code d'origine 20260924000500)
   INVALID_RANGE: "Période de statistiques invalide : 400 jours au plus, fin après le début.",
+  // Position du chauffeur (public.update_driver_location, redéfinie par 20260924007000 : code d'origine 20260924000400)
+  INVALID_COORDINATES: "Position GPS invalide : latitude ou longitude hors limites.",
   // Interrupteur plateforme des mini-sites (20260924006200)
   BOOKING_SITES_DISABLED: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
   // Réseau partagé (20260924006700 à 20260924007100 ; liste : NETWORK_ERROR_CODES de network.ts)

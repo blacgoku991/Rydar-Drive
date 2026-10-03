@@ -2,6 +2,8 @@
 // partenaire (offres, course, planning, état réseau), de l'organisation qui confie la course (A : indicateurs, courses
 // confiées, fiche course, exclusions) et de l'organisation du chauffeur (B : courses reçues, activité, chauffeurs) —
 // matrice de visibilité §11.1 ; scénarios §14.1 n° 1 à 3 de la spécification, et confidentialité des lots 3 et 4.
+// Partie 5b : journaux et alertes (§11.5), positions (§11.6, Q5), temps réel par topic (§13, §14.1 n° 32, balayage
+// n° 31 des lignes lisibles par A), notifications (montants internes), webhooks et API (§11.7).
 // Réglages du réseau écrits directement (helpers de tests/db/helpers.ts). L'interrupteur est rouvert avant chaque test et
 // recoupé à la fin du fichier.
 import { randomUUID } from "node:crypto";
@@ -12,8 +14,9 @@ import type {
   OrgNetworkSummary,
 } from "../../packages/shared/src/network";
 import {
-  acceptDriverTerms, approveNetwork, as, CDG, createDriver, createMember, createOrg, createRideAsOwner, enableNetwork,
-  expectPgError, inMinutes, networkTermsVersion, north, pingApp, pool, setSharedNetwork, sql, type Driver, type Org,
+  acceptDriverTerms, approveNetwork, as, CDG, createAuthUser, createDriver, createMember, createOrg, createRideAsOwner,
+  enableNetwork, expectPgError, inMinutes, networkTermsVersion, north, pingApp, pool, setSharedNetwork, sql, type Driver,
+  type Org,
 } from "./helpers";
 
 afterAll(async () => {
@@ -981,5 +984,386 @@ describe("Organisation qui confie la course, A (§11.3, §14.1 n° 3)", () => {
     expect(await rpc(p.B.ownerId, "network_partner_names", [p.B.id])).toEqual({ [p.A.id]: p.aName });
     expect(await rpc(C.ownerId, "network_partner_names", [C.id])).toEqual({});
     expect((await expectPgError(rpc(C.ownerId, "network_partner_names", [p.A.id]))).code).toBe("42501");
+  });
+});
+
+// =============================================================================
+// Partie 5b — journaux, alertes, positions, temps réel, notifications, webhooks (§11.5 à §11.7, §13 ; §14.1 n° 32)
+// =============================================================================
+type Message = { id: number; topic: string; event: string; payload: Record<string, any> };
+const lastMessageId = async () => Number((await sql(`select coalesce(max(id), 0) as m from realtime.messages`))[0].m);
+const messagesSince = async (after: number, topics: string[]) =>
+  (await sql(`select id, topic, event, payload from realtime.messages where id > $1 and topic = any ($2) order by id`, [after, topics])).map(
+    (m) => ({ ...m, id: Number(m.id) }),
+  ) as Message[];
+const location = (d: Driver, at: [number, number]) => rpc(d.userId, "update_driver_location", [at[0], at[1]]);
+const historyOf = (driverId: string) =>
+  sql(`select ride_id, ride_org_id from public.driver_location_history where driver_id = $1 order by recorded_at, id`, [driverId]);
+const labelOf = (p: Pair) => `Karim T. · ${p.bName}`;
+/** Données qu'aucune ligne lisible par A ne doit contenir sur le chauffeur partenaire (S3) : identifiants, nom, n° interne. */
+function expectNoPartnerIdentity(value: unknown, p: Pair, extra: string[] = []) {
+  const text = JSON.stringify(value);
+  for (const secret of [p.partner.id, p.partner.userId, p.B.ownerId, "Tazi", '"driver_number"', ...extra]) {
+    expect(text, secret).not.toContain(secret);
+  }
+}
+
+describe("Journaux et alertes (§11.5, partie 5b)", () => {
+  it("private.log_event : filet de sécurité — chauffeur d'une autre organisation retiré des données, libellé court dans le message, acteur extérieur sans identifiant ; ligne propre inchangée", async () => {
+    const p = await networkPair();
+    const own = await createDriver(p.A, { firstName: "Paul" });
+    const { ride } = await partnerAccepts(p);
+    const n = p.partner.number;
+    const log = (type: string, message: string, data: Record<string, unknown>, actorType: string, actorId: string | null) =>
+      sql(`select private.log_event($1, $2, $3, $4, 'timeline', 'info', $5::jsonb, $6::public.actor_type, $7)`, [
+        p.A.id, ride.id, type, message, JSON.stringify(data), actorType, actorId,
+      ]);
+    const event = async (type: string) =>
+      (await sql(`select message, data, actor_type, actor_id from public.ride_events where ride_id = $1 and type = $2`, [ride.id, type]))[0];
+
+    await log("test.partner", `Karim Tazi (#${n}) accepte ; Karim (#${n}) roule — M. Tazi`, {
+      driver_id: p.partner.id, previous_driver_id: own.id, assigned_driver_id: p.partner.id, driver_ids: [own.id, p.partner.id],
+      driver_number: n, driver_name: "Karim", lat: 48.1, lng: 2.1, keep: true,
+    }, "driver", p.partner.id);
+    const ev = await event("test.partner");
+    expect(ev.data).toEqual({ previous_driver_id: own.id, driver_ids: [own.id], network_count: 1, keep: true });
+    expect(ev.message).toBe(`${labelOf(p)} accepte ; ${labelOf(p)} roule — M. T.`);
+    expect(ev).toMatchObject({ actor_type: "driver", actor_id: null });
+
+    // Ligne propre (chauffeur de A, ses coordonnées comprises) : identique à avant
+    const ownData = { driver_id: own.id, driver_number: own.number, driver_name: "Paul", lat: 48.2, lng: 2.2 };
+    await log("test.own", `Paul Test (#${own.number}) accepte`, ownData, "driver", own.id);
+    expect(await event("test.own")).toEqual({ message: `Paul Test (#${own.number}) accepte`, data: ownData, actor_type: "driver", actor_id: own.id });
+
+    // Acteurs « user » : membre de A et super admin gardés ; membre de B → « system » ; compte du partenaire → « driver »
+    const admin = await createAuthUser(`sa-${tag()}@test.dev`, "Super Admin");
+    await sql(`update public.users set is_super_admin = true where id = $1`, [admin]);
+    for (const [type, actor, expected] of [
+      ["test.user.a", p.A.ownerId, { actor_type: "user", actor_id: p.A.ownerId }],
+      ["test.user.sa", admin, { actor_type: "user", actor_id: admin }],
+      ["test.user.b", p.B.ownerId, { actor_type: "system", actor_id: null }],
+      ["test.user.partner", p.partner.userId, { actor_type: "driver", actor_id: null }],
+    ] as const) {
+      await log(type, "Action", {}, "user", actor);
+      expect(await event(type), type).toMatchObject(expected);
+    }
+  });
+
+  it("historique des statuts : chauffeur partenaire et membre de B jamais identifiés chez A ; chauffeur de A inchangé", async () => {
+    const p = await networkPair();
+    const { ride } = await partnerAccepts(p);
+    expect(await stepAs(p.partner, ride.id, "DRIVER_EN_ROUTE")).toMatchObject({ ok: true });
+    // B retire son chauffeur du service (course rendue à A) : le membre de B n'apparaît pas chez A
+    expect(await rpc(p.B.ownerId, "set_driver_status", [p.partner.id, "inactive", null])).toMatchObject({ ok: true });
+    const history = await as({ sub: p.A.ownerId }, (q) =>
+      q(`select from_status, to_status, actor_type, actor_id from public.ride_status_history where ride_id = $1 order by id`, [ride.id]));
+    expect(history.find((h) => h.to_status === "ACCEPTED")).toMatchObject({ actor_type: "driver", actor_id: null });
+    expect(history.find((h) => h.to_status === "DRIVER_EN_ROUTE")).toMatchObject({ actor_type: "driver", actor_id: null });
+    expect(history.at(-1)).toMatchObject({ from_status: "DRIVER_EN_ROUTE", actor_type: "system", actor_id: null });
+    expectNoPartnerIdentity(history, p);
+    const events = await as({ sub: p.A.ownerId }, (q) => q(`select message, data, actor_id from public.ride_events where ride_id = $1`, [ride.id]));
+    expectNoPartnerIdentity(events, p);
+
+    // Course propre de A : acteur du chauffeur gardé
+    const site = nextSite();
+    const own = await createDriver(p.A, { firstName: "Paul", at: north(site, 100) });
+    const ownRide = await createRideAsOwner(p.A, { pickup_lat: site[0], pickup_lng: site[1] });
+    expect(await rpc(p.A.ownerId, "assign_ride", [ownRide.id, own.id])).toMatchObject({ ok: true });
+    expect(await stepAs(own, ownRide.id, "DRIVER_EN_ROUTE")).toMatchObject({ ok: true });
+    const [step] = await sql(`select actor_type, actor_id from public.ride_status_history where ride_id = $1 and to_status = 'DRIVER_EN_ROUTE'`, [ownRide.id]);
+    expect(step).toEqual({ actor_type: "driver", actor_id: own.id });
+  });
+
+  it("alertes d'une course partenaire : libellé court, ni identifiant, ni n° interne, ni position, distance arrondie ; diffusion sans driver_id ; « Garder »", async () => {
+    const p = await networkPair();
+    const { ride } = await partnerAccepts(p);
+    const label = labelOf(p);
+    // GPS muet depuis 10 min
+    await moveTo(p.partner.id, p.site, 600);
+    await sql("select private.watch_rides()");
+    const [alert] = await sql(`select * from public.ride_alerts where ride_id = $1 and kind = 'no_gps'`, [ride.id]);
+    expect(alert.message).toBe(`Plus de position GPS de ${label} depuis 10 min`);
+    expect(alert.driver_id).toBe(p.partner.id); // colonne (clé « on delete set null ») : identifiant résiduel accepté
+    expect(alert.data).toMatchObject({ driver_name: label, network: true, ride_number: Number(ride.number) });
+    for (const k of ["driver_id", "driver_number", "lat", "lng"]) expect(alert.data, k).not.toHaveProperty(k);
+    const [logged] = await sql(`select message, data, actor_id from public.ride_events where ride_id = $1 and type = 'alert.no_gps'`, [ride.id]);
+    expect(logged).toMatchObject({ message: alert.message, actor_id: null, data: { driver_name: label, network: true } });
+    expectNoPartnerIdentity([alert.message, alert.data, logged], p);
+    // Diffusion sur org:{A} : sans identifiant ; « Garder » (sourdine) : réponse sans identifiant, journal au libellé court
+    const [sent] = await sql(`select payload from realtime.messages where event = 'ride.alert' and payload ->> 'id' = $1 order by id desc limit 1`, [alert.id]);
+    expect(sent.payload).toMatchObject({ driver_id: null, network: true, message: alert.message });
+    const ack = await rpc(p.A.ownerId, "acknowledge_ride_alert", [alert.id]);
+    expect(ack).toMatchObject({ ok: true, alert: { driver_id: null, network: true } });
+    const [kept] = await sql(`select message from public.ride_events where ride_id = $1 and type = 'alert.kept'`, [ride.id]);
+    expect(kept.message).toContain(`garde ${label}`);
+
+    // Retard : chauffeur à ~20 km (distance exacte jamais multiple de 100 m), distance arrondie à 100 m
+    let exact = 0;
+    for (let offset = 20_123; exact % 100 === 0; offset += 37) {
+      await moveTo(p.partner.id, north(p.site, offset));
+      [{ exact }] = await sql(
+        `select round(extensions.st_distance(l.location, r.pickup_location))::int as exact
+           from public.driver_locations l, public.rides r where l.driver_id = $1 and r.id = $2`,
+        [p.partner.id, ride.id],
+      );
+    }
+    await sql("select private.watch_rides()");
+    const [late] = await sql(`select message, data from public.ride_alerts where ride_id = $1 and kind = 'late'`, [ride.id]);
+    expect(late.message.startsWith(`${label} sera en retard d'environ `)).toBe(true);
+    expect(late.data.distance_m).toBe(Math.round(exact / 100) * 100);
+    for (const k of ["driver_id", "driver_number", "lat", "lng"]) expect(late.data, k).not.toHaveProperty(k);
+  });
+});
+
+describe("Positions (§11.6, Q5, partie 5b)", () => {
+  it("course partenaire : points marqués (ride_org_id), invisibles pour B et pour A ; aucune position diffusée à B, « En course partenaire ({A}) » ; tout revient après la fin", async () => {
+    const p = await networkPair();
+    await location(p.partner, p.site); // avant la course : point visible par B
+    const { ride } = await partnerAccepts(p);
+    const marker = await lastMessageId();
+    expect(await stepAs(p.partner, ride.id, "DRIVER_EN_ROUTE")).toMatchObject({ ok: true });
+    await location(p.partner, north(p.site, 300));
+    await location(p.partner, north(p.site, 150));
+    expect(await historyOf(p.partner.id)).toEqual([
+      { ride_id: null, ride_org_id: null },
+      { ride_id: ride.id, ride_org_id: p.A.id },
+      { ride_id: ride.id, ride_org_id: p.A.id },
+    ]);
+    // B : ses points seulement ; A : aucun (pas de carte du partenaire en v1) ; le chauffeur : tous
+    const read = (sub: string) =>
+      as({ sub }, (q) => q(`select ride_id, ride_org_id from public.driver_location_history where driver_id = $1`, [p.partner.id]));
+    expect(await read(p.B.ownerId)).toEqual([{ ride_id: null, ride_org_id: null }]);
+    expect(await read(p.A.ownerId)).toEqual([]);
+    expect(await read(p.partner.userId)).toHaveLength(3);
+    expect(await as({ sub: p.B.ownerId }, (q) => q(`select 1 from public.driver_locations where driver_id = $1`, [p.partner.id]))).toEqual([]);
+
+    // Temps réel pendant la course : rien de la position ni de la course pour B
+    const during = await messagesSince(marker, [`org:${p.B.id}`, `org:${p.A.id}`, `driver:${p.partner.id}`]);
+    expect(during.filter((m) => m.event === "driver.location")).toEqual([]);
+    const toB = during.filter((m) => m.topic === `org:${p.B.id}` && m.event === "driver.updated");
+    expect(toB.length).toBeGreaterThan(0);
+    for (const m of toB) {
+      expect(m.payload).toMatchObject({ id: p.partner.id, current_ride_id: null, network: true, network_giver: p.aName });
+    }
+    // Le chauffeur lui-même : sa course en cours, comme avant
+    const own = during.filter((m) => m.topic === `driver:${p.partner.id}` && m.event === "driver.updated");
+    expect(own.at(-1)!.payload).toEqual({ id: p.partner.id, presence: "en_route", status: "active", current_ride_id: ride.id });
+
+    // Fin de course : statut habituel, position de nouveau diffusée et visible par B
+    for (const s of ["DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS", "COMPLETED"]) {
+      await moveTo(p.partner.id, s === "COMPLETED" ? CDG : p.site);
+      expect(await stepAs(p.partner, ride.id, s), s).toMatchObject({ ok: true });
+    }
+    const end = await lastMessageId();
+    const [last] = (await messagesSince(marker, [`org:${p.B.id}`])).filter((m) => m.event === "driver.updated").slice(-1);
+    expect(last!.payload).toMatchObject({ current_ride_id: null, presence: "available" });
+    expect(last!.payload).not.toHaveProperty("network");
+    expect(last!.payload).not.toHaveProperty("network_giver");
+    // Hors course : un point par minute au plus (points précédents vieillis de 2 min pour en enregistrer un nouveau)
+    await sql(`update public.driver_location_history set recorded_at = recorded_at - interval '2 minutes' where driver_id = $1`, [p.partner.id]);
+    await location(p.partner, CDG);
+    const after = await messagesSince(end, [`org:${p.B.id}`]);
+    expect(after.filter((m) => m.event === "driver.location").map((m) => m.payload.driver_id)).toEqual([p.partner.id]);
+    expect((await historyOf(p.partner.id)).at(-1)).toEqual({ ride_id: null, ride_org_id: null });
+    expect(await read(p.B.ownerId)).toEqual([{ ride_id: null, ride_org_id: null }, { ride_id: null, ride_org_id: null }]);
+  });
+
+  it("ménage : points, rappels et notifications de vol d'une course partenaire supprimés 1 h après sa fin, jamais pendant ; points et règlements gardés", async () => {
+    const p = await networkPair();
+    await location(p.partner, p.site);
+    const { ride, execution } = await partnerAccepts(p);
+    expect(await stepAs(p.partner, ride.id, "DRIVER_EN_ROUTE")).toMatchObject({ ok: true });
+    await location(p.partner, north(p.site, 200));
+    const notify = (type: string) =>
+      sql(`select private.queue_notification($1, $2, $3, null, $4, 'Test', '12 Avenue des Champs-Élysées', '{}'::jsonb) as id`, [
+        p.A.id, p.partner.id, ride.id, type,
+      ]);
+    await notify("ride_reminder");
+    await notify("flight_update");
+    const partnerPoints = async () =>
+      Number((await sql(`select count(*) as n from public.driver_location_history where driver_id = $1 and ride_org_id is not null`, [p.partner.id]))[0].n);
+    const types = async () =>
+      (await sql(`select type from public.notifications where ride_id = $1 and driver_id = $2 order by type`, [ride.id, p.partner.id])).map((x) => x.type);
+    const housekeeping = async () => (await sql(`select private.housekeeping() as r`))[0].r;
+
+    // Course en cours : rien n'est supprimé
+    expect((await housekeeping()).errors).toBeUndefined();
+    expect(await partnerPoints()).toBe(1);
+    for (const s of ["DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS", "COMPLETED"]) {
+      await moveTo(p.partner.id, s === "COMPLETED" ? CDG : p.site);
+      expect(await stepAs(p.partner, ride.id, s), s).toMatchObject({ ok: true });
+    }
+    // Fin il y a moins d'1 h : gardés
+    await housekeeping();
+    expect(await partnerPoints()).toBe(1);
+    expect(await types()).toEqual(["flight_update", "ride_offer", "ride_reminder", "settlement_due"]);
+    // Fin il y a plus d'1 h : points, rappels et vol supprimés ; offre (communes) et règlement gardés ; point propre gardé
+    await rewind([[`update public.ride_network_executions set ended_at = now() - interval '61 minutes' where id = $1`, [execution.id]]]);
+    const before = await housekeeping();
+    expect(before.history_purged).toBeGreaterThanOrEqual(1);
+    expect(before.notifications_purged).toBeGreaterThanOrEqual(2);
+    expect(await partnerPoints()).toBe(0);
+    expect(await historyOf(p.partner.id)).toEqual([{ ride_id: null, ride_org_id: null }]);
+    expect(await types()).toEqual(["ride_offer", "settlement_due"]);
+  });
+});
+
+describe("Temps réel (§13, §14.1 n° 32, partie 5b)", () => {
+  it("cycle complet : org:{B} et fleet:{B} sans donnée de A ; org:{A} sans identifiant, distance, vague ni position du partenaire ; driver:{id} inchangé ; lignes lisibles par A sans identité du partenaire (n° 31)", async () => {
+    const p = await networkPair({ giver: "centrale" });
+    const topics = [`org:${p.A.id}`, `org:${p.B.id}`, `fleet:${p.B.id}`, `driver:${p.partner.id}`];
+    const marker = await lastMessageId();
+    const { ride, offer } = await partnerOffer(p);
+    expect(await rpc(p.partner.userId, "accept_ride_offer", [offer.id])).toMatchObject({ ok: true, code: "ACCEPTED" });
+    const [execution] = await sql(`select id from public.ride_network_executions where ride_id = $1`, [ride.id]);
+    const accepted = await lastMessageId();
+    // Positions de l'app, alerte GPS muet puis rétablie, étapes jusqu'à la fin (règlement : la centrale A encaisse)
+    await moveTo(p.partner.id, p.site, 600);
+    await sql("select private.watch_rides()");
+    await moveTo(p.partner.id, p.site);
+    await location(p.partner, north(p.site, 100));
+    await finish(p.partner, ride.id, p.site);
+    await sql("select private.watch_rides()");
+    const ended = await lastMessageId();
+    await location(p.partner, CDG);
+
+    const msgs = await messagesSince(marker, topics);
+    const of = (topic: string) => msgs.filter((m) => m.topic === topic);
+    const orgA = of(`org:${p.A.id}`);
+    const orgB = of(`org:${p.B.id}`);
+
+    // org:{B} : ni identifiant de course, ni adresse, ni client, ni position pendant la course ; ids seulement
+    expect(JSON.stringify(orgB)).not.toContain(ride.id);
+    expectNoClientData(orgB);
+    expect([...new Set(orgB.map((m) => m.event))].sort()).toEqual(["driver.location", "driver.updated", "network.updated"]);
+    for (const m of orgB.filter((x) => x.event === "network.updated")) expect(m.payload).toEqual({ execution_id: execution.id });
+    expect(orgB.filter((m) => m.event === "driver.location" && m.id > accepted && m.id <= ended)).toEqual([]);
+    for (const m of orgB.filter((x) => x.event === "driver.updated" && x.id > accepted && x.id <= ended && x.payload.presence !== "available")) {
+      expect(m.payload).toMatchObject({ current_ride_id: null, network: true, network_giver: p.aName });
+    }
+    expect(of(`fleet:${p.B.id}`)).toEqual([]);
+
+    // org:{A} : jamais l'identifiant, le nom de famille, le n° interne ni la position du partenaire
+    expectNoPartnerIdentity(orgA, p);
+    expect(orgA.filter((m) => ["driver.location", "driver.updated"].includes(m.event))).toEqual([]);
+    const offers = orgA.filter((m) => m.event === "offer.updated" && m.payload.id === offer.id);
+    expect(offers.length).toBeGreaterThan(0);
+    for (const m of offers) expect(m.payload).toMatchObject({ driver_id: null, distance_m: null, wave: null, network: true });
+    const rides = orgA.filter((m) => m.event === "ride.updated" && m.payload.id === ride.id && m.id > accepted);
+    expect(rides.length).toBeGreaterThan(0);
+    for (const m of rides) expect(m.payload).toMatchObject({ driver_id: null, network: true, network_execution_id: execution.id });
+    const alerts = orgA.filter((m) => m.event === "ride.alert");
+    expect(alerts.length).toBeGreaterThan(0);
+    for (const m of alerts) expect(m.payload).toMatchObject({ driver_id: null, network: true });
+    expect(orgA.some((m) => m.event === "settlement.updated")).toBe(true);
+    expect(orgA.filter((m) => m.event === "network.updated").every((m) => Object.keys(m.payload).join() === "ride_id")).toBe(true);
+
+    // driver:{id} : le chauffeur reçoit sa course, son offre et son règlement (élément partenaire), comme avant
+    const mine = of(`driver:${p.partner.id}`);
+    expect(mine.some((m) => m.event === "ride.updated" && m.payload.driver_id === p.partner.id)).toBe(true);
+    expect(mine.some((m) => m.event === "offer.updated" && m.payload.id === offer.id)).toBe(true);
+    expect(mine.some((m) => m.event === "settlement.updated" && m.payload.network === true)).toBe(true);
+
+    // n° 31 (lignes lisibles par A après le cycle) : journal, alertes (hors colonne driver_id), historique, notifications,
+    // offres — ni identifiant, ni nom de famille, ni n° interne du partenaire ; libellé court seulement
+    const asA = <T,>(text: string) => as({ sub: p.A.ownerId }, (q) => q<T & Record<string, unknown>>(text, [ride.id]));
+    const rows = {
+      events: await asA(`select type, message, data, actor_id from public.ride_events where ride_id = $1`),
+      alerts: await asA(`select kind, message, data from public.ride_alerts where ride_id = $1`),
+      history: await asA(`select to_status, actor_type, actor_id from public.ride_status_history where ride_id = $1`),
+      notifications: await asA(`select type, title, body, data from public.notifications where ride_id = $1`),
+      offers: await asA(`select id, driver_id from public.ride_offers where ride_id = $1`),
+    };
+    expectNoPartnerIdentity(rows, p);
+    expect(rows.offers).toEqual([]);
+    expect(JSON.stringify(rows.events)).toContain(`Karim T.`);
+    // Le partenaire ne reçoit jamais commission, frais Rydar ni part dans ses notifications
+    const partnerNotes = await sql(`select data from public.notifications where driver_id = $1`, [p.partner.id]);
+    for (const n of partnerNotes) {
+      for (const k of ["commission_cents", "platform_fee_cents", "driver_payout_cents"]) expect(n.data, k).not.toHaveProperty(k);
+    }
+  });
+});
+
+describe("Notifications (§13, partie 5b)", () => {
+  it("montants internes retirés à toute insertion : chauffeur partenaire toujours, chauffeur de flotte s'ils sont renseignés ; centrale et organisation inchangées", async () => {
+    const p = await networkPair({ giver: "centrale" });
+    const { ride } = await partnerAccepts(p);
+    const money = { commission_cents: 750, platform_fee_cents: 500, driver_payout_cents: 3750, amount_cents: 1250 };
+    const queue = async (org: string, driver: string | null, rideId: string | null, data: Record<string, unknown> = money) =>
+      (await sql(`select private.queue_notification($1, $2, $3, null, 'test_money', 'Test', 'Test', $4::jsonb) as id`, [
+        org, driver, rideId, JSON.stringify(data),
+      ]))[0].id as string;
+    const dataOf = async (id: string) => (await sql(`select data from public.notifications where id = $1`, [id]))[0].data;
+
+    // Partenaire (notification chez A) : jamais
+    expect(await dataOf(await queue(p.A.id, p.partner.id, ride.id))).toEqual({ amount_cents: 1250 });
+    // Chauffeur de la flotte B : montants renseignés retirés ; NULL (cas des courses de flotte) gardé tel quel
+    const fleetDriver = await createDriver(p.B, {});
+    expect(await dataOf(await queue(p.B.id, fleetDriver.id, null))).toEqual({ amount_cents: 1250 });
+    const nulls = { commission_cents: null, platform_fee_cents: null, driver_payout_cents: null, x: 1 };
+    expect(await dataOf(await queue(p.B.id, fleetDriver.id, null, nulls))).toEqual(nulls);
+    // Chauffeur de la centrale A (part affichée dans ses offres) et notification de l'organisation : inchangés
+    const centraleDriver = await createDriver(p.A, {});
+    expect(await dataOf(await queue(p.A.id, centraleDriver.id, null))).toEqual(money);
+    expect(await dataOf(await queue(p.A.id, null, null))).toEqual(money);
+    // Insertion directe (offres de run_geo_wave) : même règle
+    const [direct] = await sql(
+      `insert into public.notifications (organization_id, driver_id, ride_id, type, title, body, data)
+       values ($1, $2, $3, 'test_money', 'Test', 'Test', $4::jsonb) returning data`,
+      [p.A.id, p.partner.id, ride.id, JSON.stringify(money)],
+    );
+    expect(direct.data).toEqual({ amount_cents: 1250 });
+  });
+});
+
+describe("Webhooks et API (§11.7, partie 5b)", () => {
+  it("course partagée : webhooks de A seulement ; « driver » = prénom, véhicule figé, exploitant (même objet que l'API) ; null 24 h après la fin ; colonne réservée au service role", async () => {
+    const p = await networkPair();
+    const endpoint = async (org: Org) => {
+      const [{ r }] = await as({ role: "service_role" }, (q) =>
+        q(`select public.svc_webhook_upsert($1::uuid, $2::text, null, null, null, 'user'::public.actor_type, $3::uuid) as r`, [
+          org.id, `https://hooks-${tag()}.example.com/rydar`, org.ownerId,
+        ]));
+      expect(r.ok, JSON.stringify(r)).toBe(true);
+      return r.endpoint.id as string;
+    };
+    const epA = await endpoint(p.A);
+    const epB = await endpoint(p.B);
+    const [vehicle] = await sql(`update public.vehicles set brand = 'Toyota', color = 'Gris' where id = $1 returning model, plate`, [p.partner.vehicleId]);
+    const { ride, execution } = await partnerAccepts(p);
+    // Véhicule changé après l'acceptation : l'instantané reste celui de la course
+    await sql(`update public.vehicles set color = 'Rouge' where id = $1`, [p.partner.vehicleId]);
+    const ridePayload = async () => (await sql(`select private.webhook_ride_json($1) as j`, [ride.id]))[0].j;
+    const expected = {
+      first_name: "Karim",
+      vehicle: { brand: "Toyota", model: vehicle.model, color: "Gris", plate: vehicle.plate },
+      operator: { name: `${p.bName} SAS` },
+    };
+    expect((await ridePayload()).driver).toEqual(expected);
+    const [{ d }] = await as({ role: "service_role" }, (q) => q(`select public.ride_public_driver(r) as d from public.rides r where r.id = $1`, [ride.id]));
+    expect(d).toEqual(expected);
+    expectNoPartnerIdentity(await ridePayload(), p, ["+3363"]);
+    expectNoClientData((await ridePayload()).driver);
+
+    // Envois : webhooks de A seulement, jamais ceux de B
+    const deliveries = await sql(`select endpoint_id, event_type from public.webhook_deliveries where ride_id = $1`, [ride.id]);
+    expect(deliveries.filter((x) => x.endpoint_id === epB).length).toBe(0);
+    expect(deliveries.filter((x) => x.endpoint_id === epA).map((x) => x.event_type)).toContain("ride.accepted");
+
+    // Fin de course : chauffeur encore là 24 h, puis null
+    await finish(p.partner, ride.id, p.site);
+    expect((await ridePayload()).driver).toEqual(expected);
+    await rewind([[`update public.ride_network_executions set ended_at = now() - interval '25 hours' where id = $1`, [execution.id]]]);
+    expect((await ridePayload()).driver).toBeNull();
+    expect(await sql(`select endpoint_id from public.webhook_deliveries where endpoint_id = $1`, [epB])).toEqual([]);
+
+    // Colonne calculée de l'API : jamais pour un client (anon, membre)
+    for (const who of [{ role: "anon" as const }, { sub: p.A.ownerId }]) {
+      const e = await expectPgError(as(who, (q) => q(`select public.ride_public_driver(null::public.rides)`)));
+      expect(e.code, JSON.stringify(who)).toBe("42501");
+    }
+    await sql(`delete from public.webhook_deliveries where endpoint_id = any ($1)`, [[epA, epB]]);
+    await sql(`delete from public.webhook_endpoints where id = any ($1)`, [[epA, epB]]);
   });
 });

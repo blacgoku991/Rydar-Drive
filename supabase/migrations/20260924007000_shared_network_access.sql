@@ -22,6 +22,22 @@
 -- Interrupteur coupé : aucune fonction existante n'est redéfinie par la partie 5a ; les nouvelles RPC répondent
 -- NETWORK_DISABLED (55000) sauf celles de NETWORK_CLOSED_RPCS (sommes et courses en cours) et les lectures générales de
 -- l'application (driver_offers_v2, driver_ride, driver_rides_upcoming : offres et courses propres identiques à avant).
+--
+-- Partie 5b (spécification §11.5 à §11.7, §13, sections 7 à 14) : journaux, alertes, positions, temps réel,
+-- notifications, webhooks et API.
+--  * Journaux (private.log_event, private.track_ride_status) : filet de sécurité — chauffeur d'une autre organisation
+--    jamais cité par son identifiant, son n° interne ni son nom de famille (libellé court), acteur d'une autre
+--    organisation sans identifiant ; alertes de suivi (private.apply_ride_alert, private.watch_rides) : libellé court,
+--    ni position ni n° interne, distance arrondie à 100 m ; annulation : « COURSE ANNULÉE — {A} » sans adresse.
+--  * Positions (Q5) : points d'une course partenaire marqués ride_org_id (invisibles pour B), supprimés 1 h après la fin
+--    (private.housekeeping, avec les rappels et notifications de vol du partenaire) ; aucune position diffusée pendant
+--    la course partenaire ; org:{B} reçoit « En course partenaire ({A}) » sans identifiant de course.
+--  * Temps réel org:{A} : ni identifiant ni position du partenaire (courses, alertes) ; notifications : jamais de
+--    commission, frais Rydar ni part chez un partenaire (ni de frais Rydar chez un chauffeur de flotte).
+--  * Webhooks et API v1 : objet « driver » commun (public.ride_public_driver) — partenaire : prénom, véhicule de
+--    l'instantané, exploitant « operator », NULL 24 h après la fin.
+-- Interrupteur coupé (aucun chauffeur d'une autre organisation sur une course) : mêmes écritures, mêmes messages, mêmes
+-- diffusions qu'avant.
 -- =============================================================================
 
 -- =============================================================================
@@ -1841,3 +1857,1322 @@ grant execute on function
   public.org_network_drivers(uuid),
   public.set_driver_network_allowed(uuid, boolean)
 to authenticated, service_role;
+
+-- =============================================================================
+-- Partie 5b (spécification §11.5 à §11.7, §13) : journaux, alertes, positions, temps réel, notifications, webhooks.
+-- Toute ligne lisible par A (journal, historique des statuts, alertes, notifications, temps réel org:{A}) ne cite un
+-- chauffeur de B que par son libellé court ; B ne reçoit rien de A pendant la course partenaire (ni identifiant de
+-- course, ni adresse, ni position : « En course partenaire ({A}) », Q5) ; ses points GPS de la course sont invisibles
+-- pour B puis supprimés 1 h après la fin. Fonctions existantes redéfinies à partir de leur dernière définition (citée),
+-- ajouts commentés « Réseau partagé » : sans chauffeur d'une autre organisation, mêmes écritures et mêmes messages.
+-- =============================================================================
+
+-- =============================================================================
+-- 7. Journaux et historique des statuts (§11.5, S3) — filet de sécurité de private.log_event et de
+--    private.track_ride_status
+-- =============================================================================
+
+-- Acteur d'une ligne du journal ou de l'historique des statuts d'une course de p_org : inchangé, sauf un acteur d'une
+-- AUTRE organisation, jamais identifié chez p_org — chauffeur d'une autre organisation (partenaire) : « driver » sans
+-- identifiant ; utilisateur qui n'est ni membre (toute adhésion), ni chauffeur de p_org, ni super admin, mais membre ou
+-- chauffeur d'une autre organisation (membre de B, compte du partenaire appelé sans set_actor) : sans identifiant,
+-- « driver » si c'est un compte de chauffeur, sinon « system ». Sans réseau, l'acteur d'une ligne de p_org en relève
+-- toujours : rien ne change.
+create or replace function private.event_actor(p_org uuid, p_type public.actor_type, p_actor uuid,
+                                               out actor_type public.actor_type, out actor_id uuid)
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  actor_type := p_type;
+  actor_id := p_actor;
+  if p_org is null or p_actor is null then
+    return;
+  end if;
+  if p_type = 'driver' then
+    if exists (select 1 from public.drivers d where d.id = p_actor and d.organization_id <> p_org) then
+      actor_id := null;
+    end if;
+  elsif p_type = 'user' then
+    if not exists (select 1 from public.organization_users ou where ou.organization_id = p_org and ou.user_id = p_actor)
+       and not exists (select 1 from public.drivers d where d.user_id = p_actor and d.organization_id = p_org)
+       and not exists (select 1 from public.users u where u.id = p_actor and u.is_super_admin) then
+      if exists (select 1 from public.drivers d where d.user_id = p_actor) then
+        actor_type := 'driver';
+        actor_id := null;
+      elsif exists (select 1 from public.organization_users ou where ou.user_id = p_actor) then
+        actor_type := 'system';
+        actor_id := null;
+      end if;
+    end if;
+  end if;
+end;
+$$;
+
+-- Données et message d'une ligne du journal de p_org : pour chaque chauffeur d'une AUTRE organisation cité (clés
+-- driver_id, previous_driver_id, assigned_driver_id, driver_ids) — clé retirée (driver_ids : ses identifiants retirés,
+-- compteur network_count), driver_number, driver_name, lat, lng retirés ; dans le message, « Prénom NOM (#n) » ou
+-- « Prénom (#n) » → libellé court (private.driver_label_for), nom de famille → initiale. Aucun chauffeur d'une autre
+-- organisation cité (toute ligne hors réseau) : données et message inchangés, sans lecture de plus.
+create or replace function private.network_event_scrub(p_org uuid, p_message text, p_data jsonb,
+                                                       out message text, out data jsonb)
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  v_uuid constant text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+  v_key text;
+  v_elem jsonb;
+  v_keep jsonb := '[]'::jsonb;
+  v_removed integer := 0;
+  v_foreign uuid[] := '{}';
+  v_label text;
+  d record;
+begin
+  message := p_message;
+  data := p_data;
+  if p_org is null or jsonb_typeof(data) is distinct from 'object'
+     or not (data ?| array['driver_id', 'previous_driver_id', 'assigned_driver_id', 'driver_ids']) then
+    return;
+  end if;
+  foreach v_key in array array['driver_id', 'previous_driver_id', 'assigned_driver_id'] loop
+    if jsonb_typeof(data -> v_key) = 'string' and (data ->> v_key) ~ v_uuid
+       and exists (select 1 from public.drivers x where x.id = (data ->> v_key)::uuid and x.organization_id <> p_org) then
+      v_foreign := v_foreign || (data ->> v_key)::uuid;
+      data := data - v_key;
+    end if;
+  end loop;
+  if jsonb_typeof(data -> 'driver_ids') = 'array' then
+    for v_elem in select x.value from jsonb_array_elements(data -> 'driver_ids') x loop
+      if jsonb_typeof(v_elem) = 'string' and (v_elem #>> '{}') ~ v_uuid
+         and exists (select 1 from public.drivers x where x.id = (v_elem #>> '{}')::uuid and x.organization_id <> p_org) then
+        v_foreign := v_foreign || (v_elem #>> '{}')::uuid;
+        v_removed := v_removed + 1;
+      else
+        v_keep := v_keep || jsonb_build_array(v_elem);
+      end if;
+    end loop;
+    if v_removed > 0 then
+      data := jsonb_set(data, '{driver_ids}', v_keep)
+        || jsonb_build_object('network_count', v_removed
+             + case when jsonb_typeof(data -> 'network_count') = 'number' then (data ->> 'network_count')::numeric::integer else 0 end);
+    end if;
+  end if;
+  if cardinality(v_foreign) = 0 then
+    return;
+  end if;
+  data := data - array['driver_number', 'driver_name', 'lat', 'lng'];
+  if message is not null then
+    for d in select x.id, btrim(x.first_name) as first_name, btrim(x.last_name) as last_name, x.number
+               from public.drivers x where x.id = any (v_foreign) loop
+      v_label := coalesce(private.driver_label_for(d.id, p_org), 'Chauffeur partenaire');
+      message := replace(message, format('%s %s (#%s)', d.first_name, d.last_name, d.number), v_label);
+      message := replace(message, format('%s (#%s)', d.first_name, d.number), v_label);
+      if char_length(d.last_name) >= 2 then
+        message := regexp_replace(message,
+          '\m' || regexp_replace(d.last_name, '([^[:alnum:][:space:]])', '\\\1', 'g') || '\M',
+          left(d.last_name, 1) || '.', 'g');
+      end if;
+    end loop;
+  end if;
+end;
+$$;
+
+-- Dernière définition : 20260924000400_dispatch.sql. Devient plpgsql (§11.5) : filet de sécurité des journaux — un
+-- chauffeur d'une autre organisation cité dans les données ou le message n'y apparaît qu'en libellé court
+-- (private.network_event_scrub), un acteur d'une autre organisation jamais par son identifiant (private.event_actor).
+-- Sans chauffeur ni acteur d'une autre organisation : même ligne qu'avant.
+create or replace function private.log_event(
+  p_org uuid,
+  p_ride uuid,
+  p_type text,
+  p_message text,
+  p_category public.event_category default 'timeline',
+  p_level public.event_level default 'info',
+  p_data jsonb default '{}'::jsonb,
+  p_actor_type public.actor_type default null,
+  p_actor_id uuid default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_type public.actor_type := coalesce(p_actor_type, private.actor_type());
+  v_actor uuid := case when p_actor_type = 'system' then null else coalesce(p_actor_id, private.actor_id()) end;
+  v_message text := p_message;
+  v_data jsonb := coalesce(p_data, '{}'::jsonb);
+begin
+  -- Réseau partagé (§11.5, S3) : filet de sécurité — chauffeur d'une autre organisation cité dans les données ou le
+  -- message (private.network_event_scrub), acteur d'une autre organisation (private.event_actor) ; ligne hors
+  -- réseau : valeurs inchangées
+  select s.message, s.data into v_message, v_data from private.network_event_scrub(p_org, v_message, v_data) s;
+  select a.actor_type, a.actor_id into v_type, v_actor from private.event_actor(p_org, v_type, v_actor) a;
+  insert into public.ride_events (organization_id, ride_id, category, level, type, message, actor_type, actor_id, data)
+  values (p_org, p_ride, p_category, p_level, p_type, v_message, v_type, v_actor, v_data);
+end;
+$$;
+
+-- Dernière définition : 20260924000400_dispatch.sql. Réseau partagé, seul ajout : acteur d'une autre organisation
+-- (chauffeur partenaire à ses étapes, membre de B qui retire la course à son chauffeur) sans identifiant
+-- (private.event_actor) — l'historique des statuts est lu par tout membre de A. Sinon inchangé.
+create or replace function private.track_ride_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  -- Réseau partagé
+  v_type public.actor_type;
+  v_actor uuid;
+begin
+  if tg_op = 'INSERT' and current_setting('rydar.bypass_ride_rules', true) = 'on' and auth.role() is null then
+    return null;
+  end if;
+  if tg_op = 'INSERT' or new.status is distinct from old.status then
+    -- Réseau partagé (§11.5, S3) : acteur d'une autre organisation (chauffeur partenaire, membre de son organisation)
+    -- jamais identifié dans l'historique de la course (private.event_actor) ; sinon inchangé
+    select a.actor_type, a.actor_id into v_type, v_actor
+      from private.event_actor(new.organization_id,
+             case
+               when tg_op = 'INSERT' and new.source = 'api' then 'api'::public.actor_type
+               when tg_op = 'INSERT' and new.source = 'booking_site' then 'booking_site'::public.actor_type
+               else private.actor_type()
+             end,
+             private.actor_id()) a;
+    insert into public.ride_status_history (organization_id, ride_id, from_status, to_status, actor_type, actor_id)
+    values (
+      new.organization_id,
+      new.id,
+      case when tg_op = 'UPDATE' then old.status end,
+      new.status,
+      v_type,
+      v_actor
+    );
+  end if;
+  return null;
+end;
+$$;
+
+-- =============================================================================
+-- 8. Alertes de suivi (§11.5) : chauffeur partenaire en libellé court, ni identifiant, ni n° interne, ni position
+-- =============================================================================
+
+-- Dernière définition : 20260924002200_ride_alerts.sql. Réseau partagé, seul ajout : chauffeur d'une autre organisation
+-- (alerte d'une course confiée, y compris « retard » dès l'acceptation) → données sans driver_id, driver_number, lat,
+-- lng, distance au départ arrondie à 100 m, driver_name = libellé court, « network »: true (contrat RideAlertData).
+create or replace function private.apply_ride_alert(
+  p_ride public.rides,
+  p_driver public.drivers,
+  p_kind text,
+  p_active boolean,
+  p_severity text,
+  p_message text,
+  p_data jsonb
+)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  a public.ride_alerts;
+  v_found boolean;
+  v_id uuid;
+  v_data jsonb;
+  -- Réseau partagé
+  v_partner boolean := p_driver.id is not null and p_driver.organization_id is distinct from p_ride.organization_id;
+begin
+  if p_active is null then
+    return null;
+  end if;
+
+  select * into a from public.ride_alerts
+   where ride_id = p_ride.id and kind = p_kind and status = 'open'
+   for update;
+  v_found := found;
+
+  if not p_active then
+    if not v_found then
+      return null;
+    end if;
+    update public.ride_alerts
+       set status = 'resolved', resolution = 'auto_resolved', resolved_at = now()
+     where id = a.id;
+    perform private.log_event(p_ride.organization_id, p_ride.id, 'alert.resolved',
+      format('Alerte close : %s', private.ride_alert_label(p_kind)), 'dispatch', 'info',
+      jsonb_build_object('alert_id', a.id, 'kind', p_kind, 'resolution', 'auto_resolved'), 'system', null);
+    return 'resolved';
+  end if;
+
+  v_id := case when v_found then a.id else gen_random_uuid() end;
+  v_data := coalesce(p_data, '{}'::jsonb) || jsonb_build_object(
+    'alert_id', v_id,
+    'ride_number', p_ride.number,
+    'driver_id', p_driver.id,
+    'driver_name', p_driver.first_name,
+    'driver_number', p_driver.number,
+    -- keep → acknowledge_ride_alert ; reassign → assign_ride ; relaunch → reassign_ride
+    'actions', jsonb_build_array('keep', 'reassign', 'relaunch'));
+  -- Réseau partagé (§11.5, S3) : chauffeur d'une autre organisation → libellé court (« Prénom I. · B »), ni son
+  -- identifiant, ni son n° interne, ni sa position ; distance au départ arrondie à 100 m (« network »: true)
+  if v_partner then
+    v_data := (v_data - array['driver_id', 'driver_number', 'lat', 'lng'])
+      || jsonb_build_object('driver_name', coalesce(private.driver_label_for(p_driver.id, p_ride.organization_id),
+                                                    p_driver.first_name), 'network', true)
+      || case when jsonb_typeof(v_data -> 'distance_m') = 'number'
+              then jsonb_build_object('distance_m', round((v_data ->> 'distance_m')::numeric, -2)::integer)
+              else '{}'::jsonb end;
+  end if;
+
+  if v_found then
+    if a.message is distinct from p_message or a.severity is distinct from p_severity then
+      update public.ride_alerts
+         set message = p_message, severity = p_severity, data = v_data
+       where id = a.id;
+      return 'updated';
+    end if;
+    return null;
+  end if;
+
+  -- « Garder » : pas de nouvelle alerte de ce type pendant la sourdine
+  if exists (
+    select 1 from public.ride_alerts x
+    where x.ride_id = p_ride.id
+      and x.kind = p_kind
+      and x.status = 'acknowledged'
+      and x.muted_until > now()
+      and x.driver_id is not distinct from p_driver.id
+  ) then
+    return null;
+  end if;
+
+  insert into public.ride_alerts (id, organization_id, ride_id, driver_id, kind, severity, message, data)
+  values (v_id, p_ride.organization_id, p_ride.id, p_driver.id, p_kind, p_severity, p_message, v_data)
+  on conflict (ride_id, kind) where status = 'open' do nothing;
+  if not found then
+    return null;
+  end if;
+
+  perform private.log_event(p_ride.organization_id, p_ride.id, 'alert.' || p_kind, p_message, 'timeline', 'warning',
+    v_data || jsonb_build_object('kind', p_kind, 'severity', p_severity), 'system', null);
+  return 'opened';
+end;
+$$;
+
+-- Dernière définition : 20260924002200_ride_alerts.sql. Réseau partagé, seul ajout (S14, §14.1 n° 32) : alerte d'un
+-- chauffeur d'une autre organisation diffusée sur org:{A} (et rendue par les RPC) sans son identifiant (driver_id NULL,
+-- « network »: true) ; la ligne ride_alerts garde driver_id (clé « on delete set null », identifiant résiduel accepté).
+create or replace function private.ride_alert_payload(a public.ride_alerts, p_op text)
+returns jsonb
+language sql
+stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'op', p_op, 'id', a.id, 'ride_id', a.ride_id,
+    -- Réseau partagé (S14) : chauffeur d'une autre organisation jamais identifié sur org:{A}
+    'driver_id', case when a.driver_org_id is distinct from a.organization_id then null else a.driver_id end,
+    'kind', a.kind,
+    'severity', a.severity, 'message', a.message, 'data', a.data, 'status', a.status,
+    'resolution', a.resolution, 'muted_until', a.muted_until, 'created_at', a.created_at,
+    'updated_at', a.updated_at, 'resolved_at', a.resolved_at, 'resolved_by', a.resolved_by)
+    || case when a.driver_id is not null and a.driver_org_id is distinct from a.organization_id
+            then jsonb_build_object('network', true) else '{}'::jsonb end;
+$$;
+
+-- Dernière définition : 20260924006800_shared_network_dispatch.sql. Réseau partagé, seul ajout (§11.5) : chauffeur
+-- d'une autre organisation cité dans les messages d'alerte par son libellé court (« Karim T. · Flotte B sera en
+-- retard… ») ; chauffeur de l'organisation : prénom, comme avant.
+create or replace function private.watch_rides()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x record;
+  a record;
+  r public.rides;
+  d public.drivers;
+  s public.organization_settings;
+  l public.driver_locations;
+  v_tz text;
+  v_watched boolean;
+  v_has_loc boolean;
+  v_fresh boolean;
+  v_gps_max integer;
+  v_age integer;
+  v_dist integer;
+  v_dist_label text;
+  v_eta integer;
+  v_d0 integer;
+  v_ref timestamptz;
+  v_delay integer;
+  v_tolerance integer;
+  v_stall_min integer;
+  v_start timestamptz;
+  v_last_away timestamptz;
+  v_since timestamptz;
+  v_still integer;
+  v_cond boolean;
+  v_severity text;
+  v_message text;
+  v_data jsonb;
+  v_res text;
+  v_checked integer := 0;
+  v_opened integer := 0;
+  v_updated integer := 0;
+  v_resolved integer := 0;
+  v_skipped integer := 0;
+  -- Réseau partagé
+  v_network jsonb;
+  v_who text;
+begin
+  -- Plusieurs workers : un seul passage à la fois (les autres sortent aussitôt)
+  if not pg_try_advisory_xact_lock(1918985550, 2200) then
+    return jsonb_build_object('ok', false, 'code', 'LOCKED', 'checked', 0, 'opened', 0, 'updated', 0, 'resolved', 0, 'skipped', 0);
+  end if;
+  perform private.set_actor('system', null);
+
+  for x in
+    select c.id
+    from (
+      select r0.id
+      from public.rides r0
+      where r0.driver_id is not null
+        and (
+          r0.status in ('DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS')
+          or (r0.status = 'ACCEPTED' and (r0.type = 'instant' or r0.pickup_at < now() + interval '90 minutes'))
+        )
+      union
+      select a0.ride_id from public.ride_alerts a0 where a0.status in ('open', 'acknowledged')
+    ) c
+    order by c.id
+  loop
+    -- Course en cours de modification (acceptation, réattribution…) : on repassera
+    select * into r from public.rides where id = x.id for no key update skip locked;
+    if not found then
+      v_skipped := v_skipped + 1;
+      continue;
+    end if;
+    v_checked := v_checked + 1;
+
+    v_watched := r.driver_id is not null and (
+      r.status in ('DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS')
+      or (r.status = 'ACCEPTED' and (r.type = 'instant' or r.pickup_at < now() + interval '90 minutes'))
+    );
+
+    -- Course terminée / annulée / remise en recherche / autre chauffeur : alertes closes.
+    -- Sourdine écoulée : l'alerte « gardée » est close (une nouvelle peut s'ouvrir ci-dessous).
+    for a in
+      update public.ride_alerts
+         set status = 'resolved',
+             resolution = coalesce(resolution, 'auto_resolved'),
+             resolved_at = now()
+       where ride_id = r.id
+         and status in ('open', 'acknowledged')
+         and (
+           not v_watched
+           or driver_id is distinct from r.driver_id
+           or (status = 'acknowledged' and muted_until <= now())
+         )
+      returning id, kind, resolution
+    loop
+      v_resolved := v_resolved + 1;
+      if a.resolution = 'auto_resolved' then
+        perform private.log_event(r.organization_id, r.id, 'alert.resolved',
+          format('Alerte close : %s', private.ride_alert_label(a.kind)), 'dispatch', 'info',
+          jsonb_build_object('alert_id', a.id, 'kind', a.kind, 'resolution', a.resolution), 'system', null);
+      end if;
+    end loop;
+
+    continue when not v_watched;
+
+    select * into d from public.drivers where id = r.driver_id;
+    continue when not found;
+    -- Réseau partagé (§11.5, S3) : chauffeur d'une autre organisation cité par son libellé court (« Prénom I. · B »)
+    v_who := case when d.organization_id <> r.organization_id
+                  then coalesce(private.driver_label_for(d.id, r.organization_id), d.first_name) else d.first_name end;
+    select * into s from public.organization_settings where organization_id = r.organization_id;
+    select o.timezone into v_tz from public.organizations o where o.id = r.organization_id;
+    select * into l from public.driver_locations where driver_id = r.driver_id;
+    v_has_loc := found;
+
+    v_gps_max := greatest(coalesce(s.location_max_age_seconds, 180), 180);
+    v_tolerance := coalesce(s.late_alert_tolerance_minutes, 5);
+    v_stall_min := coalesce(s.stalled_alert_minutes, 4);
+    if v_has_loc then
+      v_age := greatest(0, floor(extract(epoch from (now() - l.updated_at))))::integer;
+      v_fresh := v_age <= v_gps_max;
+      v_dist := round(extensions.st_distance(l.location, r.pickup_location))::integer;
+      v_dist_label := private.fmt_km(round(v_dist::numeric, -2)::integer);
+    else
+      v_age := null;
+      v_fresh := false;
+      v_dist := null;
+      v_dist_label := null;
+    end if;
+
+    -- ---------------------------------------------------------------- retard
+    v_cond := false;
+    v_severity := null;
+    v_message := null;
+    v_data := null;
+    if r.status in ('ACCEPTED', 'DRIVER_EN_ROUTE') then
+      if not v_fresh then
+        v_cond := null; -- position inconnue : c'est l'alerte GPS qui parle
+      else
+        v_eta := round(v_dist * 1.35 / 8.3)::integer;
+        -- Heure de référence :
+        --  * planifiée : l'heure réservée (pickup_at) ;
+        --  * instantanée (« dès que possible ») : l'heure promise à l'acceptation =
+        --    greatest(pickup_at, acceptation + trajet estimé à ce moment-là), la distance
+        --    venant de l'offre acceptée, sinon de la position à l'acceptation.
+        v_d0 := null;
+        if r.type = 'instant' and r.accepted_at is not null then
+          select o.distance_m into v_d0
+          from public.ride_assignments ra
+          join public.ride_offers o on o.id = ra.offer_id
+          where ra.ride_id = r.id and ra.is_active and ra.driver_id = r.driver_id
+          limit 1;
+          if v_d0 is null and l.updated_at <= r.accepted_at + interval '1 minute' then
+            v_d0 := v_dist; -- aucune position reçue depuis l'attribution : c'est celle de l'attribution
+          elsif v_d0 is null then
+            select round(extensions.st_distance(
+                     extensions.st_setsrid(extensions.st_makepoint(h.lng, h.lat), 4326)::extensions.geography,
+                     r.pickup_location))::integer
+              into v_d0
+            from public.driver_location_history h
+            where h.driver_id = r.driver_id
+              and h.recorded_at between r.accepted_at - interval '10 minutes' and r.accepted_at + interval '1 minute'
+            order by h.recorded_at desc
+            limit 1;
+          end if;
+          v_ref := greatest(r.pickup_at, r.accepted_at + make_interval(secs => coalesce(round(v_d0 * 1.35 / 8.3), 0)));
+        else
+          v_ref := r.pickup_at;
+        end if;
+        v_delay := floor(extract(epoch from (now() + make_interval(secs => v_eta) - v_ref)))::integer;
+        v_cond := v_delay > v_tolerance * 60;
+        if v_cond then
+          v_severity := case when v_delay > 15 * 60 then 'critical' else 'warning' end;
+          v_message := format('%s sera en retard d''environ %s min', v_who, greatest(1, round(v_delay / 60.0))::integer);
+          v_data := jsonb_build_object(
+            'delay_minutes', greatest(1, round(v_delay / 60.0))::integer,
+            'eta_minutes', ceil(v_eta / 60.0)::integer,
+            'distance_m', v_dist,
+            'expected_at', now() + make_interval(secs => v_eta),
+            'reference_at', v_ref,
+            'pickup_at', r.pickup_at,
+            'tolerance_minutes', v_tolerance);
+        end if;
+      end if;
+    end if;
+    v_res := private.apply_ride_alert(r, d, 'late', v_cond, v_severity, v_message, v_data);
+    v_opened := v_opened + case when v_res = 'opened' then 1 else 0 end;
+    v_updated := v_updated + case when v_res = 'updated' then 1 else 0 end;
+    v_resolved := v_resolved + case when v_res = 'resolved' then 1 else 0 end;
+
+    -- ---------------------------------------------------------------- immobile
+    v_cond := false;
+    v_severity := null;
+    v_message := null;
+    v_data := null;
+    if r.status = 'DRIVER_EN_ROUTE' or (r.status = 'ACCEPTED' and r.type = 'instant') then
+      if not v_fresh then
+        v_cond := null;
+      elsif v_dist <= 800 then
+        v_cond := false;
+      elsif r.pickup_at > now() + make_interval(secs => round(v_dist * 1.35 / 8.3)::integer)
+                             + make_interval(mins => v_stall_min + v_tolerance) then
+        -- Rien ne presse (prise en charge repoussée par un retard de vol, planifiée en avance) :
+        -- s'arrêter n'est pas une anomalie
+        v_cond := false;
+      else
+        -- Censé rouler depuis : départ « en route » (ou acceptation d'une instantanée)
+        v_start := coalesce(
+          case when r.status = 'DRIVER_EN_ROUTE' then coalesce(r.driver_en_route_at, r.accepted_at) else r.accepted_at end,
+          now());
+        -- Dernier point à plus de 150 m de la position actuelle, puis premier point « sur place » après lui
+        select max(h.recorded_at) into v_last_away
+        from public.driver_location_history h
+        where h.driver_id = d.id
+          and h.recorded_at >= greatest(v_start - interval '2 minutes', now() - interval '2 hours')
+          and coalesce(h.accuracy_m, 0) <= 500
+          and extensions.st_distance(
+                extensions.st_setsrid(extensions.st_makepoint(h.lng, h.lat), 4326)::extensions.geography,
+                l.location) > 150;
+        select min(h.recorded_at) into v_since
+        from public.driver_location_history h
+        where h.driver_id = d.id
+          and h.recorded_at >= greatest(v_start - interval '2 minutes', now() - interval '2 hours')
+          and h.recorded_at > coalesce(v_last_away, '-infinity'::timestamptz)
+          and coalesce(h.accuracy_m, 0) <= 500;
+        if v_since is null then
+          v_cond := false; -- pas d'historique : aucune preuve d'immobilité
+        else
+          v_since := greatest(v_since, v_start);
+          v_still := floor(extract(epoch from (now() - v_since)) / 60)::integer;
+          v_cond := v_since <= now() - make_interval(mins => v_stall_min);
+          if v_cond then
+            v_severity := case when v_still >= 2 * v_stall_min then 'critical' else 'warning' end;
+            v_message := format('%s est immobile depuis %s min, à %s du départ', v_who, v_still, v_dist_label);
+            v_data := jsonb_build_object(
+              'still_minutes', v_still,
+              'since', v_since,
+              'distance_m', v_dist,
+              'lat', l.lat,
+              'lng', l.lng,
+              'threshold_minutes', v_stall_min);
+          end if;
+        end if;
+      end if;
+    end if;
+    v_res := private.apply_ride_alert(r, d, 'stalled', v_cond, v_severity, v_message, v_data);
+    v_opened := v_opened + case when v_res = 'opened' then 1 else 0 end;
+    v_updated := v_updated + case when v_res = 'updated' then 1 else 0 end;
+    v_resolved := v_resolved + case when v_res = 'resolved' then 1 else 0 end;
+
+    -- ---------------------------------------------------------------- GPS muet
+    v_cond := false;
+    v_severity := null;
+    v_message := null;
+    v_data := null;
+    if r.status <> 'ACCEPTED' or r.type = 'instant' then
+      v_cond := not v_fresh;
+      if v_cond then
+        v_severity := case when not v_has_loc or v_age >= 600 then 'critical' else 'warning' end;
+        v_message := case
+          when not v_has_loc then format('Aucune position GPS reçue de %s', v_who)
+          else format('Plus de position GPS de %s depuis %s min', v_who, greatest(1, v_age / 60))
+        end;
+        v_data := jsonb_build_object(
+          'last_location_at', case when v_has_loc then l.updated_at end,
+          'location_age_s', v_age,
+          'max_age_s', v_gps_max,
+          'lat', case when v_has_loc then l.lat end,
+          'lng', case when v_has_loc then l.lng end);
+      end if;
+    end if;
+    v_res := private.apply_ride_alert(r, d, 'no_gps', v_cond, v_severity, v_message, v_data);
+    v_opened := v_opened + case when v_res = 'opened' then 1 else 0 end;
+    v_updated := v_updated + case when v_res = 'updated' then 1 else 0 end;
+    v_resolved := v_resolved + case when v_res = 'resolved' then 1 else 0 end;
+
+    -- ---------------------------------------------------------------- planifiée non démarrée
+    v_cond := false;
+    v_severity := null;
+    v_message := null;
+    v_data := null;
+    if r.status = 'ACCEPTED' and r.type = 'scheduled' and r.pickup_at <= now() + interval '30 minutes' then
+      v_cond := d.presence = 'offline' or not v_fresh;
+      if v_cond then
+        v_severity := case when r.pickup_at <= now() + interval '15 minutes' then 'critical' else 'warning' end;
+        v_message := format('%s n''a pas démarré — prise en charge à %s, chauffeur %s', v_who,
+          to_char(r.pickup_at at time zone coalesce(v_tz, 'Europe/Paris'), 'HH24:MI'),
+          case when d.presence = 'offline' then 'hors ligne' else 'sans position GPS' end);
+        v_data := jsonb_build_object(
+          'pickup_at', r.pickup_at,
+          'minutes_to_pickup', ceil(extract(epoch from (r.pickup_at - now())) / 60)::integer,
+          'presence', d.presence,
+          'last_location_at', case when v_has_loc then l.updated_at end,
+          'location_age_s', v_age);
+      end if;
+    end if;
+    v_res := private.apply_ride_alert(r, d, 'not_started', v_cond, v_severity, v_message, v_data);
+    v_opened := v_opened + case when v_res = 'opened' then 1 else 0 end;
+    v_updated := v_updated + case when v_res = 'updated' then 1 else 0 end;
+    v_resolved := v_resolved + case when v_res = 'resolved' then 1 else 0 end;
+  end loop;
+
+  -- Réseau partagé : chien de garde des courses confiées à des chauffeurs partenaires (private.network_watch), dans
+  -- un bloc protégé (une erreur n'arrête pas la surveillance) ; compteurs renvoyés seulement s'il a agi
+  begin
+    v_network := private.network_watch();
+  exception when others then
+    v_network := jsonb_build_object('error', true);
+  end;
+
+  return jsonb_build_object('ok', true, 'checked', v_checked, 'opened', v_opened, 'updated', v_updated,
+    'resolved', v_resolved, 'skipped', v_skipped)
+    || case when v_network ? 'error'
+              or coalesce((v_network ->> 'released')::integer, 0) + coalesce((v_network ->> 'alerts')::integer, 0)
+                 + coalesce((v_network ->> 'notified')::integer, 0) + coalesce((v_network ->> 'closed_offers')::integer, 0)
+                 + coalesce((v_network ->> 'errors')::integer, 0) > 0
+            then jsonb_build_object('network', v_network) else '{}'::jsonb end;
+end;
+$$;
+
+-- =============================================================================
+-- 9. Annulation (§11.5) : message au chauffeur partenaire sans adresse
+-- =============================================================================
+
+-- Dernière définition : 20260924006800_shared_network_dispatch.sql. Réseau partagé, seul ajout : course tenue par un
+-- chauffeur partenaire → « COURSE ANNULÉE — {A} » sans n° ni adresse (data : network, giver), ses notifications
+-- précédentes de la course retirées (offre, rappels, vol), comme un retrait (private.unassign_network_ride, lot 3).
+-- Course propre : inchangée (« #n · départ → arrivée »).
+create or replace function private.cancel_ride_internal(
+  p_ride_id uuid,
+  p_reason text,
+  p_actor public.actor_type,
+  p_actor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.rides;
+  v_closed uuid[];
+  v_reason text := nullif(trim(coalesce(p_reason, '')), '');
+  -- Réseau partagé
+  v_giver text;
+  v_tz text;
+begin
+  select * into r from public.rides where id = p_ride_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'RIDE_NOT_FOUND', 'message', 'Course introuvable.');
+  end if;
+  if r.status in ('COMPLETED', 'CANCELLED') then
+    return jsonb_build_object('ok', false, 'code', 'RIDE_CLOSED', 'message', 'Course déjà clôturée.');
+  end if;
+  if r.status in ('PASSENGER_ONBOARD', 'IN_PROGRESS') and p_actor in ('api', 'booking_site') then
+    return jsonb_build_object('ok', false, 'code', 'RIDE_IN_PROGRESS', 'message', 'Course en cours : annulation impossible.');
+  end if;
+  -- Réseau partagé : client à bord d'un chauffeur partenaire — le chauffeur termine, sinon A clôture puis conteste
+  if r.status in ('PASSENGER_ONBOARD', 'IN_PROGRESS') and r.driver_id is not null
+     and r.driver_org_id <> r.organization_id and p_actor not in ('system', 'super_admin') then
+    return jsonb_build_object('ok', false, 'code', 'NETWORK_RIDE_IN_PROGRESS',
+      'message', 'Client à bord d''un chauffeur partenaire : annulation impossible. Il termine la course ; s''il ne le peut plus, clôturez-la (« Clôturer la course »), puis contestez-la si besoin.');
+  end if;
+
+  perform private.set_actor(p_actor, p_actor_id);
+
+  update public.rides
+     set status = 'CANCELLED', cancelled_at = now(), cancel_reason = v_reason,
+         cancelled_by_type = p_actor, next_dispatch_at = null
+   where id = r.id;
+
+  v_closed := private.close_pending_offers(r.id, 'closed', 'ride_cancelled');
+  update public.ride_assignments
+     set is_active = false, released_at = now(), release_reason = 'cancelled'
+   where ride_id = r.id and is_active;
+  update public.notifications set status = 'cancelled' where ride_id = r.id and status = 'queued';
+
+  if r.driver_id is not null then
+    perform private.release_driver_ride(r.driver_id, r.id, true);
+    if r.driver_org_id <> r.organization_id then
+      -- Réseau partagé (§11.5, S7) : chauffeur partenaire prévenu sans adresse (« COURSE ANNULÉE — {A} ») ; ses
+      -- notifications précédentes de la course (offre, rappels, vol : adresses) retirées de son historique
+      select g.name, g.timezone into v_giver, v_tz from public.organizations g where g.id = r.organization_id;
+      delete from public.notifications n where n.ride_id = r.id and n.driver_id = r.driver_id;
+      perform private.queue_notification(r.organization_id, r.driver_id, r.id, null, 'ride_cancelled',
+        'COURSE ANNULÉE — ' || coalesce(v_giver, 'organisation partenaire'),
+        format('Course de %s du %s annulée : elle ne figure plus dans votre planning.',
+          coalesce(v_giver, 'l''organisation partenaire'),
+          to_char(r.pickup_at at time zone coalesce(v_tz, 'Europe/Paris'), 'DD/MM à HH24:MI')),
+        jsonb_build_object('type', 'ride_cancelled', 'ride_id', r.id, 'network', true, 'giver', v_giver), 'high', null);
+    else
+      perform private.queue_notification(r.organization_id, r.driver_id, r.id, null, 'ride_cancelled', 'COURSE ANNULÉE',
+        format('#%s · %s → %s', r.number, coalesce(private.short_address(r.pickup_address), r.pickup_address),
+          coalesce(private.short_address(r.dropoff_address), r.dropoff_address)),
+        jsonb_build_object('type', 'ride_cancelled', 'ride_id', r.id), 'high', null);
+    end if;
+  end if;
+
+  perform private.log_event(r.organization_id, r.id, 'ride.cancelled',
+    coalesce('Course annulée — ' || v_reason, 'Course annulée'),
+    'timeline', 'warning', jsonb_build_object('reason', v_reason, 'closed_offers', cardinality(v_closed)), p_actor, p_actor_id);
+
+  return jsonb_build_object('ok', true, 'code', 'CANCELLED', 'status', 'CANCELLED');
+end;
+$$;
+
+-- =============================================================================
+-- 10. Positions (§11.6, Q5, S8) : rien pour B pendant la course partenaire ; points marqués, puis supprimés
+-- =============================================================================
+
+-- Dernière définition : 20260924000400_dispatch.sql. Réseau partagé, seul ajout : point enregistré pendant une course
+-- d'une autre organisation marqué ride_org_id (invisible pour l'organisation du chauffeur, supprimé 1 h après la fin).
+create or replace function public.update_driver_location(
+  p_lat double precision,
+  p_lng double precision,
+  p_heading real default null,
+  p_speed real default null,
+  p_accuracy real default null,
+  p_battery real default null,
+  p_recorded_at timestamptz default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  d record;
+  v_recorded timestamptz := least(coalesce(p_recorded_at, now()), now());
+  v_has_recent_history boolean;
+  -- Réseau partagé
+  v_ride_org uuid;
+begin
+  select x.id, x.organization_id, x.presence, x.current_ride_id, x.last_seen_at into d
+  from public.drivers x where x.id = private.current_driver_id();
+  if not found then
+    raise exception 'FORBIDDEN: compte chauffeur inactif ou inconnu' using errcode = '42501';
+  end if;
+  if p_lat is null or p_lng is null or p_lat not between -90 and 90 or p_lng not between -180 and 180 then
+    raise exception 'INVALID_COORDINATES' using errcode = '22023';
+  end if;
+
+  insert into public.driver_locations as dl
+    (driver_id, organization_id, lat, lng, heading, speed_mps, accuracy_m, battery_level, recorded_at, updated_at)
+  values (d.id, d.organization_id, p_lat, p_lng, p_heading, p_speed, p_accuracy, p_battery, v_recorded, now())
+  on conflict (driver_id) do update
+    set lat = excluded.lat,
+        lng = excluded.lng,
+        heading = excluded.heading,
+        speed_mps = excluded.speed_mps,
+        accuracy_m = excluded.accuracy_m,
+        battery_level = coalesce(excluded.battery_level, dl.battery_level),
+        recorded_at = excluded.recorded_at,
+        updated_at = now()
+    where dl.recorded_at <= excluded.recorded_at;
+
+  -- Historique : chaque point en course, sinon 1 point / minute
+  select exists (
+    select 1 from public.driver_location_history h
+    where h.driver_id = d.id and h.recorded_at > now() - interval '1 minute'
+  ) into v_has_recent_history;
+  if d.current_ride_id is not null or not v_has_recent_history then
+    -- Réseau partagé (§11.6, Q5, S8) : point d'une course d'une AUTRE organisation marqué (ride_org_id) — invisible
+    -- pour l'organisation du chauffeur (policy driver_location_history_select), supprimé 1 h après la fin
+    -- (private.housekeeping) ; course propre ou aucune course : NULL, comme avant
+    if d.current_ride_id is not null then
+      select r.organization_id into v_ride_org from public.rides r
+       where r.id = d.current_ride_id and r.organization_id <> d.organization_id;
+    end if;
+    insert into public.driver_location_history (organization_id, driver_id, ride_id, lat, lng, speed_mps, heading, accuracy_m, recorded_at,
+                                                ride_org_id)
+    values (d.organization_id, d.id, d.current_ride_id, p_lat, p_lng, p_speed, p_heading, p_accuracy, v_recorded, v_ride_org);
+  end if;
+
+  if d.last_seen_at is null or d.last_seen_at < now() - interval '60 seconds' then
+    update public.drivers set last_seen_at = now() where id = d.id;
+  end if;
+
+  -- Fréquence GPS adaptative suggérée à l'application (économie batterie)
+  return jsonb_build_object(
+    'ok', true,
+    'presence', d.presence,
+    'next_interval_s', case
+      when d.current_ride_id is not null or d.presence = 'offered' then 5
+      when d.presence = 'offline' then 120
+      else 15
+    end
+  );
+end;
+$$;
+
+-- Dernière définition : 20260924000600_realtime.sql. Réseau partagé, seul ajout (Q5) : aucune position diffusée pendant
+-- une course d'une autre organisation (private.driver_on_foreign_ride, lot 2).
+create or replace function private.broadcast_driver_location()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  -- Réseau partagé (Q5, §11.6) : course d'une autre organisation en cours → aucune position diffusée à l'organisation
+  -- du chauffeur (elle voit « En course partenaire ({A}) ») ; l'organisation de la course n'a pas de carte du
+  -- partenaire en v1
+  if private.driver_on_foreign_ride(new.driver_id) then
+    return null;
+  end if;
+  perform realtime.send(
+    jsonb_build_object('driver_id', new.driver_id, 'lat', new.lat, 'lng', new.lng, 'heading', new.heading,
+      'speed', new.speed_mps, 'accuracy', new.accuracy_m, 'updated_at', new.updated_at),
+    'driver.location', 'org:' || new.organization_id::text, true);
+  return null;
+end;
+$$;
+
+-- Dernière définition : 20260924000600_realtime.sql. Réseau partagé, seul ajout (Q5, contrat
+-- NetworkDriverBroadcastFields) : sur org:{B}, course en cours d'une autre organisation → current_ride_id NULL,
+-- « network »: true, « network_giver » : nom de A ; sinon charge utile inchangée.
+create or replace function private.broadcast_driver()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  -- Réseau partagé
+  v_giver text;
+begin
+  -- Réseau partagé (Q5, §11.6) : course en cours d'une autre organisation → org:{B} ne reçoit ni son identifiant
+  -- (current_ride_id NULL) ni rien d'autre de A que son nom (« En course partenaire ({A}) », network: true) ;
+  -- driver:{id} inchangé (le chauffeur lui-même)
+  if new.current_ride_id is not null then
+    select g.name into v_giver
+      from public.rides r
+      join public.organizations g on g.id = r.organization_id
+     where r.id = new.current_ride_id
+       and r.organization_id <> new.organization_id
+       and r.status in ('ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS');
+  end if;
+  perform realtime.send(
+    jsonb_build_object('id', new.id, 'number', new.number, 'first_name', new.first_name, 'last_name', new.last_name,
+      'presence', new.presence, 'status', new.status,
+      'current_ride_id', case when v_giver is null then new.current_ride_id end, 'vehicle_id', new.vehicle_id)
+    || case when v_giver is not null then jsonb_build_object('network', true, 'network_giver', v_giver)
+            else '{}'::jsonb end,
+    'driver.updated', 'org:' || new.organization_id::text, true);
+  perform realtime.send(
+    jsonb_build_object('id', new.id, 'presence', new.presence, 'status', new.status, 'current_ride_id', new.current_ride_id),
+    'driver.updated', 'driver:' || new.id::text, true);
+  return null;
+end;
+$$;
+
+-- Exécutions closes (fin, retrait, annulation…) depuis plus d'1 h — et moins de 31 jours, au-delà les purges de 30 et 90
+-- jours ont fait le reste — dont le chauffeur ne tient plus la course : (course, chauffeur) dont private.housekeeping
+-- supprime les traces chez le chauffeur et son organisation (points GPS marqués, rappels, notifications de vol).
+create or replace function private.network_ended_traces()
+returns table (ride_id uuid, driver_id uuid)
+language sql
+stable
+set search_path = ''
+as $$
+  select distinct e.ride_id, e.executor_driver_id
+    from public.ride_network_executions e
+   where e.ended_at < now() - interval '1 hour'
+     and e.ended_at > now() - interval '31 days'
+     and e.executor_driver_id is not null
+     and not exists (
+       select 1 from public.ride_network_executions x
+        where x.ride_id = e.ride_id and x.executor_driver_id = e.executor_driver_id
+          and (x.ended_at is null or x.ended_at >= now() - interval '1 hour'));
+$$;
+
+create index if not exists ride_network_executions_ended_idx on public.ride_network_executions (ended_at)
+  where ended_at is not null;
+
+-- Dernière définition : 20260924006900_shared_network_money.sql (corps 20260924006600 et ajout 006900 gardés À
+-- L'IDENTIQUE). Réseau partagé, seuls ajouts : traces d'une course partenaire chez le chauffeur et son organisation
+-- 1 h après la fin (points GPS marqués, rappels, notifications de vol), comptées dans history_purged et
+-- notifications_purged (réponse inchangée).
+create or replace function private.housekeeping()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_history integer;
+  v_logs integer;
+  v_docs integer;
+  v_notifs integer;
+  v_chat integer;
+  v_fleet integer;
+  v_network integer;
+  v_alert_positions integer;
+  v_debtors integer;
+  v_auth integer;
+  v_expired integer;
+  v_fee_changes integer;
+  v_reductions integer;
+  v_rides integer := 0;
+  v_count integer;
+  v_org uuid;
+  v_rides_before timestamptz := date_trunc('year', now() - interval '10 years');
+  v_bans jsonb;
+  v_errors jsonb := '{}'::jsonb;
+begin
+  -- Le ménage ne met jamais un chauffeur hors ligne : application fermée, c'est private.watch_driver_gps qui s'en
+  -- charge (20260924003400).
+
+  -- Courses planifiées acceptées jamais démarrées, 6 h après l'heure de prise en charge : clôturées (005900). Un
+  -- échec est journalisé par le worker et n'empêche pas le reste du ménage ; retenté au passage suivant.
+  begin
+    v_expired := private.expire_unstarted_rides();
+  exception when others then
+    v_expired := null;
+    v_errors := v_errors || jsonb_build_object('rides_expired', left(sqlerrm, 300));
+  end;
+
+  delete from public.driver_location_history where recorded_at < now() - interval '30 days';
+  get diagnostics v_history = row_count;
+  -- Réseau partagé (Q5, §11.6, S8) : points GPS d'une course partenaire (ride_org_id, invisibles pour l'organisation du
+  -- chauffeur) 1 h après la fin de son exécution pour ce chauffeur (private.network_ended_traces) ; comptés avec
+  -- l'historique purgé (réponse inchangée)
+  delete from public.driver_location_history h
+   using private.network_ended_traces() n
+   where h.ride_id = n.ride_id and h.driver_id = n.driver_id and h.ride_org_id is not null;
+  get diagnostics v_count = row_count;
+  v_history := v_history + v_count;
+  delete from public.api_logs where created_at < now() - interval '90 days';
+  get diagnostics v_logs = row_count;
+  -- Échéance au jour LOCAL de l'organisation (comme private.document_reminders), pas au jour UTC du serveur
+  update public.driver_documents x
+     set status = 'expired'
+    from public.organizations o
+   where o.id = x.organization_id
+     and x.status = 'valid'
+     and x.expires_at < (now() at time zone coalesce(o.timezone, 'Europe/Paris'))::date;
+  get diagnostics v_docs = row_count;
+  -- Notifications : 90 jours après leur envoi prévu, quel que soit leur statut ; réveils silencieux : un jour
+  delete from public.notifications
+   where greatest(created_at, scheduled_for) < now() - interval '90 days'
+      or (type = 'location_ping' and created_at < now() - interval '1 day');
+  get diagnostics v_notifs = row_count;
+  -- Réseau partagé : rappels et notifications de vol du chauffeur partenaire (adresse, n° de vol), même délai ; comptés
+  -- avec les notifications purgées
+  delete from public.notifications x
+   using private.network_ended_traces() n
+   where x.ride_id = n.ride_id and x.driver_id = n.driver_id and x.driver_org_id <> x.organization_id
+     and x.type in ('ride_reminder', 'flight_update');
+  get diagnostics v_count = row_count;
+  v_notifs := v_notifs + v_count;
+  delete from public.chat_messages where created_at < now() - interval '180 days';
+  get diagnostics v_chat = row_count;
+  -- Signalements de la flotte recopiés dans le journal de la centrale : même durée que les messages
+  delete from public.ride_events
+   where type in ('fleet.report', 'fleet.report_cleared') and created_at < now() - interval '180 days';
+  get diagnostics v_fleet = row_count;
+  -- Journal d'audit : adresse IP et navigateur effacés au bout d'un an (l'action reste tracée)
+  update public.audit_logs set ip = null, user_agent = null
+   where (ip is not null or user_agent is not null) and created_at < now() - interval '1 year';
+  get diagnostics v_network = row_count;
+  -- Position du chauffeur relevée par une alerte (immobile, GPS muet) : 30 jours. Alerte encore ouverte : sa
+  -- position est celle du moment, retirée une fois l'alerte close.
+  with batch as (
+    select a.id from public.ride_alerts a
+     where a.status <> 'open' and (a.data ? 'lat' or a.data ? 'lng') and a.created_at < now() - interval '30 days'
+     order by a.created_at
+     limit 500
+  )
+  update public.ride_alerts a
+     set data = a.data - array['lat', 'lng']
+    from batch b
+   where a.id = b.id;
+  get diagnostics v_alert_positions = row_count;
+  update public.ride_events e
+     set data = e.data - array['lat', 'lng']
+   where e.type in ('alert.stalled', 'alert.no_gps') and (e.data ? 'lat' or e.data ? 'lng')
+     and e.created_at < now() - interval '30 days';
+  get diagnostics v_count = row_count;
+  v_alert_positions := v_alert_positions + v_count;
+  -- Empreintes d'un chauffeur supprimé qui devait des commissions : plus de dette ouverte, plus d'empreinte
+  delete from private.debtor_identities x
+   where not exists (
+     select 1 from public.ride_settlements s
+      where s.driver_id = x.driver_id and s.direction = 'driver_owes'
+        and s.status in ('due', 'declared', 'disputed') and s.amount_cents > 0);
+  get diagnostics v_debtors = row_count;
+  -- Réseau partagé : empreintes d'un chauffeur partenaire supprimé, plus rien d'ouvert envers CETTE organisation
+  -- créancière (comptées avec les précédentes : réponse inchangée)
+  delete from private.network_debtor_identities n
+   where not exists (
+     select 1 from public.ride_settlements s
+      where s.organization_id = n.creditor_org_id and s.network_driver_id = n.driver_id
+        and s.network_driver_org_id is not null and s.direction = 'driver_owes'
+        and s.status in ('due', 'declared', 'disputed') and s.amount_cents > 0);
+  get diagnostics v_count = row_count;
+  v_debtors := v_debtors + v_count;
+  -- Courses : 10 ans après la fin de l'année de la prise en charge, quel que soit leur statut. Par centrale (index
+  -- organization_id, pickup_at).
+  -- Purges longues ou hors de nos tables (courses, bannissements, journal Auth) : un échec est journalisé par le
+  -- worker et n'empêche pas le reste du ménage ; elles sont retentées au passage suivant.
+  begin
+    for v_org in select o.id from public.organizations o loop
+      delete from public.rides r
+       where r.organization_id = v_org and r.pickup_at < v_rides_before;
+      get diagnostics v_count = row_count;
+      v_rides := v_rides + v_count;
+    end loop;
+  exception when others then
+    v_rides := 0;
+    v_errors := v_errors || jsonb_build_object('rides', left(sqlerrm, 300));
+  end;
+  begin
+    v_bans := private.purge_expired_bans();
+  exception when others then
+    v_errors := v_errors || jsonb_build_object('bans', left(sqlerrm, 300));
+  end;
+  -- Journal d'audit de Supabase Auth : 1 an ; une fois par heure au plus (parcours complet de la table)
+  if not exists (select 1 from private.housekeeping_runs h
+                  where h.task = 'auth_audit' and h.last_run_at > now() - interval '1 hour') then
+    insert into private.housekeeping_runs (task, last_run_at) values ('auth_audit', now())
+    on conflict (task) do update set last_run_at = excluded.last_run_at;
+    begin
+      v_auth := 0;
+      if to_regclass('auth.audit_log_entries') is not null then
+        delete from auth.audit_log_entries a where a.created_at < now() - interval '1 year';
+        get diagnostics v_auth = row_count;
+      end if;
+    exception when others then
+      v_auth := null;
+      v_errors := v_errors || jsonb_build_object('auth_audit', left(sqlerrm, 300));
+    end;
+  end if;
+
+  -- Frais Rydar (20260924006600) : baisses en attente depuis 30 jours sans décision du super admin acceptées (CGV
+  -- art. 5)
+  begin
+    v_reductions := private.accept_stale_platform_reductions();
+  exception when others then
+    v_reductions := null;
+    v_errors := v_errors || jsonb_build_object('platform_reductions', left(sqlerrm, 300));
+  end;
+  -- Hausses annoncées arrivées à leur date d'effet, EN DERNIER : le verrou de l'organisation (UPDATE des taux) est gardé
+  -- jusqu'à la fin de la transaction, et la création d'une course de l'organisation l'attend
+  begin
+    v_fee_changes := private.apply_platform_fee_changes();
+  exception when others then
+    v_fee_changes := null;
+    v_errors := v_errors || jsonb_build_object('platform_fee_changes', left(sqlerrm, 300));
+  end;
+
+  return jsonb_build_object('rides_expired', v_expired, 'platform_fee_changes_applied', v_fee_changes,
+    'platform_reductions_accepted', v_reductions,
+    'history_purged', v_history, 'api_logs_purged', v_logs,
+    'documents_expired', v_docs, 'notifications_purged', v_notifs, 'chat_purged', v_chat,
+    'fleet_events_purged', v_fleet, 'audit_network_purged', v_network, 'rides_purged', v_rides,
+    'bans_purged', v_bans, 'alert_positions_purged', v_alert_positions, 'debtor_identities_purged', v_debtors,
+    'auth_audit_purged', v_auth)
+    || case when v_errors = '{}'::jsonb then '{}'::jsonb else jsonb_build_object('errors', v_errors) end;
+end;
+$$;
+
+-- =============================================================================
+-- 11. Temps réel (§13, S14) : org:{A} sans identifiant de partenaire ; jamais org:{B} pour une course de A
+-- =============================================================================
+
+-- Dernière définition : 20260924002100_flight_tracking.sql. Réseau partagé, seul ajout (contrat
+-- NetworkRideBroadcastFields) : chauffeur d'une autre organisation → driver_id NULL, « network »: true,
+-- « network_execution_id » sur org:{A} ; driver:{id} et ride.unassigned inchangés.
+create or replace function private.broadcast_ride()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v public.rides;
+  -- Réseau partagé
+  v_partner boolean;
+  v_execution uuid;
+begin
+  if current_setting('rydar.bypass_ride_rules', true) = 'on' then
+    return null;
+  end if;
+  if tg_op = 'UPDATE' and new.flight_checked_at is distinct from old.flight_checked_at then
+    if (to_jsonb(new) - '{flight_checked_at,updated_at}'::text[]) = (to_jsonb(old) - '{flight_checked_at,updated_at}'::text[]) then
+      return null;
+    end if;
+  end if;
+  select * into v from public.rides where id = new.id;
+  if not found then
+    v := new;
+  end if;
+  -- Réseau partagé (§13, S14) : chauffeur d'une autre organisation → org:{A} ne reçoit jamais son identifiant
+  -- (driver_id NULL), mais l'exécution en cours (network_execution_id, network: true) ; driver:{id} inchangé ;
+  -- jamais org:{B}
+  v_partner := v.driver_id is not null and v.driver_org_id is distinct from v.organization_id;
+  if v_partner then
+    select e.id into v_execution
+      from public.ride_network_executions e
+     where e.ride_id = v.id and e.executor_driver_id = v.driver_id
+     order by e.ended_at is null desc, e.accepted_at desc
+     limit 1;
+  end if;
+
+  perform realtime.send(
+    jsonb_build_object(
+      'op', lower(tg_op), 'id', v.id, 'number', v.number, 'status', v.status, 'type', v.type, 'source', v.source,
+      'dispatch_mode', v.dispatch_mode,
+      'pickup_address', v.pickup_address, 'pickup_lat', v.pickup_lat, 'pickup_lng', v.pickup_lng,
+      'dropoff_address', v.dropoff_address, 'dropoff_lat', v.dropoff_lat, 'dropoff_lng', v.dropoff_lng,
+      'pickup_at', v.pickup_at, 'customer_name', v.customer_name, 'passengers', v.passengers,
+      'vehicle_category', v.vehicle_category, 'price_cents', v.price_cents,
+      'driver_id', case when v_partner then null else v.driver_id end,
+      'dispatch_wave', v.dispatch_wave, 'dispatch_radius_m', v.dispatch_radius_m, 'next_dispatch_at', v.next_dispatch_at,
+      'estimated_distance_m', v.estimated_distance_m, 'estimated_duration_s', v.estimated_duration_s,
+      'route_polyline', case when tg_op = 'INSERT' or new.route_polyline is distinct from old.route_polyline then v.route_polyline end,
+      'created_at', v.created_at, 'updated_at', v.updated_at)
+    || jsonb_build_object(
+      'flight_number', v.flight_number, 'flight_mode', v.flight_mode, 'flight_status', v.flight_status,
+      'flight_scheduled_arrival', v.flight_scheduled_arrival, 'flight_estimated_arrival', v.flight_estimated_arrival,
+      'flight_actual_arrival', v.flight_actual_arrival, 'flight_delay_minutes', v.flight_delay_minutes,
+      'flight_terminal', v.flight_terminal, 'flight_origin', v.flight_origin, 'flight_checked_at', v.flight_checked_at,
+      'pickup_at_original', v.pickup_at_original)
+    || case when v_partner then jsonb_build_object('network', true, 'network_execution_id', v_execution)
+            else '{}'::jsonb end,
+    'ride.updated', 'org:' || v.organization_id::text, true);
+
+  if v.driver_id is not null then
+    perform realtime.send(
+      jsonb_build_object('id', v.id, 'status', v.status, 'driver_id', v.driver_id, 'updated_at', v.updated_at,
+        'pickup_at', v.pickup_at, 'pickup_at_original', v.pickup_at_original,
+        'flight_status', v.flight_status, 'flight_delay_minutes', v.flight_delay_minutes),
+      'ride.updated', 'driver:' || v.driver_id::text, true);
+  end if;
+  if tg_op = 'UPDATE' and old.driver_id is not null and old.driver_id is distinct from new.driver_id then
+    perform realtime.send(
+      jsonb_build_object('id', new.id, 'status', 'UNASSIGNED'),
+      'ride.unassigned', 'driver:' || old.driver_id::text, true);
+  end if;
+  return null;
+end;
+$$;
+
+-- =============================================================================
+-- 12. Notifications (§13)
+-- =============================================================================
+
+-- Montants internes jamais chez un chauffeur qui ne doit pas les voir (§13, U4 ; critère 5 : aucun montant de frais
+-- Rydar chez un chauffeur de flotte) — point unique de TOUTE insertion (private.queue_notification, offres de
+-- private.run_geo_wave / private.offer_to_fleet, rappels…), après private.set_driver_org_id (G1, ordre alphabétique) :
+--  * chauffeur partenaire (organisation de la notification = A ≠ la sienne) : commission_cents, platform_fee_cents,
+--    driver_payout_cents retirés des données ;
+--  * chauffeur d'une flotte : ces montants retirés s'ils sont renseignés (en flotte, la course les porte NULL : rien ne
+--    change aujourd'hui, filet de sécurité).
+-- Centrale, son propre chauffeur (part affichée dans l'offre) : inchangé.
+create or replace function private.notifications_scrub_money()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.driver_id is null or jsonb_typeof(new.data) is distinct from 'object'
+     or not (new.data ?| array['commission_cents', 'platform_fee_cents', 'driver_payout_cents']) then
+    return new;
+  end if;
+  if new.driver_org_id is distinct from new.organization_id then
+    new.data := new.data - array['commission_cents', 'platform_fee_cents', 'driver_payout_cents'];
+  elsif exists (select 1 from public.organizations o where o.id = new.organization_id and o.dispatch_model = 'fleet') then
+    new.data := new.data - array(
+      select k from unnest(array['commission_cents', 'platform_fee_cents', 'driver_payout_cents']) k
+       where jsonb_typeof(new.data -> k) is distinct from 'null');
+  end if;
+  return new;
+end;
+$$;
+
+create trigger notifications_scrub_money before insert on public.notifications
+  for each row execute function private.notifications_scrub_money();
+
+-- =============================================================================
+-- 13. Webhooks et API (§11.7)
+-- =============================================================================
+
+-- Chauffeur d'une course pour l'API publique et les webhooks (objet « driver » de publicRide, @rydar/shared) :
+--  * chauffeur de l'organisation de la course : prénom et véhicule de sa fiche — objet identique à l'ancien
+--    embed PostgREST et à l'ancienne private.webhook_ride_json ;
+--  * chauffeur partenaire (réseau partagé, §11.7) : prénom, véhicule de l'instantané figé à l'acceptation
+--    (ride_network_executions.vehicle), exploitant « operator » { name : raison sociale validée de son organisation } ;
+--    NULL 24 h après la fin de son exécution (jamais son nom, son téléphone ni son identifiant).
+-- Colonne calculée PostgREST de rides (« driver:ride_public_driver » dans PUBLIC_RIDE_SELECT, apps/web/lib/api/v1.ts,
+-- lue avec le client service role de l'API v1) et private.webhook_ride_json : même objet des deux côtés. EXECUTE :
+-- service_role seulement (jamais un client : une ligne rides forgée en paramètre lirait n'importe quel chauffeur).
+create or replace function public.ride_public_driver(r public.rides)
+returns jsonb
+language sql
+stable
+set search_path = ''
+as $$
+  select case
+    when r.driver_id is null then null
+    when r.driver_org_id <> r.organization_id then (
+      select case when e.ended_at is null or e.ended_at > now() - interval '24 hours' then jsonb_build_object(
+               'first_name', d.first_name,
+               'vehicle', jsonb_build_object('brand', e.vehicle ->> 'brand', 'model', e.vehicle ->> 'model',
+                                             'color', e.vehicle ->> 'color', 'plate', e.vehicle ->> 'plate'),
+               'operator', jsonb_build_object(
+                 'name', coalesce(nullif(btrim(e.operator ->> 'legal_name'), ''), e.operator ->> 'name'))) end
+        from public.ride_network_executions e
+        left join public.drivers d on d.id = e.executor_driver_id
+       where e.ride_id = r.id and e.executor_driver_id = r.driver_id
+       order by e.ended_at is null desc, e.accepted_at desc
+       limit 1)
+    else (
+      select jsonb_build_object(
+               'first_name', d.first_name,
+               'vehicle', case when v.id is null then null else jsonb_build_object(
+                 'brand', v.brand, 'model', v.model, 'color', v.color, 'plate', v.plate) end)
+        from public.drivers d
+        left join public.vehicles v on v.organization_id = d.organization_id and v.id = d.vehicle_id
+       where d.organization_id = r.organization_id and d.id = r.driver_id)
+  end;
+$$;
+
+-- Dernière définition : 20260924006000_webhooks.sql. Réseau partagé, seul changement : objet « driver » calculé par
+-- public.ride_public_driver (identique pour un chauffeur de l'organisation ; partenaire : instantané, exploitant, NULL
+-- 24 h après la fin). Une course partagée n'apparaît que dans les webhooks de A (déclencheur sur la course de A).
+create or replace function private.webhook_ride_json(p_ride uuid)
+returns jsonb
+language sql
+stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'id', r.id,
+    'number', r.number,
+    'type', r.type,
+    'status', r.status,
+    'pickup_address', r.pickup_address,
+    'pickup_lat', r.pickup_lat,
+    'pickup_lng', r.pickup_lng,
+    'dropoff_address', r.dropoff_address,
+    'dropoff_lat', r.dropoff_lat,
+    'dropoff_lng', r.dropoff_lng,
+    'pickup_at', r.pickup_at,
+    'passengers', r.passengers,
+    'luggage', r.luggage,
+    'vehicle_category', r.vehicle_category,
+    'price_cents', r.price_cents,
+    'currency', r.currency,
+    'payment_method', r.payment_method,
+    'flight_number', r.flight_number,
+    'external_reference', r.external_reference,
+    'estimated_distance_m', r.estimated_distance_m,
+    'estimated_duration_s', r.estimated_duration_s,
+    'route_polyline', r.route_polyline,
+    'created_at', r.created_at,
+    'accepted_at', r.accepted_at,
+    'driver_arrived_at', r.driver_arrived_at,
+    'started_at', r.started_at,
+    'completed_at', r.completed_at,
+    'cancelled_at', r.cancelled_at,
+    'updated_at', r.updated_at,
+    -- Réseau partagé (§11.7) : même objet que l'API v1 (public.ride_public_driver) — chauffeur de l'organisation :
+    -- prénom et véhicule de sa fiche, comme avant ; chauffeur partenaire : instantané et exploitant
+    'driver', public.ride_public_driver(r)
+  )
+  from public.rides r
+  where r.id = p_ride;
+$$;
+
+-- =============================================================================
+-- 14. Droits de la partie 5b : aides et déclencheur réservés aux fonctions serveur ; public.ride_public_driver au
+--     service role seulement (colonne calculée de l'API v1). Fonctions redéfinies : droits conservés (même signature).
+-- =============================================================================
+revoke all on function
+  private.event_actor(uuid, public.actor_type, uuid),
+  private.network_event_scrub(uuid, text, jsonb),
+  private.network_ended_traces()
+from public, anon, authenticated;
+grant execute on function
+  private.event_actor(uuid, public.actor_type, uuid),
+  private.network_event_scrub(uuid, text, jsonb),
+  private.network_ended_traces()
+to service_role;
+revoke all on function private.notifications_scrub_money() from public, anon, authenticated, service_role;
+revoke all on function public.ride_public_driver(public.rides) from public, anon, authenticated;
+grant execute on function public.ride_public_driver(public.rides) to service_role;

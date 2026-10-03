@@ -1670,6 +1670,11 @@ export interface AdminNetworkOverview {
 // =============================================================================
 // Temps réel (aucun nouveau topic ; ids seulement)
 // =============================================================================
+// Lot 5b (20260924007000) — règles des diffusions : org:{A} ne reçoit jamais l'identifiant, la distance, la vague ni la
+// position d'un chauffeur partenaire (offres, courses, alertes : RideAlertBroadcast.network de types.ts, journal) ;
+// org:{B} et fleet:{B} ne reçoivent rien de A pendant la course partenaire (ni identifiant de course, ni adresse, ni
+// position : « driver.location » suspendu) ; driver:{id} (le chauffeur lui-même) inchangé. Clés « network* » présentes
+// seulement quand un chauffeur partenaire est en jeu : diffusions hors réseau identiques à avant.
 
 /** « network.updated » : org:{A} → { ride_id } ; org:{B} → { execution_id } seulement (S14). */
 export type NetworkUpdatedEvent = { ride_id: Uuid } | { execution_id: Uuid };
@@ -1679,13 +1684,20 @@ export interface NetworkOfferBroadcastFields {
   network?: boolean;
 }
 
-/** « ride.updated » sur org:{A} quand le chauffeur est d'une autre organisation : driver_id à null. */
+/**
+ * « ride.updated » sur org:{A} quand le chauffeur est d'une autre organisation (private.broadcast_ride) : driver_id à
+ * null, `network: true`, exécution en cours (ou la dernière s'il a fini la course).
+ */
 export interface NetworkRideBroadcastFields {
   network?: boolean;
   network_execution_id?: Uuid | null;
 }
 
-/** « driver.updated » sur org:{B} pendant une course partenaire : current_ride_id à null, aucune position (Q5). */
+/**
+ * « driver.updated » sur org:{B} pendant une course partenaire (private.broadcast_driver : course en cours d'une autre
+ * organisation, d'ACCEPTED à IN_PROGRESS) : current_ride_id à null, `network: true`, nom de A ; aucune position (Q5).
+ * Fin de la course partenaire : charge utile habituelle, sans ces clés.
+ */
 export interface NetworkDriverBroadcastFields {
   network?: boolean;
   /** « En course partenaire ({A}) » */
@@ -1887,7 +1899,9 @@ export const NETWORK_TONE: Tone = "violet";
  * `data` d'une notification de règlement d'une course partenaire (types existants settlement_due, settlement_payout,
  * settlement_paid, settlement_payout_sent et relances ; ligne notifications chez A) : `network: true` fait ouvrir à
  * l'app l'onglet « Courses partenaires » de l'écran Commissions (sinon : commissions de sa propre organisation).
- * Jamais commission_cents, platform_fee_cents ni driver_payout_cents (U4, nettoyage de queue_notification).
+ * Jamais commission_cents, platform_fee_cents ni driver_payout_cents (U4) : retirés à toute insertion par le déclencheur
+ * notifications_scrub_money (lot 5b, 20260924007000) pour un chauffeur partenaire (et, s'ils sont renseignés, pour un
+ * chauffeur de flotte).
  * Lot argent (4b, private.network_notify) : aussi settlement_disputed (« Pas reçu »), settlement_waived (« Annuler »),
  * settlement_reminder (relances : amount_cents, count), settlement_payout_info (RIB consulté par A),
  * settlement_payout_cancelled (versement annulé par « Contester la course »), settlement_contested (course contestée,
