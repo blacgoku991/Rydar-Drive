@@ -437,18 +437,22 @@ Aperçu navigateur (démo) : `pnpm --filter @rydar/driver web`, ou `export:web` 
 ## 6. Pages légales
 
 Les pages publiques `/mentions-legales`, `/cgu`, `/cgv`, `/confidentialite`, `/cookies`, `/dpa` (accord de
-traitement des données) et `/suppression-compte` lisent l'identité de l'éditeur et des hébergeurs dans la base :
+traitement des données), `/suppression-compte`, `/abonnement-resiliation` (résumé des CGV, sans rien y ajouter) et
+`/accessibilite` (déclaration « non conforme » tant qu'aucun audit RGAA) lisent l'identité de l'éditeur et des
+hébergeurs dans la base :
 
 - **avant l'ouverture au public**, le Super Admin remplit **`/admin/legal`** (raison sociale, forme, capital, siège,
   RCS, TVA, directeur de la publication, contacts, hébergeur du serveur et des données). Tant qu'un champ manque,
-  `/mentions-legales` affiche « à compléter par l'éditeur ». `LEGAL_NAME`, `LEGAL_EMAIL` et `LEGAL_ADDRESS`
+  `/mentions-legales` affiche « à compléter par l'éditeur » et `/admin/legal` le liste en tête (« Mentions
+  obligatoires manquantes »). `LEGAL_NAME`, `LEGAL_EMAIL` et `LEGAL_ADDRESS`
   (`deploy/configure.sh`) ne servent que de repli ;
 - les textes sont des modèles fidèles au fonctionnement du logiciel (Rydar = éditeur de logiciel, les courses
   appartiennent aux centrales) : **faites-les relire par un juriste** avant l'ouverture ;
 - après toute modification importante des textes, changez la version du document concerné
   (`packages/shared/src/features.ts`, reprise par `apps/web/lib/legal.ts`) et sa date affichée
-  (`apps/web/lib/legal.ts` : `LEGAL_UPDATED_AT` pour les CGU, mentions et cookies, `CGV_UPDATED_AT`, `DPA_UPDATED_AT`,
-  `PRIVACY_UPDATED_AT`). Deux versions, pour ne faire ré-accepter que les personnes concernées :
+  (`apps/web/lib/legal.ts` : `LEGAL_UPDATED_AT` pour les CGU et la suppression de compte, `CGV_UPDATED_AT`,
+  `DPA_UPDATED_AT`, `PRIVACY_UPDATED_AT`, `NOTICE_UPDATED_AT`, `COOKIES_UPDATED_AT`, `SUBSCRIPTION_TERMS_UPDATED_AT`,
+  `ACCESSIBILITY_UPDATED_AT`). Deux versions, pour ne faire ré-accepter que les personnes concernées :
   - **`LEGAL_VERSION`** (CGU + politique de confidentialité, à titre personnel) : un bandeau (non bloquant) du
     tableau de bord la fait accepter à chaque membre, dispatchers compris ; dans l'application chauffeur, un écran
     plein la fait accepter à chaque chauffeur, invité par sa centrale ou inscrit par lien (jamais pendant une offre
@@ -546,3 +550,11 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
 - [ ] Domaine wildcard pour les mini-sites, domaines personnalisés ajoutés
 - [ ] Builds EAS signés, pushs testés sur un vrai téléphone Android et un vrai iPhone
 - [ ] `/admin/legal` rempli (aucun « à compléter par l'éditeur » sur `/mentions-legales`), textes légaux relus par un juriste
+- [ ] Textes fidèles à l'installation : serveur dans l'Union européenne (sinon changer `/confidentialite` § 8 et `/dpa`
+      art. 7), sauvegardes nocturnes gardées 14 jours, journaux techniques gardés 1 an au plus (Docker de
+      `/opt/supabase` compris, journald), aucune copie hors du serveur non décrite dans `/dpa` (docs/SECURITY.md,
+      « Documents légaux »)
+- [ ] Stripe : portail client en annulation à la fin de la période, sans remboursement ni prorata automatiques (CGV
+      art. 4) ; mentions légales des factures (SIREN, TVA, échéance, pénalités, indemnité de 40 €)
+- [ ] Mini-sites, avant de les rouvrir (`booking_sites_enabled()`) : conditions de chaque centrale renseignées
+      (médiateur de la consommation, annulation, moyens de paiement), parcours relu par un juriste
