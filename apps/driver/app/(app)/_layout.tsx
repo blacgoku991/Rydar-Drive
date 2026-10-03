@@ -25,6 +25,9 @@ export default function AppLayout() {
         <Stack.Screen name="earnings" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="documents" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="commissions" options={{ animation: "slide_from_right" }} />
+        {/* Réseau partagé : conditions du chauffeur, coordonnées bancaires des versements */}
+        <Stack.Screen name="network-terms" options={{ animation: "slide_from_right" }} />
+        <Stack.Screen name="payout" options={{ animation: "slide_from_right" }} />
       </Stack>
     </TermsGate>
   );

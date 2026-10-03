@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import {
   PAYMENT_METHOD_LABELS, VEHICLE_CATEGORY_META, decodePolyline, driverCollects, flightBadge, formatDistance, formatDuration, formatPrice, formatRideDate,
-  type DriverOffer,
+  type DriverOfferV2,
 } from "@rydar/shared";
 import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
@@ -9,13 +9,15 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, Vibration, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { blockerInfo, CollectNote, deductionCents, frTypo } from "@/components/centrale";
+import { CollectNote, deductionCents, frTypo } from "@/components/centrale";
 import { RydarMap } from "@/components/map/rydar-map";
+import { MoneyLine } from "@/components/network";
 import { CountdownRing } from "@/components/radar";
 import { BigButton, Chip, RouteLine, Screen, Sheet } from "@/components/ui";
 import { URGENT_OFFER_S, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
-import { api, refusalText } from "@/lib/api";
+import { api, ApiError, refusalText } from "@/lib/api";
+import { offerBlockView, partnerOfferView, settleHref } from "@/lib/network";
 import { offerSession } from "@/lib/offer-session";
 import { approachSeconds, colors, control, mono, overlay, radius, space, toneColor, type, weight } from "@/theme";
 
@@ -35,6 +37,9 @@ const ACCEPT_H = 80;
 const MAP_PADDING = { top: 110, bottom: 60, left: 50, right: 50 };
 
 const NBSP = " ";
+
+/** Refus levés en erreur à l'acceptation : l'offre se ferme avec leur motif (réessayer n'y changerait rien). */
+const CLOSING_CODES = new Set(["OFFER_CHANGED", "DRIVER_BUSY_AT_TIME", "OFFER_CLOSED", "OFFER_EXPIRED", "NETWORK_CONSENT_REQUIRED", "NETWORK_DISABLED"]);
 const passengersText = (n: number) => `${n}${NBSP}passager${n > 1 ? "s" : ""}`;
 const luggageText = (n: number) => (n > 0 ? `${n}${NBSP}bagage${n > 1 ? "s" : ""}` : "Sans bagage");
 
@@ -60,7 +65,7 @@ export default function OfferScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { offers, offersReadAt, forgetOffer, refresh, home } = useDriver();
   const me = useMyPosition();
-  const snapshot = useRef<DriverOffer | null>(null);
+  const snapshot = useRef<DriverOfferV2 | null>(null);
   const live = offers.find((o) => o.offer_id === id) ?? null;
   if (live) snapshot.current = live;
   const offer = live ?? snapshot.current;
@@ -70,10 +75,14 @@ export default function OfferScreen() {
   const [message, setMessage] = useState<string | null>(null);
   // Ouverture directe (notification) : la liste des offres n'est peut-être pas encore chargée
   const [checked, setChecked] = useState(live != null);
-  // Mode centrale : acceptation refusée (DRIVER_BLOCKED) en attendant la relecture de l'offre (champ blocked)
+  // Centrale ou réseau partagé : acceptation refusée (DRIVER_BLOCKED) en attendant la relecture de l'offre (champ blocked)
   const [blockedLocal, setBlockedLocal] = useState<{ reason: string; message?: string } | null>(null);
   useEffect(() => setBlockedLocal(null), [offers]);
-  const block = blockerInfo(offer?.blocked ?? blockedLocal?.reason, offer?.blocked ? null : blockedLocal?.message);
+  const block = offerBlockView(
+    offer?.blocked ?? blockedLocal?.reason,
+    offer?.blocked ? offer.blocked_message : blockedLocal?.message,
+    { giver: offer?.network?.giver.name, executor: home?.organization.name },
+  );
   const blockedReason = block?.reason ?? null;
   const ringtone = useAudioPlayer(require("../../../assets/sounds/ride_offer_v2.wav"));
   const chime = useAudioPlayer(require("../../../assets/sounds/ride_offer.wav"));
@@ -283,6 +292,16 @@ export default function OfferScreen() {
         void refresh();
       }
     } catch (e) {
+      const code = e instanceof ApiError ? e.code : null;
+      if (code && CLOSING_CODES.has(code)) {
+        // Réseau partagé : course modifiée (reproposée si encore disponible), créneau déjà pris, offre fermée…
+        if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        closedExpiry.current = offer.expires_at;
+        setMessage(refusalText({ code, message: (e as Error).message }));
+        setState(code === "OFFER_EXPIRED" ? "expired" : "taken");
+        void refresh();
+        return;
+      }
       setMessage((e as Error).message);
       setState("open");
     }
@@ -317,12 +336,15 @@ export default function OfferScreen() {
   const eta = approachSeconds(offer.distance_m);
   // Vol suivi : « AF1234 · +35 min », « AF1234 · atterri 14:52 · T2E »
   const flight = flightBadge(offer, home?.organization.timezone);
+  // Réseau partagé : « Course de {A} (partenaire) », sa part et UNE ligne d'argent (jamais commission ni frais)
+  const partner = partnerOfferView(offer);
   // Mode centrale : « Vous gagnez 40 € » (part chauffeur), course 59 € · commission 19 € (commission + frais)
-  const centrale = offer.dispatch_model === "centrale" && offer.driver_payout_cents != null;
+  const centrale = !partner && offer.dispatch_model === "centrale" && offer.driver_payout_cents != null;
   const deduction = deductionCents(offer);
   const collects = offer.driver_collects ?? driverCollects(offer.payment_method);
-  // Motif renvoyé par le serveur (mode centrale uniquement), même pour une course sans répartition (prix absent)
+  // Motif renvoyé par le serveur (centrale, réseau partagé), même pour une course sans répartition (prix absent)
   const blocked = block != null && !closed;
+  const kicker = partner ? partner.title : offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée";
   const busy = state === "accepting";
   // Fermée après acceptation (course acceptée / ajoutée au planning) : confirmation ; sinon expirée / prise / refusée
   const success = state === "declined" && message != null;
@@ -358,12 +380,13 @@ export default function OfferScreen() {
 
   return (
     <Screen>
-      <View style={[styles.mapBox, (centrale || blocked) && { height: blocked ? "27%" : "37%" }]}>
-        {/* Offre (quelques secondes pour décider) : carte fixe, sans rotation ni boussole (compte à rebours à droite) */}
-        <RydarMap me={me} pickup={pickup} dropoff={dropoff} route={route} padding={MAP_PADDING} rotatable={false} />
+      <View style={[styles.mapBox, (centrale || partner || blocked) && { height: blocked ? "27%" : "37%" }]}>
+        {/* Offre (quelques secondes pour décider) : carte fixe, sans rotation ni boussole (compte à rebours à droite).
+            Offre partenaire : départ et arrivée approximatifs (~300 m), sans tracé */}
+        <RydarMap me={me} pickup={pickup} dropoff={dropoff} route={partner ? null : route} padding={MAP_PADDING} rotatable={false} />
         <SafeAreaView edges={["top"]} style={styles.mapTop} pointerEvents="box-none">
-          <View style={styles.headBox} accessible accessibilityRole="header" accessibilityLabel={`${offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée"}, course ${offer.number}, ${category}`}>
-            <Text style={styles.kicker}>{offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée"}</Text>
+          <View style={styles.headBox} accessible accessibilityRole="header" accessibilityLabel={`${kicker}, course ${offer.number}, ${category}`}>
+            <Text style={styles.kicker} numberOfLines={1}>{kicker}</Text>
             <Text style={styles.number} numberOfLines={1}>Course {offer.number} · {category}</Text>
           </View>
           {urgent && !closed && (
@@ -375,9 +398,17 @@ export default function OfferScreen() {
       </View>
 
       <Sheet style={styles.sheet}>
-        <SafeAreaView edges={["bottom"]} style={[styles.body, { gap: centrale ? space.md : space.lg }]}>
+        <SafeAreaView edges={["bottom"]} style={[styles.body, { gap: centrale || partner ? space.md : space.lg }]}>
           <View style={styles.priceRow}>
-            {centrale ? (
+            {partner ? (
+              <View style={{ flex: 1 }} accessible accessibilityLabel={`Vous gagnez ${formatPrice(partner.gainCents, partner.currency)}. ${partner.line}`}>
+                <Text style={styles.priceLabel}>Vous gagnez</Text>
+                <Text style={styles.price} numberOfLines={1} adjustsFontSizeToFit>
+                  {formatPrice(partner.gainCents, partner.currency)}
+                </Text>
+                <Text style={styles.priceSub} numberOfLines={1}>{partner.paymentLabel}</Text>
+              </View>
+            ) : centrale ? (
               <View
                 style={{ flex: 1 }}
                 accessible
@@ -409,7 +440,14 @@ export default function OfferScreen() {
             </View>
           </View>
 
-          <RouteLine from={offer.pickup_address} to={offer.dropoff_address} big />
+          {partner ? (
+            <View style={{ gap: space.xs }}>
+              <RouteLine from={partner.pickup} to={partner.dropoff} big />
+              <Text style={styles.areaNote}>{partner.addressNote}</Text>
+            </View>
+          ) : (
+            <RouteLine from={offer.pickup_address} to={offer.dropoff_address} big />
+          )}
 
           <View style={styles.chips}>
             {offer.estimated_distance_m != null && <Chip icon="navigate-outline" text={`${formatDistance(offer.estimated_distance_m)} · ${formatDuration(offer.estimated_duration_s)}`} />}
@@ -423,6 +461,8 @@ export default function OfferScreen() {
               <Text style={styles.commentText} numberOfLines={3}>{offer.comment}</Text>
             </View>
           ) : null}
+          {/* Réseau partagé : une seule ligne d'argent avec l'organisation qui confie la course */}
+          {partner && !blocked && <MoneyLine text={partner.line} collects={offer.network?.money.collects ?? false} />}
           {/* Qui encaisse le client : le chauffeur (il reverse la commission) ou la centrale (elle verse la part) */}
           {centrale && !blocked && (
             <CollectNote collects={collects} price={offer.price_cents} deduction={deduction} payout={offer.driver_payout_cents} currency={offer.currency} />
@@ -437,7 +477,8 @@ export default function OfferScreen() {
                 </Text>
               </View>
             ) : blocked && block ? (
-              // Mode centrale : commission en retard / contestée, plafond d'encours… → acceptation impossible
+              // Centrale : commission en retard / contestée, plafond d'encours… ; réseau partagé : impayé ou plafond envers
+              // l'organisation partenaire, plafond de la sienne → acceptation impossible
               <>
                 <View style={styles.blockBox} accessibilityRole="alert">
                   <Ionicons name="lock-closed-outline" size={20} color={colors.red} style={styles.commentIcon} />
@@ -448,7 +489,7 @@ export default function OfferScreen() {
                 </View>
                 <BigButton title="Accepter" icon="lock-closed-outline" variant="secondary" height={control.md} disabled onPress={() => undefined} />
                 {block.payable && (
-                  <BigButton title="Régler mes commissions" icon="wallet-outline" height={control.lg} onPress={() => router.push("/commissions")} />
+                  <BigButton title={block.actionLabel} icon="wallet-outline" height={control.lg} onPress={() => router.push(settleHref(block.target))} />
                 )}
                 {secondary}
               </>
@@ -486,6 +527,7 @@ const styles = StyleSheet.create({
   priceLabel: { color: colors.muted, fontSize: type.body, fontWeight: weight.medium },
   price: { color: colors.fg, fontSize: type.display, lineHeight: type.display + 6, fontWeight: weight.bold, letterSpacing: -0.5, ...mono },
   priceSub: { color: colors.muted, fontSize: type.body, ...mono },
+  areaNote: { color: colors.muted, fontSize: type.footnote, lineHeight: 18, marginLeft: 24 },
   approach: { alignItems: "flex-end" },
   eta: { color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, ...mono },
   etaSub: { color: colors.muted, fontSize: type.body, ...mono },

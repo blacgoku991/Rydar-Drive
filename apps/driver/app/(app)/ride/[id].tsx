@@ -1,17 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import {
-  DRIVER_FLOW, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, decodePolyline, driverCollects, formatDistance, formatDuration, formatPhone, formatPrice,
-  formatRideDate, haversine, shortAddress, type DriverSettlementItem, type Ride, type RideStatus,
+  DRIVER_FLOW, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, decodePolyline, formatDistance, formatDuration, formatPhone, formatPrice,
+  formatRideDate, haversine, shortAddress, type DriverNetworkSettlementItem, type DriverSettlementItem, type RideStatus,
 } from "@rydar/shared";
 import { useKeepAwake } from "expo-keep-awake";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { CollectNote, deductionCents, dueText, frTypo } from "@/components/centrale";
+import { BookingVoucherCard } from "@/components/booking-voucher";
+import { CollectNote, dueText, frTypo } from "@/components/centrale";
 import { FlightCard, PickupShiftBanner } from "@/components/flight";
 import { RydarMap } from "@/components/map/rydar-map";
 import { NavBanner } from "@/components/nav-banner";
+import { MoneyLine } from "@/components/network";
 import { BigButton, BottomSheet, Chip, Pill, Screen, Sheet, SlideToConfirm, StepDots } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
@@ -19,6 +21,10 @@ import { useNavigation } from "@/hooks/use-navigation";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { setHighAccuracy } from "@/lib/location";
+import {
+  clientWindowNote, giverPhone, partnerDoneView, partnerPaymentLabel, receiptText, rideMoneyView, settleHref, type AppRide, type LegacyRideContext,
+  type RideMoneyView,
+} from "@/lib/network";
 import { overdue, overdueHint } from "@/lib/planning";
 import { navUrl, rideTarget, type NavApp, type RideTarget } from "@/lib/ride-target";
 import { approachSeconds, colors, control, mono, overlay, radius, space, type, weight } from "@/theme";
@@ -62,27 +68,36 @@ export default function RideScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { refresh, home, setOnline } = useDriver();
   const me = useMyPosition();
-  const [ride, setRide] = useState<Ride | null>(null);
+  const [ride, setRide] = useState<AppRide | null>(null);
   // Course invisible pour ce chauffeur dès l'ouverture (réattribuée, notification ou planning périmés)
   const [missing, setMissing] = useState(false);
   const [loading, setLoading] = useState(false);
-  // Mode centrale : récapitulatif de fin de course (part chauffeur, commission à régler ou part à recevoir)
-  const [done, setDone] = useState<{ ride: Ride; settlement: DriverSettlementItem | null } | null>(null);
+  // Récapitulatif de fin de course : centrale (part chauffeur, commission à régler ou part à recevoir) ; course partenaire
+  // (UN montant à régler à l'organisation qui l'a confiée, ou qu'elle vous versera)
+  const [done, setDone] = useState<{ ride: AppRide; settlement: DriverSettlementItem | null; partnerItem: DriverNetworkSettlementItem | null } | null>(null);
 
-  const hadRide = useRef(false);
+  // Serveur antérieur à driver_ride : argent déduit du modèle de l'organisation (ref : la relecture de l'accueil ne relance
+  // pas le chargement)
+  const legacy = useRef<LegacyRideContext>({});
+  legacy.current = { model: home?.model ?? home?.organization.dispatch_model, organization: home?.organization.name };
+  const hadRide = useRef<AppRide | null>(null);
   const load = useCallback(async () => {
-    const r = await api.ride(String(id)).catch(() => undefined); // undefined : réseau, on garde l'affichage
+    const r = await api.ride(String(id), legacy.current).catch(() => undefined); // undefined : réseau, on garde l'affichage
     if (r === undefined) return;
     if (r === null) {
-      if (hadRide.current) {
-        // Course retirée par la centrale (réattribuée) : plus visible pour ce chauffeur
-        hadRide.current = false;
-        Alert.alert("Course retirée", "La centrale a réattribué cette course.");
+      const previous = hadRide.current;
+      if (previous) {
+        // Course retirée (réattribuée par la centrale, ou retirée par l'organisation partenaire) : plus visible
+        hadRide.current = null;
+        Alert.alert(
+          "Course retirée",
+          previous.network ? frTypo(`${previous.network.giver.name} a retiré cette course.`) : "La centrale a réattribué cette course.",
+        );
         toHome();
       } else setMissing(true);
       return;
     }
-    hadRide.current = true;
+    hadRide.current = r;
     setMissing(false);
     setRide(r);
   }, [id]);
@@ -155,8 +170,16 @@ export default function RideScreen() {
 
   const status = ride.status as RideStatus;
   const step = DRIVER_FLOW[status];
-  // Mode centrale : répartition calculée sur la course (part chauffeur / commission / frais plateforme)
-  const centrale = (home?.model ?? home?.organization.dispatch_model) === "centrale" && ride.driver_payout_cents != null;
+  // Argent décidé par driver_ride.money (et non par le modèle de l'organisation) : course partenaire (part du chauffeur,
+  // UN montant avec l'organisation qui la confie), centrale (part chauffeur / commission), flotte (prix seul)
+  const money = rideMoneyView(ride);
+  const partner = money.kind === "partner" ? money : null;
+  const centrale = money.kind === "centrale";
+  const giver = ride.network ? ride.network.giver.name : null;
+  const callGiver = giverPhone(ride);
+  // Course partenaire hors de la fenêtre du client (1 h avant la prise en charge → 1 h après la fin)
+  const clientNote = clientWindowNote(ride);
+  const payLabel = partner ? partnerPaymentLabel(ride.payment_method) : PAYMENT_METHOD_LABELS[ride.payment_method];
   const stepIndex = Math.max(0, STEPS.findIndex((s) => s.status === status));
   const toPickup = headingToPickup;
   // Client à bord : la destination, même sans coordonnées (adresse seule, sans estimation d'arrivée)
@@ -197,10 +220,17 @@ export default function RideScreen() {
     setLoading(false);
     if (!res.ok) return Alert.alert("Action impossible", res.message ? frTypo(res.message) : "Réessayez.");
     await Promise.all([load(), refresh()]);
+    if (step.next === "COMPLETED" && partner) {
+      // Règlement partenaire créé à la clôture (trigger) : montant et échéance exacts pour le récapitulatif
+      const net = await api.networkSettlements().catch(() => null);
+      const item = net?.organizations.flatMap((o) => o.items).find((x) => x.ride_id === ride.id) ?? null;
+      setDone({ ride, settlement: null, partnerItem: item });
+      return;
+    }
     if (step.next === "COMPLETED" && centrale) {
       // Règlement créé à la clôture (trigger) : montant et échéance exacts pour le récapitulatif
       const mine = await api.settlements(20).catch(() => null);
-      setDone({ ride, settlement: mine?.items.find((x) => x.ride_id === ride.id) ?? null });
+      setDone({ ride, settlement: mine?.items.find((x) => x.ride_id === ride.id) ?? null, partnerItem: null });
       return;
     }
     if (step.next === "COMPLETED") {
@@ -273,6 +303,26 @@ export default function RideScreen() {
               </View>
             </View>
           )}
+          {ride.network ? (
+            // Course partenaire : organisation qui l'a confiée, joignable jusqu'à 48 h après la fin
+            <View style={styles.partner}>
+              <Ionicons name="business-outline" size={20} color={colors.violet} style={styles.iconTop} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.partnerTitle} accessibilityRole="header">Course partenaire — {giver}</Text>
+                <Text style={styles.partnerSub}>{frTypo(`Vous la faites pour le compte de ${home?.organization.name ?? "votre organisation"}.`)}</Text>
+              </View>
+              {callGiver ? (
+                <Pressable
+                  style={({ pressed }) => [styles.call, pressed && styles.pressed]}
+                  onPress={() => void Linking.openURL(`tel:${callGiver}`)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Appeler ${giver}, ${formatPhone(callGiver)}`}
+                >
+                  <Ionicons name="call-outline" size={22} color={colors.fg} />
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
           {step && <StepDots steps={STEPS.map((s) => s.label)} current={stepIndex} />}
 
           <View style={styles.targetRow}>
@@ -291,17 +341,23 @@ export default function RideScreen() {
           <View style={styles.client}>
             <Ionicons name="person-outline" size={20} color={colors.muted} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.clientName} numberOfLines={1}>{ride.customer_name}</Text>
-              <Text style={styles.clientSub} numberOfLines={1}>{formatRideDate(ride.pickup_at, home?.organization.timezone)} · {formatPrice(ride.price_cents)}</Text>
+              {clientNote ? (
+                <Text style={styles.clientHidden}>{clientNote}</Text>
+              ) : (
+                <Text style={styles.clientName} numberOfLines={1}>{ride.customer_name}</Text>
+              )}
+              <Text style={styles.clientSub} numberOfLines={1}>{formatRideDate(ride.pickup_at, home?.organization.timezone)} · {formatPrice(ride.price_cents, ride.currency)}</Text>
             </View>
-            <Pressable
-              style={({ pressed }) => [styles.call, pressed && styles.pressed]}
-              onPress={() => void Linking.openURL(`tel:${ride.customer_phone}`)}
-              accessibilityRole="button"
-              accessibilityLabel={`Appeler ${ride.customer_name}, ${formatPhone(ride.customer_phone)}`}
-            >
-              <Ionicons name="call-outline" size={22} color={colors.fg} />
-            </Pressable>
+            {ride.customer_phone ? (
+              <Pressable
+                style={({ pressed }) => [styles.call, pressed && styles.pressed]}
+                onPress={() => void Linking.openURL(`tel:${ride.customer_phone}`)}
+                accessibilityRole="button"
+                accessibilityLabel={`Appeler ${ride.customer_name ?? "le client"}, ${formatPhone(ride.customer_phone)}`}
+              >
+                <Ionicons name="call-outline" size={22} color={colors.fg} />
+              </Pressable>
+            ) : null}
           </View>
 
           {/* Vol suivi (prise en charge à l'aéroport ou dépôt pour un vol) */}
@@ -310,9 +366,11 @@ export default function RideScreen() {
           <View style={styles.chips}>
             <Chip icon="people-outline" text={passengersText(ride.passengers)} />
             <Chip icon="briefcase-outline" text={luggageText(ride.luggage)} />
-            <Chip icon="card-outline" text={PAYMENT_METHOD_LABELS[ride.payment_method]} />
-            {centrale && <Chip icon="wallet-outline" text={`Vous gagnez ${formatPrice(ride.driver_payout_cents, ride.currency)}`} color={colors.fg} />}
+            <Chip icon="card-outline" text={payLabel} />
+            {money.kind !== "plain" && <Chip icon="wallet-outline" text={`Vous gagnez ${formatPrice(money.gainCents, money.currency)}`} color={colors.fg} />}
           </View>
+          {/* Course partenaire : UN montant avec l'organisation qui l'a confiée (jamais commission ni frais) */}
+          {partner && <MoneyLine text={partner.line} collects={partner.collects} />}
           {ride.comment ? (
             <View style={styles.note}>
               <Ionicons name="chatbubble-outline" size={20} color={colors.muted} style={styles.iconTop} />
@@ -322,6 +380,8 @@ export default function RideScreen() {
               </View>
             </View>
           ) : null}
+          {/* Bon de réservation : toutes les courses (à présenter en cas de contrôle) */}
+          {ride.voucher ? <BookingVoucherCard voucher={ride.voucher} tz={home?.organization.timezone} /> : null}
         </ScrollView>
       </Sheet>
 
@@ -334,7 +394,7 @@ export default function RideScreen() {
       </SafeAreaView>
 
       <BottomSheet visible={done != null} onClose={() => router.dismissTo("/home")}>
-        {done && <RideDoneSummary ride={done.ride} settlement={done.settlement} tz={home?.organization.timezone} />}
+        {done && <RideDoneSummary ride={done.ride} settlement={done.settlement} partnerItem={done.partnerItem} tz={home?.organization.timezone} />}
       </BottomSheet>
     </Screen>
   );
@@ -358,12 +418,17 @@ function BackButton() {
 /**
  * Fin de course (mode centrale) : « Course 1692 terminée · Vous gagnez 40 € », puis « Commission 19 € à régler »
  * (le chauffeur a encaissé le client) ou « 40 € vous seront versés par la centrale » (client payé en ligne).
+ * Course partenaire : « 12,50 € à régler à {A} » ou « {A} vous versera 37,50 € » (PartnerDoneSummary).
  */
-function RideDoneSummary({ ride, settlement, tz }: { ride: Ride; settlement: DriverSettlementItem | null; tz?: string }) {
+function RideDoneSummary({
+  ride, settlement, partnerItem, tz,
+}: { ride: AppRide; settlement: DriverSettlementItem | null; partnerItem: DriverNetworkSettlementItem | null; tz?: string }) {
+  const money = rideMoneyView(ride);
+  if (money.kind === "partner") return <PartnerDoneSummary ride={ride} money={money} item={partnerItem} tz={tz} />;
   const currency = ride.currency ?? "EUR";
-  const payout = settlement?.driver_payout_cents ?? ride.driver_payout_cents ?? null;
-  const collects = settlement ? settlement.direction === "driver_owes" : driverCollects(ride.payment_method);
-  const owed = settlement?.direction === "driver_owes" ? settlement.amount_cents : deductionCents(ride);
+  const payout = settlement?.driver_payout_cents ?? (money.kind === "centrale" ? money.gainCents : null);
+  const collects = settlement ? settlement.direction === "driver_owes" : ride.money.collects;
+  const owed = settlement?.direction === "driver_owes" ? settlement.amount_cents : money.kind === "centrale" ? money.deductionCents : 0;
   const due = settlement?.direction === "driver_owes" && settlement.status === "due" ? dueText(settlement.due_at, tz) : null;
   return (
     <>
@@ -402,6 +467,46 @@ function RideDoneSummary({ ride, settlement, tz }: { ride: Ride; settlement: Dri
           </View>
           <BigButton title="Retour à l'accueil" height={control.lg} onPress={() => router.dismissTo("/home")} />
         </>
+      )}
+    </>
+  );
+}
+
+/** Fin d'une course partenaire : un seul montant avec l'organisation qui l'a confiée, puis « Régler ». */
+function PartnerDoneSummary({
+  ride, money, item, tz,
+}: { ride: AppRide; money: Extract<RideMoneyView, { kind: "partner" }>; item: DriverNetworkSettlementItem | null; tz?: string }) {
+  const done = partnerDoneView(money, item, tz);
+  const price = formatPrice(ride.price_cents, money.currency);
+  return (
+    <>
+      <View style={styles.doneHead} accessibilityRole="header">
+        <Ionicons name="checkmark-circle-outline" size={24} color={colors.muted} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.doneTitle}>Course {ride.number} terminée</Text>
+          <Text style={styles.doneRoute} numberOfLines={1}>{shortAddress(ride.pickup_address)} → {shortAddress(ride.dropoff_address)}</Text>
+        </View>
+      </View>
+      <View accessible accessibilityLabel={`Vous gagnez ${formatPrice(money.gainCents, money.currency)}. Course ${price}, ${partnerPaymentLabel(ride.payment_method)}.`}>
+        <Text style={styles.doneGainLabel}>Vous gagnez</Text>
+        <Text style={styles.doneGain} numberOfLines={1} adjustsFontSizeToFit>{formatPrice(money.gainCents, money.currency)}</Text>
+        <Text style={styles.doneGainSub}>Course {price} · {partnerPaymentLabel(ride.payment_method)}</Text>
+      </View>
+      <View style={styles.owed}>
+        <Ionicons name={done.owes ? "wallet-outline" : "arrow-down-circle-outline"} size={20} color={colors.muted} style={styles.iconTop} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.owedTitle}>{done.title}</Text>
+          <Text style={[styles.owedSub, done.late && { color: colors.amber }]}>{done.sub}</Text>
+        </View>
+      </View>
+      <Text style={styles.receipt}>{receiptText(money.giver)}</Text>
+      {done.owes ? (
+        <>
+          <BigButton title="Régler maintenant" icon="wallet-outline" height={control.lg} onPress={() => router.replace(settleHref("network"))} />
+          <BigButton title="Plus tard" variant="ghost" height={control.md} onPress={() => router.dismissTo("/home")} />
+        </>
+      ) : (
+        <BigButton title="Retour à l'accueil" height={control.lg} onPress={() => router.dismissTo("/home")} />
       )}
     </>
   );
@@ -446,6 +551,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
   },
   clientName: { color: colors.fg, fontSize: type.headline, fontWeight: weight.semibold },
+  clientHidden: { color: colors.muted, fontSize: type.body, lineHeight: 21 },
+  partner: {
+    flexDirection: "row", alignItems: "center", gap: space.md, paddingLeft: space.lg, paddingRight: space.sm, paddingVertical: space.sm,
+    borderRadius: radius.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line, minHeight: control.md,
+  },
+  partnerTitle: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold },
+  partnerSub: { color: colors.muted, fontSize: type.footnote, lineHeight: 18, marginTop: 2 },
+  receipt: { color: colors.muted, fontSize: type.subhead, lineHeight: 20 },
   clientSub: { color: colors.muted, fontSize: type.body, marginTop: 2, ...mono },
   call: {
     width: control.md, height: control.md, borderRadius: radius.full, backgroundColor: colors.surface3, borderWidth: 1, borderColor: colors.lineStrong,

@@ -1,5 +1,7 @@
 // Gains du chauffeur : jour / semaine / mois, histogramme 7 jours, dernières courses (driver_earnings).
 // Mode centrale : « Votre part » (part chauffeur réelle), commission et statut du règlement par course.
+// Réseau partagé : course partenaire marquée « Partenaire · {organisation} », net par course (termes figés), UN montant
+// avec l'organisation qui l'a confiée (jamais commission ni frais).
 import { Ionicons } from "@expo/vector-icons";
 import {
   PAYMENT_METHOD_LABELS, SETTLEMENT_STATUS_META, formatDistance, formatDuration, formatPrice, formatRideDate,
@@ -10,10 +12,12 @@ import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { driverSettlementLabel } from "@/components/centrale";
+import { PartnerBadge } from "@/components/network";
 import { BigButton, Card, Label, Pill, Screen, ScreenHeader, Segmented } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
+import { earningsPartner, hasPartnerMoney, networkVisible, PARTNER_SETTLEMENTS_TITLE, settleHref } from "@/lib/network";
 import { alpha, colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
 
 type Period = "today" | "week" | "month";
@@ -42,7 +46,7 @@ function periodTitle(p: Period, e: DriverEarnings) {
 }
 
 export default function Earnings() {
-  const { home } = useDriver();
+  const { home, network } = useDriver();
   const [data, setData] = useState<DriverEarnings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("today");
@@ -86,6 +90,14 @@ export default function Earnings() {
         : settlement && settlement.to_receive_cents > 0
           ? { icon: "arrow-down-circle-outline" as const, color: colors.green, text: `${formatPrice(settlement.to_receive_cents, currency)} à recevoir` }
           : { icon: "wallet-outline" as const, color: colors.muted, text: "Tout est réglé" };
+  // Flotte : accès aux règlements des courses partenaires (centrale : onglet de l'écran Commissions)
+  const partnerNet = home?.network ?? null;
+  const showPartners = !centrale && (hasPartnerMoney(partnerNet) || networkVisible(network));
+  const partnerState = partnerNet && partnerNet.owed_cents > 0
+    ? { icon: "wallet-outline" as const, color: colors.amber, text: `${formatPrice(partnerNet.owed_cents, currency)} à régler` }
+    : partnerNet && partnerNet.payout_due_cents > 0
+      ? { icon: "arrow-down-circle-outline" as const, color: colors.green, text: `${formatPrice(partnerNet.payout_due_cents, currency)} à recevoir` }
+      : { icon: "swap-horizontal-outline" as const, color: colors.muted, text: "Tout est réglé" };
 
   return (
     <Screen>
@@ -214,6 +226,23 @@ export default function Earnings() {
                 </Pressable>
               )}
 
+              {/* Flotte : règlements des courses partenaires (le chauffeur règle lui-même l'organisation qui les confie) */}
+              {showPartners && (
+                <Pressable
+                  onPress={() => router.push(settleHref("network"))}
+                  style={({ pressed }) => [styles.linkRow, pressed && { backgroundColor: colors.surface2 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${PARTNER_SETTLEMENTS_TITLE}. ${partnerState.text}`}
+                >
+                  <Ionicons name={partnerState.icon} size={20} color={partnerState.color} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.linkTitle}>{PARTNER_SETTLEMENTS_TITLE}</Text>
+                    <Text style={styles.linkSub} numberOfLines={2}>{partnerState.text}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+                </Pressable>
+              )}
+
               {/* Histogramme 7 jours */}
               <Card style={{ gap: space.lg }}>
                 <View style={styles.chartHead}>
@@ -281,7 +310,10 @@ export default function Earnings() {
                   {data.recent.map((r, i) => {
                     const when = formatRideDate(r.completed_at, data.timezone);
                     const pay = PAYMENT_METHOD_LABELS[r.payment_method] ?? "";
-                    const amount = centrale
+                    // Course partenaire : sa part (termes figés) comme en centrale, quel que soit le modèle
+                    const partner = earningsPartner(r);
+                    const share = centrale || partner != null;
+                    const amount = share
                       ? `votre part ${formatPrice(r.net_cents, r.currency)} sur ${formatPrice(r.price_cents, r.currency)}`
                       : `${formatPrice(r.price_cents, r.currency)}${r.net_cents != null ? `, net ${formatPrice(r.net_cents, r.currency)}` : ""}`;
                     return (
@@ -289,7 +321,7 @@ export default function Earnings() {
                         key={r.id}
                         style={[styles.ride, i > 0 && styles.rideBorder]}
                         accessible
-                        accessibilityLabel={`Course ${r.number}, ${r.pickup} vers ${r.dropoff}, ${when}, ${pay}, ${amount}`}
+                        accessibilityLabel={`Course ${r.number}${partner ? `, partenaire, ${partner.giver}` : ""}, ${r.pickup} vers ${r.dropoff}, ${when}, ${pay}, ${amount}`}
                       >
                         <Ionicons name={PAY_ICON[r.payment_method] ?? "card-outline"} size={20} color={colors.muted} style={styles.rideIcon} />
                         <View style={{ flex: 1, gap: 2 }}>
@@ -297,9 +329,9 @@ export default function Earnings() {
                           <Text style={styles.rideMeta} numberOfLines={1}>
                             Course {r.number} · {when}{pay ? ` · ${pay}` : ""}
                           </Text>
-                          {centrale && <RideSettlement r={r} />}
+                          {partner ? <PartnerSettlement r={r} /> : centrale && <RideSettlement r={r} />}
                         </View>
-                        {centrale ? (
+                        {share ? (
                           <View style={{ alignItems: "flex-end" }}>
                             <Text style={styles.ridePrice}>{formatPrice(r.net_cents, r.currency)}</Text>
                             <Text style={styles.rideNet}>sur {formatPrice(r.price_cents, r.currency)}</Text>
@@ -320,6 +352,26 @@ export default function Earnings() {
         </ScrollView>
       </SafeAreaView>
     </Screen>
+  );
+}
+
+/**
+ * Course partenaire : organisation qui l'a confiée, statut du règlement et UN montant (« 12,50 € à reverser à {A} » /
+ * « part versée par {A} »), jamais commission ni frais.
+ */
+function PartnerSettlement({ r }: { r: EarningsRide }) {
+  const p = earningsPartner(r);
+  if (!p) return null;
+  const status = r.settlement_status ?? null;
+  const direction = p.collects ? "driver_owes" : "centrale_owes";
+  return (
+    <View style={styles.settle}>
+      <PartnerBadge giver={p.giver} />
+      {status ? <Pill label={driverSettlementLabel(status, direction)} color={toneColor(SETTLEMENT_STATUS_META[status].tone)} /> : null}
+      <Text style={styles.settleText}>
+        {p.collects ? `${formatPrice(p.giverPartCents, r.currency)} à reverser à ${p.giver}` : `Part versée par ${p.giver}`}
+      </Text>
+    </View>
   );
 }
 

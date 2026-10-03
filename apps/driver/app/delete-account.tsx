@@ -11,7 +11,7 @@ import { useDriver } from "@/hooks/driver-context";
 import {
   ApiError, deleteAccount, deletionDebt, LAST_EMAIL_KEY, legalUrl, previewAccountDeletion, type DeleteAccountResult,
 } from "@/lib/api";
-import { openDebt, openDebtNotice, type OpenDebt } from "@/lib/debt";
+import { debtTotal, openDebt, openDebtNotice, type OpenDebt } from "@/lib/debt";
 import { forgetLocalAcceptance } from "@/lib/legal";
 import { stopTracking } from "@/lib/location";
 import { unregisterPush } from "@/lib/notifications";
@@ -195,7 +195,8 @@ export default function DeleteAccount() {
     if (working.current || missingPassword()) return;
     const shown = await debtToConfirm();
     if (shown === undefined) return;
-    const cents = shown?.cents ?? 0;
+    // Total dû (centrale + organisations partenaires) : la confirmation se redemande s'il change
+    const cents = shown ? debtTotal(shown) : 0;
     // Déjà confirmé (avant la demande du mot de passe) avec ce montant, ou plus rien de dû : pas de seconde fois
     if (confirmedCents.current != null && (cents === 0 || cents === confirmedCents.current)) return void run();
     const notice = shown ? openDebtNotice(shown) : null;

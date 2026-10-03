@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import {
-  DRIVER_FLOW, FLEET_REPORT_META, RIDE_STATUS_META, formatPrice, formatRideDate, haversine, shortAddress, type Ride, type RideStatus,
+  DRIVER_FLOW, FLEET_REPORT_META, RIDE_STATUS_META, formatPrice, formatRideDate, haversine, shortAddress, type RideStatus,
 } from "@rydar/shared";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, Linking, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,15 +10,18 @@ import { frTypo, SettlementBanner } from "@/components/centrale";
 import { ReportCard, ReportSheet } from "@/components/fleet-report";
 import { RydarMap } from "@/components/map/rydar-map";
 import type { LatLng, MapReport } from "@/components/map/types";
+import { NetworkBanner } from "@/components/network";
 import { BigButton, CollapsibleSheet, CountBadge, Pill, RouteLine, Screen, useFlash, type SheetSurfaceProps } from "@/components/ui";
 import { LOCATION_BLOCKED_MESSAGE, prepareFleetReport, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
+import { useNetworkTermsPrompt } from "@/hooks/use-network-terms-prompt";
 import { useNow } from "@/hooks/use-now";
 import { api } from "@/lib/api";
 import { batteryRestricted, requestBatteryExemption } from "@/lib/battery";
 import { useFleetRules } from "@/lib/chat-moderation";
 import { useAppEvent } from "@/lib/events";
 import { locationPermissionBlocked } from "@/lib/location";
+import { rideMoneyView, settleHref, type AppRide, type LegacyRideContext } from "@/lib/network";
 import { overdue } from "@/lib/planning";
 import { colors, control, mono, overlay, presenceColor, radius, space, type, weight } from "@/theme";
 
@@ -53,7 +56,7 @@ export default function Home() {
   const params = useLocalSearchParams<{ report?: string }>();
   const insets = useSafeAreaInsets();
   const flash = useFlash(insets.top + 66);
-  const [current, setCurrent] = useState<Ride | null>(null);
+  const [current, setCurrent] = useState<AppRide | null>(null);
   const [reporting, setReporting] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<LatLng | null>(null);
@@ -79,6 +82,18 @@ export default function Home() {
   const settlement = centrale ? home?.settlement ?? null : null;
   const blockedOffers = Boolean(settlement?.blocked);
   const isNew = centrale && home?.driver.trust_level === "new";
+  // Réseau partagé : conditions proposées une fois, accueil au premier plan (jamais pendant une offre ou une course)
+  const [focused, setFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+  useNetworkTermsPrompt(focused, now);
+  // Serveur antérieur à driver_ride : argent de la course en cours déduit du modèle de l'organisation
+  const legacy = useRef<LegacyRideContext>({});
+  legacy.current = { model: home?.model ?? home?.organization.dispatch_model, organization: home?.organization.name };
 
   // Course en cours : relue à chaque changement de présence (en route, sur place, client à bord) ou de course ;
   // lecture en échec (réseau) : nouvel essai, la carte « Course en cours » reste affichée en attendant
@@ -93,7 +108,7 @@ export default function Home() {
     let retry: ReturnType<typeof setTimeout> | null = null;
     const load = () => {
       api
-        .ride(currentRideId)
+        .ride(currentRideId, legacy.current)
         .then((r) => alive && setCurrent(r))
         .catch(() => {
           if (alive) retry = setTimeout(load, CURRENT_RIDE_RETRY_MS);
@@ -107,6 +122,8 @@ export default function Home() {
   }, [currentRideId, presence, rideTick]);
   // Course connue de l'accueil mais pas encore lue (réseau) : carte minimale, l'écran de course se charge lui-même
   const currentShown = current != null && current.id === currentRideId ? current : null;
+  // Argent de la course en cours (driver_ride.money) : sa part (centrale, course partenaire), sinon le prix
+  const currentMoney = currentShown ? rideMoneyView(currentShown) : null;
   // Nouvelle course en cours : panneau rouvert (le chauffeur voit la course sans avoir à le tirer)
   useEffect(() => {
     if (currentRideId) setCollapsed(false);
@@ -437,11 +454,12 @@ export default function Home() {
                       <Text style={styles.title} accessibilityRole="header">Course en cours</Text>
                       <Text style={styles.subtitle}>
                         Course {currentShown.number}
+                        {currentShown.network ? ` · partenaire (${currentShown.network.giver.name})` : ""}
                         {" · "}
                         <Text style={mono}>
-                          {centrale && currentShown.driver_payout_cents != null
-                            ? `vous gagnez ${formatPrice(currentShown.driver_payout_cents)}`
-                            : formatPrice(currentShown.price_cents)}
+                          {currentMoney && currentMoney.kind !== "plain"
+                            ? `vous gagnez ${formatPrice(currentMoney.gainCents, currentMoney.currency)}`
+                            : formatPrice(currentShown.price_cents, currentShown.currency)}
                         </Text>
                       </Text>
                     </View>
@@ -469,6 +487,8 @@ export default function Home() {
                   {settlement && (
                     <SettlementBanner s={settlement} tz={home?.organization.timezone} now={now} onPress={() => router.push("/commissions")} />
                   )}
+                  {/* Réseau partagé : sommes à régler aux organisations partenaires (blocage de leurs courses), part à recevoir */}
+                  <NetworkBanner n={home?.network} executor={home?.organization.name} onPress={() => router.push(settleHref("network"))} />
 
                   <View style={styles.status} accessibilityLiveRegion="polite">
                     <View style={styles.statusHead}>
