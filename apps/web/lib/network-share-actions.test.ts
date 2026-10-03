@@ -271,6 +271,14 @@ describe("courses confiées : règlements et décisions", () => {
     expect(h.rpcCalls).toEqual([{ fn: "org_network_payout_info", args: { p_settlement: SETTLEMENT } }]);
   });
 
+  it("chauffeur sans coordonnées bancaires : code PAYOUT_DETAILS_MISSING transmis (la feuille « Versé » l'explique)", async () => {
+    h.rpcReply.org_network_payout_info = { error: { code: "P0002", message: "PAYOUT_DETAILS_MISSING" } };
+    expect(await A.getNetworkPayoutInfo(SETTLEMENT)).toEqual({ ok: false, error: ERROR_MESSAGES.PAYOUT_DETAILS_MISSING, code: "PAYOUT_DETAILS_MISSING" });
+    // Panne : message générique, sans code
+    h.rpcReply.org_network_payout_info = { error: { code: "XX000", message: "boom" } };
+    expect(await A.getNetworkPayoutInfo(SETTLEMENT)).toEqual({ ok: false, error: "Coordonnées bancaires indisponibles." });
+  });
+
   it("exclusions : chauffeur (par exécution), organisation (symétrique), levée", async () => {
     await A.excludeNetworkDriver(EXEC, "");
     await A.setNetworkPartnerExcluded(PARTNER, true);

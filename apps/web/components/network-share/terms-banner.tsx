@@ -1,10 +1,12 @@
 "use client";
-// Bandeau owner / admin « nouvelle convention du réseau partagé » (tableau de bord, toutes les pages) : affiché quand
-// la convention a déjà été acceptée une fois mais pas sa version courante — pendant le délai de grâce (le réseau
-// continue), ou après (le réseau est arrêté pour l'organisation). Jamais affiché quand le réseau est fermé.
+// Bandeau owner / admin « nouvelle convention du réseau partagé » (tableau de bord) : affiché quand la convention a
+// déjà été acceptée une fois mais pas sa version courante — pendant le délai de grâce (le réseau continue), ou après
+// (le réseau est arrêté pour l'organisation). Jamais affiché quand le réseau est fermé, ni sur l'onglet « Réseau
+// partagé », qui a sa propre carte d'acceptation (Réglages) et son propre rappel en en-tête.
 import { NETWORK_DOCUMENTS, formatDate } from "@rydar/shared";
 import { FileCheck2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { NETWORK_SHARE_PATH } from "@/components/network-share/paths";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { acceptNetworkTerms } from "@/app/dashboard/reseau-partage/actions";
@@ -22,10 +24,11 @@ export function NetworkTermsBanner({
   timeZone: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [pending, start] = useTransition();
   const [checked, setChecked] = useState(false);
   const [hidden, setHidden] = useState(false);
-  if (hidden) return null;
+  if (hidden || pathname === NETWORK_SHARE_PATH || pathname?.startsWith(`${NETWORK_SHARE_PATH}/`)) return null;
   const submit = () =>
     checked &&
     start(() => runAction(async () => {

@@ -4,8 +4,8 @@
 import {
   DRIVER_NETWORK_READINESS_CODES, DRIVER_NETWORK_READINESS_META, ORG_NETWORK_READINESS_CODES, ORG_NETWORK_READINESS_META,
   formatDate, networkText,
-  type DispatchModel, type DriverNetworkReadinessCode, type NetworkDriverReadiness, type NetworkReadinessAction,
-  type OrgNetworkReadiness, type OrgNetworkReadinessCode,
+  type DispatchModel, type DriverNetworkReadinessCode, type NetworkDriverReadiness, type NetworkMembership,
+  type NetworkReadinessAction, type OrgNetworkReadiness, type OrgNetworkReadinessCode,
 } from "@rydar/shared";
 import { networkShareHref } from "./paths";
 
@@ -104,7 +104,11 @@ function sideState(r: OrgNetworkReadiness, side: ReadinessSide): SideState {
 }
 
 /** Explication d'un manque, date de fin de grâce et motifs de Rydar insérés. */
-function itemHint(code: OrgNetworkReadinessCode, r: OrgNetworkReadiness, timeZone: string): string {
+/** Centrale : ses chauffeurs indépendants roulent avec leur véhicule et sous leur assurance (carte « Recevoir »). */
+const CENTRALE_INSURANCE_HINT = "Confirmez que l'assurance de vos chauffeurs couvre les courses faites pour d'autres organisations.";
+
+function itemHint(code: OrgNetworkReadinessCode, r: OrgNetworkReadiness, timeZone: string, model: DispatchModel): string {
+  if (code === "insurance" && model === "centrale") return CENTRALE_INSURANCE_HINT;
   const meta = ORG_NETWORK_READINESS_META[code];
   const hint = networkText(meta.hint, { date: r.terms.grace_until ? formatDate(r.terms.grace_until, timeZone) : "la fin du délai" });
   if (code === "approval_refused" && r.approval.refused_reason) return `${hint} Motif : ${r.approval.refused_reason}`;
@@ -130,7 +134,7 @@ export function orgReadinessView(r: OrgNetworkReadiness, model: DispatchModel, t
     return {
       code,
       label: meta.label,
-      hint: itemHint(code, r, timeZone),
+      hint: itemHint(code, r, timeZone, model),
       blocking: meta.blocking,
       action: meta.action && href ? { label: meta.action.label, href } : null,
       sides: bySide.get(code)!,
@@ -153,6 +157,11 @@ export function shareOutRequested(r: OrgNetworkReadiness | null | undefined): bo
   return !!r?.enabled && sideState(r, "out") !== "off";
 }
 
+/** « Carte VTC à valider » → « carte VTC à valider » : seule la première lettre passe en minuscule (sigles intacts). */
+export function lowerFirst(label: string): string {
+  return label ? `${label.charAt(0).toLowerCase()}${label.slice(1)}` : label;
+}
+
 /** Phrase courte d'un sens demandé : « Actif » ou « En attente : {premier manque} ». */
 export function sideSummary(r: OrgNetworkReadiness, side: ReadinessSide): string {
   const state = sideState(r, side);
@@ -160,15 +169,31 @@ export function sideSummary(r: OrgNetworkReadiness, side: ReadinessSide): string
   const s = side === "out" ? r.share_out : r.share_in;
   const code = ORG_NETWORK_READINESS_CODES.find((c) => !HIDDEN.has(c) && s.missing.includes(c));
   if (code === "approval_pending") return "En attente de validation par Rydar";
-  return code ? `En attente : ${ORG_NETWORK_READINESS_META[code].label.toLowerCase()}` : SIDE_STATE_TEXT.pending;
+  return code ? `En attente : ${lowerFirst(ORG_NETWORK_READINESS_META[code].label)}` : SIDE_STATE_TEXT.pending;
 }
 
 /**
- * Bandeau owner / admin « nouvelle convention à accepter » (onglet et tableau de bord) : convention déjà acceptée
- * une fois, mais pas la version courante (délai de grâce en cours, ou expiré : le réseau est alors arrêté).
+ * Réglages : carte « Nouvelle convention » mise en tête — un sens est demandé et la version courante n'est pas encore
+ * acceptée. L'en-tête de l'onglet ne répète alors pas ce manque, et le bandeau du tableau de bord n'est pas affiché sur
+ * l'onglet.
+ */
+export function termsCardUpFront(
+  r: OrgNetworkReadiness | null | undefined,
+  m: Pick<NetworkMembership, "share_out" | "share_in" | "terms_version"> | null | undefined,
+  version: string,
+): boolean {
+  const accepted = r?.terms.accepted_version ?? m?.terms_version ?? null;
+  return !!(m?.share_out || m?.share_in) && accepted !== version;
+}
+
+/**
+ * Bandeau owner / admin « nouvelle convention à accepter » (tableau de bord) : convention déjà acceptée une fois, mais
+ * pas la version courante (délai de grâce en cours, ou expiré : le réseau est alors arrêté), et au moins un sens
+ * demandé (une organisation qui ne partage ni ne reçoit n'est pas concernée).
  */
 export function networkTermsDue(r: OrgNetworkReadiness | null | undefined): { version: string; graceUntil: string | null; expired: boolean } | null {
   if (!r?.enabled) return null;
+  if (sideState(r, "out") === "off" && sideState(r, "in") === "off") return null;
   const accepted = r.terms.accepted_version;
   if (!accepted || accepted === r.terms.version) return null;
   const inGrace = accepted === r.terms.min_version && !!r.terms.grace_until && Date.parse(r.terms.grace_until) > Date.now();
@@ -177,9 +202,9 @@ export function networkTermsDue(r: OrgNetworkReadiness | null | undefined): { ve
 
 export interface DriverReadinessView {
   ready: boolean;
-  /** « Prêt » ou « Manque : carte VTC à valider » */
+  /** « Prêt » ou « Manque : carte VTC à valider · assurance à valider » (tous les manques, en clair) */
   text: string;
-  /** Tous les manques (infobulle) */
+  /** Tous les manques du chauffeur (hors état de l'organisation) */
   missing: { code: DriverNetworkReadinessCode; label: string; hint: string }[];
   /** UNE action pour l'organisation : celle du premier manque qui en propose une */
   action: (ReadinessLink & { kind: NetworkReadinessAction }) | null;
@@ -187,7 +212,13 @@ export interface DriverReadinessView {
   needsAllow: boolean;
 }
 
-const DRIVER_HIDDEN: ReadonlySet<DriverNetworkReadinessCode> = new Set(["network_off"]);
+/**
+ * Manques de l'ORGANISATION, pas du chauffeur : réseau fermé, réception non active (désactivée ou en attente). L'état
+ * de la réception est affiché une fois, en tête de la carte, jamais sur chaque ligne (ni son bouton, qui renverrait
+ * vers la carte où l'on se trouve). Un chauffeur sans autre manque est « Prêt » : il recevra les courses dès que la
+ * réception sera active.
+ */
+const DRIVER_HIDDEN: ReadonlySet<DriverNetworkReadinessCode> = new Set(["network_off", "org_reception_off"]);
 
 /** Ligne d'un chauffeur de B dans Réglages (« Prêt » / « Manque : … »). */
 export function driverReadinessView(r: NetworkDriverReadiness, driverId: string, timeZone: string): DriverReadinessView {
@@ -205,10 +236,12 @@ export function driverReadinessView(r: NetworkDriverReadiness, driverId: string,
       break;
     }
   }
-  const ready = r.ready && missing.length === 0;
+  // Seuls des manques de l'organisation (masqués) : prêt dès que la réception est active
+  const onlyOrgMissing = r.missing.length > 0 && r.missing.every((c) => DRIVER_HIDDEN.has(c));
+  const ready = (r.ready || onlyOrgMissing) && missing.length === 0;
   return {
     ready,
-    text: ready ? "Prêt" : missing.length ? `Manque : ${missing[0]!.label.charAt(0).toLowerCase()}${missing[0]!.label.slice(1)}` : "Non prêt",
+    text: ready ? "Prêt" : missing.length ? `Manque : ${missing.map((m) => lowerFirst(m.label)).join(" · ")}` : "Non prêt",
     missing,
     action,
     needsAllow: missing.some((m) => m.code === "org_disallowed"),

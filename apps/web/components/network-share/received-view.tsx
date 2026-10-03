@@ -12,10 +12,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { networkExportHref, networkShareHref, NETWORK_LIST_MAX, NETWORK_LIST_PAGE } from "@/components/network-share/paths";
 import { SETTINGS_ANCHORS } from "@/components/network-share/readiness";
-import { receivedMoneyLine, receivedRoute, receivedState } from "@/components/network-share/received";
+import { receivedMoneyLine, receivedRoute, receivedState, sinceText } from "@/components/network-share/received";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useLiveSync } from "@/components/realtime/use-live-sync";
-import { fromNow } from "@/components/settlements/settlement-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -36,6 +35,8 @@ type Props = {
   partners: { id: string; name: string }[];
   months: { value: string; label: string }[];
   shareIn: boolean;
+  /** Réseau fermé par Rydar (sommes en cours) : ni rappel de la réception, ni lien vers les Réglages */
+  closed?: boolean;
   timeZone: string;
   serverNow: number;
   failed: boolean;
@@ -76,7 +77,7 @@ export function ReceivedView(p: Props) {
 
   return (
     <div className="space-y-6">
-      {!p.shareIn && (
+      {!p.shareIn && !p.closed && (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-white/[0.02] px-4 py-3 text-[13px] text-fg-muted">
           <Info className="size-4 shrink-0 text-fg-subtle" />
           Réception désactivée&nbsp;: vos chauffeurs ne reçoivent plus les courses du réseau. Historique ci-dessous.
@@ -110,7 +111,7 @@ export function ReceivedView(p: Props) {
                   </div>
                   <div className="shrink-0 text-right">
                     <Badge tone={RIDE_STATUS_META[r.phase]?.tone ?? "neutral"}>{RIDE_STATUS_META[r.phase]?.short ?? r.phase}</Badge>
-                    <p className="mt-1 text-[11.5px] text-fg-subtle">depuis {fromNow(r.since, now).replace(/^il y a /, "")}</p>
+                    <p className="mt-1 text-[11.5px] text-fg-subtle">{sinceText(r.since, now)}</p>
                   </div>
                 </li>
               ))}

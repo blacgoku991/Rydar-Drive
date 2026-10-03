@@ -1,4 +1,5 @@
 import type { SettlementMethod } from "@rydar/shared";
+import { networkMenuShown } from "@/components/network-share/access";
 import { networkNavState } from "@/components/network-share/nav";
 import { networkTermsDue, shareOutRequested } from "@/components/network-share/readiness";
 import { NetworkTermsBanner } from "@/components/network-share/terms-banner";
@@ -10,15 +11,16 @@ import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { LEGAL_VERSION } from "@/lib/legal";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
-import { networkSummary, sharedNetworkEnabled } from "@/lib/shared-network";
+import { networkAccess } from "@/lib/shared-network";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireOrg();
   const centrale = ctx.org.dispatch_model === "centrale";
   const admin = isAdminRole(ctx.role);
-  // Réseau partagé : interrupteur plateforme, puis (seulement s'il est ouvert) le résumé de l'organisation pour la
-  // pastille du menu et le bandeau « nouvelle convention » — en parallèle des autres lectures
-  const network = sharedNetworkEnabled().then(async (on) => (on ? { summary: await networkSummary(ctx.supabase, ctx.org.id) } : null));
+  // Réseau partagé : interrupteur plateforme, puis le résumé de l'organisation (pastille du menu, bandeau « nouvelle
+  // convention ») — réseau ouvert, ou fermé par Rydar avec des sommes en cours (organisation déjà membre) ; jamais
+  // membre et réseau coupé : rien d'autre que l'interrupteur et l'adhésion. En parallèle des autres lectures.
+  const network = networkAccess(ctx.supabase, ctx.org.id);
   const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees, networkInfo] = await Promise.all([
     ctx.supabase
       .from("rides")
@@ -70,8 +72,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const orgTermsDue = admin && !!terms && !terms.error && (terms.count ?? 0) === 0;
   const accepted = new Set(((userTerms.data ?? []) as { document: string }[]).map((a) => a.document));
   const userTermsDue = !userTerms.error && !(accepted.has("cgu") && accepted.has("privacy"));
-  // Réseau ouvert : menu (pastille à 0 si le résumé est illisible) ; nouvelle convention à accepter (owner / admin)
-  const networkTerms = admin && networkInfo ? networkTermsDue(networkInfo.summary?.readiness) : null;
+  // Réseau ouvert : menu (pastille à 0 si le résumé est illisible) ; nouvelle convention à accepter (owner / admin).
+  // Réseau fermé par Rydar : menu seulement tant que des sommes ou des courses sont en cours, aucun bandeau
+  const networkOpen = networkInfo?.mode === "open";
+  const networkTerms = admin && networkOpen ? networkTermsDue(networkInfo.summary?.readiness) : null;
   const cs = (centraleSettings?.data ?? null) as {
     settlement_link: string | null;
     settlement_instructions: string | null;
@@ -101,7 +105,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         methods: cs?.settlement_methods ?? [],
         bank: cs?.settlement_iban ? { payeeName: cs.settlement_payee_name || ctx.org.name, iban: cs.settlement_iban, bic: cs.settlement_bic } : null,
         blockUnpaid: cs?.block_unpaid ?? true,
-        network: networkInfo ? { shareOut: shareOutRequested(networkInfo.summary?.readiness) } : null,
+        network: networkOpen ? { shareOut: shareOutRequested(networkInfo.summary?.readiness) } : null,
       }}
       centraleCounts={centraleCounts}
       topBanner={
@@ -122,7 +126,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       superAdmin={ctx.profile.is_super_admin === true}
       bookingSites={bookingSites}
       rydarFees={fleetFees?.data === true}
-      sharedNetwork={networkInfo ? networkNavState(networkInfo.summary) : null}
+      sharedNetwork={networkMenuShown(networkInfo) ? networkNavState(networkInfo?.summary) : null}
     >
       {children}
     </DashboardShell>

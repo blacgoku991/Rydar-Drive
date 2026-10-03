@@ -62,6 +62,7 @@ export function SettlementMethodsFields({
   legalName,
   currency = "EUR",
   audience = "Le chauffeur",
+  whatsapp = true,
 }: {
   value: SettlementMethodsValue;
   onChange: <K extends keyof SettlementMethodsValue>(key: K, value: SettlementMethodsValue[K]) => void;
@@ -72,7 +73,11 @@ export function SettlementMethodsFields({
   currency?: string;
   /** Sujet des textes d'aide (« Le chauffeur », « Le chauffeur partenaire ») */
   audience?: string;
+  /** Instructions reprises dans les relances WhatsApp (centrale) ; réseau partagé : application seulement (v1) */
+  whatsapp?: boolean;
 }) {
+  // « chauffeur » / « chauffeur partenaire » : libellés du champ « Instructions » et de l'aperçu
+  const noun = audience.replace(/^Le /, "");
   // Moyen coché mais non renseigné : le chauffeur ne le verrait pas
   const ready: Record<SettlementMethod, boolean> = {
     link: /^https:\/\/\S+$/.test(f.link.trim()),
@@ -203,9 +208,15 @@ export function SettlementMethodsFields({
       )}
 
       <Field
-        label={f.methods.includes("other") ? "Autre moyen : comment payer" : "Instructions au chauffeur"}
+        label={f.methods.includes("other") ? "Autre moyen : comment payer" : `Instructions au ${noun}`}
         optional={!f.methods.includes("other")}
-        hint={f.methods.includes("other") ? "Ex. Wero ou Lydia au 06 12 34 56 78, ou au bureau du lundi au vendredi." : "Affichées avec le montant à régler (application et message WhatsApp)."}
+        hint={
+          f.methods.includes("other")
+            ? "Ex. Wero ou Lydia au 06 12 34 56 78, ou au bureau du lundi au vendredi."
+            : whatsapp
+              ? "Affichées avec le montant à régler (application et message WhatsApp)."
+              : `Affichées au ${noun} avec le montant à régler, dans l'application.`
+        }
         error={errors.instructions}
       >
         <Textarea
@@ -215,13 +226,13 @@ export function SettlementMethodsFields({
           maxLength={500}
           onChange={(e) => set("instructions", e.target.value)}
           placeholder={f.methods.includes("other") ? "Ex. Wero au 06 12 34 56 78 en indiquant la référence (C1783)." : "Ex. indiquez la référence (C1783) dans le commentaire du paiement."}
-          aria-label={f.methods.includes("other") ? "Autre moyen de paiement" : "Instructions au chauffeur"}
+          aria-label={f.methods.includes("other") ? "Autre moyen de paiement" : `Instructions au ${noun}`}
           className="min-h-[72px]"
         />
       </Field>
 
       <div className="rounded-xl bg-white/[0.03] px-4 py-3">
-        <p className="mb-2 text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Dans l&apos;application, le chauffeur voit</p>
+        <p className="mb-2 text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Dans l&apos;application, le {noun} voit</p>
         <div className="flex flex-wrap gap-1.5">
           {f.methods.map((m) => (
             <span key={m} className={cn("rounded-lg border px-2.5 py-1 text-[12.5px]", ready[m] ? "border-line-strong text-fg" : "border-amber/40 text-amber")}>

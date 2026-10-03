@@ -5,6 +5,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   driverActionHref, driverReadinessView, networkTermsDue, orgActionHref, orgReadinessView, shareOutRequested, sideSummary,
+  termsCardUpFront,
 } from "./readiness";
 import { readiness } from "./test-fixtures";
 
@@ -62,6 +63,14 @@ describe("en-tête : état de l'organisation", () => {
     expect(v.items.find((i) => i.code === "terms_grace")!.hint).toContain(formatDate("2026-12-01T10:00:00.000Z", TZ));
   });
 
+  it("assurance : centrale → celle de ses chauffeurs indépendants ; flotte → la sienne", () => {
+    const r = readiness({ share_in: { active: false, missing: ["insurance"], warnings: [] } });
+    expect(orgReadinessView(r, "centrale", TZ).items[0]!.hint).toBe(
+      "Confirmez que l'assurance de vos chauffeurs couvre les courses faites pour d'autres organisations.",
+    );
+    expect(orgReadinessView(r, "fleet", TZ).items[0]!.hint).toBe(ORG_NETWORK_READINESS_META.insurance.hint);
+  });
+
   it("motifs de Rydar ajoutés à l'explication (refus, suspension)", () => {
     const r = readiness({
       share_out: { active: false, missing: ["suspended", "approval_refused"], warnings: [] },
@@ -77,7 +86,15 @@ describe("en-tête : état de l'organisation", () => {
     expect(sideSummary(readiness({ share_out: { active: true, missing: [], warnings: [] } }), "out")).toBe("Actif");
     expect(sideSummary(readiness(), "in")).toBe("Désactivé");
     expect(sideSummary(readiness({ share_out: { active: false, missing: ["approval_pending"], warnings: [] } }), "out")).toBe("En attente de validation par Rydar");
-    expect(sideSummary(readiness({ share_in: { active: false, missing: ["insurance"], warnings: [] } }), "in")).toBe("En attente : assurance à confirmer");
+    expect(sideSummary(readiness({ share_in: { active: false, missing: ["insurance"], warnings: [] } }), "in")).toBe("En attente\u00a0: assurance à confirmer");
+  });
+
+  it("résumé d'un sens : seule la première lettre du manque passe en minuscule (sigles et noms propres intacts)", () => {
+    const pending = (code: "vtc_registration" | "platform_fee" | "approval_refused") =>
+      sideSummary(readiness({ share_out: { active: false, missing: [code], warnings: [] } }), "out");
+    expect(pending("vtc_registration")).toBe("En attente\u00a0: n° d'inscription VTC manquant");
+    expect(pending("platform_fee")).toBe("En attente\u00a0: frais Rydar à définir");
+    expect(pending("approval_refused")).toBe("En attente\u00a0: inscription refusée par Rydar");
   });
 });
 
@@ -95,7 +112,7 @@ describe("actions de l'organisation", () => {
     }
     expect(orgActionHref("accept_terms", "fleet")).toBe("/dashboard/reseau-partage?tab=reglages#convention");
     expect(orgActionHref("edit_organization", "fleet")).toBe("/dashboard/settings?tab=org");
-    expect(orgActionHref("view_payouts", "fleet")).toBe("/dashboard/reseau-partage?filtre=to_pay");
+    expect(orgActionHref("view_payouts", "fleet")).toBe("/dashboard/reseau-partage?tab=confiees&filtre=to_pay");
     expect(orgActionHref("contact_rydar", "fleet")).toBe("/contact");
     // Actions de l'application chauffeur : jamais un lien du tableau de bord
     expect(orgActionHref("update_app", "fleet")).toBeNull();
@@ -120,12 +137,21 @@ describe("liste des chauffeurs de B (« Prêt » / « Manque : … »)", () => {
     expect(driverReadinessView(base, "d-1", TZ)).toMatchObject({ ready: true, text: "Prêt", missing: [], action: null });
   });
 
-  it("premier manque affiché, tous en infobulle, UNE action (la première qui en propose une)", () => {
+  it("tous les manques en clair (sans infobulle), UNE action (la première qui en propose une)", () => {
     const v = driverReadinessView({ ...base, ready: false, missing: ["org_disallowed", "vtc_card", "insurance"] }, "d-1", TZ);
-    expect(v.text).toBe("Manque : non autorisé par l'organisation");
+    expect(v.text).toBe("Manque\u00a0: non autorisé par l'organisation · carte VTC à valider · assurance à valider");
     expect(v.missing.map((m) => m.code)).toEqual(["org_disallowed", "vtc_card", "insurance"]);
     expect(v.needsAllow).toBe(true);
     expect(v.action).toEqual({ label: "Voir les documents", href: "/dashboard/drivers/d-1", kind: "review_documents" });
+  });
+
+  it("réception de l'organisation non active : jamais répétée sur la ligne (ni son bouton) ; seul manque → « Prêt »", () => {
+    const only = driverReadinessView({ ...base, ready: false, missing: ["org_reception_off"] }, "d-1", TZ);
+    expect(only).toMatchObject({ ready: true, text: "Prêt", missing: [], action: null });
+    const more = driverReadinessView({ ...base, ready: false, missing: ["org_reception_off", "vtc_card"] }, "d-1", TZ);
+    expect(more).toMatchObject({ ready: false, text: "Manque\u00a0: carte VTC à valider" });
+    expect(more.missing.map((m) => m.code)).toEqual(["vtc_card"]);
+    expect(more.action?.kind).toBe("review_documents");
   });
 
   it("exclusion automatique : date de fin dans l'explication", () => {
@@ -144,16 +170,40 @@ describe("bandeau « nouvelle convention »", () => {
     expect(networkTermsDue(null)).toBeNull();
   });
 
+  // Partage demandé (actif pendant la grâce) : l'organisation participe au réseau
+  const sharing = { share_out: { active: true, missing: [], warnings: ["terms_grace" as const] } };
+
   it("ancienne version en délai de grâce : bandeau avec la date limite", () => {
-    const r = readiness({ terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: future, accepted_version: "2026-06-01", accepted_at: null } });
+    const r = readiness({ ...sharing, terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: future, accepted_version: "2026-06-01", accepted_at: null } });
     expect(networkTermsDue(r)).toEqual({ version: "2026-11-01", graceUntil: future, expired: false });
   });
 
   it("délai dépassé (ou version trop ancienne) : bandeau « réseau arrêté »", () => {
-    const r = readiness({ terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: past, accepted_version: "2026-06-01", accepted_at: null } });
+    const stopped = { share_out: { active: false, missing: ["terms" as const], warnings: [] } };
+    const r = readiness({ ...stopped, terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: past, accepted_version: "2026-06-01", accepted_at: null } });
     expect(networkTermsDue(r)).toEqual({ version: "2026-11-01", graceUntil: null, expired: true });
-    const old = readiness({ terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: future, accepted_version: "2025-01-01", accepted_at: null } });
+    const old = readiness({ ...stopped, terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: future, accepted_version: "2025-01-01", accepted_at: null } });
     expect(networkTermsDue(old)?.expired).toBe(true);
+  });
+
+  it("partage et réception désactivés : pas de bandeau (l'organisation ne participe plus), même délai dépassé", () => {
+    const r = readiness({ terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: past, accepted_version: "2026-06-01", accepted_at: null } });
+    expect(networkTermsDue(r)).toBeNull();
+    // Réception seule demandée : bandeau
+    const receiving = readiness({
+      share_in: { active: false, missing: ["terms"], warnings: [] },
+      terms: { version: "2026-11-01", min_version: "2026-06-01", grace_until: past, accepted_version: "2026-06-01", accepted_at: null },
+    });
+    expect(networkTermsDue(receiving)?.expired).toBe(true);
+  });
+
+  it("Réglages : carte de la convention en tête seulement si un sens est demandé et la version courante non acceptée", () => {
+    const old = readiness({ terms: { version: "2026-11-01", min_version: null, grace_until: null, accepted_version: "2026-06-01", accepted_at: null } });
+    expect(termsCardUpFront(old, { share_out: true, share_in: false, terms_version: "2026-06-01" }, "2026-11-01")).toBe(true);
+    expect(termsCardUpFront(old, { share_out: false, share_in: false, terms_version: "2026-06-01" }, "2026-11-01")).toBe(false);
+    expect(termsCardUpFront(readiness(), { share_out: true, share_in: false, terms_version: "2026-11-01" }, "2026-11-01")).toBe(false);
+    // Résumé illisible : version de l'adhésion
+    expect(termsCardUpFront(null, { share_out: false, share_in: true, terms_version: "2026-06-01" }, "2026-11-01")).toBe(true);
   });
 
   it("réseau fermé par la plateforme : jamais de bandeau", () => {

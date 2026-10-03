@@ -7,7 +7,7 @@ import { hasOpenNetworkSettlements, openNetworkSummaryText } from "@/components/
 import { getPayerContext } from "@/components/platform-fees/org-payer-context";
 import { OrgSuspendedDues } from "@/components/platform-fees/org-suspended-dues";
 import { Button } from "@/components/ui/button";
-import { networkSummary, sharedNetworkEnabled } from "@/lib/shared-network";
+import { networkSummary } from "@/lib/shared-network";
 import { signOut } from "@/app/login/actions";
 import { SwitchOrganization } from "./switch-organization";
 
@@ -22,7 +22,9 @@ export default async function SuspendedPage() {
   if (ctx && ctx.org.status === "suspended" && ctx.canPay) {
     const [{ data }, summary] = await Promise.all([
       ctx.supabase.rpc("org_platform_account", { p_org: ctx.org.id }),
-      sharedNetworkEnabled().then((on) => (on ? networkSummary(ctx.supabase, ctx.org.id) : null)),
+      // Réseau ouvert, ou fermé par Rydar avec des sommes en cours (NETWORK_CLOSED_RPCS) : la carte n'apparaît que
+      // s'il reste quelque chose à régler ; organisation jamais membre ou lecture refusée : rien
+      networkSummary(ctx.supabase, ctx.org.id),
     ]);
     const acc = (data ?? null) as OrgPlatformAccount | null;
     if (acc?.enabled && (acc.account.balance_cents > 0 || acc.account.declared_count > 0)) platform = acc;

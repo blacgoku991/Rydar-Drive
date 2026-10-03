@@ -7,7 +7,7 @@
 // l'interrupteur plateforme et les délais ; ici, refus anticipé d'un dispatcher (lecture seule, sauf « Relancer »).
 // Fichier « use server » : seules des fonctions async sont exportées (les types sont effacés à la compilation).
 import {
-  describeError, fieldErrors, humanizeError, settlementPaymentSchema,
+  describeError, extractErrorCode, fieldErrors, humanizeError, settlementPaymentSchema,
   type CloseNetworkRideResult, type ContestNetworkRideResult, type ExcludeNetworkDriverResult, type OrgNetworkPayoutInfo, type OrgNetworkReadiness,
   type OrgNetworkSettingsResult, type RemindNetworkDriverResult, type SetDriverNetworkAllowedResult, type SettlementMethod,
   type SettlementPaymentInput, type ValidateNetworkRideResult,
@@ -21,7 +21,8 @@ import { getOrgContext } from "@/lib/org-context";
 
 export type NetworkActionResult<T = object> =
   | ({ ok: true; message: string } & T)
-  | { ok: false; error: string; fieldErrors?: Record<string, string> };
+  /** code : code métier de la base quand l'écran l'explique autrement (ex. PAYOUT_DETAILS_MISSING) */
+  | { ok: false; error: string; fieldErrors?: Record<string, string>; code?: string };
 
 const PATH = "/dashboard/reseau-partage";
 /** Organisation suspendue : ses règlements réseau ouverts (owner / admin), hors du tableau de bord. */
@@ -330,15 +331,21 @@ export async function reopenNetworkSettlement(id: string) {
   return settlementCall("reopen_settlement", { p_id: id }, "Règlement rouvert.");
 }
 
-/** RIB du chauffeur pour un versement (consultation journalisée en base et notifiée au chauffeur). */
+/**
+ * RIB du chauffeur pour un versement (consultation journalisée en base et notifiée au chauffeur). Chauffeur sans
+ * coordonnées bancaires (RIB facultatif) : code PAYOUT_DETAILS_MISSING, expliqué par la feuille « Versé ».
+ */
 export async function getNetworkPayoutInfo(settlementId: string): Promise<NetworkActionResult<{ info: OrgNetworkPayoutInfo }>> {
   const ctx = await context(true, { creditor: true });
   if (failed(ctx)) return ctx;
   if (!UUID.test(settlementId)) return { ok: false, error: "Règlement introuvable." };
-  const res = await call<OrgNetworkPayoutInfo | null>(ctx, "org_network_payout_info", { p_settlement: settlementId }, "Coordonnées bancaires indisponibles.");
-  if (isFail(res)) return res;
-  if (!res.data) return { ok: false, error: "Coordonnées bancaires indisponibles." };
-  return { ok: true, message: "", info: res.data };
+  const { data, error } = await ctx.supabase.rpc("org_network_payout_info", { p_settlement: settlementId });
+  if (error) {
+    const code = extractErrorCode(error.message);
+    return { ok: false, error: rpcError(error, "Coordonnées bancaires indisponibles."), ...(code ? { code } : {}) };
+  }
+  if (!data) return { ok: false, error: "Coordonnées bancaires indisponibles." };
+  return { ok: true, message: "", info: data as OrgNetworkPayoutInfo };
 }
 
 /** « Valider » : course « à vérifier » contrôlée, le versement retenu devient payable. */

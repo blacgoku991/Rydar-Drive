@@ -21,8 +21,10 @@ import {
   setNetworkInsurance, setNetworkPartnerExcluded, setNetworkSharing, updateNetworkPaymentMethods,
 } from "@/app/dashboard/reseau-partage/actions";
 import { networkSearchDelayText, shareExampleText } from "@/components/network-share/example";
+import { ExcludePartnerDialog } from "@/components/network-share/given-actions";
 import { useNetworkRunner } from "@/components/network-share/use-network-runner";
-import { SETTINGS_ANCHORS, driverReadinessView, sideSummary } from "@/components/network-share/readiness";
+import { SETTINGS_ANCHORS, driverReadinessView, sideSummary, termsCardUpFront } from "@/components/network-share/readiness";
+import { RECEIVE_COPY, activateCopy, driverGraceHours } from "@/components/network-share/settings-copy";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import {
@@ -34,7 +36,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
-import { Avatar, Switch, Tooltip } from "@/components/ui/misc";
+import { Avatar, Switch } from "@/components/ui/misc";
 import { cn, submitWith } from "@/lib/utils";
 
 export type NetworkPaymentRow = {
@@ -80,9 +82,9 @@ export function SettingsView(p: Props) {
   const m = p.membership;
   const accepted = p.readiness?.terms.accepted_version ?? m?.terms_version ?? null;
   const needsTerms = accepted !== p.termsVersion;
-  const requested = !!(m?.share_out || m?.share_in);
-  // Convention à (ré)accepter alors qu'un sens est demandé : bloc en tête (sinon : options avancées)
-  const termsUpFront = requested && needsTerms;
+  // Convention à (ré)accepter alors qu'un sens est demandé : bloc en tête (sinon : options avancées) ; l'en-tête de la
+  // page et le bandeau du tableau de bord ne la répètent pas sur cet onglet
+  const termsUpFront = termsCardUpFront(p.readiness, m, p.termsVersion);
   const [activate, setActivate] = useState<"out" | "in" | null>(null);
   const { pending, run } = useNetworkRunner();
 
@@ -112,6 +114,8 @@ export function SettingsView(p: Props) {
         side={activate}
         version={p.termsVersion}
         approval={p.readiness?.approval.status ?? "none"}
+        model={p.model}
+        graceHours={driverGraceHours(p.dispatch.graceHours)}
         onClose={() => setActivate(null)}
       />
     </div>
@@ -161,7 +165,7 @@ function sideStatus(r: OrgNetworkReadiness | null, side: "out" | "in", on: boole
 function ShareCard(p: Props & { pending: boolean; onToggle: (on: boolean) => void }) {
   const on = !!p.membership?.share_out;
   const example = useMemo(() => shareExampleText(p.rates, p.currency), [p.rates, p.currency]);
-  const graceHours = Math.max(p.dispatch.graceHours ?? 24, NETWORK_PARAMS.minDriverGraceHours);
+  const graceHours = driverGraceHours(p.dispatch.graceHours);
   return (
     <Card id={SETTINGS_ANCHORS.share} className="scroll-mt-6">
       <SwitchHeader
@@ -276,11 +280,24 @@ function PaymentSummary({ payment, action }: { payment: NetworkPaymentRow | null
   );
 }
 
-/** Flotte : résumé, ou carte « Encaissement » ouverte (aucun moyen en ligne, lien d'action #encaissement, « Modifier »). */
+/**
+ * Flotte : résumé + « Modifier », ou carte « Encaissement » ouverte — d'office seulement quand le partage est demandé
+ * sans moyen en ligne, ou en arrivant par le lien d'action (#encaissement) ; toujours refermable (« Annuler »). Une
+ * flotte qui ne fait que recevoir garde une carte courte.
+ */
 function FleetPayment(p: Props) {
-  const [editing, setEditing] = useState(() => p.canManage && !hasOnlineMethod(p.payment));
+  const needed = p.canManage && !!p.membership?.share_out && !hasOnlineMethod(p.payment);
+  const [editing, setEditing] = useState(needed);
+  // Partage activé (ou dernier moyen en ligne retiré) depuis l'ouverture de la page : carte ouverte
   useEffect(() => {
-    if (p.canManage && window.location.hash === `#${SETTINGS_ANCHORS.payment}`) setEditing(true);
+    if (needed) setEditing(true);
+  }, [needed]);
+  useEffect(() => {
+    if (!p.canManage) return;
+    const sync = () => window.location.hash === `#${SETTINGS_ANCHORS.payment}` && setEditing(true);
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
   }, [p.canManage]);
   if (!editing) {
     return (
@@ -296,7 +313,7 @@ function FleetPayment(p: Props) {
       />
     );
   }
-  return <NetworkPaymentMethodsForm {...p} onDone={hasOnlineMethod(p.payment) ? () => setEditing(false) : undefined} />;
+  return <NetworkPaymentMethodsForm {...p} onDone={() => setEditing(false)} />;
 }
 
 /** Flotte : carte « Encaissement » (bloc partagé avec « Commission & encaissement »), éditable ici. */
@@ -358,6 +375,7 @@ function NetworkPaymentMethodsForm(p: Props & { onDone?: () => void }) {
         legalName={p.legalName}
         currency={p.currency}
         audience="Le chauffeur partenaire"
+        whatsapp={false}
       />
       {p.canManage && (
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -400,14 +418,17 @@ function ReceiveCard(p: Props & { pending: boolean; onToggle: (on: boolean) => v
   const { pending, run } = useNetworkRunner();
   const insured = !!p.membership?.insurance_confirmed_at;
   const drivers = p.drivers ?? [];
-  const readyCount = drivers.filter((d) => d.readiness.ready).length;
+  const readyCount = drivers.filter((d) => driverReadinessView(d.readiness, d.driver.id, p.timeZone).ready).length;
+  // Réception demandée mais pas encore active (validation Rydar, convention, assurance…) : dit une fois, ici
+  const waiting = on && !!p.readiness && !p.readiness.share_in.active;
+  const copy = RECEIVE_COPY[p.model];
   return (
     <Card id={SETTINGS_ANCHORS.receive} className="scroll-mt-6">
       <SwitchHeader
         id="recevoir"
         icon={<ArrowDownLeft />}
         title="Recevoir les courses du réseau"
-        description="Vos chauffeurs les font avec vos véhicules et sous votre assurance ; votre organisation ne touche rien."
+        description={copy.description}
         checked={on}
         disabled={!p.canManage || p.pending}
         onToggle={p.onToggle}
@@ -423,11 +444,11 @@ function ReceiveCard(p: Props & { pending: boolean; onToggle: (on: boolean) => v
             className="mt-0.5 size-4 shrink-0 accent-[var(--color-brand)]"
           />
           <span className="min-w-0">
-            <span className="block text-[13.5px] font-medium">Mon assurance couvre les courses faites pour d&apos;autres organisations</span>
+            <span className="block text-[13.5px] font-medium">{copy.insurance}</span>
             <span className="block text-[12px] text-fg-subtle">
               {insured && p.membership?.insurance_confirmed_at
                 ? `Confirmé le ${formatDate(p.membership.insurance_confirmed_at, p.timeZone)}.`
-                : "Responsabilité civile circulation et transport de personnes à titre onéreux : à confirmer avant de recevoir des courses."}
+                : copy.insuranceHint}
             </span>
           </span>
         </label>
@@ -445,24 +466,34 @@ function ReceiveCard(p: Props & { pending: boolean; onToggle: (on: boolean) => v
                   " Pour un chauffeur indépendant, renseignez son n° d'inscription au registre des exploitants VTC : il figure sur le bon de réservation."}
               </p>
             </div>
-            {p.drivers && drivers.length > 0 && (
+            {on && p.drivers && drivers.length > 0 && (
               <p className="text-[12.5px] text-fg-subtle">
                 <span className="font-semibold text-fg">{readyCount}</span> prêt{readyCount > 1 ? "s" : ""} sur {drivers.length}
               </p>
             )}
           </div>
-          {!p.canManage ? (
+          {!on ? (
+            // Réception désactivée : pas de liste de manques (ni de bouton qui ramènerait ici)
+            <p className="text-[12.5px] text-fg-subtle">Activez la réception pour voir quels chauffeurs sont prêts.</p>
+          ) : !p.canManage ? (
             <p className="text-[12.5px] text-fg-subtle">Liste réservée au propriétaire et aux administrateurs.</p>
           ) : p.driversFailed ? (
             <p className="text-[12.5px] text-red">Liste des chauffeurs indisponible. Réessayez dans un instant.</p>
           ) : drivers.length === 0 ? (
             <p className="text-[12.5px] text-fg-subtle">Aucun chauffeur actif.</p>
           ) : (
-            <ul className="divide-y divide-line rounded-xl border border-line">
-              {drivers.map((d) => (
-                <DriverRow key={d.driver.id} d={d} model={p.model} timeZone={p.timeZone} />
-              ))}
-            </ul>
+            <>
+              {waiting && (
+                <p className="text-[12.5px] text-fg-muted">
+                  La réception n&apos;est pas encore active{NB}: les chauffeurs prêts recevront les courses dès qu&apos;elle le sera.
+                </p>
+              )}
+              <ul className="divide-y divide-line rounded-xl border border-line">
+                {drivers.map((d) => (
+                  <DriverRow key={d.driver.id} d={d} model={p.model} timeZone={p.timeZone} />
+                ))}
+              </ul>
+            </>
           )}
         </section>
       </CardBody>
@@ -496,12 +527,8 @@ function DriverRow({ d, model, timeZone }: { d: OrgNetworkDriver; model: Dispatc
               <Link href={`/dashboard/drivers/${d.driver.id}`} prefetch={false} className="hover:text-brand">{name}</Link>{" "}
               <span className="mono font-normal text-fg-subtle">#{d.driver.number}</span>
             </p>
-            <Tooltip content={view.missing.length ? view.missing.map((m) => m.label).join(" · ") : "Toutes les conditions sont remplies"}>
-              <p className={cn("truncate text-[12px]", view.ready ? "text-green" : "text-amber")}>
-                {view.text}
-                {view.missing.length > 1 && <span className="text-fg-subtle"> (+{view.missing.length - 1})</span>}
-              </p>
-            </Tooltip>
+            {/* Tous les manques en clair (lisibles au doigt et au clavier), sur plusieurs lignes si besoin */}
+            <p className={cn("text-[12px]", view.ready ? "text-green" : "text-amber")}>{view.text}</p>
           </div>
         </div>
         {view.action && (
@@ -624,6 +651,9 @@ function CreditLimitForm(p: Props) {
 function PartnerExclusions(p: Props) {
   const { pending, run } = useNetworkRunner();
   const excluded = new Set(p.excludedPartners);
+  // « Exclure » : même fenêtre de confirmation que depuis une course (effet dans les deux sens, partenaire non prévenu) ;
+  // « Réintégrer » : en un clic (favorable, réversible)
+  const [confirm, setConfirm] = useState<{ id: string; name: string } | null>(null);
   return (
     <section aria-labelledby="orgs-title" className="space-y-2">
       <h3 id="orgs-title" className="text-[13.5px] font-semibold">Organisations exclues</h3>
@@ -643,7 +673,12 @@ function PartnerExclusions(p: Props) {
                   {o.name} {out && <Badge tone="red" className="ml-1.5">Exclue</Badge>}
                 </span>
                 {p.canManage && (
-                  <Button variant={out ? "ghost" : "outline"} size="xs" disabled={pending} onClick={() => run(() => setNetworkPartnerExcluded(o.id, !out))}>
+                  <Button
+                    variant={out ? "ghost" : "outline"}
+                    size="xs"
+                    disabled={pending}
+                    onClick={() => (out ? run(() => setNetworkPartnerExcluded(o.id, false)) : setConfirm(o))}
+                  >
                     {out ? <><Undo2 /> Réintégrer</> : "Exclure"}
                   </Button>
                 )}
@@ -652,6 +687,7 @@ function PartnerExclusions(p: Props) {
           })}
         </ul>
       )}
+      {confirm && <ExcludePartnerDialog partner={confirm} onClose={() => setConfirm(null)} />}
     </section>
   );
 }
@@ -757,31 +793,14 @@ function TermsCard({
 }
 
 // ---------------------------------------------------------------------------- première activation
-const ACTIVATE_COPY = {
-  out: {
-    title: "Activer le partage",
-    points: [
-      "Une course qu'aucun de vos chauffeurs n'accepte est proposée aux chauffeurs des organisations partenaires proches.",
-      "Payée à bord, le chauffeur vous reverse votre part ; déjà payée, vous lui versez la sienne, avec vos moyens de paiement.",
-      "Vous restez responsable envers votre client et lui délivrez le reçu ou la facture.",
-    ],
-  },
-  in: {
-    title: "Activer la réception",
-    points: [
-      "Vos chauffeurs libres et proches reçoivent les courses des organisations partenaires, après leurs propres chauffeurs.",
-      "Ils les font avec vos véhicules et sous votre assurance ; votre organisation ne touche rien.",
-      "Chaque chauffeur règle lui-même avec l'organisation qui lui confie la course.",
-    ],
-  },
-} as const;
-
 function ActivateDialog({
-  side, version, approval, onClose,
+  side, version, approval, model, graceHours, onClose,
 }: {
   side: "out" | "in" | null;
   version: string;
   approval: string;
+  model: DispatchModel;
+  graceHours: number;
   onClose: () => void;
 }) {
   const { pending, run } = useNetworkRunner();
@@ -789,7 +808,7 @@ function ActivateDialog({
   useEffect(() => {
     if (side) setChecked(false);
   }, [side]);
-  const copy = ACTIVATE_COPY[side ?? "out"];
+  const copy = activateCopy(side ?? "out", model, graceHours);
   return (
     <Dialog open={!!side} onOpenChange={(o) => !o && onClose()}>
       <DialogContent size="md" title={copy.title} description="Le réseau partagé est une option du logiciel de dispatch, régie par une convention entre organisations.">

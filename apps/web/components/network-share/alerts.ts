@@ -50,8 +50,12 @@ export function noDriverNetworkLine(e: { message?: string | null; data?: Network
   return n > 0 ? `Réseau partagé : ${plural(n, "chauffeur partenaire sollicité", "chauffeurs partenaires sollicités")}` : "Réseau partagé : aucun chauffeur partenaire disponible";
 }
 
-/** Règlement d'une course confiée (bloc network de settlement_json) : page et libellé du bouton. */
+/**
+ * Règlement d'une course confiée (bloc network de settlement_json) : « Courses confiées » filtrée — à confirmer
+ * (paiement signalé), à verser (course déjà payée) ou à encaisser (payée à bord) — et libellé du bouton. Le
+ * sous-onglet est toujours explicite (la page ouvre sinon celui qui convient à l'état de l'organisation).
+ */
 export function networkSettlementLink(action: "created" | "declared", direction: "driver_owes" | "centrale_owes"): { href: string; cta: string } {
-  const filter = action === "declared" ? "to_confirm" : direction === "centrale_owes" ? "to_pay" : null;
+  const filter = action === "declared" ? "to_confirm" : direction === "centrale_owes" ? "to_pay" : "to_collect";
   return { href: networkShareHref({ tab: "confiees", filter }), cta: "Réseau partagé" };
 }

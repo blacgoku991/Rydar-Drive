@@ -708,8 +708,11 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
       return;
     }
     if (e.action !== "created" && e.action !== "declared") return; // « updated » : montant recalculé après correction
-    // Course confiée à un chauffeur partenaire : « Karim B. (Flotte B) », onglet « Réseau partagé »
+    // Course confiée à un chauffeur partenaire : « Karim B. (Flotte B) », onglet « Réseau partagé ». Ligne réseau =
+    // bloc `network`, ou à défaut aucun chauffeur propre (driver_id NULL, spec §10.3) : jamais traitée comme une
+    // ligne d'Encaissements, même si la diffusion a perdu son bloc
     const network = s.network ?? null;
+    const networkLine = !!network || s.driver_id == null;
     const who = network ? { firstName: network.driver_label, number: null } : parseDriverLabel(s.driver_label);
     const tag = network ? `${network.driver_label} (${network.partner_name})` : `${who.firstName}${who.number ? ` #${who.number}` : ""}`;
     const n = rideLine(s.ride_id).number ?? rideNumberOf(s);
@@ -717,9 +720,9 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     const tz = centraleRef.current?.timeZone;
     const settlement = {
       id: s.id, action: e.action, direction: s.direction, amountCents: s.amount_cents, currency: s.currency, reference: s.reference,
-      rideNumber: n, driverId: s.driver_id, firstName: who.firstName, network: !!network,
+      rideNumber: n, driverId: s.driver_id, firstName: who.firstName, network: networkLine,
     } satisfies AlertItem["settlement"];
-    const link = network ? networkSettlementLink(e.action, s.direction) : null;
+    const link = networkLine ? networkSettlementLink(e.action, s.direction) : null;
     if (e.action === "declared") {
       push({
         id: `set:${s.id}:declared:${s.declared_at ?? ""}`,
@@ -1015,7 +1018,8 @@ function SettlementToastActions({ item, api, onClose, btn }: { item: AlertItem; 
         )
       : null;
   const [busy, setBusy] = useState(false);
-  // Règlement réseau : « Reçu » réservé au propriétaire et aux administrateurs (argent réseau, S9)
+  // Règlement réseau : « Reçu » réservé au propriétaire et aux administrateurs (argent réseau, S9), toujours par
+  // l'action du réseau partagé (jamais confirmSettlements, qui refuse d'ailleurs les lignes réseau)
   const canReceive = !s.network || org?.role === "owner" || org?.role === "admin";
   const received = async () => {
     setBusy(true);

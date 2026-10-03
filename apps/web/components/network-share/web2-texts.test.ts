@@ -36,6 +36,12 @@ const TOUCHED = [
   "components/legal/network-terms.ts",
   "components/legal/network-terms-page.tsx",
   "lib/queries/live.ts",
+  // Corrections après revue : renvoi d'Encaissements, garde des lignes réseau, menu et titre « Inscriptions »
+  "app/dashboard/settlements",
+  "app/dashboard/layout.tsx",
+  "app/dashboard/network/page.tsx",
+  "lib/shared-network.ts",
+  "components/settlements/settlement-methods-fields.tsx",
 ].flatMap(files);
 
 /** Nouveaux fichiers : aucune couleur en dur, liens sans préchargement. */
@@ -68,6 +74,11 @@ describe("écrans du réseau partagé (web 2/2)", () => {
 
   it("nouveaux fichiers : jetons du thème seulement, jamais de couleur en dur", () => {
     for (const path of NEW) expect(/#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})\b/i.test(read(path)), path).toBe(false);
+  });
+
+  it("renvoi d'Encaissements vers « Réseau partagé » : lien sans préchargement", () => {
+    const page = TOUCHED.find((p) => p.endsWith(join("settlements", "page.tsx")))!;
+    for (const tag of read(page).match(/<Link\b[^>]*>/g) ?? []) expect(tag.includes("prefetch={false}"), tag).toBe(true);
   });
 
   it("nouveaux écrans connectés : liens sans préchargement", () => {

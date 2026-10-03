@@ -14,6 +14,7 @@ import {
   remindNetworkDriver, reopenNetworkSettlement, setNetworkPartnerExcluded, validateNetworkRide, waiveNetworkSettlement,
 } from "@/app/dashboard/reseau-partage/actions";
 import type { GivenRowActions } from "@/components/network-share/given";
+import { suspectLabels } from "@/components/network-share/ride-network";
 import { useNetworkRunner } from "@/components/network-share/use-network-runner";
 import { useCentrale } from "@/components/settlements/centrale-context";
 import { Chips, MethodPicker, fromNow, methodLabel, type ConfirmMethod } from "@/components/settlements/settlement-ui";
@@ -24,11 +25,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
-type Mode = "confirm" | "dispute" | "waive" | "reopen" | "contest" | "excludeDriver" | "excludePartner" | "payout" | null;
+type Mode = "confirm" | "dispute" | "waive" | "reopen" | "contest" | "excludeDriver" | "excludePartner" | "payout" | "validate" | null;
 
 const DISPUTE_REASONS = ["Rien reçu sur le compte", "Montant incomplet", "Référence introuvable", "Espèces non remises"];
 const WAIVE_REASONS = ["Geste commercial", "Course litigieuse", "Client parti sans payer", "Erreur de prix"];
 const CONTEST_REASONS = ["Course non effectuée", "Client jamais pris en charge", "Trajet très différent", "Course terminée trop tôt"];
+const NB = " ";
 
 /** Bandeau récapitulatif des fenêtres : chauffeur · organisation, course, montant. */
 function Summary({ item }: { item: NetworkGivenItem }) {
@@ -85,11 +87,10 @@ export function GivenActions({
         </Button>
       )}
       {can.validate && (
-        <Tooltip content="Course contrôlée : le versement retenu devient payable">
-          <Button variant="outline" size="xs" loading={pending} onClick={() => run(() => validateNetworkRide(item.ride.id))}>
-            <ShieldCheck /> Valider
-          </Button>
-        </Tooltip>
+        // Fenêtre de confirmation : rappelle les motifs « à vérifier » et le versement libéré
+        <Button variant="outline" size="xs" onClick={() => setMode("validate")}>
+          <ShieldCheck /> Valider
+        </Button>
       )}
       {/* Dispatcher : seule action permise, en bouton ; owner / admin : dans le menu */}
       {can.remind && !can.confirm && (
@@ -148,7 +149,8 @@ export function GivenActions({
       {s && mode === "reopen" && <ReopenDialog item={item} open onClose={close} />}
       {s && mode === "payout" && <PayoutSheet item={item} open onClose={close} />}
       {(mode === "contest" || mode === "excludeDriver") && <ReasonDialog kind={mode} item={item} open onClose={close} />}
-      {mode === "excludePartner" && <ExcludePartnerDialog item={item} open onClose={close} />}
+      {mode === "excludePartner" && <ExcludePartnerDialog partner={item.execution.partner} onClose={close} />}
+      {mode === "validate" && <ValidateDialog item={item} onClose={close} />}
     </div>
   );
 }
@@ -299,6 +301,47 @@ function ReasonDialog({ kind, item, open, onClose }: { kind: keyof typeof REASON
   );
 }
 
+// ---------------------------------------------------------------------------- Valider (course « à vérifier »)
+function ValidateDialog({ item, onClose }: { item: NetworkGivenItem; onClose: () => void }) {
+  const { pending, run } = useNetworkRunner();
+  const e = item.execution;
+  const s = item.settlement;
+  const payout = (s?.direction ?? e.terms.direction) === "centrale_owes";
+  const amount = formatPrice(s?.amount_cents ?? e.terms.amount_cents, item.ride.currency);
+  const reasons = suspectLabels(e.suspect_reasons);
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        size="sm"
+        title={`Valider la course #${item.ride.number}${NB}?`}
+        description={
+          payout
+            ? `Vous confirmez que la course s'est bien passée : le versement de ${amount} à ${e.driver_label} n'est plus retenu et devient payable.`
+            : "Vous confirmez que la course s'est bien passée : elle n'est plus « à vérifier »."
+        }
+      >
+        <Summary item={item} />
+        {reasons.length > 0 && (
+          <div className="rounded-lg border border-amber/30 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-fg-muted">
+            <p className="font-medium text-fg">Motifs signalés à la fin de la course</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              {reasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Retour</Button>
+          <Button variant="primary" loading={pending} onClick={() => run(() => validateNetworkRide(item.ride.id), onClose)}>
+            <ShieldCheck /> Valider la course
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ---------------------------------------------------------------------------- Rouvrir
 function ReopenDialog({ item, open, onClose }: { item: NetworkGivenItem; open: boolean; onClose: () => void }) {
   const { pending, run } = useNetworkRunner();
@@ -323,11 +366,11 @@ function ReopenDialog({ item, open, onClose }: { item: NetworkGivenItem; open: b
 }
 
 // ---------------------------------------------------------------------------- Ne plus travailler avec {B}
-function ExcludePartnerDialog({ item, open, onClose }: { item: NetworkGivenItem; open: boolean; onClose: () => void }) {
+/** Confirmation d'exclusion d'une organisation (course confiée, ou Réglages › Options avancées). */
+export function ExcludePartnerDialog({ partner, onClose }: { partner: { id: string; name: string }; onClose: () => void }) {
   const { pending, run } = useNetworkRunner();
-  const partner = item.execution.partner;
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
         size="sm"
         title={`Ne plus travailler avec ${partner.name}`}
@@ -356,17 +399,27 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
   const [loading, startLoading] = useTransition();
   const [info, setInfo] = useState<OrgNetworkPayoutInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [method, setMethod] = useState<ConfirmMethod | null>("transfer");
+  // RIB facultatif : non renseigné (connu par la ligne, ou appris en le demandant) = cas normal, expliqué sans alarme
+  const [missing, setMissing] = useState(s.network?.payout_configured === false);
+  const [method, setMethod] = useState<ConfirmMethod | null>(missing ? null : "transfer");
   useEffect(() => {
     if (!open) return;
+    const known = s.network?.payout_configured === false;
     setInfo(null);
     setError(null);
-    setMethod("transfer");
-  }, [open]);
+    setMissing(known);
+    setMethod(known ? null : "transfer");
+  }, [open, s.network?.payout_configured]);
   const reveal = () =>
     startLoading(() => runAction(async () => {
       const res = await getNetworkPayoutInfo(s.id);
-      if (!res.ok) return void setError(res.error);
+      if (!res.ok) {
+        if (res.code === "PAYOUT_DETAILS_MISSING") {
+          setMissing(true);
+          return void setMethod(null);
+        }
+        return void setError(res.error);
+      }
       setInfo(res.info);
     }, setError));
   const copy = (text: string, what: string) =>
@@ -381,7 +434,12 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
             <h3 id="rib-title" className="flex items-center gap-2 text-[13px] font-medium">
               <Landmark className="size-4 text-fg-subtle" /> Coordonnées bancaires du chauffeur
             </h3>
-            {!info ? (
+            {missing ? (
+              <p role="status" className="mt-3 rounded-lg border border-line bg-white/[0.03] px-3 py-2.5 text-[12.5px] text-fg-muted">
+                {item.execution.driver_label} n&apos;a pas encore enregistré ses coordonnées bancaires{NB}: appelez-le, ou versez sa part par un
+                autre moyen puis «{NB}Marquer versé{NB}».
+              </p>
+            ) : !info ? (
               <div className="mt-3 space-y-3">
                 <p className="text-[12.5px] text-fg-muted">Le chauffeur est prévenu de chaque consultation de son RIB.</p>
                 {error && <p className="text-[12.5px] text-red">{error}</p>}

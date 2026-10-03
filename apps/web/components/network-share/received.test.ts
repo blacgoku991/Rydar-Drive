@@ -1,6 +1,6 @@
 import { formatPrice } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
-import { driverShortLabel, receivedMoneyLine, receivedRoute, receivedState, showReceivedTab } from "./received";
+import { driverShortLabel, receivedMoneyLine, receivedRoute, receivedState, showReceivedTab, sinceText } from "./received";
 import { givenItem, receivedFromGiven } from "./test-fixtures";
 
 // « Courses reçues » (B) : lecture seule — communes, chauffeur, prix et part du chauffeur, état du règlement entre le
@@ -55,5 +55,17 @@ describe("onglet « Courses reçues »", () => {
     expect(showReceivedTab({ shareIn: true, inProgress: 0, monthRides: 0, totalRides: 0 })).toBe(true);
     expect(showReceivedTab({ shareIn: false, inProgress: 0, monthRides: 0, totalRides: 3 })).toBe(true);
     expect(showReceivedTab({ shareIn: false, inProgress: 1, monthRides: 0, totalRides: null })).toBe(true);
+  });
+});
+
+describe("« En course partenaire maintenant » : durée écoulée", () => {
+  const now = Date.parse("2026-10-03T10:00:00.000Z");
+  it("jamais « depuis à l'instant » : moins d'1 min, minutes, heures, jours", () => {
+    expect(sinceText("2026-10-03T09:59:40.000Z", now)).toBe("depuis moins d'1\u00a0min");
+    expect(sinceText("2026-10-03T10:00:30.000Z", now)).toBe("depuis moins d'1\u00a0min"); // horloge en avance
+    expect(sinceText("2026-10-03T09:48:00.000Z", now)).toBe("depuis 12\u00a0min");
+    expect(sinceText("2026-10-03T08:00:00.000Z", now)).toBe("depuis 2\u00a0h");
+    expect(sinceText("2026-10-01T10:00:00.000Z", now)).toBe("depuis 2\u00a0j");
+    expect(sinceText("pas une date", now)).toBe("");
   });
 });

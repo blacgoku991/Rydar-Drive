@@ -257,7 +257,7 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
 
         {data.previous.length > 0 && (
           <section aria-label="Chauffeurs partenaires précédents">
-            <h4 className="text-[12.5px] font-medium text-fg">Avant</h4>
+            <h4 className="text-[12.5px] font-medium text-fg">Chauffeurs partenaires précédents</h4>
             <ul className="mt-1 space-y-1 text-[12px] text-fg-muted">
               {data.previous.map((p) => (
                 <li key={p.id}>

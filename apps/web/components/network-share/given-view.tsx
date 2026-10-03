@@ -49,6 +49,8 @@ type Props = {
    * ni exclusion, ni export, ni lien vers la fiche course (tableau de bord fermé).
    */
   suspended?: boolean;
+  /** Réseau fermé par Rydar (sommes en cours) : plus d'exclusion (aucune course n'est plus partagée) */
+  closed?: boolean;
 };
 
 const EMPTY: Record<NetworkGivenFilter, { title: string; description: string }> = {
@@ -58,6 +60,7 @@ const EMPTY: Record<NetworkGivenFilter, { title: string; description: string }> 
   },
   in_progress: { title: "Aucune course en cours", description: "Les courses tenues en ce moment par un chauffeur partenaire s'afficheront ici." },
   to_check: { title: "Rien à vérifier", description: "Une fin de course inhabituelle (position absente, durée très courte…) s'affiche ici pour contrôle." },
+  to_collect: { title: "Rien à encaisser", description: "Les parts que les chauffeurs partenaires vous reversent (courses payées à bord) s'afficheront ici jusqu'à leur règlement." },
   to_confirm: { title: "Rien à confirmer", description: "Quand un chauffeur partenaire signale « J'ai payé », le paiement attend ici votre « Reçu »." },
   overdue: { title: "Aucun retard", description: "Aucun règlement n'a dépassé son échéance." },
   disputed: { title: "Aucune contestation", description: "Les paiements marqués « Pas reçu » et les courses contestées s'afficheront ici." },
@@ -66,6 +69,7 @@ const EMPTY: Record<NetworkGivenFilter, { title: string; description: string }> 
 };
 
 const plural = (n: number, one: string, many: string) => `${formatNumber(n)} ${n > 1 ? many : one}`;
+const NB = " ";
 
 export function GivenView(p: Props) {
   const router = useRouter();
@@ -100,8 +104,14 @@ export function GivenView(p: Props) {
           <Kpi
             label="À encaisser"
             value={formatPrice(g.to_collect_cents, p.currency)}
-            sub={g.to_confirm_count ? plural(g.to_confirm_count, "paiement à confirmer", "paiements à confirmer") : "reversé par les chauffeurs"}
-            href={href({ filter: "to_confirm" })}
+            sub={
+              g.to_confirm_count
+                ? plural(g.to_confirm_count, "paiement à confirmer", "paiements à confirmer")
+                : g.to_collect_cents > 0
+                  ? "à reverser par les chauffeurs partenaires"
+                  : "rien à encaisser"
+            }
+            href={href({ filter: g.to_confirm_count ? "to_confirm" : "to_collect" })}
             icon={<ArrowDownLeft />}
           />
           <Kpi
@@ -131,7 +141,8 @@ export function GivenView(p: Props) {
           <Kpi
             label="En cours"
             value={formatNumber(g.in_progress)}
-            sub={g.searching ? plural(g.searching, "course proposée au réseau", "courses proposées au réseau") : "courses tenues par un partenaire"}
+            // Le chiffre = courses tenues par un partenaire ; les courses encore en recherche sont nommées à part
+            sub={g.searching ? `chez un partenaire · ${formatNumber(g.searching)} en recherche` : "chez un partenaire"}
             href={href({ filter: "in_progress" })}
             icon={<Route />}
           />
@@ -234,6 +245,7 @@ export function GivenView(p: Props) {
                   canManage={p.canManage}
                   partnerExcluded={excluded.has(item.execution.partner.id)}
                   suspended={p.suspended}
+                  closed={p.closed}
                 />
               ))}
             </ul>
@@ -266,6 +278,7 @@ function GivenRow({
   canManage,
   partnerExcluded,
   suspended,
+  closed,
 }: {
   item: NetworkGivenItem;
   now: number;
@@ -274,6 +287,7 @@ function GivenRow({
   canManage: boolean;
   partnerExcluded: boolean;
   suspended?: boolean;
+  closed?: boolean;
 }) {
   const e = item.execution;
   const t = e.terms;
@@ -281,8 +295,13 @@ function GivenRow({
   const currency = item.ride.currency;
   const owes = t.direction === "driver_owes";
   const base = givenRowActions(item, { canManage, now, partnerExcluded });
-  // Organisation suspendue : décisions d'argent seulement (relance, exclusions : organisation active)
-  const can = suspended ? { ...base, remind: false, excludeDriver: false, excludePartner: false } : base;
+  // Organisation suspendue : décisions d'argent seulement (relance, exclusions : organisation active) ; réseau fermé
+  // par Rydar : plus d'exclusion (plus aucune course n'est partagée)
+  const can = suspended
+    ? { ...base, remind: false, excludeDriver: false, excludePartner: false }
+    : closed
+      ? { ...base, excludeDriver: false, excludePartner: false }
+      : base;
   const progress = givenProgress(item);
   const live = s ? { ...s, overdue: s.direction === "driver_owes" && s.status === "due" && Date.parse(s.due_at) <= now } : null;
   const due = live ? dueInfo(live, now, { blockUnpaid: false }) : null;
@@ -346,23 +365,23 @@ function GivenRow({
               <Badge tone={progress.tone}>{progress.label}</Badge>
             ) : null}
             {toCheck && (
-              <span title={suspectText(item)}>
-                <Badge tone="amber" dot={false}>
-                  <ShieldAlert className="size-3" /> À vérifier
-                </Badge>
-              </span>
+              <Badge tone="amber" dot={false}>
+                <ShieldAlert className="size-3" /> À vérifier
+              </Badge>
             )}
-            {e.contested_at && (
-              <span title={e.contested_reason ?? undefined}>
-                <Badge tone="red">Course contestée</Badge>
-              </span>
-            )}
-            {e.driver_disputed_at && (
-              <span title={e.driver_dispute_reason ?? undefined}>
-                <Badge tone="red">Le chauffeur conteste</Badge>
-              </span>
-            )}
+            {e.contested_at && <Badge tone="red">Course contestée</Badge>}
+            {e.driver_disputed_at && <Badge tone="red">Le chauffeur conteste</Badge>}
           </div>
+          {/* Motifs en clair (lisibles au doigt et au clavier) : une ligne chacun, coupée si trop longue */}
+          {toCheck && <p className="truncate text-[11.5px] text-amber" title={suspectText(item)}>{suspectText(item)}</p>}
+          {e.contested_at && e.contested_reason && (
+            <p className="truncate text-[11.5px] text-fg-muted" title={e.contested_reason}>Contestée{NB}: «{NB}{e.contested_reason}{NB}»</p>
+          )}
+          {e.driver_disputed_at && (
+            <p className="truncate text-[11.5px] text-fg-muted" title={e.driver_dispute_reason ?? undefined}>
+              Le chauffeur conteste{e.driver_dispute_reason ? <>{NB}: «{NB}{e.driver_dispute_reason}{NB}»</> : " ce règlement"}
+            </p>
+          )}
           {s?.status === "declared" ? (
             <DeclarationLine settlement={s} now={now} />
           ) : e.on_hold && e.hold_until ? (
@@ -372,7 +391,11 @@ function GivenRow({
           ) : due ? (
             <p className={cn("truncate text-[11.5px]", toneText[due.tone])}>{due.text.replace(/^à verser dans /, "échéance dans ")}</p>
           ) : null}
-          {s && (s.status === "disputed" || s.status === "waived") && s.note && (
+          {s && !owes && s.status === "due" && s.network?.payout_configured === false && (
+            <p className="truncate text-[11.5px] text-fg-subtle">RIB non renseigné par le chauffeur</p>
+          )}
+          {/* Note du règlement (« Pas reçu », annulation), sauf si c'est le motif de la contestation, déjà affiché */}
+          {s && (s.status === "disputed" || s.status === "waived") && s.note && s.note !== e.contested_reason && (
             <p className="truncate text-[11.5px] text-fg-subtle" title={s.note}>« {s.note} »</p>
           )}
         </div>

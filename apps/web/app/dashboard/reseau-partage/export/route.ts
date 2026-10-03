@@ -1,13 +1,15 @@
 // Export CSV / relevé mensuel du réseau partagé (tout membre de l'organisation, client de session : les RPC
 // org_network_given / org_network_received vérifient l'appartenance en base). Mêmes colonnes et totaux pour les
 // courses confiées et les courses reçues (components/network-share/csv.ts) ; UTF-8 avec BOM, séparateur « ; ».
+// Réseau fermé par Rydar : relevé toujours disponible pour une organisation déjà membre (comptabilité des sommes en
+// cours) ; jamais membre : 404, comme l'onglet.
 //   ?vue=confiees|recues   &mois=AAAA-MM (défaut : mois en cours, fuseau de l'organisation)   &partenaire=<uuid>
 import type { NetworkGivenItem, NetworkPartnerNames, NetworkReceivedItem, OrgNetworkGiven, OrgNetworkReceived } from "@rydar/shared";
 import { NextResponse } from "next/server";
 import { networkStatementCsv, statementFileName, statementRowsFromGiven, statementRowsFromReceived } from "@/components/network-share/csv";
 import { isUuid, monthInZone, parseMonth } from "@/components/network-share/paths";
 import { getOrgContext } from "@/lib/org-context";
-import { sharedNetworkEnabled } from "@/lib/shared-network";
+import { networkAccess } from "@/lib/shared-network";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +22,7 @@ type Page<T> = { items: T[]; next_before: string | null };
 export async function GET(request: Request) {
   const ctx = await getOrgContext();
   if (!ctx) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
-  if (!(await sharedNetworkEnabled())) return NextResponse.json({ error: "Page introuvable." }, { status: 404 });
+  if (!(await networkAccess(ctx.supabase, ctx.org.id))) return NextResponse.json({ error: "Page introuvable." }, { status: 404 });
   const url = new URL(request.url);
   const view = url.searchParams.get("vue") === "recues" ? "recues" : "confiees";
   const tz = ctx.org.timezone || "Europe/Paris";

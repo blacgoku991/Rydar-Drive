@@ -53,6 +53,23 @@ export function driverShortLabel(d: { first_name: string; last_name: string } | 
   return initial ? `${d.first_name.trim()} ${initial}.` : d.first_name.trim();
 }
 
+const NB = " ";
+
+/**
+ * Durée écoulée d'une course partenaire en cours : « depuis 12 min », « depuis moins d'1 min », « depuis 2 h » —
+ * jamais « depuis à l'instant ». Date illisible : chaîne vide.
+ */
+export function sinceText(iso: string | null | undefined, now: number): string {
+  const t = iso ? Date.parse(iso) : Number.NaN;
+  if (!Number.isFinite(t)) return "";
+  const min = Math.max(0, Math.round((now - t) / 60_000));
+  if (min < 1) return `depuis moins d'1${NB}min`;
+  if (min < 60) return `depuis ${min}${NB}min`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `depuis ${h}${NB}h`;
+  return `depuis ${Math.round(h / 24)}${NB}j`;
+}
+
 /** Onglet « Courses reçues » : visible si la réception est demandée, ou s'il existe un historique. */
 export function showReceivedTab(opts: { shareIn: boolean; inProgress: number; monthRides: number; totalRides: number | null }): boolean {
   return opts.shareIn || opts.inProgress > 0 || opts.monthRides > 0 || (opts.totalRides ?? 0) > 0;

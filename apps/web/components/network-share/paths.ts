@@ -2,7 +2,8 @@
 // Module pur (ni « use client » ni « server-only ») : page serveur, composants client, route d'export et tests.
 //
 // Contrat d'URL :
-//   ?tab=confiees|recues|reglages                       (défaut : confiees)
+//   ?tab=confiees|recues|reglages                       (absent : choisi selon l'état, access.ts → defaultNetworkTab ;
+//                                                        les liens internes le donnent toujours)
 //   &filtre=<clé>        Courses confiées : NETWORK_GIVEN_FILTERS ; Courses reçues : NETWORK_RECEIVED_FILTERS (défaut : all)
 //   &partenaire=<uuid>   organisation partenaire (network_partner_names)
 //   &mois=AAAA-MM        mois (relevé, export CSV)
@@ -36,7 +37,8 @@ export function parseMonth(value: unknown): string | null {
 export type NetworkShareSearchParams = { tab?: string | string[]; filtre?: string | string[]; partenaire?: string | string[]; mois?: string | string[]; n?: string | string[] };
 
 export type NetworkShareParams = {
-  tab: NetworkShareTab;
+  /** null : absent ou inconnu (sous-onglet choisi selon l'état de l'organisation) */
+  tab: NetworkShareTab | null;
   given: NetworkGivenFilter;
   received: NetworkReceivedFilter;
   partner: string | null;
@@ -54,7 +56,7 @@ export function parseNetworkShareParams(sp: NetworkShareSearchParams): NetworkSh
   const filter = first(sp.filtre) ?? "";
   const n = Math.round(Number(first(sp.n)) || NETWORK_LIST_PAGE);
   return {
-    tab: NETWORK_SHARE_TABS.some((t) => t.key === tab) ? (tab as NetworkShareTab) : "confiees",
+    tab: NETWORK_SHARE_TABS.some((t) => t.key === tab) ? (tab as NetworkShareTab) : null,
     given: GIVEN_KEYS.has(filter) ? (filter as NetworkGivenFilter) : "all",
     received: RECEIVED_KEYS.has(filter) ? (filter as NetworkReceivedFilter) : "all",
     partner: isUuid(first(sp.partenaire)) ? first(sp.partenaire)! : null,
@@ -69,14 +71,18 @@ export function parseNetworkShareParams(sp: NetworkShareSearchParams): NetworkSh
  */
 export const NETWORK_SUSPENDED_PATH = "/suspended/reseau-partage";
 
-/** Lien vers un sous-onglet (paramètres par défaut omis), avec ancre facultative ; `base` : autre page (suspendue). */
+/**
+ * Lien vers un sous-onglet, avec ancre facultative. Le sous-onglet est TOUJOURS écrit (sans lui, la page choisit selon
+ * l'état de l'organisation) ; filtres par défaut omis. `base` : page de l'organisation suspendue (« Courses confiées »
+ * seulement, sans sous-onglets).
+ */
 export function networkShareHref(
   p: { tab: NetworkShareTab; filter?: string | null; partner?: string | null; month?: string | null; n?: number | null },
   hash?: string,
   base: string = NETWORK_SHARE_PATH,
 ): string {
   const q = new URLSearchParams();
-  if (p.tab !== "confiees") q.set("tab", p.tab);
+  if (base === NETWORK_SHARE_PATH) q.set("tab", p.tab);
   if (p.filter && p.filter !== "all") q.set("filtre", p.filter);
   if (p.partner) q.set("partenaire", p.partner);
   if (p.month) q.set("mois", p.month);

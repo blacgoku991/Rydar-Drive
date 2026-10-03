@@ -2,6 +2,7 @@ import "server-only";
 import type { OrgNetworkSummary } from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cache } from "react";
+import { networkPendingWork, type NetworkAccess } from "@/components/network-share/access";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -27,4 +28,20 @@ export const sharedNetworkEnabled = cache(async (): Promise<boolean> => {
 export const networkSummary = cache(async (supabase: SupabaseClient, orgId: string): Promise<OrgNetworkSummary | null> => {
   const { data, error } = await supabase.rpc("org_network_summary", { p_org: orgId });
   return error ? null : ((data ?? null) as OrgNetworkSummary | null);
+});
+
+/**
+ * Accès réseau de l'organisation ACTIVE (components/network-share/access.ts) :
+ *   • interrupteur ouvert : onglet complet ;
+ *   • interrupteur coupé et organisation déjà membre (network_memberships, RLS) : onglet réduit aux sommes en cours
+ *     (NETWORK_CLOSED_RPCS) — les courses déjà acceptées vont à leur terme et créent leurs règlements ;
+ *   • sinon null : aucun écran réseau, et aucune lecture de plus que l'interrupteur et l'adhésion.
+ * Une lecture par requête (cache React) ; une adhésion illisible vaut « jamais membre ».
+ */
+export const networkAccess = cache(async (supabase: SupabaseClient, orgId: string): Promise<NetworkAccess | null> => {
+  if (await sharedNetworkEnabled()) return { mode: "open", summary: await networkSummary(supabase, orgId) };
+  const { data, error } = await supabase.from("network_memberships").select("organization_id").eq("organization_id", orgId).maybeSingle();
+  if (error || !data) return null;
+  const summary = await networkSummary(supabase, orgId);
+  return { mode: "closed", summary, pending: networkPendingWork(summary) };
 });

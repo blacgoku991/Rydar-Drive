@@ -43,8 +43,9 @@ describe("alertes du réseau partagé", () => {
   });
 
   it("règlement d'une course confiée : « Réseau partagé › Courses confiées », jamais Encaissements", () => {
-    expect(networkSettlementLink("declared", "driver_owes")).toEqual({ href: "/dashboard/reseau-partage?filtre=to_confirm", cta: "Réseau partagé" });
-    expect(networkSettlementLink("created", "centrale_owes").href).toBe("/dashboard/reseau-partage?filtre=to_pay");
-    expect(networkSettlementLink("created", "driver_owes").href).toBe("/dashboard/reseau-partage");
+    expect(networkSettlementLink("declared", "driver_owes")).toEqual({ href: "/dashboard/reseau-partage?tab=confiees&filtre=to_confirm", cta: "Réseau partagé" });
+    expect(networkSettlementLink("created", "centrale_owes").href).toBe("/dashboard/reseau-partage?tab=confiees&filtre=to_pay");
+    // Payée à bord : « À encaisser » (et non toute la liste) ; sous-onglet toujours explicite
+    expect(networkSettlementLink("created", "driver_owes").href).toBe("/dashboard/reseau-partage?tab=confiees&filtre=to_collect");
   });
 });

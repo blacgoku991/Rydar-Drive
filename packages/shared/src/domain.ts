@@ -283,6 +283,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "Ce chauffeur a une course ou un règlement en cours avec une organisation partenaire : archivez-le au lieu de le supprimer.",
   PAYOUT_DETAILS_INVALID: "Coordonnées bancaires invalides : vérifiez le titulaire, l'IBAN et le BIC.",
   PAYOUT_DETAILS_IN_USE: "Un versement vous est encore dû : modifiez vos coordonnées bancaires au lieu de les supprimer.",
+  PAYOUT_DETAILS_MISSING:
+    "Le chauffeur n'a pas encore enregistré ses coordonnées bancaires : appelez-le, ou versez sa part par un autre moyen puis « Marquer versé ».",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */

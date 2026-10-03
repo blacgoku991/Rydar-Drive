@@ -6,6 +6,8 @@ import { notFound, redirect } from "next/navigation";
 import { Logo } from "@/components/brand/logo";
 import { GivenView } from "@/components/network-share/given-view";
 import { NETWORK_LIST_MAX, parseNetworkShareParams, recentMonths, type NetworkShareSearchParams } from "@/components/network-share/paths";
+import { NETWORK_CLOSED_NOTICE } from "@/components/network-share/access";
+import { hasOpenNetworkSettlements } from "@/components/network-share/suspended";
 import { getPayerContext } from "@/components/platform-fees/org-payer-context";
 import { networkSummary, sharedNetworkEnabled } from "@/lib/shared-network";
 
@@ -16,21 +18,22 @@ export const dynamic = "force-dynamic";
  * Organisation SUSPENDUE qui a confié des courses à des chauffeurs partenaires (spec C12, §10.5) : ses règlements
  * réseau restent dus et attendus. Owner / admin seulement : Reçu, Pas reçu, Versé (RIB), Valider, Contester, Rouvrir
  * (assert_network_creditor accepte une organisation suspendue). Ni relance, ni exclusion, ni export ; tableau de bord
- * fermé. Organisation active → onglet habituel ; réseau fermé par la plateforme → 404.
+ * fermé. Organisation active → onglet habituel. Réseau fermé par la plateforme : la page reste ouverte tant que des
+ * sommes sont en cours (NETWORK_CLOSED_RPCS), sinon 404.
  */
 export default async function SuspendedNetworkPage({ searchParams }: { searchParams: Promise<NetworkShareSearchParams> }) {
   const ctx = await getPayerContext();
   if (!ctx) redirect("/login");
   if (ctx.org.status !== "suspended") redirect("/dashboard/reseau-partage");
   if (!ctx.canPay) redirect("/suspended");
-  if (!(await sharedNetworkEnabled())) notFound();
+  const orgId = ctx.org.id;
+  const [open, summary] = await Promise.all([sharedNetworkEnabled(), networkSummary(ctx.supabase, orgId)]);
+  if (!open && !hasOpenNetworkSettlements(summary?.given)) notFound();
 
   const params = parseNetworkShareParams(await searchParams);
-  const orgId = ctx.org.id;
   const tz = ctx.org.timezone || "Europe/Paris";
   const serverNow = Date.now();
-  const [summary, given, partnersRes] = await Promise.all([
-    networkSummary(ctx.supabase, orgId),
+  const [given, partnersRes] = await Promise.all([
     ctx.supabase.rpc("org_network_given", {
       p_org: orgId, p_filter: params.given, p_partner: params.partner, p_month: params.month, p_limit: params.limit, p_before: null,
     }),
@@ -60,6 +63,7 @@ export default async function SuspendedNetworkPage({ searchParams }: { searchPar
             {ctx.org.name} est suspendue : plus aucune course n&apos;est proposée au réseau, mais les courses déjà acceptées vont à leur
             terme. Les sommes que les chauffeurs partenaires vous doivent restent dues, et celles que vous leur devez restent à verser.
           </p>
+          {!open && <p className="mt-2 max-w-2xl text-[13px] text-fg-muted">{NETWORK_CLOSED_NOTICE}</p>}
         </header>
         {!summary && (
           <p role="status" className="mb-4 flex items-center gap-2 rounded-lg border border-line bg-white/[0.02] px-4 py-2.5 text-[12.5px] text-fg-muted">

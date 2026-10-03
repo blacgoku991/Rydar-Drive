@@ -3,22 +3,23 @@ import {
   type DispatchModel, type NetworkDriverExclusion, type NetworkMembership, type NetworkPartnerNames, type OrgNetworkActivity,
   type OrgNetworkDriver, type OrgNetworkGiven, type OrgNetworkReceived, type SettlementMethod,
 } from "@rydar/shared";
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, Info } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
+import { NETWORK_CLOSED_NOTICE, defaultNetworkTab } from "@/components/network-share/access";
 import { GivenView } from "@/components/network-share/given-view";
 import {
   NETWORK_LIST_MAX, NETWORK_SHARE_TABS, networkShareHref, parseNetworkShareParams, recentMonths, type NetworkShareSearchParams,
 } from "@/components/network-share/paths";
 import { ReadinessPanel } from "@/components/network-share/readiness-panel";
-import { orgReadinessView } from "@/components/network-share/readiness";
+import { orgReadinessView, termsCardUpFront } from "@/components/network-share/readiness";
 import { showReceivedTab } from "@/components/network-share/received";
 import { ReceivedView } from "@/components/network-share/received-view";
 import { SettingsView, type NetworkPaymentRow } from "@/components/network-share/settings-view";
 import { isAdminRole, requireOrg } from "@/lib/auth";
-import { networkSummary, sharedNetworkEnabled } from "@/lib/shared-network";
+import { networkAccess } from "@/lib/shared-network";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Réseau partagé" };
@@ -28,12 +29,16 @@ const one = <T,>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ?
 
 /**
  * « Réseau partagé » (flottes et centrales, spec §12.1) : trois sous-onglets — Courses confiées (A), Courses reçues (B),
- * Réglages. Absent (404) tant que l'interrupteur plateforme est coupé. Tout membre lit (dispatcher : lecture seule +
- * « Relancer ») ; contrat d'URL : components/network-share/paths.ts.
+ * Réglages. Tout membre lit (dispatcher : lecture seule + « Relancer ») ; contrat d'URL : components/network-share/paths.ts.
+ * Interrupteur plateforme coupé : 404 pour une organisation qui n'a jamais été membre (rien ne change) ; pour une
+ * organisation déjà membre, onglet réduit aux sommes en cours (Courses confiées / reçues, sans Réglages), car les
+ * courses déjà acceptées vont à leur terme et créent leurs règlements (components/network-share/access.ts).
  */
 export default async function NetworkSharePage({ searchParams }: { searchParams: Promise<NetworkShareSearchParams> }) {
   const ctx = await requireOrg();
-  if (!(await sharedNetworkEnabled())) notFound();
+  const access = await networkAccess(ctx.supabase, ctx.org.id);
+  if (!access) notFound();
+  const closed = access.mode === "closed";
   const params = parseNetworkShareParams(await searchParams);
   const orgId = ctx.org.id;
   const canManage = isAdminRole(ctx.role);
@@ -41,21 +46,23 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
   const model: DispatchModel = ctx.org.dispatch_model === "centrale" ? "centrale" : "fleet";
   const db = ctx.supabase;
   const serverNow = Date.now();
+  // Même lecture que la mise en page (pastille, bandeau) : une seule requête (cache React)
+  const summary = access.summary;
 
-  const [summary, membershipRes, partnersRes, exclusionsRes] = await Promise.all([
-    // Même lecture que la mise en page (pastille, bandeau) : une seule requête (cache React)
-    networkSummary(db, orgId),
+  const [membershipRes, partnersRes, exclusionsRes] = await Promise.all([
     db.from("network_memberships").select("*").eq("organization_id", orgId).maybeSingle(),
     db.rpc("network_partner_names", { p_org: orgId }),
-    db.from("network_exclusions").select("excluded_org_id").eq("organization_id", orgId),
+    // Réseau fermé : plus d'exclusion possible (aucune course n'est plus partagée)
+    closed ? Promise.resolve(null) : db.from("network_exclusions").select("excluded_org_id").eq("organization_id", orgId),
   ]);
   const membership = (membershipRes.data ?? null) as NetworkMembership | null;
   const partners = Object.entries((partnersRes.error ? {} : (partnersRes.data ?? {})) as NetworkPartnerNames)
     .map(([id, name]) => ({ id, name }))
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
-  const excludedPartners = ((exclusionsRes.data ?? []) as { excluded_org_id: string }[]).map((r) => r.excluded_org_id);
+  const excludedPartners = ((exclusionsRes?.data ?? []) as { excluded_org_id: string }[]).map((r) => r.excluded_org_id);
   const readiness = summary?.readiness ?? null;
   const currency = summary?.currency || "EUR";
+  const termsVersion = readiness?.terms.version ?? NETWORK_TERMS_VERSION;
 
   // « Courses reçues » : masqué si la réception est coupée et sans historique
   const shareIn = !!membership?.share_in;
@@ -70,8 +77,12 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
     monthRides: summary?.received.month_rides ?? 0,
     totalRides: totalReceived,
   });
-  const tabs = NETWORK_SHARE_TABS.filter((t) => t.key !== "recues" || receivedVisible);
-  const tab = tabs.some((t) => t.key === params.tab) ? params.tab : "confiees";
+  // Réseau fermé : jamais de Réglages (seulement les sommes en cours)
+  const tabs = NETWORK_SHARE_TABS.filter((t) => (t.key !== "recues" || receivedVisible) && (t.key !== "reglages" || !closed));
+  const view = readiness && !closed ? orgReadinessView(readiness, model, tz) : null;
+  // Sans ?tab (lien du menu) : selon l'état (rien de demandé → Réglages, réception seule → Courses reçues…)
+  const wanted = params.tab ?? defaultNetworkTab({ mode: access.mode, summary, view, receivedVisible });
+  const tab = tabs.some((t) => t.key === wanted) ? wanted : "confiees";
   const months = recentMonths(new Date(serverNow), tz, 12);
 
   let content: React.ReactNode;
@@ -99,6 +110,7 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
         timeZone={tz}
         serverNow={serverNow}
         failed={!!res.error}
+        closed={closed}
       />
     );
   } else if (tab === "recues") {
@@ -123,6 +135,7 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
         partners={partners}
         months={months}
         shareIn={shareIn}
+        closed={closed}
         timeZone={tz}
         serverNow={serverNow}
         failed={!!res.error}
@@ -138,7 +151,8 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
         )
         .eq("organization_id", orgId)
         .maybeSingle(),
-      canManage ? db.rpc("org_network_drivers", { p_org: orgId }) : Promise.resolve(null),
+      // Liste « Prêt / Manque » : seulement quand la réception est demandée (sinon une phrase la remplace)
+      canManage && shareIn ? db.rpc("org_network_drivers", { p_org: orgId }) : Promise.resolve(null),
       canManage ? db.rpc("org_network_driver_exclusions", { p_org: orgId }) : Promise.resolve(null),
       membership?.terms_accepted_by
         ? db
@@ -196,20 +210,34 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
         excludedPartners={excludedPartners}
         driverExclusions={driverExclusionsRes && !driverExclusionsRes.error ? ((driverExclusionsRes.data ?? []) as NetworkDriverExclusion[]) : null}
         termsAcceptedBy={acceptor ? acceptor.full_name || acceptor.email : null}
-        termsVersion={readiness?.terms.version ?? NETWORK_TERMS_VERSION}
+        termsVersion={termsVersion}
       />
     );
   }
 
-  const view = readiness ? orgReadinessView(readiness, model, tz) : null;
+  // Réglages avec la carte « Nouvelle convention » en tête : l'en-tête ne la répète pas (une seule acceptation à l'écran)
+  const headerView =
+    view && tab === "reglages" && termsCardUpFront(readiness, membership, termsVersion)
+      ? { ...view, items: view.items.filter((i) => i.code !== "terms" && i.code !== "terms_grace") }
+      : view;
   return (
     <>
       <PageHeader
         eyebrow="Opérations"
         title="Réseau partagé"
-        description="Vos chauffeurs d'abord. Si aucun n'accepte, la course est proposée aux chauffeurs des organisations partenaires."
+        description={
+          closed ? undefined : "Vos chauffeurs d'abord. Si aucun n'accepte, la course est proposée aux chauffeurs des organisations partenaires."
+        }
       >
-        {view && <ReadinessPanel view={view} canManage={canManage} />}
+        {closed ? (
+          // Réseau fermé par Rydar : ni état des sens, ni manques, ni Réglages — les sommes en cours seulement
+          <p role="status" className="mb-5 flex items-start gap-2.5 rounded-xl border border-line bg-white/[0.02] px-4 py-3 text-[13px] text-fg-muted">
+            <Info className="mt-0.5 size-4 shrink-0 text-violet" aria-hidden />
+            {NETWORK_CLOSED_NOTICE}
+          </p>
+        ) : (
+          headerView && <ReadinessPanel view={headerView} canManage={canManage} />
+        )}
         <nav className="-mb-px flex gap-1 overflow-x-auto" aria-label="Sous-onglets du réseau partagé">
           {tabs.map((t) => {
             const badge = t.key === "confiees" ? (summary?.badge ?? 0) : 0;

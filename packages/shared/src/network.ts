@@ -865,6 +865,12 @@ export interface SettlementNetworkInfo {
   contested: boolean;
   driver_disputed: boolean;
   driver_dispute_reason: string | null;
+  /**
+   * Ajout web (revue, facultatif) : versement au chauffeur (centrale_owes) — le chauffeur a enregistré ses coordonnées
+   * bancaires (driver_payout_details). false : « RIB non renseigné » sur la ligne, la feuille « Versé » l'explique sans
+   * appeler org_network_payout_info. Jamais l'IBAN ni ses derniers chiffres. Absent ou null : inconnu.
+   */
+  payout_configured?: boolean | null;
 }
 
 /**
@@ -1140,10 +1146,16 @@ export interface DriverDeletionNetworkDebt {
 // Organisation A (donneuse) — lecture : tout membre ; argent : owner / admin
 // =============================================================================
 
+/**
+ * Filtres de « Courses confiées » (p_filter d'org_network_given). « to_collect » (ajout web, revue) : reversements des
+ * chauffeurs (driver_owes) non soldés — dû, signalé payé, « Pas reçu » — cible de l'indicateur « À encaisser »
+ * (to_collect_cents) ; « to_confirm » en est la partie signalée payée.
+ */
 export const NETWORK_GIVEN_FILTERS = [
   { key: "all", label: "Toutes" },
   { key: "in_progress", label: "En cours" },
   { key: "to_check", label: "À vérifier" },
+  { key: "to_collect", label: "À encaisser" },
   { key: "to_confirm", label: "À confirmer" },
   { key: "overdue", label: "En retard" },
   { key: "disputed", label: "Contestées" },
@@ -1172,8 +1184,10 @@ export interface OrgNetworkSummary {
   /**
    * total_rides : ajout web (lot 8, facultatif) = toutes les exécutions de ses chauffeurs pour d'autres organisations
    * (onglet « Courses reçues » masqué si la réception est coupée et qu'il vaut 0). Absent : l'onglet relit une ligne.
+   * open_count : ajout web (revue, facultatif) = règlements de ses chauffeurs encore ouverts (dû, signalé payé, « Pas
+   * reçu ») envers d'autres organisations : réseau fermé par Rydar, l'onglet reste visible tant qu'il est > 0.
    */
-  received: { in_progress: number; month_rides: number; total_rides?: number };
+  received: { in_progress: number; month_rides: number; total_rides?: number; open_count?: number };
   /** Pastille : à confirmer + en retard + à vérifier */
   badge: number;
 }
@@ -1235,7 +1249,10 @@ export interface OrgNetworkRide {
 
 export type NetworkPayoutWarning = "iban_changed" | "recent_change";
 
-/** RPC org_network_payout_info(p_settlement) (owner / admin ; consultation journalisée et notifiée au chauffeur). */
+/**
+ * RPC org_network_payout_info(p_settlement) (owner / admin ; consultation journalisée et notifiée au chauffeur).
+ * Chauffeur sans coordonnées bancaires (RIB facultatif) : erreur PAYOUT_DETAILS_MISSING, jamais une réponse NULL.
+ */
 export interface OrgNetworkPayoutInfo {
   settlement_id: Uuid;
   amount_cents: number;
@@ -1640,6 +1657,29 @@ export const NETWORK_SUSPENDED_CREDITOR_RPCS = [
   "contest_network_ride", "confirm_settlements", "dispute_settlement", "waive_settlement", "reopen_settlement",
 ] as const;
 
+/**
+ * Ajout web (revue) — réseau FERMÉ par la plateforme après avoir été ouvert (shared_network_enabled() = false) : plus
+ * aucune course n'est partagée, mais les courses déjà acceptées vont à leur terme et créent leurs règlements. Ces RPC
+ * répondent alors comme réseau ouvert (mêmes droits : lecture pour tout membre, argent pour owner / admin, chauffeur
+ * pour ses propres lignes) afin de régler les sommes en cours ; toutes les autres RPC réseau (réglages, exclusions,
+ * lisibilité, consentement du chauffeur…) restent refusées (NETWORK_DISABLED). Les lignes réseau de
+ * confirm_settlements, dispute_settlement, waive_settlement et reopen_settlement ne dépendent jamais de l'interrupteur.
+ * driver_offers_v2, driver_ride et driver_rides_upcoming répondent toujours (lectures générales de l'application).
+ * Côté web : onglet réduit à « Courses confiées » et « Courses reçues », sans Réglages, montré seulement aux
+ * organisations qui ont des sommes ou des courses en cours (org_network_summary).
+ */
+export const NETWORK_CLOSED_RPCS = [
+  // Organisation qui a confié des courses (A)
+  "org_network_summary", "org_network_given", "org_network_ride", "network_partner_names", "org_network_payout_info",
+  "validate_network_ride", "contest_network_ride", "close_network_ride", "remind_network_driver",
+  "confirm_settlements", "dispute_settlement", "waive_settlement", "reopen_settlement",
+  // Organisation du chauffeur (B), lecture seule
+  "org_network_received", "org_network_activity",
+  // Chauffeur partenaire : sommes en cours (« Courses partenaires » de l'application)
+  "driver_network_settlements", "driver_declare_network_payment", "driver_dispute_network_settlement",
+  "driver_payout_info", "driver_set_payout_details", "driver_delete_payout_details",
+] as const;
+
 // =============================================================================
 // Codes d'erreur SQL du réseau (libellés : ERROR_MESSAGES de domain.ts)
 // =============================================================================
@@ -1650,6 +1690,8 @@ export const NETWORK_ERROR_CODES = [
   "NETWORK_RIDE_LOCKED", "NETWORK_CLOSE_NOT_ALLOWED", "NETWORK_CONTEST_EXPIRED", "NETWORK_SETTLEMENT_ACTION_FORBIDDEN",
   "NETWORK_CONSENT_REQUIRED", "NETWORK_PAYOUT_ON_HOLD", "NETWORK_DISPUTE_NOT_ALLOWED", "OFFER_CHANGED",
   "DRIVER_BUSY_AT_TIME", "DRIVER_HAS_NETWORK_OBLIGATIONS", "PAYOUT_DETAILS_INVALID", "PAYOUT_DETAILS_IN_USE",
+  // Ajout web (revue) : org_network_payout_info, chauffeur sans coordonnées bancaires (RIB facultatif)
+  "PAYOUT_DETAILS_MISSING",
 ] as const;
 export type NetworkErrorCode = (typeof NETWORK_ERROR_CODES)[number];
 
