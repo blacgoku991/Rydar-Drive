@@ -284,9 +284,42 @@ export const ORG_LEGAL_VERSION = "2026-10-02";
  * Entrée en vigueur de ORG_LEGAL_VERSION pour une organisation déjà cliente à sa publication (version antérieure
  * acceptée) : dès son acceptation, et AU PLUS TARD à cette date ; elle peut résilier sans frais avant (CGV art. 16 :
  * modification défavorable annoncée au moins 30 jours à l'avance). Date ISO AAAA-MM-JJ, à revoir avec chaque
- * nouvelle ORG_LEGAL_VERSION.
+ * nouvelle ORG_LEGAL_VERSION. L'annonce par e-mail (svc_org_terms_notify, /admin/legal) est refusée en base quand cette
+ * date laisse moins de 30 jours (premier minuit, heure de Paris, après maintenant + 30 jours : noticeMinDay) : la
+ * repousser, puis redéployer.
  */
 export const ORG_LEGAL_EFFECTIVE_AT = "2026-11-05";
+
+/**
+ * Principaux changements de ORG_LEGAL_VERSION par rapport à la version précédente (CGV du 27 septembre 2026), y compris
+ * ceux qui sont défavorables à la centrale : MÊME liste dans le préambule des CGV (app/cgv/page.tsx), le bandeau
+ * « mise à jour » du tableau de bord et l'e-mail d'annonce (private.org_terms_email, migration 20260924006600, avec la
+ * typographie française de private.fr_typo ; tests/db/platform-fee-schedule.test.ts les compare). À réécrire avec
+ * chaque nouvelle ORG_LEGAL_VERSION.
+ */
+export const ORG_LEGAL_CHANGES = [
+  "Des frais plateforme par course peuvent s'appliquer aux flottes comme aux centrales à commission, en plus ou à la place de l'abonnement (articles 3 à 5) ; en modèle flotte, ils n'ont pas de plafond et leur montant fixe est dû même pour une course sans prix.",
+  "Ces frais s'entendent toutes taxes comprises (article 5).",
+  "Une hausse de ces frais est annoncée au moins 30 jours à l'avance, sauf accord écrit de la centrale, et n'attend plus le renouvellement de l'abonnement : le préavis de 30 jours et l'application au renouvellement suivant de l'article 4 ne visent plus que le prix de l'abonnement (articles 4 et 5).",
+  "En cas de retard de paiement, le blocage vise aussi la relance ou l'attribution d'une course sans chauffeur ; un paiement déclaré ne le suspend que s'il couvre la somme échue, 7 jours au plus comptés depuis la première déclaration des 30 derniers jours, et pas dans les 7 jours qui suivent un paiement marqué « non reçu » (article 5).",
+  "L'éditeur peut inscrire au relevé, avec son motif, la correction d'une erreur de calcul des frais (article 5).",
+  "Nouvelle obligation : tenir à jour l'adresse e-mail et le téléphone du propriétaire et de la centrale (article 10).",
+  "En faveur de la centrale : facture récapitulative à chaque cycle, baisse d'une correction acceptée sans décision de l'éditeur sous 30 jours, modèle d'exploitation changé seulement à sa demande ou avec son accord écrit, résiliation sans frais ni préavis avant une hausse ou une modification défavorable, avec remboursement au prorata de l'abonnement payé d'avance (articles 3, 5 et 7).",
+  "L'accord de traitement des données ne change pas.",
+] as const;
+
+/**
+ * Premier jour « AAAA-MM-JJ » (minuit dans le fuseau) au moins 30 jours après `now` : date d'effet au plus tôt d'une
+ * annonce faite maintenant (miroir de private.notice_min_on : hausse des frais par course, entrée en vigueur des CGV).
+ */
+export function noticeMinDay(now: Date = new Date(), timeZone = "Europe/Paris"): string {
+  // Premier minuit à partir de now + 30 jours : jour local de (now + 30 jours − 1 ms), plus un jour
+  const day = new Date(now.getTime() + 30 * 86_400_000 - 1);
+  const iso = dateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(day);
+  const next = new Date(`${iso}T12:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
 
 /**
  * Version acceptée ÉGALE à celle en vigueur (comme le web) : une version « postérieure » inscrite dans le registre

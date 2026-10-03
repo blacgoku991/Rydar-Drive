@@ -228,9 +228,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Invitation d'un compte existant (20260924004700) : activée par la personne elle-même (lien reçu par e-mail)
   INVITATION_PENDING: "Invitation en attente : seule la personne invitée peut activer cet accès, avec le lien reçu par e-mail.",
   // Frais plateforme (20260924003000)
-  // Libellé neutre (20260924006600) : une flotte règle dans « Frais Rydar », une centrale dans « Encaissements »
+  // Libellé neutre (20260924006600) : une flotte règle dans « Frais Rydar », une centrale dans « Encaissements » ;
+  // espaces insécables avant « : » et dans les guillemets (typographie française, comme private.fr_typo)
   PLATFORM_FEES_OVERDUE:
-    "Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour créer de nouvelles courses.",
+    "Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour créer de nouvelles courses.",
   PLATFORM_LEDGER_IMMUTABLE: "Les frais plateforme enregistrés ne se modifient pas.",
   // Visite médicale (donnée de santé) retirée des justificatifs déposés (20260924004300)
   TYPE_NOT_ALLOWED: "Ce type de document ne se dépose plus dans l'application.",
@@ -260,18 +261,27 @@ export const ERROR_MESSAGES: Record<string, string> = {
   WEBHOOK_TEST_RATE_LIMITED: "Trop de tests et de renvois de webhooks en une minute (10 au plus par centrale) : réessayez dans un instant.",
   // Interrupteur plateforme des mini-sites (20260924006200)
   BOOKING_SITES_DISABLED: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
-  // Frais Rydar : hausses annoncées, accord écrit, annonce des CGV, relance WhatsApp d'une flotte (20260924006600)
+  // Frais Rydar : hausses annoncées, accord écrit, annonce des CGV, relance WhatsApp d'une flotte, délai de paiement
+  // (20260924006600) — espaces insécables avant « : » et dans les guillemets
   PLATFORM_FEE_NOTICE_REQUIRED:
-    "Hausse des frais par course : à annoncer au moins 30 jours à l'avance, ou à appliquer sur accord écrit de l'organisation (fiche de l'organisation).",
+    "Hausse des frais par course : à annoncer au moins 30 jours à l'avance, ou à appliquer sur accord écrit de l'organisation (fiche de l'organisation).",
   NOTICE_TOO_SHORT:
-    "Préavis insuffisant : une hausse des frais par course s'applique au plus tôt 30 jours après son annonce (et pas avant l'entrée en vigueur des CGV pour une organisation qui ne les a pas acceptées), sauf accord écrit de l'organisation.",
-  CONSENT_REQUIRED: "Accord écrit : précisez sa date et sa forme (e-mail, courrier…) pour appliquer la hausse tout de suite.",
-  FEE_CHANGE_NOT_PENDING: "Ce changement n'est plus en attente (déjà appliqué, annulé ou remplacé) : rechargez la page.",
-  ORG_NOT_NEW: "Réglage initial réservé à une organisation tout juste créée, sans course : programmez la hausse ou indiquez l'accord écrit.",
+    "Préavis insuffisant : une hausse des frais par course s'applique au plus tôt 30 jours après son annonce (et pas avant l'entrée en vigueur des CGV pour une organisation qui ne les a pas acceptées), sauf accord écrit de l'organisation.",
+  CONSENT_REQUIRED: "Accord écrit : précisez sa date et sa forme (e-mail, courrier…).",
+  FEE_CHANGE_NOT_PENDING: "Ce changement n'est plus en attente (déjà appliqué, annulé ou remplacé) : rechargez la page.",
+  ORG_NOT_NEW: "Réglage initial réservé à une organisation tout juste créée, sans course : programmez la hausse ou indiquez l'accord écrit.",
   TERMS_VERSION_INVALID: "Version des CGV ou date de leur entrée en vigueur invalide.",
-  TERMS_EFFECTIVE_PASSED: "Entrée en vigueur des CGV atteinte : l'annonce par e-mail n'est plus envoyée.",
+  TERMS_EFFECTIVE_PASSED: "Entrée en vigueur des CGV atteinte : l'annonce par e-mail n'est plus envoyée.",
+  TERMS_NOTICE_TOO_SHORT:
+    "Préavis insuffisant : l'annonce des CGV doit précéder d'au moins 30 jours leur entrée en vigueur. Repoussez la date (ORG_LEGAL_EFFECTIVE_AT), puis redéployez.",
+  TERMS_NOT_NOTIFIED:
+    "CGV en vigueur ni acceptées par l'organisation ni annoncées par e-mail : prévenez-la d'abord (Informations légales), ou appliquez la hausse sur son accord écrit.",
+  NO_EMAIL:
+    "Aucune adresse e-mail valide pour le propriétaire ni pour l'organisation : corrigez l'adresse pour annoncer la hausse, ou appliquez-la sur son accord écrit.",
+  PLATFORM_PAYMENT_DAYS_MAX:
+    "Délai de paiement des frais plateforme : 45 jours au plus (facture récapitulative, article L441-10 du Code de commerce).",
   WHATSAPP_FLEET_UNSUPPORTED:
-    "WhatsApp indisponible pour une flotte : le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte. Relancez sans WhatsApp (rappel affiché dans son tableau de bord).",
+    "WhatsApp indisponible pour une flotte : le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte. Relancez sans WhatsApp (rappel affiché dans son tableau de bord).",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */
