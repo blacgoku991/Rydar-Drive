@@ -5,8 +5,8 @@
 // tests/db/helpers.ts) ; l'interrupteur est ouvert pour ce fichier et recoupé à la fin.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  approveNetwork, as, CDG, createDriver, createMember, createOrg, enableNetwork, expectPgError, inMinutes, north, pool,
-  setSharedNetwork, sql, type Driver,
+  approveNetwork, as, CDG, createDriver, createMember, createOrg, createRideAsOwner, enableNetwork, expectPgError, inMinutes,
+  north, pool, setSharedNetwork, sql, type Driver,
 } from "./helpers";
 import {
   finish, giver, moveTo, orgName, pendingOffer, readyPartner, rpc, siteMaker, stepAs, tag, uniquePhone, type Pair,
@@ -501,5 +501,43 @@ describe("Temps réel du cycle (§14.1 n° 32, S14)", () => {
     const mine = of(`driver:${p.partner.id}`);
     expect(mine.some((m) => m.event === "ride.updated" && m.payload.driver_id === p.partner.id)).toBe(true);
     expect(mine.some((m) => m.event === "settlement.updated")).toBe(true);
+  });
+});
+
+// =============================================================================
+// Lot 7 — performance de l'étape réseau : mêmes partenaires, contrôles arrêtés plus tôt
+// =============================================================================
+describe("Étape réseau : contrôles des partenaires arrêtés à la limite (20260924007200)", () => {
+  it("network_candidates(…, p_limit) = début de la liste complète, même ordre ; banni (plateforme) jamais candidat ; 1 suffit à l'arrêt anticipé", async () => {
+    const site = nextSite();
+    const A = await giver("Centrale Limite", "fleet");
+    const B = await createOrg(`Flotte Limite ${tag()}`);
+    await enableNetwork(B, { in: true });
+    await approveNetwork(B);
+    const near = [];
+    for (const [i, m] of [300, 900, 1500, 2100].entries()) near.push(await readyPartner(B, { firstName: `P${i}`, at: north(site, m) }));
+    // Le plus proche banni par la plateforme (empreinte de sa carte VTC) : jamais candidat
+    await sql(
+      `insert into public.banned_identities (scope, kind, value_hash, reason)
+       select 'platform', k.kind, k.value_hash, 'Fraude' from private.driver_identity_keys k
+        where k.driver_id = $1 and k.kind = 'vtc_card'`,
+      [near[0]!.id],
+    );
+    const ride = await createRideAsOwner(A, { pickup_lat: site[0], pickup_lng: site[1], price_cents: 5000 });
+    await sql(`update public.rides set network_at = now() where id = $1`, [ride.id]);
+    const list = async (limit: number | null) =>
+      (await sql(
+        `select c.driver_id from private.network_candidates((select r from public.rides r where r.id = $1), 16000, false, $2) c`,
+        [ride.id, limit],
+      )).map((x) => x.driver_id);
+    const all = (await sql(
+      `select c.driver_id from private.network_candidates((select r from public.rides r where r.id = $1), 16000) c`, [ride.id],
+    )).map((x) => x.driver_id);
+    expect(all).toEqual([near[1]!.id, near[2]!.id, near[3]!.id]);
+    expect(await list(null)).toEqual(all);
+    expect(await list(2)).toEqual(all.slice(0, 2));
+    expect(await list(1)).toEqual(all.slice(0, 1));
+    expect((await sql(`select private.network_identity_block($1, $2) as r`, [near[0]!.id, A.id]))[0].r).toBe("banned");
+    expect((await sql(`select private.network_identity_block($1, $2) as r`, [near[1]!.id, A.id]))[0].r).toBeNull();
   });
 });

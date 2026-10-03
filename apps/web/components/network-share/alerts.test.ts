@@ -21,6 +21,10 @@ describe("alertes du réseau partagé", () => {
       title: "Course proposée au réseau partagé",
       body: "Aucun de vos chauffeurs n'a accepté",
     });
+    // Compteur plafonné à 50 par la base (20260924007200) : « 50 ou plus »
+    expect(networkProposedAlert({ data: { partners_nearby: 50 } }, { label: "#1784", route: "" }).body).toBe(
+      "Aucun de vos chauffeurs n'a accepté · 50 chauffeurs partenaires ou plus à proximité",
+    );
     // Planifiée dans la fenêtre réseau (006800 : stage « scheduled_window ») : proposée en plus à la flotte
     expect(networkProposedAlert({ data: { partners_nearby: 1, stage: "scheduled_window" } }, { label: "#1790", route: "Opéra → CDG" })).toEqual({
       title: "Planifiée #1790 proposée aussi au réseau partagé",

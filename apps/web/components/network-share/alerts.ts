@@ -1,7 +1,9 @@
 // Alertes du rattacheur (components/alerts/dispatch-alerts.tsx) liées au réseau partagé : course proposée au réseau
 // (information), aucun chauffeur après le réseau, acceptation par un chauffeur partenaire, règlement d'une course
 // confiée. Module pur (tests : alerts.test.ts). Les événements ne contiennent jamais d'identifiant de partenaire.
-import { networkPartnersFromNoDriver, type NetworkNoDriverEventData, type NetworkShareStage } from "@rydar/shared";
+import {
+  NETWORK_PARTNERS_NEARBY_MAX, networkPartnersFromNoDriver, type NetworkNoDriverEventData, type NetworkShareStage,
+} from "@rydar/shared";
 import { networkShareHref } from "./paths";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
@@ -31,7 +33,11 @@ export function networkProposedAlert(
     title: (scheduled ? `Planifiée ${ride.label} proposée aussi au réseau partagé` : `Course ${ride.label} proposée au réseau partagé`).replace("  ", " "),
     body: [
       scheduled ? "Toujours sans chauffeur" : "Aucun de vos chauffeurs n'a accepté",
-      typeof n === "number" && n > 0 ? plural(n, "chauffeur partenaire à proximité", "chauffeurs partenaires à proximité") : null,
+      typeof n === "number" && n > 0
+        ? n >= NETWORK_PARTNERS_NEARBY_MAX
+          ? `${NETWORK_PARTNERS_NEARBY_MAX} chauffeurs partenaires ou plus à proximité` // compteur plafonné (20260924007200)
+          : plural(n, "chauffeur partenaire à proximité", "chauffeurs partenaires à proximité")
+        : null,
       ride.route || null,
     ]
       .filter(Boolean)

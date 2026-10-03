@@ -702,6 +702,12 @@ export type NetworkWatchCause = (typeof NETWORK_WATCH_CAUSES)[number];
 export const NETWORK_CLOSE_CAUSES = ["driver_inactive", "executor_inactive", "no_position"] as const;
 export type NetworkCloseCause = (typeof NETWORK_CLOSE_CAUSES)[number];
 
+/**
+ * Plafond du compteur « chauffeurs partenaires à proximité » du journal dispatch.network (private.network_open,
+ * 20260924007200) : le comptage s'arrête là (contrôles coûteux), la valeur atteinte se lit « au moins autant ».
+ */
+export const NETWORK_PARTNERS_NEARBY_MAX = 50;
+
 /** Événements du journal de A (ride_events.type) propres au réseau. Jamais l'identifiant d'un chauffeur partenaire. */
 export type NetworkRideEventType =
   | "dispatch.network" | "dispatch.network_skipped" | "dispatch.network_error"
@@ -709,6 +715,7 @@ export type NetworkRideEventType =
   // Lot argent (4b, 20260924006900)
   | "ride.network_validated" | "ride.network_contested";
 export interface NetworkRideEventData {
+  /** partners_nearby : plafonné à NETWORK_PARTNERS_NEARBY_MAX (valeur atteinte = « au moins autant »). */
   "dispatch.network": { partners_nearby: number; stage?: NetworkShareStage; cycle?: number };
   "dispatch.network_skipped": { reason: NetworkSkipReason };
   "dispatch.network_error": { errors: number };

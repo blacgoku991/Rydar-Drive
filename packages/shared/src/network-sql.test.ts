@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   ACCEPT_OFFER_CODES, DRIVER_NETWORK_READINESS_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES,
   NETWORK_CLOSED_RPCS, NETWORK_EXECUTION_END_REASONS, NETWORK_GIVEN_FILTERS, NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS,
-  NETWORK_PICKUP_HIDDEN_LABEL, NETWORK_RECEIVED_FILTERS, NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS,
+  NETWORK_PARTNERS_NEARBY_MAX, NETWORK_PICKUP_HIDDEN_LABEL, NETWORK_RECEIVED_FILTERS, NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS,
   NETWORK_SUSPECT_REASONS, NETWORK_SUSPENDED_CREDITOR_RPCS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
   NETWORK_RPC_ACCESS, ORG_NETWORK_READINESS_CODES, type DriverNetworkSettlementItem, type NetworkDriverMoney,
   type NetworkOfferNotificationData, type NetworkPayoutWarning, type NetworkRpcs, type RemindNetworkDriverResult,
@@ -121,6 +121,12 @@ describe("Réseau partagé : paramètres fixes de la v1 (NETWORK_PARAMS) appliqu
     expect(lastSqlDefinition("private.dispatch_tick")).toContain(`v_network_max constant integer := ${NETWORK_PARAMS.maxPerTick};`);
     expect(lastSqlDefinition("private.network_dispatch_failed")).toContain(`if v_errors < ${NETWORK_PARAMS.maxErrors} then`);
     expect(lastSqlDefinition("private.network_open")).toContain(`>= ${NETWORK_PARAMS.maxErrors} then`);
+  });
+
+  it("lot 7 (performance) : compteur « partenaires à proximité » plafonné (NETWORK_PARTNERS_NEARBY_MAX), un candidat suffit à l'arrêt anticipé, limite de la vague passée aux candidats", () => {
+    expect(lastSqlDefinition("private.network_open")).toContain(`p_stage = 'scheduled_window', ${NETWORK_PARTNERS_NEARBY_MAX});`);
+    expect(lastSqlDefinition("private.network_search_exhausted")).toContain("private.network_candidates(r, v_radius, false, 1)");
+    expect(lastSqlDefinition("private.network_offer")).toContain("private.network_candidates(r, p_radius, v_scheduled, p_limit)");
   });
 });
 
