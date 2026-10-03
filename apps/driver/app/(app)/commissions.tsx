@@ -20,10 +20,11 @@ import { METHOD_BUTTON, PaySheet, type ManualMethod, type PaySheetState, type Pa
 import { BigButton, hapticResult, Label, Pill, Screen, ScreenHeader, Segmented, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useNow } from "@/hooks/use-now";
+import { usePayoutInfo } from "@/hooks/use-payout-info";
 import { api, isMissingRpc } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { useAppEvent } from "@/lib/events";
-import { hasPartnerMoney, networkVisible, PARTNER_SETTLEMENTS_TITLE } from "@/lib/network";
+import { ownTabBadge, PARTNER_SETTLEMENTS_TITLE, PARTNER_TAB_LABEL, partnerAccess, partnerTabBadge } from "@/lib/network";
 import { pastWhen } from "@/lib/settlement-text";
 import { settlementSession } from "@/lib/settlement-session";
 import { colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
@@ -90,15 +91,17 @@ export default function Commissions() {
   // Notification d'un règlement partenaire, écran déjà affiché : onglet « Courses partenaires »
   useAppEvent("settlements:tab", (t) => setTab(t));
 
-  // Commissions de la centrale (mode centrale) et courses partenaires (réseau partagé)
+  // Commissions de la centrale (mode centrale) et courses partenaires (réseau partagé) : une seule décision, testée
+  // (lib/network.ts : partnerAccess) — réseau coupé ou non reçu, sans somme partenaire : écran « Commissions » inchangé
   const model = data?.model ?? home?.model ?? home?.organization.dispatch_model;
-  const ownApplies = model === "centrale";
   const netData = net && net !== "unsupported" ? net : null;
-  const netApplies =
-    net !== "unsupported" &&
-    ((netData?.organizations.length ?? 0) > 0 || hasPartnerMoney(home?.network) || networkVisible(network) || params.tab === "network");
-  const showNetwork = netApplies && (!ownApplies || tab === "network");
-  const title = ownApplies || !netApplies ? "Commissions" : PARTNER_SETTLEMENTS_TITLE;
+  const access = partnerAccess({ model, homeNetwork: home?.network, network, settlements: net, requested: params.tab === "network", tab });
+  const { showNetwork, title } = access;
+  // Coordonnées bancaires : état réseau, sinon lues directement (réseau coupé ensuite) ; inconnues : aucune invitation
+  const payout = usePayoutInfo(showNetwork);
+  // Pastilles des onglets : courses à régler de l'autre onglet (rouge s'il y a du retard)
+  const partnerBadge = partnerTabBadge(netData, home?.network);
+  const ownBadge = ownTabBadge(data?.pay, data?.summary.overdue_cents);
 
   const currency = data?.currency ?? "EUR";
   const price = (c: number | null | undefined) => formatPrice(c, currency);
@@ -198,19 +201,26 @@ export default function Commissions() {
             />
           }
         >
-          {ownApplies && netApplies && (
+          {access.tabs && (
             <Segmented
               value={tab}
               onChange={setTab}
               options={[
-                { value: "own", label: data?.organization.name ?? home?.organization.name ?? "Ma centrale" },
-                { value: "network", label: PARTNER_SETTLEMENTS_TITLE },
+                {
+                  value: "own", label: data?.organization.name ?? home?.organization.name ?? "Ma centrale",
+                  badge: ownBadge.count, badgeColor: ownBadge.late ? colors.red : colors.amber, badgeLabel: ownBadge.label,
+                },
+                {
+                  // Libellé court : tient sur une ligne avec sa pastille (lecteur d'écran : « Courses partenaires »)
+                  value: "network", label: PARTNER_TAB_LABEL, accessibilityLabel: PARTNER_SETTLEMENTS_TITLE,
+                  badge: partnerBadge.count, badgeColor: partnerBadge.late ? colors.red : colors.amber, badgeLabel: partnerBadge.label,
+                },
               ]}
             />
           )}
           {showNetwork ? (
             netData ? (
-              <NetworkSettlementsView data={netData} tz={tz} now={now} payout={network?.payout ?? null} onChanged={() => load().then(() => void refresh())} flash={flash} />
+              <NetworkSettlementsView data={netData} tz={tz} now={now} payout={payout} onChanged={() => load().then(() => void refresh())} flash={flash} />
             ) : (
               <View style={styles.loading}>
                 {netError ? (

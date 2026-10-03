@@ -15,6 +15,7 @@ import { BigButton, CollapsibleSheet, CountBadge, Pill, RouteLine, Screen, useFl
 import { LOCATION_BLOCKED_MESSAGE, prepareFleetReport, useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { useNetworkTermsPrompt } from "@/hooks/use-network-terms-prompt";
+import { useReturnFlash } from "@/hooks/use-return-flash";
 import { useNow } from "@/hooks/use-now";
 import { api } from "@/lib/api";
 import { batteryRestricted, requestBatteryExemption } from "@/lib/battery";
@@ -91,6 +92,8 @@ export default function Home() {
     }, []),
   );
   useNetworkTermsPrompt(focused, now);
+  // Retour de l'écran des conditions (proposé ici) : « Courses du réseau partagé activées »
+  useReturnFlash(flash.show);
   // Serveur antérieur à driver_ride : argent de la course en cours déduit du modèle de l'organisation
   const legacy = useRef<LegacyRideContext>({});
   legacy.current = { model: home?.model ?? home?.organization.dispatch_model, organization: home?.organization.name };

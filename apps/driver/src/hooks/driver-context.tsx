@@ -241,8 +241,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     setHome(h);
   }, []);
   const networkJson = useRef("");
-  /** Serveur sans réseau partagé (fonctions absentes) : plus aucun appel réseau pour ce compte dans ce processus. */
-  const networkUnsupported = useRef(false);
+  // Serveur sans réseau partagé (fonctions absentes, PGRST202) : api.ts ne les rappelle pas pendant 10 min, puis réessaie
+  // (jamais d'abandon pour toute la vie du processus : SQL déployé après le lancement, cache de schéma en rechargement)
   const networkReadAt = useRef(0);
   const networkPingAt = useRef(0);
   const applyNetwork = useCallback((n: DriverNetworkState | null) => {
@@ -321,7 +321,6 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     setHomeError(false);
     seenOffers.current.clear();
     pushReady.current = null;
-    networkUnsupported.current = false;
     networkReadAt.current = 0;
     networkPingAt.current = 0;
     if (userId) void checkAccount();
@@ -401,11 +400,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   }, [canDrive, checkAccount]);
 
   // Réseau partagé : état (réglage, conditions, lisibilité) lu pour le compte connecté. Serveur sans réseau partagé
-  // (PGRST202) : plus aucun appel ; réseau coupé par Rydar (NETWORK_DISABLED) : aucun écran réseau ; réseau injoignable :
-  // dernier état connu gardé.
+  // (PGRST202 : nouvel essai 10 min plus tard) ou réseau coupé par Rydar (NETWORK_DISABLED) : aucun écran réseau ; réseau
+  // injoignable : dernier état connu gardé.
   const refreshNetwork = useCallback(async (): Promise<DriverNetworkState | null> => {
     const uid = userIdRef.current;
-    if (!uid || networkUnsupported.current) return null;
+    if (!uid) return null;
     try {
       const state = await api.networkState();
       if (uid !== userIdRef.current) return null;
@@ -414,7 +413,6 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       return state ?? null;
     } catch (e) {
       if (uid !== userIdRef.current) return null;
-      if (isMissingRpc(e)) networkUnsupported.current = true;
       if (isMissingRpc(e) || (e instanceof ApiError && e.code === "NETWORK_DISABLED")) applyNetwork(null);
       return null;
     }
@@ -426,14 +424,13 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     if (!userId || !canDrive) return;
     let alive = true;
     const wake = (force: boolean) => {
-      if (networkUnsupported.current) return;
       const now = Date.now();
       const ping = force || now - networkPingAt.current >= NETWORK_PING_MS;
       if (ping) networkPingAt.current = now;
       void (ping ? api.networkPing().catch((e: unknown) => {
-        if (isMissingRpc(e)) networkUnsupported.current = true;
-        // Serveur injoignable : nouvel essai au prochain retour (refus du serveur, réseau coupé compris : 15 min)
-        else if (!(e instanceof ApiError && e.code)) networkPingAt.current = 0;
+        // Fonction absente (api.ts : sans appel pendant 10 min) ou serveur injoignable : nouvel essai au prochain retour ;
+        // refus du serveur (réseau coupé compris) : 15 min
+        if (isMissingRpc(e) || !(e instanceof ApiError && e.code)) networkPingAt.current = 0;
       }) : Promise.resolve()).then(() => {
         if (alive && (force || Date.now() - networkReadAt.current >= NETWORK_STATE_MS)) void refreshNetwork();
       });

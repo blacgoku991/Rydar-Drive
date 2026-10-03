@@ -7,15 +7,19 @@
 //     seul montant de part de A (« vous reverserez X € à {A} » ou « {A} vous versera X € »), jamais « frais Rydar » ni
 //     « commission » ;
 //   • il accepte et règle toujours lui-même (contrepartie chauffeur, aucun « J'ai compris ») ;
-//   • interrupteur plateforme coupé, ou organisation qui ne reçoit pas le réseau : rien de nouveau n'apparaît (les
-//     sommes déjà dues restent affichées dans « Courses partenaires »).
+//   • interrupteur plateforme coupé (par défaut) : rien de nouveau n'apparaît, ni écran, ni réglage, ni bandeau, ni bon de
+//     réservation (les sommes déjà dues restent affichées dans « Courses partenaires ») ;
+//   • réseau ouvert par Rydar mais organisation qui ne le reçoit pas : ni réglage, ni conditions, ni bandeau ; seul le bon
+//     de réservation apparaît sur ses courses (§7.5 et critère 28 : toutes les courses une fois le réseau ouvert).
 import {
-  DRIVER_NETWORK_READINESS_META, NETWORK_FORBIDDEN_WORDS, NETWORK_PICKUP_HIDDEN_LABEL, NETWORK_TERMS_VERSION, PAYMENT_METHOD_LABELS,
+  DRIVER_NETWORK_READINESS_META, NETWORK_FORBIDDEN_WORDS, NETWORK_PARAMS, NETWORK_PICKUP_HIDDEN_LABEL, NETWORK_TERMS_REVIEWED,
+  NETWORK_TERMS_VERSION, PAYMENT_METHOD_LABELS,
   driverCollects, formatDate, formatPhone, formatPrice, formatRideDate, formatTime, isNetworkBlocker, isValidIban, networkBlockerMessage,
   networkMoneyLine, networkText,
   type BookingVoucher, type DispatchModel, type DriverHomeNetwork, type DriverNetworkCreditor, type DriverNetworkReadinessCode,
-  type DriverNetworkSettlementItem, type DriverNetworkState, type DriverOffer, type DriverOfferV2, type DriverRide, type DriverRideMoney,
-  type EarningsRide, type NetworkGiverInfo, type NetworkReadinessAction, type PaymentMethod, type Ride, type SettlementMethod,
+  type DriverNetworkSettlementItem, type DriverNetworkSettlements, type DriverNetworkState, type DriverOffer, type DriverOfferV2,
+  type DriverPayoutInfo, type DriverRide, type DriverRideMoney, type EarningsRide, type NetworkGiverInfo, type NetworkReadinessAction,
+  type PaymentMethod, type Ride, type SettlementMethod,
 } from "@rydar/shared";
 import { blockerInfo, deductionCents, driverSettlementLabel, dueText, formatWhen, frTypo, NBSP, pastWhen } from "./settlement-text";
 
@@ -119,14 +123,24 @@ export const partnerPaymentLabel = (pm: PaymentMethod) => (pm === "card" ? PARTN
 export const PARTNER_BADGE = "Partenaire";
 /** Entrée des règlements partenaires d'un chauffeur de flotte (profil, gains, accueil), titre de l'écran. */
 export const PARTNER_SETTLEMENTS_TITLE = "Courses partenaires";
+/**
+ * Onglet des règlements partenaires dans l'écran « Commissions » d'un chauffeur de centrale : court, pour tenir sur une
+ * ligne à côté de sa pastille (« Courses partenaires » serait tronqué en « Courses partenair… » sur 360 à 390 pt).
+ */
+export const PARTNER_TAB_LABEL = "Partenaires";
 
-/** « Course de {A} (partenaire) » */
-export const partnerRideTitle = (giver: string) => `Course de ${giver} (partenaire)`;
+/**
+ * « Course partenaire · {A} » : le mot clé d'abord (un nom d'organisation long ne coupe jamais « partenaire » ; le nom
+ * complet figure aussi dans la ligne d'argent).
+ */
+export const partnerRideTitle = (giver: string) => `Course partenaire · ${giver}`;
 
 export type PartnerOfferView = {
   giver: string;
-  /** « Course de {A} (partenaire) » */
+  /** « Course partenaire · {A} » */
   title: string;
+  /** Lecteur d'écran : « Course partenaire de {A} » */
+  label: string;
   /** « Vous gagnez » : part du chauffeur */
   gainCents: number;
   currency: string;
@@ -148,6 +162,7 @@ export function partnerOfferView(o: Pick<DriverOfferV2, "network" | "currency">)
   return {
     giver,
     title: partnerRideTitle(giver),
+    label: `Course partenaire de ${giver}`,
     gainCents: n.money.driver_part_cents,
     currency,
     line: frTypo(networkMoneyLine({ ...n.money, currency }, giver)),
@@ -195,6 +210,20 @@ export function offerBlockView(
   return info && { ...info, target: "own", actionLabel: "Régler mes commissions" };
 }
 
+/**
+ * Libellé et message d'un blocage réseau (noms insérés). Code inconnu de CETTE version de l'app (ajouté côté serveur
+ * après une app livrée) : repli neutre, jamais lu dans NETWORK_BLOCKER_META (l'app n'a pas d'ErrorBoundary).
+ */
+export function blockerText(reason: string, names: { giver?: string | null; executor?: string | null } = {}) {
+  if (isNetworkBlocker(reason)) return networkBlockerMessage(reason, names);
+  const giver = names.giver?.trim();
+  return {
+    label: "Courses partenaires bloquées",
+    message: giver ? `Les courses de ${giver} vous sont bloquées pour le moment.` : "Les courses partenaires vous sont bloquées pour le moment.",
+    payable: true,
+  };
+}
+
 /** Écran où régler : commissions de sa propre organisation, ou onglet des courses partenaires. */
 export const settleHref = (target: SettleTarget) =>
   target === "network" ? ({ pathname: "/commissions", params: { tab: "network" } } as const) : ("/commissions" as const);
@@ -235,10 +264,25 @@ export function rideMoneyView(r: Pick<AppRide, "money" | "network" | "currency">
   return { kind: "plain", currency };
 }
 
-/** Récapitulatif de fin d'une course partenaire : « 12,50 € à régler à {A} » ou « {A} vous versera 37,50 € ». */
+export type PartnerDoneView = {
+  owes: boolean;
+  title: string;
+  sub: string;
+  /** Échéance dépassée (sous-titre en couleur d'alerte) */
+  late: boolean;
+  /** Course déjà payée, coordonnées bancaires non renseignées : « Renseigner mon RIB » en bouton principal */
+  payoutMissing: boolean;
+};
+
+/**
+ * Récapitulatif de fin d'une course partenaire : « 12,50 € à régler à {A} » ou « {A} vous versera 37,50 € » ; course déjà
+ * payée : où arrivera le versement (« Versement sur votre compte •••• 0189 sous 7 jours »), ou coordonnées bancaires à
+ * renseigner (sans elles, {A} ne peut pas le verser). `payout` null : inconnu (jamais pris pour « non renseignées »).
+ */
 export function partnerDoneView(
   v: Extract<RideMoneyView, { kind: "partner" }>, item: DriverNetworkSettlementItem | null | undefined, tz?: string, now = Date.now(),
-) {
+  payout?: DriverPayoutInfo | null,
+): PartnerDoneView {
   const amount = formatPrice(item?.amount_cents ?? v.amountCents, v.currency);
   if (v.collects) {
     const due = item && item.status === "due" ? dueText(item.due_at, tz, now) : null;
@@ -247,10 +291,47 @@ export function partnerDoneView(
       title: frTypo(`${amount} à régler à ${v.giver}`),
       sub: due?.text ?? frTypo(`À régler avec les moyens de paiement de ${v.giver}`),
       late: due?.late ?? false,
+      payoutMissing: false,
     };
   }
+  const note = payoutNoteView(payout);
   const held = item?.on_hold && item.hold_until ? `Course à vérifier : versement retenu ${untilText(item.hold_until, tz, new Date(now))}` : null;
-  return { owes: false, title: frTypo(`${v.giver} vous versera ${amount}`), sub: frTypo(held ?? "Versement par virement sous 7 jours"), late: false };
+  const sub = held
+    ? note?.missing ? `${held}. Renseignez vos coordonnées bancaires pour le recevoir.` : held
+    : note
+      ? note.missing ? note.text : `${note.text} sous ${NETWORK_PARAMS.payoutDays}${NBSP}jours`
+      : `Versement par virement sous ${NETWORK_PARAMS.payoutDays}${NBSP}jours`;
+  return { owes: false, title: frTypo(`${v.giver} vous versera ${amount}`), sub: frTypo(sub), late: false, payoutMissing: !!note?.missing };
+}
+
+/**
+ * Versement d'une course déjà payée (fin de course, fiche course) : compte où il arrivera (IBAN masqué), ou coordonnées
+ * bancaires à renseigner. null : coordonnées inconnues (état réseau pas encore lu, réseau coupé) — rien n'est affirmé.
+ */
+export function payoutNoteView(payout: DriverPayoutInfo | null | undefined): { missing: boolean; text: string } | null {
+  if (!payout) return null;
+  return payout.configured
+    ? { missing: false, text: `Versement sur votre compte ${maskIban(payout.iban_last4)}` }
+    : { missing: true, text: "Renseignez vos coordonnées bancaires pour recevoir ce versement" };
+}
+
+/** Course retirée pendant qu'elle était affichée : motif neutre (le retrait vient de A, de B ou du chien de garde). */
+export const rideRemovedText = (r: Pick<AppRide, "network">) =>
+  r.network ? frTypo(`Cette course de ${giverName(r.network.giver)} vous a été retirée.`) : "La centrale a réattribué cette course.";
+
+/** Lecture d'une course avec sa provenance : `legacy` = repli sur la table rides (driver_ride absente du serveur, PGRST202). */
+export type RideRead = { ride: AppRide | null; legacy: boolean };
+
+/**
+ * Suite d'une lecture de la course affichée : « show » (afficher), « removed » (retirée pendant qu'elle était affichée),
+ * « missing » (jamais lisible), « keep » (garder l'affichage). Une lecture de repli (table rides) ne montre jamais une
+ * course partenaire (RLS : courses propres seulement) : elle ne prouve pas un retrait (PGRST202 aussi quand les noms de
+ * paramètres diffèrent du contrat), l'affichage est gardé.
+ */
+export function rideReadAction(previous: AppRide | null, res: RideRead): "show" | "keep" | "removed" | "missing" {
+  if (res.legacy && previous?.network) return "keep";
+  if (res.ride) return "show";
+  return previous ? "removed" : "missing";
 }
 
 /** « jusqu'à 20:06 », « jusqu'à demain 06:30 », « jusqu'au jeu. 25/09 06:30 » */
@@ -320,7 +401,9 @@ export function voucherView(v: BookingVoucher, tz?: string): { lines: VoucherLin
 
 /**
  * Bon affiché : course partenaire, ou toute course dès que Rydar a ouvert le réseau partagé (état réseau lu, sans
- * `network_off`). Interrupteur plateforme coupé (par défaut) : rien de nouveau dans l'app, même si le serveur envoie un bon.
+ * `network_off`), y compris pour une organisation qui ne reçoit pas le réseau (§7.5 et critère 28 : « toutes les
+ * courses de l'app » ; seul changement visible pour elle). Interrupteur plateforme coupé (par défaut) : rien de nouveau
+ * dans l'app, même si le serveur envoie un bon.
  */
 export function showVoucher(r: Pick<AppRide, "voucher" | "network">, s: DriverNetworkState | null | undefined): boolean {
   if (!r.voucher) return false;
@@ -362,6 +445,15 @@ export type DriverNetworkStatus = {
 /** Raisons de l'organisation : l'interrupteur du chauffeur n'y change rien. */
 const ORG_SIDE: DriverNetworkReadinessCode[] = ["inactive", "org_disallowed"];
 
+/**
+ * Code de lisibilité connu de CETTE version de l'app. Le SQL peut en ajouter après une app livrée (EAS Update) : un code
+ * inconnu est ignoré, jamais lu dans DRIVER_NETWORK_READINESS_META (l'app n'a pas d'ErrorBoundary).
+ */
+const knownReadiness = (c: string): c is DriverNetworkReadinessCode => Object.prototype.hasOwnProperty.call(DRIVER_NETWORK_READINESS_META, c);
+
+/** Manque que cette version de l'app ne sait pas nommer : repli neutre. */
+const UNKNOWN_READINESS = { label: "Réseau partagé indisponible", hint: "Les courses du réseau partagé sont indisponibles pour le moment." };
+
 function readinessDate(code: DriverNetworkReadinessCode, s: DriverNetworkState, tz?: string) {
   const iso = code === "excluded_until" ? s.readiness.excluded_until ?? s.excluded_until : code === "terms_grace" ? s.readiness.terms_grace_until : null;
   return iso ? formatDate(iso, tz) : "";
@@ -392,8 +484,12 @@ export function driverNetworkStatus(s: DriverNetworkState, tz?: string): DriverN
   if (r?.ready) {
     return { tone: "green", title: "Actif", hint: "Vous recevez aussi les courses d'organisations partenaires proches de vous.", action: null, warning: grace };
   }
-  const first = missing.find((c) => c !== "driver_off" && c !== "terms_grace");
-  if (!first) return { tone: "amber", title: "En attente", hint: null, action: null, warning: grace };
+  const first = missing.find((c) => c !== "driver_off" && c !== "terms_grace" && knownReadiness(c));
+  if (!first) {
+    return missing.some((c) => !knownReadiness(c))
+      ? { tone: "amber", title: UNKNOWN_READINESS.label, hint: UNKNOWN_READINESS.hint, action: null, warning: grace }
+      : { tone: "amber", title: "En attente", hint: null, action: null, warning: grace };
+  }
   const meta = DRIVER_NETWORK_READINESS_META[first];
   return {
     tone: first.startsWith("blocked:") ? "red" : "amber",
@@ -420,33 +516,55 @@ export function shouldProposeNetworkTerms(s: DriverNetworkState | null | undefin
 /** Bascule de l'interrupteur vers « activé » : conditions en vigueur à accepter d'abord (écran), sinon activation directe. */
 export const enableNeedsTerms = (s: DriverNetworkState) => !currentTermsAccepted(s);
 
+/** Bouton de l'écran des conditions : accepter (déjà actif), accepter ET activer (ne reçoit pas ces courses), activer seul. */
+export type NetworkTermsPrimary = "J'accepte" | "J'accepte et j'active" | "Activer";
+
 export type NetworkTermsContent = {
   title: string;
   lead: string;
   points: string[];
-  note: string;
-  /** « J'accepte », « Activer », ou null (déjà accepté et activé : « Fermer ») */
-  primary: "J'accepte" | "Activer" | null;
+  /** Ce que vaut le bouton (accepter une version, et activer s'il ne reçoit pas ces courses) ; null : simple activation */
+  note: string | null;
+  /** null : déjà accepté et activé (« Fermer ») */
+  primary: NetworkTermsPrimary | null;
+  /** Confirmation affichée au retour, une fois l'action faite */
+  done: string;
+  /** Texte pas encore relu par le juriste (NETWORK_TERMS_REVIEWED) : mention au-dessus du bouton */
+  review: string | null;
   version: string;
 };
 
 /**
- * Conditions du chauffeur (§7.3), adaptées aux décisions : il règle toujours lui-même, un seul écran « J'accepte ». Aucun
- * mot interdit (NETWORK_FORBIDDEN_WORDS) : Rydar n'est qu'un logiciel de dispatch.
+ * Conditions du chauffeur (§7.3), adaptées aux décisions : il règle toujours lui-même, un seul écran d'acceptation (jamais
+ * « J'ai compris »). Accepter active aussi les courses du réseau partagé : c'est dit sur le bouton et dans la note quand le
+ * chauffeur ne les reçoit pas (première fois, ou arrêtées lui-même). Aucun mot interdit (NETWORK_FORBIDDEN_WORDS) : Rydar
+ * n'est qu'un logiciel de dispatch.
  */
-export function networkTermsContent(s: DriverNetworkState | null | undefined, now = new Date()): NetworkTermsContent {
+export function networkTermsContent(
+  s: DriverNetworkState | null | undefined, now = new Date(), reviewed: boolean = NETWORK_TERMS_REVIEWED,
+): NetworkTermsContent {
   const b = s?.organization?.name?.trim() || "votre organisation";
   const version = s?.terms?.version || NETWORK_TERMS_VERSION;
+  const enabled = !!s?.enabled;
   const accepted = !!s?.accepted_version && s.accepted_version === version;
   const updated = !!s?.accepted_version && !accepted;
-  const graceUntil = updated && s?.terms?.grace_until && Date.parse(s.terms.grace_until) > now.getTime() ? s.terms.grace_until : null;
+  const graceUntil = updated && enabled && s?.terms?.grace_until && Date.parse(s.terms.grace_until) > now.getTime() ? s.terms.grace_until : null;
   const lead = accepted
-    ? s?.enabled
+    ? enabled
       ? `Vous recevez aussi les courses du réseau partagé, pour le compte de ${b}.`
       : "Vous avez déjà accepté ces conditions : activez les courses du réseau partagé pour en recevoir."
     : updated
-      ? `Les conditions des courses du réseau partagé ont changé.${graceUntil ? ` Les précédentes restent valables jusqu'au ${formatDate(graceUntil)}.` : ""} Lisez-les, puis acceptez-les pour continuer à recevoir ces courses.`
+      ? enabled
+        ? `Les conditions des courses du réseau partagé ont changé.${graceUntil ? ` Les précédentes restent valables jusqu'au ${formatDate(graceUntil)}.` : ""} Lisez-les, puis acceptez-les pour continuer à recevoir ces courses.`
+        : "Les conditions des courses du réseau partagé ont changé. Lisez-les, puis acceptez-les pour recevoir de nouveau ces courses."
       : `${b} reçoit les courses du réseau partagé : des courses d'autres organisations qu'aucun de leurs chauffeurs n'a acceptées. Lisez ces conditions avant d'en recevoir.`;
+  const primary: NetworkTermsPrimary | null = accepted ? (enabled ? null : "Activer") : enabled ? "J'accepte" : "J'accepte et j'active";
+  const dated = `les conditions des courses du réseau partagé (version du ${formatDate(version)})`;
+  const note = primary === "J'accepte"
+    ? `En touchant « J'accepte », vous acceptez ${dated}.`
+    : primary === "J'accepte et j'active"
+      ? `En touchant « J'accepte et j'active », vous acceptez ${dated} et activez ces courses.`
+      : null;
   const points = [
     `Vous faites la course pour le compte de ${b}.`,
     `Si le client paie à bord, vous réglez la part de l'organisation qui vous confie la course, pour le compte de ${b}, avec les moyens de paiement qu'elle propose.`,
@@ -459,8 +577,10 @@ export function networkTermsContent(s: DriverNetworkState | null | undefined, no
     title: "Courses du réseau partagé",
     lead: frTypo(lead),
     points: points.map(frTypo),
-    note: frTypo(`En touchant « J'accepte », vous acceptez les conditions des courses du réseau partagé (version du ${formatDate(version)}).`),
-    primary: accepted ? (s?.enabled ? null : "Activer") : "J'accepte",
+    note: note && frTypo(note),
+    primary,
+    done: primary === "J'accepte" ? "Nouvelles conditions acceptées" : "Courses du réseau partagé activées",
+    review: reviewed ? null : frTypo("Texte en cours de relecture juridique : s'il change, la nouvelle version vous sera proposée."),
     version,
   };
 }
@@ -513,7 +633,7 @@ export function networkHomeBanner(n: DriverHomeNetwork | null | undefined, execu
   if (blockedCreditor || executorLimit) {
     const m = executorLimit
       ? networkBlockerMessage("executor_limit", { executor })
-      : networkBlockerMessage(blockedCreditor!.blocked!, { giver: blockedCreditor!.name, executor });
+      : blockerText(blockedCreditor!.blocked!, { giver: blockedCreditor!.name, executor });
     return {
       tone: "red", icon: "lock-closed-outline", alert: true, late: false, cta: "Régler",
       title: n.owed_cents > 0 ? `${owed} à régler` : m.label,
@@ -605,7 +725,7 @@ export function creditorView(c: DriverNetworkCreditor, tz?: string, now = Date.n
           : `${name} vous versera ${formatPrice(payoutCents, currency)}${onHold > 0 ? ` (et ${formatPrice(onHold, currency)} après vérification)` : ""}`),
       }
       : null,
-    blocked: c.blocked ? frTypo(c.blocked_message || networkBlockerMessage(c.blocked, { giver: name }).message) : null,
+    blocked: c.blocked ? frTypo(c.blocked_message || blockerText(c.blocked, { giver: name }).message) : null,
     open: items.filter((i) => OPEN_STATUSES.has(i.status)),
     closed: items.filter((i) => !OPEN_STATUSES.has(i.status)),
   };
@@ -668,7 +788,7 @@ export function partnerItemView(i: DriverNetworkSettlementItem, giver: string, t
   return {
     owes,
     title: `Course ${i.ride.number}`,
-    kind: owes ? "à reverser" : "votre part",
+    kind: partnerItemKind(i),
     route: `${i.ride.pickup} → ${i.ride.dropoff}`,
     meta: join([formatRideDate(i.ride.completed_at ?? i.due_at, tz, today), formatPrice(i.price_cents, currency), partnerPaymentLabel(i.payment_method)]),
     amount: `${owes ? "−" : "+"}${formatPrice(i.amount_cents, currency)}`,
@@ -682,6 +802,22 @@ export function partnerItemView(i: DriverNetworkSettlementItem, giver: string, t
       : null,
     notReceived: owes && i.status === "disputed" ? frTypo(`${giver} n'a pas reçu ce paiement.`) : null,
   };
+}
+
+/**
+ * Mention à côté du n° de course, selon le sens ET l'état (une ligne réglée ne dit jamais « à reverser ») : à bord →
+ * « à reverser » (dû, « Pas reçu »), « reversé » (signalé ou encaissé), « annulé » ; déjà payée → « votre part »,
+ * « part versée », « part annulée ».
+ */
+export function partnerItemKind(i: Pick<DriverNetworkSettlementItem, "direction" | "status">): string {
+  if (i.direction === "driver_owes") {
+    if (i.status === "paid" || i.status === "declared") return "reversé";
+    if (i.status === "waived") return "annulé";
+    return "à reverser";
+  }
+  if (i.status === "paid") return "part versée";
+  if (i.status === "waived") return "part annulée";
+  return "votre part";
 }
 
 const METHOD_LABELS: Record<string, string> = { link: "lien de paiement", cash: "espèces", transfer: "virement", other: "autre moyen" };
@@ -709,6 +845,125 @@ export function earningsPartner(r: EarningsRide): { giver: string; gainCents: nu
     giverPartCents: gain != null && r.price_cents != null ? Math.max(0, r.price_cents - gain) : null,
     collects: (r.settlement_direction ?? (driverCollects(r.payment_method) ? "driver_owes" : "centrale_owes")) === "driver_owes",
   };
+}
+
+/** « reversé » / « reversés » : pluriel à partir de 2 € (1,50 € reversé, 12,50 € reversés). */
+const reversed = (cents: number | null) => ((cents ?? 0) >= 200 ? "reversés" : "reversé");
+
+/**
+ * Texte d'une course partenaire des gains, accordé à l'état du règlement (la pastille voisine) : UN montant, jamais
+ * commission ni frais. À bord : « 12,50 € à reverser à {A} » (dû, « Pas reçu »), « 12,50 € reversés à {A} · à
+ * confirmer » (signalé), « 12,50 € reversés à {A} » (encaissé), « Reversement annulé par {A} ». Déjà payée : « {A} vous
+ * versera 37,50 € », « Versement signalé par {A} », « Part versée par {A} », « Versement annulé par {A} ».
+ */
+export function earningsPartnerText(r: EarningsRide): string | null {
+  const p = earningsPartner(r);
+  if (!p) return null;
+  const status = r.settlement_status ?? null;
+  if (p.collects) {
+    const amount = formatPrice(p.giverPartCents, r.currency);
+    if (status === "paid") return `${amount} ${reversed(p.giverPartCents)} à ${p.giver}`;
+    if (status === "declared") return `${amount} ${reversed(p.giverPartCents)} à ${p.giver} · à confirmer`;
+    if (status === "waived") return `Reversement annulé par ${p.giver}`;
+    return `${amount} à reverser à ${p.giver}`;
+  }
+  if (status === "paid") return `Part versée par ${p.giver}`;
+  if (status === "declared") return `Versement signalé par ${p.giver}`;
+  if (status === "waived") return `Versement annulé par ${p.giver}`;
+  return `${p.giver} vous versera ${formatPrice(p.gainCents, r.currency)}`;
+}
+
+// =============================================================================
+// Accès aux règlements partenaires (écran Commissions, entrées du profil et des gains) : une seule décision, testée
+// =============================================================================
+
+export type PartnerAccessInput = {
+  /** Modèle de l'organisation du chauffeur (centrale : commissions propres) */
+  model: DispatchModel | null | undefined;
+  /** driver_home().network : null / absent = rien de réseau (jamais ouvert, aucune somme partenaire) */
+  homeNetwork: DriverHomeNetwork | null | undefined;
+  /** driver_network_state() : null = interrupteur coupé (NETWORK_DISABLED), serveur sans réseau partagé, pas encore lu */
+  network: DriverNetworkState | null | undefined;
+  /** Règlements partenaires lus (écran Commissions) ; « unsupported » : serveur sans réseau partagé */
+  settlements?: DriverNetworkSettlements | "unsupported" | null;
+  /** Onglet « Courses partenaires » demandé (notification de règlement, bouton « Régler ») */
+  requested?: boolean;
+  /** Onglet choisi dans l'écran Commissions */
+  tab?: "own" | "network";
+};
+
+export type PartnerAccess = {
+  /** « Courses partenaires » s'applique : réseau visible (ouvert ET reçu), ou sommes partenaires (même réseau coupé ensuite) */
+  partner: boolean;
+  /** Commissions de sa propre organisation (centrale) */
+  own: boolean;
+  /** Sélecteur « {Ma centrale} / Courses partenaires » (chauffeur de centrale) */
+  tabs: boolean;
+  /** Titre de l'écran Commissions */
+  title: string;
+  /** Entrée « Courses partenaires » séparée dans le profil et les gains (chauffeur de flotte) */
+  entry: boolean;
+  /** L'écran Commissions montre les courses partenaires (onglet choisi, ou seul contenu pour une flotte) */
+  showNetwork: boolean;
+};
+
+/**
+ * Où apparaissent les règlements partenaires. Interrupteur plateforme coupé, organisation qui ne reçoit pas le réseau,
+ * serveur sans réseau partagé : rien (écran « Commissions » inchangé, aucune entrée) ; seules des sommes partenaires
+ * déjà nées (réseau coupé ensuite) gardent l'entrée « Courses partenaires ».
+ */
+export function partnerAccess(i: PartnerAccessInput): PartnerAccess {
+  const read = i.settlements && i.settlements !== "unsupported" ? i.settlements : null;
+  const partner = i.settlements !== "unsupported"
+    && ((read?.organizations.length ?? 0) > 0 || hasPartnerMoney(i.homeNetwork) || networkVisible(i.network) || !!i.requested);
+  const own = i.model === "centrale";
+  return {
+    partner,
+    own,
+    tabs: own && partner,
+    title: own || !partner ? "Commissions" : PARTNER_SETTLEMENTS_TITLE,
+    entry: !own && partner,
+    showNetwork: partner && (!own || i.tab === "network"),
+  };
+}
+
+/** Pastille d'un onglet de l'écran Commissions : nombre à régler (lecteur d'écran : `label`), rouge s'il y a du retard. */
+export type TabBadge = { count: number; late: boolean; label: string };
+
+const counted = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? many : one}`;
+
+/** Pastille de l'onglet de sa centrale : courses dont la commission est à régler. */
+export function ownTabBadge(pay: { amount_cents: number; count: number } | null | undefined, overdueCents = 0): TabBadge {
+  const count = pay && pay.amount_cents > 0 ? pay.count : 0;
+  return { count, late: count > 0 && overdueCents > 0, label: `${counted(count, "course", "courses")} à régler` };
+}
+
+/**
+ * Pastille de l'onglet « Courses partenaires » : courses partenaires à régler (dues, ou « Pas reçu ») ; avant la lecture
+ * des règlements, organisations à régler d'après l'accueil (driver_home().network).
+ */
+export function partnerTabBadge(settlements: DriverNetworkSettlements | null | undefined, homeNetwork: DriverHomeNetwork | null | undefined): TabBadge {
+  if (settlements) {
+    const count = settlements.organizations
+      .flatMap((o) => o.items ?? [])
+      .filter((x) => x.direction === "driver_owes" && (x.status === "due" || x.status === "disputed")).length;
+    return { count, late: count > 0 && (settlements.summary?.overdue_cents ?? 0) > 0, label: `${counted(count, "course", "courses")} à régler` };
+  }
+  if (!homeNetwork || homeNetwork.owed_cents <= 0) return { count: 0, late: false, label: "" };
+  const orgs = Math.max(1, (homeNetwork.creditors ?? []).filter((c) => c.owed_cents > 0).length);
+  return { count: orgs, late: homeNetwork.overdue_cents > 0, label: `à régler à ${counted(orgs, "organisation", "organisations")}` };
+}
+
+/**
+ * Détail de l'entrée « Mes coordonnées bancaires » (profil) : IBAN masqué, ou à renseigner (en alerte si un versement
+ * est attendu) ; null : coordonnées inconnues (rien n'est affirmé).
+ */
+export function payoutRowDetail(payout: DriverPayoutInfo | null | undefined, payoutDueCents = 0): { text: string; alert: boolean } | null {
+  if (!payout) return null;
+  if (payout.configured) return { text: `IBAN ${maskIban(payout.iban_last4)}`, alert: false };
+  return payoutDueCents > 0
+    ? { text: "À renseigner pour recevoir vos versements", alert: true }
+    : { text: "Pour recevoir vos versements", alert: false };
 }
 
 // =============================================================================

@@ -40,7 +40,7 @@ vi.mock("./supabase", async () => {
   return { supabase };
 });
 
-const { api, ApiError, isMissingRpc, networkTermsUrl, refusalText, resetRpcFallbacks } = await import("./api");
+const { api, ApiError, isMissingRpc, MISSING_RETRY_MS, networkTermsUrl, refusalText, resetRpcFallbacks } = await import("./api");
 
 const RPC = "/rest/v1/rpc/";
 const missing = (fn: string) => ({ status: 404, body: { code: "PGRST202", message: `Could not find the function public.${fn} without parameters in the schema cache` } });
@@ -102,6 +102,18 @@ describe("course : driver_ride (liste blanche), repli rides sur un serveur anté
     await expect(api.ride("r1")).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
+  it("provenance de la lecture : driver_ride (retrait sûr) ou repli sur la table rides (jamais pris pour un retrait)", async () => {
+    h.s.handle = () => raised("RIDE_NOT_FOUND: course introuvable");
+    expect(await api.rideRead("r1")).toEqual({ ride: null, legacy: false });
+    // Fonction absente, ou présente sous d'autres noms de paramètres (PGRST202 aussi) : repli, marqué comme tel
+    h.s.handle = (req) =>
+      req.url.pathname === `${RPC}driver_ride` ? missing("driver_ride")
+      : req.url.pathname === "/rest/v1/rides" ? { body: null }
+      : { status: 404 };
+    expect(await api.rideRead("r1")).toEqual({ ride: null, legacy: true });
+    expect(await api.rideRead("r1")).toEqual({ ride: null, legacy: true }); // repli retenu 10 min : toujours marqué
+  });
+
   it("serveur antérieur : ligne rides (RLS), argent déduit du modèle de l'organisation", async () => {
     const row = {
       id: "r1", number: 12, type: "instant", status: "ACCEPTED", payment_method: "cash", price_cents: 5000, currency: "EUR",
@@ -154,6 +166,7 @@ describe("RPC réseau : noms et paramètres du contrat", () => {
     h.s.handle = () => missing("driver_network_state");
     const e = await api.networkState().catch((x: unknown) => x);
     expect(isMissingRpc(e)).toBe(true);
+    resetRpcFallbacks();
     h.s.handle = () => raised("NETWORK_DISABLED: réseau partagé fermé");
     const off = await api.networkState().catch((x: unknown) => x);
     expect(isMissingRpc(off)).toBe(false);
@@ -169,6 +182,45 @@ describe("RPC réseau : noms et paramètres du contrat", () => {
     await expect(api.accept("o1")).rejects.toMatchObject({ code: "DRIVER_BUSY_AT_TIME", message: "Créneau déjà pris\u00A0: vous avez une autre course à cette heure-là." });
     expect(refusalText({ code: "OFFER_CHANGED" })).toBe("La course a été modifiée : elle vous sera reproposée si elle est encore disponible.");
     expect(refusalText({ code: "DRIVER_BUSY_AT_TIME" })).toBe("Créneau déjà pris\u00A0: vous avez une autre course à cette heure-là.");
+  });
+
+  it("état réseau et signe de vie absents du serveur : plus d'appel pendant 10 min, puis nouvel essai (jamais pour toujours)", async () => {
+    const t0 = Date.parse("2026-11-10T09:00:00Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(t0);
+    try {
+      h.s.handle = (req) => missing(req.url.pathname.slice(RPC.length));
+      await expect(api.networkState()).rejects.toSatisfy(isMissingRpc);
+      await expect(api.networkPing()).rejects.toSatisfy(isMissingRpc);
+      expect(paths()).toEqual([`${RPC}driver_network_state`, `${RPC}driver_network_ping`]);
+      // Pendant 10 min : rejet immédiat, même erreur, aucune requête
+      clock.mockReturnValue(t0 + MISSING_RETRY_MS - 1);
+      await expect(api.networkState()).rejects.toSatisfy(isMissingRpc);
+      await expect(api.networkPing()).rejects.toSatisfy(isMissingRpc);
+      expect(paths()).toHaveLength(2);
+      // SQL déployé entre-temps : nouvel essai, puis appels normaux
+      clock.mockReturnValue(t0 + MISSING_RETRY_MS + 1);
+      h.s.handle = (req) => (req.url.pathname === `${RPC}driver_network_ping` ? { body: { capable_at: "2026-11-10T09:10:00Z" } } : { body: { enabled: false } });
+      await expect(api.networkPing()).resolves.toEqual({ capable_at: "2026-11-10T09:10:00Z" });
+      await expect(api.networkState()).resolves.toMatchObject({ enabled: false });
+      await expect(api.networkState()).resolves.toMatchObject({ enabled: false });
+      expect(paths()).toHaveLength(5);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("conditions changées, réseau suspendu : textes du chauffeur (conditions, son organisation), jamais ceux des organisations", async () => {
+    h.s.handle = () => raised("NETWORK_TERMS_OUTDATED: version périmée");
+    await expect(api.setNetwork(true, "2026-08-01")).rejects.toMatchObject({
+      code: "NETWORK_TERMS_OUTDATED", message: "Les conditions du réseau partagé ont changé\u00A0: lisez et acceptez la nouvelle version.",
+    });
+    h.s.handle = () => raised("NETWORK_SUSPENDED: organisation suspendue");
+    const suspended = (await api.setNetwork(true, "2026-11-01").catch((x: unknown) => x)) as InstanceType<typeof ApiError>;
+    expect(suspended).toMatchObject({ code: "NETWORK_SUSPENDED" });
+    expect(suspended.message).toBe("Le réseau partagé est suspendu pour votre organisation\u00A0: renseignez-vous auprès d'elle.");
+    expect(suspended.message).not.toMatch(/convention|contactez Rydar/i);
+    expect(refusalText({ code: "NETWORK_TERMS_OUTDATED" })).not.toMatch(/convention/i);
+    expect(refusalText({ code: "NETWORK_TERMS_REQUIRED" })).toBe("Lisez et acceptez les conditions du réseau partagé pour en recevoir les courses.");
   });
 
   it("conditions complètes : page publique du serveur web", () => {

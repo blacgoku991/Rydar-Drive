@@ -6,16 +6,18 @@ import Constants from "expo-constants";
 import { router, useFocusEffect } from "expo-router";
 import { Children, Fragment, useCallback, useState } from "react";
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { frTypo, TrustBadge } from "@/components/centrale";
 import { buildDocEntries, needsAction } from "@/components/documents";
-import { BigButton, hapticResult, Screen, ScreenHeader } from "@/components/ui";
+import { BigButton, hapticResult, Screen, ScreenHeader, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
-import { api, legalUrl } from "@/lib/api";
+import { usePayoutInfo } from "@/hooks/use-payout-info";
+import { useReturnFlash } from "@/hooks/use-return-flash";
+import { api, ApiError, legalUrl } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import {
-  driverNetworkStatus, enableNeedsTerms, hasPartnerMoney, maskIban, networkVisible, PARTNER_SETTLEMENTS_TITLE, settleHref,
-  type NetworkStatusTone,
+  driverNetworkStatus, enableNeedsTerms, hasPartnerMoney, networkVisible, PARTNER_SETTLEMENTS_TITLE, partnerAccess, payoutRowDetail,
+  settleHref, type NetworkStatusTone,
 } from "@/lib/network";
 import { colors, control, mono, radius, space, type, weight } from "@/theme";
 
@@ -64,14 +66,22 @@ const STATUS_COLOR: Record<NetworkStatusTone, string> = { green: colors.green, a
 
 export default function Profile() {
   const { home, signOut, chat, network, refreshNetwork, applyNetwork } = useDriver();
+  const insets = useSafeAreaInsets();
+  const flash = useFlash(insets.top + 64);
+  // Retour de l'écran des conditions : « Courses du réseau partagé activées »
+  useReturnFlash(flash.show);
   const v = home?.vehicle;
   const tz = home?.organization.timezone;
   // Réseau partagé : visible seulement si Rydar l'a ouvert ET que l'organisation du chauffeur le reçoit
   const showNetwork = networkVisible(network);
   const status = network && showNetwork ? driverNetworkStatus(network, tz) : null;
-  const payout = network?.payout ?? null;
-  // Sommes partenaires ouvertes : l'entrée reste visible même réseau coupé ensuite
-  const partnerMoney = hasPartnerMoney(home?.network);
+  // Entrée « Courses partenaires » (flotte) : réseau visible, ou sommes partenaires ouvertes (même réseau coupé ensuite)
+  const access = partnerAccess({ model: home?.model ?? home?.organization.dispatch_model, homeNetwork: home?.network, network });
+  // Coordonnées bancaires : état réseau, sinon lues directement si des sommes partenaires existent (réseau coupé ensuite) ;
+  // inconnues : rien n'est affirmé
+  const payout = usePayoutInfo(!status && hasPartnerMoney(home?.network));
+  const payoutDue = home?.network?.payout_due_cents ?? 0;
+  const payoutDetail = payoutRowDetail(payout, payoutDue);
   const [toggling, setToggling] = useState(false);
   useFocusEffect(useCallback(() => void refreshNetwork(), [refreshNetwork]));
 
@@ -89,6 +99,15 @@ export default function Profile() {
         hapticResult(true);
       } catch (e) {
         hapticResult(false);
+        // Conditions changées entre-temps : texte du chauffeur (jamais la convention des organisations) et accès direct
+        if (e instanceof ApiError && e.code === "NETWORK_TERMS_OUTDATED") {
+          void refreshNetwork();
+          Alert.alert("Nouvelles conditions", frTypo(e.message), [
+            { text: "Plus tard", style: "cancel" },
+            { text: "Lire les conditions", onPress: () => router.push("/network-terms") },
+          ]);
+          return;
+        }
         Alert.alert(next ? "Activation impossible" : "Arrêt impossible", frTypo((e as Error).message));
       } finally {
         setToggling(false);
@@ -197,7 +216,7 @@ export default function Profile() {
               />
             )}
             {/* Flotte : règlements des courses partenaires (le chauffeur règle lui-même l'organisation qui les confie) */}
-            {!centrale && (partnerMoney || showNetwork) && (
+            {access.entry && (
               <Row
                 icon="swap-horizontal-outline"
                 title={PARTNER_SETTLEMENTS_TITLE}
@@ -299,21 +318,23 @@ export default function Profile() {
                 <Row
                   icon="card-outline"
                   title="Mes coordonnées bancaires"
-                  detail={payout?.configured ? `IBAN ${maskIban(payout.iban_last4)}` : "Pour recevoir vos versements"}
+                  detail={payoutDetail?.text}
+                  detailColor={payoutDetail?.alert ? colors.amber : undefined}
                   onPress={() => router.push("/payout")}
                 />
               </Group>
             </>
           )}
           {/* Réseau coupé ensuite : coordonnées bancaires encore utiles tant qu'un versement est attendu */}
-          {!status && (payout?.configured || (home?.network?.payout_due_cents ?? 0) > 0) && (
+          {!status && (payout?.configured || payoutDue > 0) && (
             <>
               <Text style={styles.section} accessibilityRole="header">{PARTNER_SETTLEMENTS_TITLE}</Text>
               <Group>
                 <Row
                   icon="card-outline"
                   title="Mes coordonnées bancaires"
-                  detail={payout?.configured ? `IBAN ${maskIban(payout.iban_last4)}` : "Pour recevoir vos versements"}
+                  detail={payoutDetail?.text}
+                  detailColor={payoutDetail?.alert ? colors.amber : undefined}
                   onPress={() => router.push("/payout")}
                 />
               </Group>
@@ -361,6 +382,7 @@ export default function Profile() {
           </View>
         </ScrollView>
       </SafeAreaView>
+      {flash.node}
     </Screen>
   );
 }

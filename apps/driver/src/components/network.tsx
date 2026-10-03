@@ -1,12 +1,13 @@
-// Réseau partagé : pièces d'interface communes (ligne d'argent unique, étiquette « Partenaire », bandeau d'accueil).
+// Réseau partagé : pièces d'interface communes (ligne d'argent unique, étiquette « Partenaire », bandeau d'accueil,
+// versement d'une course déjà payée).
 // Les vues sont calculées par src/lib/network.ts (testé sous Node) ; ces composants ne font que les présenter.
 import { Ionicons } from "@expo/vector-icons";
 import type { DriverHomeNetwork } from "@rydar/shared";
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { MoneyBanner } from "@/components/centrale";
-import { Pill } from "@/components/ui";
+import { BigButton, Pill } from "@/components/ui";
 import { networkHomeBanner, PARTNER_BADGE, type BannerTone } from "@/lib/network";
-import { colors, radius, space, type, weight } from "@/theme";
+import { colors, control, radius, space, type, weight } from "@/theme";
 
 /** Étiquette « Partenaire » (violet = réseau partagé, NETWORK_TONE). */
 export function PartnerBadge({ giver }: { giver?: string | null }) {
@@ -22,6 +23,22 @@ export function MoneyLine({ text, collects, style }: { text: string; collects: b
     <View style={[styles.line, style]}>
       <Ionicons name={collects ? "cash-outline" : "business-outline"} size={20} color={colors.muted} style={styles.icon} />
       <Text style={styles.text}>{text}</Text>
+    </View>
+  );
+}
+
+/**
+ * Course partenaire déjà payée : compte où arrivera le versement (IBAN masqué), ou coordonnées bancaires à renseigner —
+ * sans elles, l'organisation qui confie la course ne peut pas verser la part (lib/network.ts : payoutNoteView).
+ */
+export function PayoutNote({ note, onEdit }: { note: { missing: boolean; text: string }; onEdit: () => void }) {
+  return (
+    <View style={styles.payout}>
+      <View style={styles.payoutRow}>
+        <Ionicons name="card-outline" size={20} color={note.missing ? colors.amber : colors.muted} style={styles.icon} />
+        <Text style={styles.payoutText}>{note.text}</Text>
+      </View>
+      {note.missing ? <BigButton title="Renseigner mon RIB" icon="card-outline" variant="secondary" height={control.md} onPress={onEdit} /> : null}
     </View>
   );
 }
@@ -44,4 +61,7 @@ const styles = StyleSheet.create({
   },
   icon: { marginTop: 1 },
   text: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21, fontWeight: weight.regular },
+  payout: { gap: space.sm },
+  payoutRow: { flexDirection: "row", alignItems: "flex-start", gap: space.md, paddingHorizontal: space.lg },
+  payoutText: { flex: 1, color: colors.muted, fontSize: type.body, lineHeight: 21 },
 });

@@ -36,6 +36,24 @@ import type {
  */
 export const NETWORK_TERMS_VERSION = "2026-11-01";
 
+/**
+ * Ajout web (lot 8) : textes de la convention (/reseau-partage/conditions) et des conditions chauffeur
+ * (/reseau-partage/chauffeur) relus par le juriste (spec §7.7). false : bandeau « Texte en cours de relecture
+ * juridique » sur les deux pages publiques (et l'écran des conditions de l'app). Passe à true avec la version relue.
+ */
+export const NETWORK_TERMS_REVIEWED: boolean = false;
+
+/**
+ * Positionnement de Rydar (spec §7.1, U1), formule unique de la convention, des CGV, de l'interface et des docs.
+ * Ajout web (lot 8) : texte partagé par les pages publiques, /admin/reseau et l'app.
+ */
+export const NETWORK_POSITIONING =
+  "Le réseau partagé est une option du logiciel de dispatch : l'organisation diffuse elle-même aux chauffeurs des " +
+  "organisations ayant accepté la même convention les courses qu'aucun de ses chauffeurs n'a acceptées, selon ses propres " +
+  "réglages ; l'ordre est fixe et neutre (ses chauffeurs, puis la distance) ; Rydar ne choisit ni l'organisation " +
+  "partenaire ni le chauffeur, n'est partie ni au contrat de transport ni à la sous-traitance, n'encaisse aucune somme et " +
+  "ne garantit ni l'exécution ni le paiement.";
+
 /** Documents du réseau dans legal_acceptances (acceptés par RPC dédiées, jamais par accept_legal_documents). */
 export const NETWORK_DOCUMENTS = {
   /** Convention entre organisations (owner / admin) */

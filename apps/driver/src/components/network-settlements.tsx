@@ -45,7 +45,9 @@ export function NetworkSettlementsView({
   const currency = data.currency || "EUR";
   const price = (c: number) => formatPrice(c, currency);
   const orgs = data.organizations.map((c) => ({ raw: c, view: creditorView(c, tz, now) }));
-  const waitingPayout = orgs.some((o) => o.view.payout) && !payout?.configured;
+  // Versement attendu et coordonnées bancaires CONNUES pour absentes (inconnues : réseau coupé ensuite, état pas encore
+  // lu — jamais d'invitation trompeuse à renseigner un IBAN déjà enregistré)
+  const waitingPayout = orgs.some((o) => o.view.payout) && payout != null && !payout.configured;
 
   async function copyReference(ref: string | null) {
     if (!ref) return;

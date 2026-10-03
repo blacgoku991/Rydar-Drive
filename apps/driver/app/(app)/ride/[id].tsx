@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import {
   DRIVER_FLOW, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, decodePolyline, formatDistance, formatDuration, formatPhone, formatPrice,
-  formatRideDate, haversine, shortAddress, type DriverNetworkSettlementItem, type DriverSettlementItem, type RideStatus,
+  formatRideDate, haversine, shortAddress, type DriverNetworkSettlementItem, type DriverPayoutInfo, type DriverSettlementItem,
+  type RideStatus,
 } from "@rydar/shared";
 import { useKeepAwake } from "expo-keep-awake";
 import { router, useLocalSearchParams } from "expo-router";
@@ -13,7 +14,7 @@ import { CollectNote, dueText, frTypo } from "@/components/centrale";
 import { FlightCard, PickupShiftBanner } from "@/components/flight";
 import { RydarMap } from "@/components/map/rydar-map";
 import { NavBanner } from "@/components/nav-banner";
-import { MoneyLine } from "@/components/network";
+import { MoneyLine, PayoutNote } from "@/components/network";
 import { BigButton, BottomSheet, Chip, Pill, Screen, Sheet, SlideToConfirm, StepDots } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
@@ -22,8 +23,8 @@ import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { setHighAccuracy } from "@/lib/location";
 import {
-  clientWindowNote, giverPhone, partnerDoneView, partnerPaymentLabel, receiptText, rideMoneyView, settleHref, showVoucher, type AppRide,
-  type LegacyRideContext, type RideMoneyView,
+  clientWindowNote, giverPhone, partnerDoneView, partnerPaymentLabel, payoutNoteView, receiptText, rideMoneyView, rideReadAction,
+  rideRemovedText, settleHref, showVoucher, type AppRide, type LegacyRideContext, type RideMoneyView,
 } from "@/lib/network";
 import { overdue, overdueHint } from "@/lib/planning";
 import { navUrl, rideTarget, type NavApp, type RideTarget } from "@/lib/ride-target";
@@ -73,8 +74,10 @@ export default function RideScreen() {
   const [missing, setMissing] = useState(false);
   const [loading, setLoading] = useState(false);
   // Récapitulatif de fin de course : centrale (part chauffeur, commission à régler ou part à recevoir) ; course partenaire
-  // (UN montant à régler à l'organisation qui l'a confiée, ou qu'elle vous versera)
-  const [done, setDone] = useState<{ ride: AppRide; settlement: DriverSettlementItem | null; partnerItem: DriverNetworkSettlementItem | null } | null>(null);
+  // (UN montant à régler à l'organisation qui l'a confiée, ou qu'elle vous versera, sur le compte renseigné)
+  const [done, setDone] = useState<{
+    ride: AppRide; settlement: DriverSettlementItem | null; partnerItem: DriverNetworkSettlementItem | null; payout: DriverPayoutInfo | null;
+  } | null>(null);
 
   // Serveur antérieur à driver_ride : argent déduit du modèle de l'organisation (ref : la relecture de l'accueil ne relance
   // pas le chargement)
@@ -82,24 +85,27 @@ export default function RideScreen() {
   legacy.current = { model: home?.model ?? home?.organization.dispatch_model, organization: home?.organization.name };
   const hadRide = useRef<AppRide | null>(null);
   const load = useCallback(async () => {
-    const r = await api.ride(String(id), legacy.current).catch(() => undefined); // undefined : réseau, on garde l'affichage
-    if (r === undefined) return;
-    if (r === null) {
-      const previous = hadRide.current;
-      if (previous) {
-        // Course retirée (réattribuée par la centrale, ou retirée par l'organisation partenaire) : plus visible
-        hadRide.current = null;
-        Alert.alert(
-          "Course retirée",
-          previous.network ? frTypo(`${previous.network.giver.name} a retiré cette course.`) : "La centrale a réattribué cette course.",
-        );
-        toHome();
-      } else setMissing(true);
+    const res = await api.rideRead(String(id), legacy.current).catch(() => undefined); // undefined : réseau, on garde l'affichage
+    if (res === undefined) return;
+    const previous = hadRide.current;
+    // Lecture de repli (table rides) d'une course partenaire : elle ne la montre jamais, ce n'est pas un retrait
+    const action = rideReadAction(previous, res);
+    if (action === "keep") return;
+    if (action === "removed" && previous) {
+      // Course retirée (réattribuée par la centrale ; course partenaire : par l'organisation qui l'a confiée, par la
+      // sienne, ou chauffeur devenu indisponible — motif exact dans la notification « COURSE RETIRÉE ») : plus visible
+      hadRide.current = null;
+      Alert.alert("Course retirée", rideRemovedText(previous));
+      toHome();
       return;
     }
-    hadRide.current = r;
+    if (action === "missing" || !res.ride) {
+      setMissing(true);
+      return;
+    }
+    hadRide.current = res.ride;
     setMissing(false);
-    setRide(r);
+    setRide(res.ride);
   }, [id]);
 
   useEffect(() => {
@@ -175,6 +181,8 @@ export default function RideScreen() {
   const money = rideMoneyView(ride);
   const partner = money.kind === "partner" ? money : null;
   const centrale = money.kind === "centrale";
+  // Course partenaire déjà payée : le versement arrive sur le compte du chauffeur (coordonnées inconnues : rien)
+  const payoutNote = partner && !partner.collects ? payoutNoteView(network?.payout) : null;
   const giver = ride.network ? ride.network.giver.name : null;
   const callGiver = giverPhone(ride);
   // Course partenaire hors de la fenêtre du client (1 h avant la prise en charge → 1 h après la fin)
@@ -221,16 +229,20 @@ export default function RideScreen() {
     if (!res.ok) return Alert.alert("Action impossible", res.message ? frTypo(res.message) : "Réessayez.");
     await Promise.all([load(), refresh()]);
     if (step.next === "COMPLETED" && partner) {
-      // Règlement partenaire créé à la clôture (trigger) : montant et échéance exacts pour le récapitulatif
-      const net = await api.networkSettlements().catch(() => null);
+      // Règlement partenaire créé à la clôture (trigger) : montant et échéance exacts pour le récapitulatif ; course déjà
+      // payée : coordonnées bancaires relues (sans elles, l'organisation qui l'a confiée ne peut pas verser la part)
+      const [net, payout] = await Promise.all([
+        api.networkSettlements().catch(() => null),
+        partner.collects ? Promise.resolve(null) : api.payoutInfo().catch(() => network?.payout ?? null),
+      ]);
       const item = net?.organizations.flatMap((o) => o.items).find((x) => x.ride_id === ride.id) ?? null;
-      setDone({ ride, settlement: null, partnerItem: item });
+      setDone({ ride, settlement: null, partnerItem: item, payout });
       return;
     }
     if (step.next === "COMPLETED" && centrale) {
       // Règlement créé à la clôture (trigger) : montant et échéance exacts pour le récapitulatif
       const mine = await api.settlements(20).catch(() => null);
-      setDone({ ride, settlement: mine?.items.find((x) => x.ride_id === ride.id) ?? null, partnerItem: null });
+      setDone({ ride, settlement: mine?.items.find((x) => x.ride_id === ride.id) ?? null, partnerItem: null, payout: null });
       return;
     }
     if (step.next === "COMPLETED") {
@@ -371,6 +383,8 @@ export default function RideScreen() {
           </View>
           {/* Course partenaire : UN montant avec l'organisation qui l'a confiée (jamais commission ni frais) */}
           {partner && <MoneyLine text={partner.line} collects={partner.collects} />}
+          {/* Course partenaire déjà payée : compte où arrivera le versement, ou coordonnées bancaires à renseigner */}
+          {payoutNote ? <PayoutNote note={payoutNote} onEdit={() => router.push("/payout")} /> : null}
           {ride.comment ? (
             <View style={styles.note}>
               <Ionicons name="chatbubble-outline" size={20} color={colors.muted} style={styles.iconTop} />
@@ -394,7 +408,9 @@ export default function RideScreen() {
       </SafeAreaView>
 
       <BottomSheet visible={done != null} onClose={() => router.dismissTo("/home")}>
-        {done && <RideDoneSummary ride={done.ride} settlement={done.settlement} partnerItem={done.partnerItem} tz={home?.organization.timezone} />}
+        {done && (
+          <RideDoneSummary ride={done.ride} settlement={done.settlement} partnerItem={done.partnerItem} payoutInfo={done.payout} tz={home?.organization.timezone} />
+        )}
       </BottomSheet>
     </Screen>
   );
@@ -421,10 +437,12 @@ function BackButton() {
  * Course partenaire : « 12,50 € à régler à {A} » ou « {A} vous versera 37,50 € » (PartnerDoneSummary).
  */
 function RideDoneSummary({
-  ride, settlement, partnerItem, tz,
-}: { ride: AppRide; settlement: DriverSettlementItem | null; partnerItem: DriverNetworkSettlementItem | null; tz?: string }) {
+  ride, settlement, partnerItem, payoutInfo, tz,
+}: {
+  ride: AppRide; settlement: DriverSettlementItem | null; partnerItem: DriverNetworkSettlementItem | null; payoutInfo: DriverPayoutInfo | null; tz?: string;
+}) {
   const money = rideMoneyView(ride);
-  if (money.kind === "partner") return <PartnerDoneSummary ride={ride} money={money} item={partnerItem} tz={tz} />;
+  if (money.kind === "partner") return <PartnerDoneSummary ride={ride} money={money} item={partnerItem} payout={payoutInfo} tz={tz} />;
   const currency = ride.currency ?? "EUR";
   const payout = settlement?.driver_payout_cents ?? (money.kind === "centrale" ? money.gainCents : null);
   const collects = settlement ? settlement.direction === "driver_owes" : ride.money.collects;
@@ -472,11 +490,16 @@ function RideDoneSummary({
   );
 }
 
-/** Fin d'une course partenaire : un seul montant avec l'organisation qui l'a confiée, puis « Régler ». */
+/**
+ * Fin d'une course partenaire : un seul montant avec l'organisation qui l'a confiée, puis « Régler » ; course déjà payée
+ * sans coordonnées bancaires : « Renseigner mon RIB » d'abord (sinon la part ne peut pas être versée).
+ */
 function PartnerDoneSummary({
-  ride, money, item, tz,
-}: { ride: AppRide; money: Extract<RideMoneyView, { kind: "partner" }>; item: DriverNetworkSettlementItem | null; tz?: string }) {
-  const done = partnerDoneView(money, item, tz);
+  ride, money, item, payout, tz,
+}: {
+  ride: AppRide; money: Extract<RideMoneyView, { kind: "partner" }>; item: DriverNetworkSettlementItem | null; payout: DriverPayoutInfo | null; tz?: string;
+}) {
+  const done = partnerDoneView(money, item, tz, Date.now(), payout);
   const price = formatPrice(ride.price_cents, money.currency);
   return (
     <>
@@ -496,7 +519,7 @@ function PartnerDoneSummary({
         <Ionicons name={done.owes ? "wallet-outline" : "arrow-down-circle-outline"} size={20} color={colors.muted} style={styles.iconTop} />
         <View style={{ flex: 1 }}>
           <Text style={styles.owedTitle}>{done.title}</Text>
-          <Text style={[styles.owedSub, done.late && { color: colors.amber }]}>{done.sub}</Text>
+          <Text style={[styles.owedSub, (done.late || done.payoutMissing) && { color: colors.amber }]}>{done.sub}</Text>
         </View>
       </View>
       <Text style={styles.receipt}>{receiptText(money.giver)}</Text>
@@ -504,6 +527,11 @@ function PartnerDoneSummary({
         <>
           <BigButton title="Régler maintenant" icon="wallet-outline" height={control.lg} onPress={() => router.replace(settleHref("network"))} />
           <BigButton title="Plus tard" variant="ghost" height={control.md} onPress={() => router.dismissTo("/home")} />
+        </>
+      ) : done.payoutMissing ? (
+        <>
+          <BigButton title="Renseigner mon RIB" icon="card-outline" height={control.lg} onPress={() => router.replace("/payout")} />
+          <BigButton title="Retour à l'accueil" variant="secondary" height={control.md} onPress={() => router.dismissTo("/home")} />
         </>
       ) : (
         <BigButton title="Retour à l'accueil" height={control.lg} onPress={() => router.dismissTo("/home")} />

@@ -5,16 +5,18 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  BookingVoucher, DriverHomeNetwork, DriverNetworkCreditor, DriverNetworkSettlementItem, DriverNetworkState, DriverOfferV2, DriverRideMoney,
-  NetworkDriverMoney, Ride,
+  BookingVoucher, DriverHomeNetwork, DriverNetworkCreditor, DriverNetworkSettlementItem, DriverNetworkSettlements, DriverNetworkState, DriverOfferV2,
+  DriverRideMoney, NetworkDriverMoney, Ride,
 } from "@rydar/shared";
 import { NETWORK_FORBIDDEN_WORDS, NETWORK_TERMS_VERSION } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
-  clientWindowNote, creditorView, driverNetworkStatus, earningsPartner, forbiddenWordsIn, giverPhone, legacyOffer, legacyRide, maskIban,
-  networkHomeBanner, networkTermsContent, networkVisible, offerBlockView, partnerDoneView, partnerItemView, partnerOfferView, payoutFormErrors,
-  rideMoneyView, settleHref, shouldProposeNetworkTerms, showVoucher, voucherView, type AppRide,
+  blockerText, clientWindowNote, creditorView, driverNetworkStatus, earningsPartner, earningsPartnerText, forbiddenWordsIn, giverPhone,
+  legacyOffer, legacyRide, maskIban, networkHomeBanner, networkTermsContent, networkVisible, offerBlockView, ownTabBadge, partnerAccess,
+  partnerDoneView, partnerItemKind, partnerItemView, partnerOfferView, partnerTabBadge, payoutFormErrors, payoutNoteView, payoutRowDetail,
+  rideMoneyView, rideReadAction, rideRemovedText, settleHref, shouldProposeNetworkTerms, showVoucher, voucherView, type AppRide,
 } from "./network";
+import { RETURN_FLASH_TTL_MS, returnFlash } from "./return-flash";
 
 /** Espaces insécables (prix, typographie française) ramenés à des espaces pour comparer les textes. */
 const plain = (s: string | null | undefined) => (s ?? "").replace(/[  ]/g, " ");
@@ -122,9 +124,10 @@ function creditor(over: Partial<DriverNetworkCreditor> = {}): DriverNetworkCredi
 // -----------------------------------------------------------------------------------------------------------------
 
 describe("offre partenaire : UN seul montant, jamais commission ni frais Rydar (U4)", () => {
-  it("client payé à bord : « Course de {A} (partenaire) », part du chauffeur, « vous reverserez 12,50 € à {A} »", () => {
+  it("client payé à bord : « Course partenaire · {A} », part du chauffeur, « vous reverserez 12,50 € à {A} »", () => {
     const v = partnerOfferView(offer())!;
-    expect(v.title).toBe("Course de Taxi Alpha (partenaire)");
+    expect(v.title).toBe("Course partenaire · Taxi Alpha");
+    expect(v.label).toBe("Course partenaire de Taxi Alpha");
     expect(v.gainCents).toBe(3_750);
     expect(plain(v.line)).toBe("Le client vous paie 50 € à bord · vous reverserez 12,50 € à Taxi Alpha");
     expect(v.paymentLabel).toBe("Espèces");
@@ -146,6 +149,12 @@ describe("offre partenaire : UN seul montant, jamais commission ni frais Rydar (
     const v = partnerOfferView(o)!;
     expect(v.paymentLabel).toBe("Carte à bord (votre terminal)");
     expect(v.pickup).toBe("Départ communiqué après acceptation");
+  });
+
+  it("nom d'organisation long : le mot clé « partenaire » reste en tête du titre (jamais coupé)", () => {
+    const o = offer();
+    o.network!.giver = { name: "Élite Chauffeurs Paris Île-de-France", legal_name: null, vtc_registration: null };
+    expect(partnerOfferView(o)!.title.startsWith("Course partenaire · ")).toBe(true);
   });
 
   it("aucun mot « commission » ni « frais » dans ce que voit le chauffeur d'une offre ou d'une course partenaire", () => {
@@ -201,6 +210,60 @@ describe("course : affichage décidé par driver_ride.money (et non par le modè
     expect(plain(partnerDoneView(v, null, TZ, NOW).title)).toBe("Taxi Alpha vous versera 37,50 €");
     const held = partnerDoneView(v, item({ direction: "centrale_owes", amount_cents: 3_750, on_hold: true, hold_until: iso(72 * 60) }), TZ, NOW);
     expect(plain(held.sub)).toBe("Course à vérifier : versement retenu jusqu'au ven. 13/11 10:00");
+  });
+
+  it("prépayée : versement sur le compte enregistré, ou « Renseigner mon RIB » sans coordonnées ; inconnues : rien n'est affirmé", () => {
+    const r = partnerRide({ payment_method: "online", money: rideMoney({ collects: false, payment_method: "online", direction: "centrale_owes", amount_cents: 3_750 }) });
+    const v = rideMoneyView(r);
+    if (v.kind !== "partner") throw new Error("vue partenaire attendue");
+    const due = item({ direction: "centrale_owes", amount_cents: 3_750 });
+    const missing = partnerDoneView(v, due, TZ, NOW, state().payout);
+    expect(missing).toMatchObject({ owes: false, payoutMissing: true });
+    expect(plain(missing.sub)).toBe("Renseignez vos coordonnées bancaires pour recevoir ce versement");
+    const saved = { configured: true, payee_name: "Karim Benali", iban_last4: "0189", bic: null, updated_at: iso(-60), in_use: true };
+    const known = partnerDoneView(v, due, TZ, NOW, saved);
+    expect(known.payoutMissing).toBe(false);
+    expect(plain(known.sub)).toBe("Versement sur votre compte •••• 0189 sous 7 jours");
+    // Coordonnées inconnues (réseau coupé ensuite, état pas encore lu) : jamais « à renseigner »
+    expect(partnerDoneView(v, due, TZ, NOW, null)).toMatchObject({ payoutMissing: false });
+    expect(plain(partnerDoneView(v, due, TZ, NOW).sub)).toBe("Versement par virement sous 7 jours");
+    // Course à vérifier sans coordonnées : les deux sont dits
+    const held = partnerDoneView(v, { ...due, on_hold: true, hold_until: iso(72 * 60) }, TZ, NOW, state().payout);
+    expect(held.payoutMissing).toBe(true);
+    expect(plain(held.sub)).toBe("Course à vérifier : versement retenu jusqu'au ven. 13/11 10:00. Renseignez vos coordonnées bancaires pour le recevoir.");
+    // Payée à bord : rien à verser au chauffeur, jamais d'invitation
+    const onBoard = rideMoneyView(partnerRide());
+    if (onBoard.kind !== "partner") throw new Error("vue partenaire attendue");
+    expect(partnerDoneView(onBoard, item(), TZ, NOW, state().payout).payoutMissing).toBe(false);
+  });
+
+  it("fiche d'une course déjà payée : compte du versement (IBAN masqué) ou coordonnées à renseigner ; inconnues : rien", () => {
+    expect(payoutNoteView(state().payout)).toEqual({ missing: true, text: "Renseignez vos coordonnées bancaires pour recevoir ce versement" });
+    const note = payoutNoteView({ configured: true, payee_name: "K", iban_last4: "0189", bic: null, updated_at: null, in_use: false })!;
+    expect(note.missing).toBe(false);
+    expect(plain(note.text)).toBe("Versement sur votre compte •••• 0189");
+    expect(payoutNoteView(null)).toBeNull();
+    expect(payoutNoteView(undefined)).toBeNull();
+  });
+
+  it("course retirée : motif neutre (A, B ou chien de garde), jamais « {A} a retiré cette course »", () => {
+    expect(plain(rideRemovedText(partnerRide()))).toBe("Cette course de Taxi Alpha vous a été retirée.");
+    expect(rideRemovedText(partnerRide({ network: null }))).toBe("La centrale a réattribué cette course.");
+  });
+
+  it("lecture de repli (table rides) d'une course partenaire affichée : affichage gardé, jamais « Course retirée »", () => {
+    const partner = partnerRide();
+    const own = partnerRide({ network: null });
+    // Repli (PGRST202 : serveur antérieur ou paramètres différents du contrat) : la table ne montre pas la course de A
+    expect(rideReadAction(partner, { ride: null, legacy: true })).toBe("keep");
+    expect(rideReadAction(partner, { ride: legacyRide({ ...own, driver_id: "d1" } as unknown as Ride), legacy: true })).toBe("keep");
+    // driver_ride : RIDE_NOT_FOUND = vrai retrait
+    expect(rideReadAction(partner, { ride: null, legacy: false })).toBe("removed");
+    expect(rideReadAction(partner, { ride: partner, legacy: false })).toBe("show");
+    // Course propre : le repli reste la vérité (serveur antérieur)
+    expect(rideReadAction(own, { ride: null, legacy: true })).toBe("removed");
+    expect(rideReadAction(null, { ride: null, legacy: false })).toBe("missing");
+    expect(rideReadAction(null, { ride: own, legacy: true })).toBe("show");
   });
 
   it("course propre de centrale : part et commission ; flotte : prix seul (jamais les frais Rydar d'une flotte)", () => {
@@ -263,14 +326,22 @@ describe("bon de réservation (§7.5) : toutes les courses", () => {
     expect(plain(v.receipt)).toBe("Reçu ou facture du client : délivré par Taxi Bleu");
   });
 
-  it("affiché sur toute course une fois le réseau ouvert par Rydar ; interrupteur plateforme coupé : rien de nouveau", () => {
+  it("interrupteur plateforme coupé : aucun bon sur une course propre (rien de nouveau dans l'app)", () => {
     const own = partnerRide({ network: null });
-    expect(showVoucher(partnerRide(), null)).toBe(true); // course partenaire : toujours
-    expect(showVoucher(own, state())).toBe(true);
-    expect(showVoucher(own, state({ organization: { id: "b", name: "Flotte Beta", dispatch_model: "fleet", receiving: false } }))).toBe(true);
     expect(showVoucher(own, null)).toBe(false); // NETWORK_DISABLED, serveur antérieur ou état pas encore lu
     expect(showVoucher(own, state({}, { ready: false, missing: ["network_off"] }))).toBe(false);
     expect(showVoucher({ ...own, voucher: null }, state())).toBe(false);
+  });
+
+  it("réseau ouvert par Rydar : bon sur TOUTES les courses (§7.5, critère 28), même organisation qui ne reçoit pas le réseau", () => {
+    const own = partnerRide({ network: null });
+    expect(showVoucher(partnerRide(), null)).toBe(true); // course partenaire : toujours
+    expect(showVoucher(own, state())).toBe(true);
+    // Règle retenue (spec validée) : seul changement visible pour une organisation non participante, à confirmer par le
+    // propriétaire ; ni réglage, ni conditions, ni bandeau pour elle (networkVisible)
+    const notReceiving = state({ organization: { id: "b", name: "Flotte Beta", dispatch_model: "fleet", receiving: false } }, { ready: false, missing: ["org_reception_off"] });
+    expect(showVoucher(own, notReceiving)).toBe(true);
+    expect(networkVisible(notReceiving)).toBe(false);
   });
 });
 
@@ -290,6 +361,14 @@ describe("réglage « Courses du réseau partagé » : rien de nouveau quand le 
     expect(terms).toMatchObject({ tone: "amber", title: "Conditions à accepter", action: { kind: "open_network_terms", label: "Lire les conditions" } });
     expect(driverNetworkStatus(state({}, { ready: false, missing: ["vtc_card"] }), TZ).action).toEqual({ kind: "open_documents", label: "Mes documents" });
     expect(driverNetworkStatus(state({}, { ready: false, missing: ["blocked:executor_limit"] }), TZ)).toMatchObject({ tone: "red", action: { kind: "pay_network" } });
+  });
+
+  it("code de lisibilité inconnu de cette version (ajouté côté serveur) : ignoré, repli neutre, jamais d'erreur d'affichage", () => {
+    const unknownOnly = state({}, { ready: false, missing: ["nouveau_motif" as never] });
+    expect(() => driverNetworkStatus(unknownOnly, TZ)).not.toThrow();
+    expect(driverNetworkStatus(unknownOnly, TZ)).toMatchObject({ tone: "amber", title: "Réseau partagé indisponible", action: null });
+    // Un manque connu passe avant le code inconnu
+    expect(driverNetworkStatus(state({}, { ready: false, missing: ["nouveau_motif" as never, "vtc_card"] }), TZ).title).toBe("Carte VTC à valider");
   });
 
   it("raisons de l'organisation : pas de bouton, même interrupteur coupé ; exclusion datée ; nouvelles conditions en grâce", () => {
@@ -332,9 +411,10 @@ describe("conditions proposées une fois à l'accueil, puis à chaque nouvelle v
 });
 
 describe("écran des conditions (§7.3) : un seul « J'accepte », le chauffeur règle lui-même", () => {
-  it("première fois : texte au nom de son organisation, version datée, « J'accepte »", () => {
+  it("première fois : texte au nom de son organisation, version datée, « J'accepte et j'active » (accepter active ces courses)", () => {
     const c = networkTermsContent(state({ enabled: false, accepted_version: null }), new Date(NOW));
-    expect(c.primary).toBe("J'accepte");
+    expect(c.primary).toBe("J'accepte et j'active");
+    expect(c.done).toBe("Courses du réseau partagé activées");
     expect(c.version).toBe(NETWORK_TERMS_VERSION);
     expect(plain(c.lead)).toContain("Flotte Beta reçoit les courses du réseau partagé");
     expect(c.points.map(plain)).toEqual([
@@ -345,20 +425,42 @@ describe("écran des conditions (§7.3) : un seul « J'accepte », le chauffeur 
       "L'organisation qui vous confie la course reçoit votre prénom, l'initiale de votre nom, votre véhicule, votre plaque, votre téléphone et le n° de votre carte VTC.",
       "Vous pouvez arrêter à tout moment dans votre profil.",
     ]);
-    expect(plain(c.note)).toBe("En touchant « J'accepte », vous acceptez les conditions des courses du réseau partagé (version du 01/11/2026).");
+    expect(plain(c.note)).toBe("En touchant « J'accepte et j'active », vous acceptez les conditions des courses du réseau partagé (version du 01/11/2026) et activez ces courses.");
     // Décision Q2 : jamais « J'ai compris », jamais « encaissement géré par l'organisation »
     expect([c.lead, ...c.points, c.note].join(" ")).not.toMatch(/J'ai compris|géré par/);
   });
 
   it("déjà acceptées : « Activer » si coupé, rien si actif ; nouvelle version : lead « ont changé » et fin de grâce", () => {
-    expect(networkTermsContent(state({ enabled: false })).primary).toBe("Activer");
+    const activate = networkTermsContent(state({ enabled: false }));
+    expect(activate).toMatchObject({ primary: "Activer", note: null, done: "Courses du réseau partagé activées" });
     expect(networkTermsContent(state()).primary).toBeNull();
     const updated = networkTermsContent(
       state({ accepted_version: "2026-08-01", terms: { version: NETWORK_TERMS_VERSION, min_version: "2026-08-01", grace_until: "2026-12-01T00:00:00Z" } }),
       new Date(NOW),
     );
-    expect(updated.primary).toBe("J'accepte");
+    expect(updated).toMatchObject({ primary: "J'accepte", done: "Nouvelles conditions acceptées" });
     expect(plain(updated.lead)).toContain("ont changé. Les précédentes restent valables jusqu'au 01/12/2026.");
+    expect(plain(updated.lead)).toContain("pour continuer à recevoir ces courses");
+    expect(plain(updated.note)).toBe("En touchant « J'accepte », vous acceptez les conditions des courses du réseau partagé (version du 01/11/2026).");
+  });
+
+  it("nouvelle version, chauffeur qui avait arrêté : « recevoir de nouveau », « J'accepte et j'active », note explicite", () => {
+    const stopped = networkTermsContent(
+      state({ enabled: false, accepted_version: "2026-08-01", terms: { version: NETWORK_TERMS_VERSION, min_version: "2026-08-01", grace_until: "2026-12-01T00:00:00Z" } },
+        { ready: false, missing: ["driver_off"] }),
+      new Date(NOW),
+    );
+    expect(stopped.primary).toBe("J'accepte et j'active");
+    expect(plain(stopped.lead)).toBe("Les conditions des courses du réseau partagé ont changé. Lisez-les, puis acceptez-les pour recevoir de nouveau ces courses.");
+    expect(plain(stopped.lead)).not.toContain("continuer à recevoir");
+    expect(plain(stopped.note)).toContain("et activez ces courses.");
+    expect(stopped.done).toBe("Courses du réseau partagé activées");
+  });
+
+  it("texte pas encore relu par le juriste (NETWORK_TERMS_REVIEWED) : mention avant d'accepter ; relu : rien", () => {
+    const pending = networkTermsContent(state({ enabled: false, accepted_version: null }), new Date(NOW), false);
+    expect(plain(pending.review)).toBe("Texte en cours de relecture juridique : s'il change, la nouvelle version vous sera proposée.");
+    expect(networkTermsContent(state({ enabled: false, accepted_version: null }), new Date(NOW), true).review).toBeNull();
   });
 });
 
@@ -405,6 +507,15 @@ describe("accueil : bandeau des courses partenaires", () => {
     expect(plain(limit.sub)).toBe("Plafond de Flotte Beta atteint : réglez d'abord vos courses partenaires.");
   });
 
+  it("blocage inconnu de cette version (ajouté côté serveur) : bandeau rouge neutre, jamais d'erreur d'affichage", () => {
+    const n = home({ creditors: [{ id: "a", name: "Taxi Alpha", owed_cents: 1_250, overdue_cents: 0, blocked: "nouveau_blocage" as never }] });
+    expect(() => networkHomeBanner(n, "Flotte Beta")).not.toThrow();
+    const v = networkHomeBanner(n, "Flotte Beta")!;
+    expect(v).toMatchObject({ tone: "red", alert: true });
+    expect(plain(v.sub)).toBe("Les courses de Taxi Alpha vous sont bloquées pour le moment.");
+    expect(blockerText("giver_unpaid", { giver: "Taxi Alpha" }).label).toBe("Impayé envers Taxi Alpha");
+  });
+
   it("part à recevoir ; rien à signaler ; pas de bloc réseau : rien", () => {
     const payout = networkHomeBanner(home({ owed_cents: 0, payout_due_cents: 3_750, creditors: [{ id: "a", name: "Taxi Alpha", owed_cents: 0, overdue_cents: 0, blocked: null }] }), "B");
     expect(payout).toMatchObject({ tone: "green", cta: "Voir", sub: "Courses partenaires · Taxi Alpha" });
@@ -445,6 +556,26 @@ describe("« Courses partenaires » : un bloc par organisation, avec SES moyens"
     expect(plain(v.payout!.text)).toBe("Taxi Alpha vous versera 37,50 € (et 20 € après vérification)");
   });
 
+  it("blocage inconnu (sans message du serveur) : texte neutre ; message du serveur prioritaire", () => {
+    const v = creditorView(creditor({ blocked: "nouveau_blocage" as never, blocked_message: null }), TZ, NOW);
+    expect(plain(v.blocked)).toBe("Les courses de Taxi Alpha vous sont bloquées pour le moment.");
+    expect(creditorView(creditor({ blocked: "nouveau_blocage" as never, blocked_message: "Motif du serveur." }), TZ, NOW).blocked).toBe("Motif du serveur.");
+  });
+
+  it("mention de la ligne accordée à l'état : une ligne réglée ne dit jamais « à reverser »", () => {
+    expect(partnerItemKind({ direction: "driver_owes", status: "due" })).toBe("à reverser");
+    expect(partnerItemKind({ direction: "driver_owes", status: "disputed" })).toBe("à reverser");
+    expect(partnerItemKind({ direction: "driver_owes", status: "declared" })).toBe("reversé");
+    expect(partnerItemKind({ direction: "driver_owes", status: "paid" })).toBe("reversé");
+    expect(partnerItemKind({ direction: "driver_owes", status: "waived" })).toBe("annulé");
+    expect(partnerItemKind({ direction: "centrale_owes", status: "due" })).toBe("votre part");
+    expect(partnerItemKind({ direction: "centrale_owes", status: "paid" })).toBe("part versée");
+    expect(partnerItemKind({ direction: "centrale_owes", status: "waived" })).toBe("part annulée");
+    // Capture 15 : « Course 1702 · à reverser −12,50 € [Encaissé] » → « reversé »
+    const settled = partnerItemView(item({ status: "paid", settled_at: iso(-60), ride: { number: 1702, pickup: "75011 Paris", dropoff: "Versailles", completed_at: iso(-120) } }), "Taxi Alpha", TZ, NOW);
+    expect(settled).toMatchObject({ title: "Course 1702", kind: "reversé", status: "Encaissé" });
+  });
+
   it("lignes : un seul montant par sens, jamais commission ; « Je conteste » une fois par ligne", () => {
     const due = partnerItemView(item(), "Taxi Alpha", TZ, NOW);
     expect(due).toMatchObject({ owes: true, title: "Course 1783", kind: "à reverser", status: "À régler", statusTone: "amber", dispute: null });
@@ -468,11 +599,130 @@ describe("« Courses partenaires » : un bloc par organisation, avec SES moyens"
 });
 
 describe("gains : net par course partenaire", () => {
+  const r = { id: "r1", number: 1783, pickup: "75011 Paris", dropoff: "Versailles", completed_at: iso(-30), price_cents: 5_000, net_cents: 3_750,
+    currency: "EUR", payment_method: "cash" as const, vehicle_category: "standard" as const, distance_m: null, duration_s: null, network_giver: "Taxi Alpha" };
+
   it("organisation, part du chauffeur et part de A (termes figés)", () => {
-    const r = { id: "r1", number: 1783, pickup: "75011 Paris", dropoff: "Versailles", completed_at: iso(-30), price_cents: 5_000, net_cents: 3_750,
-      currency: "EUR", payment_method: "cash" as const, vehicle_category: "standard" as const, distance_m: null, duration_s: null, network_giver: "Taxi Alpha" };
     expect(earningsPartner(r)).toEqual({ giver: "Taxi Alpha", gainCents: 3_750, giverPartCents: 1_250, collects: true });
     expect(earningsPartner({ ...r, network_giver: null })).toBeNull();
+  });
+
+  it("texte accordé à l'état du règlement (la pastille voisine) : jamais « à reverser » une fois encaissé", () => {
+    const text = (over: Record<string, unknown>) => plain(earningsPartnerText({ ...r, ...over }));
+    // Payée à bord (le chauffeur reverse la part de A)
+    expect(text({ settlement_status: "due", settlement_direction: "driver_owes" })).toBe("12,50 € à reverser à Taxi Alpha");
+    expect(text({ settlement_status: "disputed", settlement_direction: "driver_owes" })).toBe("12,50 € à reverser à Taxi Alpha");
+    expect(text({ settlement_status: "declared", settlement_direction: "driver_owes" })).toBe("12,50 € reversés à Taxi Alpha · à confirmer");
+    expect(text({ settlement_status: "paid", settlement_direction: "driver_owes" })).toBe("12,50 € reversés à Taxi Alpha");
+    expect(text({ settlement_status: "waived", settlement_direction: "driver_owes" })).toBe("Reversement annulé par Taxi Alpha");
+    expect(text({ settlement_status: null })).toBe("12,50 € à reverser à Taxi Alpha");
+    expect(text({ settlement_status: "paid", net_cents: 4_850 })).toBe("1,50 € reversé à Taxi Alpha");
+    // Déjà payée (A verse la part du chauffeur)
+    const prepaid = { payment_method: "online", settlement_direction: "centrale_owes" };
+    expect(text({ ...prepaid, settlement_status: "due" })).toBe("Taxi Alpha vous versera 37,50 €");
+    expect(text({ ...prepaid, settlement_status: "paid" })).toBe("Part versée par Taxi Alpha");
+    expect(text({ ...prepaid, settlement_status: "declared" })).toBe("Versement signalé par Taxi Alpha");
+    expect(text({ ...prepaid, settlement_status: "waived" })).toBe("Versement annulé par Taxi Alpha");
+    expect(earningsPartnerText({ ...r, network_giver: null })).toBeNull();
+    for (const status of ["due", "declared", "paid", "waived", "disputed", null]) {
+      for (const dir of ["driver_owes", "centrale_owes"]) expect(text({ settlement_status: status, settlement_direction: dir })).not.toMatch(/commission|frais/i);
+    }
+  });
+});
+
+describe("accès aux règlements partenaires : rien de visible quand le réseau est coupé, non reçu ou absent du serveur", () => {
+  const owing: DriverHomeNetwork = {
+    owed_cents: 1_250, overdue_cents: 0, payout_due_cents: 0, creditors: [{ id: "a", name: "Taxi Alpha", owed_cents: 1_250, overdue_cents: 0, blocked: null }],
+    readiness: { ready: false, missing: ["network_off"], warnings: [], terms_grace_until: null, excluded_until: null },
+  };
+  const noMoney: DriverHomeNetwork = { ...owing, owed_cents: 0, creditors: [] };
+  const notReceiving = state({ organization: { id: "b", name: "Flotte Beta", dispatch_model: "fleet", receiving: false } }, { ready: false, missing: ["org_reception_off"] });
+
+  it("interrupteur coupé (NETWORK_DISABLED : état null, ou network_off) sans somme partenaire : écran « Commissions », aucune entrée", () => {
+    for (const network of [null, state({}, { ready: false, missing: ["network_off"] })]) {
+      for (const homeNetwork of [null, undefined, noMoney]) {
+        const fleet = partnerAccess({ model: "fleet", homeNetwork, network });
+        expect(fleet).toMatchObject({ partner: false, entry: false, tabs: false, title: "Commissions", showNetwork: false });
+        const centrale = partnerAccess({ model: "centrale", homeNetwork, network, tab: "network" });
+        expect(centrale).toMatchObject({ partner: false, tabs: false, title: "Commissions", showNetwork: false });
+      }
+    }
+  });
+
+  it("organisation qui ne reçoit pas le réseau : rien (ni onglet, ni entrée)", () => {
+    expect(partnerAccess({ model: "fleet", homeNetwork: null, network: notReceiving })).toMatchObject({ partner: false, entry: false });
+    expect(partnerAccess({ model: "centrale", homeNetwork: null, network: notReceiving })).toMatchObject({ partner: false, tabs: false });
+  });
+
+  it("sommes partenaires nées avant la coupure : l'entrée reste (flotte : écran « Courses partenaires » ; centrale : onglet)", () => {
+    const fleet = partnerAccess({ model: "fleet", homeNetwork: owing, network: null });
+    expect(fleet).toMatchObject({ partner: true, entry: true, tabs: false, title: "Courses partenaires", showNetwork: true });
+    const centrale = partnerAccess({ model: "centrale", homeNetwork: owing, network: null, tab: "own" });
+    expect(centrale).toMatchObject({ partner: true, entry: false, tabs: true, title: "Commissions", showNetwork: false });
+    expect(partnerAccess({ model: "centrale", homeNetwork: owing, network: null, tab: "network" }).showNetwork).toBe(true);
+    // Règlements lus (écran Commissions) : une organisation suffit, même sans somme à l'accueil
+    const read: DriverNetworkSettlements = { currency: "EUR", summary: creditor().summary, organizations: [creditor()] };
+    expect(partnerAccess({ model: "fleet", homeNetwork: null, network: null, settlements: read }).partner).toBe(true);
+  });
+
+  it("serveur sans réseau partagé (fonctions absentes) : rien, même onglet demandé par un lien", () => {
+    const access = partnerAccess({ model: "fleet", homeNetwork: undefined, network: null, settlements: "unsupported", requested: true });
+    expect(access).toMatchObject({ partner: false, entry: false, title: "Commissions", showNetwork: false });
+  });
+
+  it("réseau visible (ouvert ET reçu) : entrée et onglet, même sans somme ; notification de règlement : onglet ouvert", () => {
+    expect(partnerAccess({ model: "fleet", homeNetwork: null, network: state() })).toMatchObject({ partner: true, entry: true });
+    expect(partnerAccess({ model: "centrale", homeNetwork: null, network: state() })).toMatchObject({ tabs: true, entry: false });
+    expect(partnerAccess({ model: "fleet", homeNetwork: null, network: null, settlements: null, requested: true }).showNetwork).toBe(true);
+  });
+});
+
+describe("onglets de l'écran Commissions : pastilles des sommes à régler", () => {
+  it("courses partenaires à régler (dues ou « Pas reçu »), rouge s'il y a du retard ; avant lecture : d'après l'accueil", () => {
+    const read: DriverNetworkSettlements = {
+      currency: "EUR",
+      summary: { owed_cents: 2_500, overdue_cents: 1_250, declared_cents: 0, payout_due_cents: 0, on_hold_cents: 0 },
+      organizations: [creditor({ items: [item(), item({ id: "s2", status: "disputed" }), item({ id: "s3", status: "paid" }), item({ id: "s4", direction: "centrale_owes" })] })],
+    };
+    expect(partnerTabBadge(read, null)).toMatchObject({ count: 2, late: true });
+    expect(plain(partnerTabBadge(read, null).label)).toBe("2 courses à régler");
+    expect(partnerTabBadge({ ...read, organizations: [] }, null)).toMatchObject({ count: 0, late: false });
+    const homeNet: DriverHomeNetwork = {
+      owed_cents: 1_250, overdue_cents: 0, payout_due_cents: 0, creditors: [{ id: "a", name: "Taxi Alpha", owed_cents: 1_250, overdue_cents: 0, blocked: null }],
+      readiness: { ready: true, missing: [], warnings: [], terms_grace_until: null, excluded_until: null },
+    };
+    expect(plain(partnerTabBadge(null, homeNet).label)).toBe("à régler à 1 organisation");
+    expect(partnerTabBadge(null, homeNet)).toMatchObject({ count: 1, late: false });
+    expect(partnerTabBadge(null, null).count).toBe(0);
+  });
+
+  it("onglet de sa centrale : courses dont la commission est à régler", () => {
+    expect(ownTabBadge({ amount_cents: 1_900, count: 2 }, 0)).toMatchObject({ count: 2, late: false });
+    expect(plain(ownTabBadge({ amount_cents: 1_900, count: 2 }, 900).label)).toBe("2 courses à régler");
+    expect(ownTabBadge({ amount_cents: 1_900, count: 2 }, 900).late).toBe(true);
+    expect(ownTabBadge({ amount_cents: 0, count: 0 }, 0).count).toBe(0);
+    expect(ownTabBadge(null).count).toBe(0);
+  });
+});
+
+describe("coordonnées bancaires : inconnues ≠ non renseignées", () => {
+  const saved = { configured: true, payee_name: "Karim Benali", iban_last4: "0189", bic: null, updated_at: null, in_use: false };
+
+  it("profil : IBAN masqué, à renseigner (alerte si un versement est attendu), ou rien si inconnues", () => {
+    expect(plain(payoutRowDetail(saved)?.text)).toBe("IBAN •••• 0189");
+    expect(payoutRowDetail(state().payout, 3_750)).toEqual({ text: "À renseigner pour recevoir vos versements", alert: true });
+    expect(payoutRowDetail(state().payout, 0)).toEqual({ text: "Pour recevoir vos versements", alert: false });
+    expect(payoutRowDetail(null, 3_750)).toBeNull();
+  });
+});
+
+describe("confirmation au retour (écran fermé juste après une action)", () => {
+  it("lue une seule fois, oubliée si trop ancienne", () => {
+    returnFlash.set("Courses du réseau partagé activées", NOW);
+    expect(returnFlash.take(NOW + 500)).toBe("Courses du réseau partagé activées");
+    expect(returnFlash.take(NOW + 600)).toBeNull();
+    returnFlash.set("Courses du réseau partagé activées", NOW);
+    expect(returnFlash.take(NOW + RETURN_FLASH_TTL_MS + 1)).toBeNull();
   });
 });
 

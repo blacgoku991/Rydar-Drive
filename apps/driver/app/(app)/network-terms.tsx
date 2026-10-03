@@ -1,8 +1,9 @@
 // Conditions des courses du réseau partagé (document « network_driver », §7.3) : l'essentiel, le lien vers le texte
-// complet, « J'accepte » (ou « Activer » quand la version en vigueur est déjà acceptée). Ouvert depuis le profil, ou
-// proposé une fois à l'accueil quand l'organisation du chauffeur reçoit le réseau, puis à chaque nouvelle version
-// (use-network-terms-prompt). Tout chauffeur accepte et règle lui-même. Preuve côté serveur : driver_set_network →
-// legal_acceptances (network_driver, source « app »).
+// complet, « J'accepte » (déjà actif), « J'accepte et j'active » (ne reçoit pas ces courses : accepter les active, c'est dit
+// sur le bouton et dans la note) ou « Activer » (version en vigueur déjà acceptée). Ouvert depuis le profil, ou proposé
+// une fois à l'accueil quand l'organisation du chauffeur reçoit le réseau, puis à chaque nouvelle version
+// (use-network-terms-prompt). Tout chauffeur accepte et règle lui-même. Confirmation visible au retour (return-flash).
+// Preuve côté serveur : driver_set_network → legal_acceptances (network_driver, source « app »).
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
@@ -14,6 +15,7 @@ import { BigButton, hapticResult, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { api, ApiError, networkTermsUrl } from "@/lib/api";
 import { networkTermsContent } from "@/lib/network";
+import { returnFlash } from "@/lib/return-flash";
 import { colors, control, space, type, weight } from "@/theme";
 
 export default function NetworkTerms() {
@@ -43,11 +45,15 @@ export default function NetworkTerms() {
     if (!network || busy) return;
     setBusy(true);
     setError(null);
+    // Confirmation figée avant l'appel (le contenu change dès que le nouvel état est appliqué)
+    const done = content.done;
     try {
       const state = await api.setNetwork(true, content.version);
       applyNetwork(state);
       hapticResult(true);
-      announce("Courses du réseau partagé activées");
+      announce(done);
+      // Écran qui reprend la main (profil, accueil) : bandeau « Courses du réseau partagé activées »
+      returnFlash.set(done);
       close();
     } catch (e) {
       hapticResult(false);
@@ -102,7 +108,14 @@ export default function NetworkTerms() {
               )}
             </ScrollView>
             <View style={styles.footer}>
-              {content.primary === "J'accepte" && <Text style={styles.note}>{content.note}</Text>}
+              {content.review ? (
+                // Texte pas encore relu par le juriste (NETWORK_TERMS_REVIEWED) : dit avant d'accepter
+                <View style={styles.review}>
+                  <Ionicons name="information-circle-outline" size={20} color={colors.muted} />
+                  <Text style={styles.reviewText}>{content.review}</Text>
+                </View>
+              ) : null}
+              {content.note ? <Text style={styles.note}>{content.note}</Text> : null}
               {error && <Notice tone="error" message={error} />}
               {content.primary ? (
                 <BigButton title={content.primary} icon="checkmark" height={control.lg} loading={busy} onPress={() => void accept()} />
@@ -136,4 +149,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   note: { color: colors.muted, fontSize: type.subhead, lineHeight: 20 },
+  review: { flexDirection: "row", alignItems: "flex-start", gap: space.sm },
+  reviewText: { flex: 1, color: colors.muted, fontSize: type.subhead, lineHeight: 20 },
 });

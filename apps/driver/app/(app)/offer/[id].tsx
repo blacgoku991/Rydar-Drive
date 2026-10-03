@@ -337,7 +337,7 @@ export default function OfferScreen() {
   const eta = approachSeconds(offer.distance_m);
   // Vol suivi : « AF1234 · +35 min », « AF1234 · atterri 14:52 · T2E »
   const flight = flightBadge(offer, home?.organization.timezone);
-  // Réseau partagé : « Course de {A} (partenaire) », sa part et UNE ligne d'argent (jamais commission ni frais)
+  // Réseau partagé : « Course partenaire · {A} » (mot clé d'abord), sa part et UNE ligne d'argent (jamais commission ni frais)
   const partner = partnerOfferView(offer);
   // Mode centrale : « Vous gagnez 40 € » (part chauffeur), course 59 € · commission 19 € (commission + frais)
   const centrale = !partner && offer.dispatch_model === "centrale" && offer.driver_payout_cents != null;
@@ -386,8 +386,14 @@ export default function OfferScreen() {
             Offre partenaire : départ et arrivée approximatifs (~300 m), sans tracé */}
         <RydarMap me={me} pickup={pickup} dropoff={dropoff} route={partner ? null : route} padding={MAP_PADDING} rotatable={false} />
         <SafeAreaView edges={["top"]} style={styles.mapTop} pointerEvents="box-none">
-          <View style={styles.headBox} accessible accessibilityRole="header" accessibilityLabel={`${kicker}, course ${offer.number}, ${category}`}>
-            <Text style={styles.kicker} numberOfLines={1}>{kicker}</Text>
+          <View
+            style={styles.headBox}
+            accessible
+            accessibilityRole="header"
+            accessibilityLabel={`${partner ? partner.label : kicker}, course ${offer.number}, ${category}`}
+          >
+            {/* Course partenaire : « Course partenaire » toujours lisible, nom long sur une deuxième ligne */}
+            <Text style={styles.kicker} numberOfLines={partner ? 2 : 1}>{kicker}</Text>
             <Text style={styles.number} numberOfLines={1}>Course {offer.number} · {category}</Text>
           </View>
           {urgent && !closed && (

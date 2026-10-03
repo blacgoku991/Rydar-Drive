@@ -7,7 +7,7 @@ import type {
 import { NETWORK_DOCUMENTS, extractErrorCode, humanizeError } from "@rydar/shared";
 import { appConfig } from "./config";
 import { debtFromSettlements } from "./debt";
-import { legacyOffer, legacyRide, normalizeBic, normalizeIban, type AppRide, type LegacyRideContext } from "./network";
+import { legacyOffer, legacyRide, normalizeBic, normalizeIban, type AppRide, type LegacyRideContext, type RideRead } from "./network";
 import { supabase } from "./supabase";
 
 /**
@@ -50,9 +50,15 @@ export function refusalText(res: { code?: string | null; message?: string | null
   return (res.code ? DRIVER_MESSAGES[res.code] : undefined) || humanizeError(res.code, "") || res.message || fallback;
 }
 
-/** Libellés partagés écrits pour l'organisation, reformulés pour le chauffeur. */
-const DRIVER_MESSAGES: Record<string, string> = {
+/**
+ * Libellés partagés écrits pour l'organisation, reformulés pour le chauffeur : il accepte des « conditions » (jamais la
+ * convention des organisations) et s'adresse à son organisation (jamais « contactez Rydar »).
+ */
+export const DRIVER_MESSAGES: Record<string, string> = {
   DRIVER_BUSY_AT_TIME: "Créneau déjà pris\u00A0: vous avez une autre course à cette heure-là.",
+  NETWORK_TERMS_OUTDATED: "Les conditions du réseau partagé ont changé\u00A0: lisez et acceptez la nouvelle version.",
+  NETWORK_TERMS_REQUIRED: "Lisez et acceptez les conditions du réseau partagé pour en recevoir les courses.",
+  NETWORK_SUSPENDED: "Le réseau partagé est suspendu pour votre organisation\u00A0: renseignez-vous auprès d'elle.",
 };
 
 /** Jeton refusé par l'API (expiré pendant la requête, horloge du téléphone en retard). */
@@ -80,7 +86,25 @@ export function networkRpc<K extends NetworkRpcName>(fn: K, args: NetworkRpcArgs
 
 /** Fonctions absentes du serveur (version antérieure) : appel de l'ancienne directement pendant 10 min, puis nouvel essai. */
 const missingUntil = new Map<string, number>();
-const MISSING_RETRY_MS = 10 * 60_000;
+export const MISSING_RETRY_MS = 10 * 60_000;
+
+/**
+ * Fonctions appelées d'office (démarrage, retour au premier plan : état réseau, signe de vie) absentes du serveur
+ * (PGRST202 : SQL pas encore déployé, cache de schéma en rechargement) : plus d'appel pendant 10 min (rejet immédiat,
+ * même erreur), puis nouvel essai — jamais pour toute la vie du processus (l'app reste ouverte des jours, GPS).
+ */
+async function gated<T>(fn: string, call: () => Promise<T>): Promise<T> {
+  const until = missingUntil.get(fn);
+  if (until != null && until > Date.now()) throw new ApiError("Fonction indisponible sur ce serveur.", null, "PGRST202");
+  try {
+    const res = await call();
+    missingUntil.delete(fn);
+    return res;
+  } catch (e) {
+    if (isMissingRpc(e)) missingUntil.set(fn, Date.now() + MISSING_RETRY_MS);
+    throw e;
+  }
+}
 
 /** Nouvelle fonction, repli sur l'ancienne si le serveur ne la connaît pas encore (jamais sur une autre erreur). */
 async function withLegacy<T>(fn: string, modern: () => Promise<T>, legacy: () => Promise<T>): Promise<T> {
@@ -306,6 +330,29 @@ export async function fetchDriverRoute(from: LatLng, to: LatLng, signal?: AbortS
   };
 }
 
+/** driver_ride, repli sur la ligne rides d'un serveur antérieur (PGRST202) ; provenance renvoyée avec la course. */
+async function readRide(id: string, legacy?: LegacyRideContext): Promise<RideRead> {
+  let fromLegacy = false;
+  const ride = await withLegacy<AppRide | null>(
+    "driver_ride",
+    () =>
+      networkRpc("driver_ride", { p_ride: id }).then(
+        (r) => r as AppRide,
+        (e: unknown) => {
+          if (e instanceof ApiError && e.code === "RIDE_NOT_FOUND") return null;
+          throw e;
+        },
+      ),
+    async () => {
+      fromLegacy = true;
+      const { data, error } = await supabase.from("rides").select("*").eq("id", id).maybeSingle();
+      if (error) throw new Error("Course indisponible.");
+      return data ? legacyRide(data as Ride, legacy) : null;
+    },
+  );
+  return { ride, legacy: fromLegacy };
+}
+
 export const api = {
   home: () => rpc<DriverHome>("driver_home"),
   /**
@@ -350,23 +397,12 @@ export const api = {
    * partenaire, bon de réservation) ; null : course qu'il ne tient pas (RIDE_NOT_FOUND : retirée, réattribuée).
    * Serveur antérieur : ligne rides (RLS), argent déduit du modèle de l'organisation (`legacy`).
    */
-  ride: (id: string, legacy?: LegacyRideContext) =>
-    withLegacy<AppRide | null>(
-      "driver_ride",
-      () =>
-        networkRpc("driver_ride", { p_ride: id }).then(
-          (r) => r as AppRide,
-          (e: unknown) => {
-            if (e instanceof ApiError && e.code === "RIDE_NOT_FOUND") return null;
-            throw e;
-          },
-        ),
-      async () => {
-        const { data, error } = await supabase.from("rides").select("*").eq("id", id).maybeSingle();
-        if (error) throw new Error("Course indisponible.");
-        return data ? legacyRide(data as Ride, legacy) : null;
-      },
-    ),
+  ride: (id: string, legacy?: LegacyRideContext) => readRide(id, legacy).then((r) => r.ride),
+  /**
+   * Même lecture, avec sa provenance (`legacy` : repli sur la table rides). Une lecture de repli ne montre jamais une
+   * course partenaire (RLS) : l'écran de course ne la prend pas pour un retrait (lib/network.ts : rideReadAction).
+   */
+  rideRead: (id: string, legacy?: LegacyRideContext) => readRide(id, legacy),
   // --- Messagerie + signalements (migration 002300) ------------------------------------------
   chatOverview: () => rpc<DriverChatOverview>("driver_chat_overview"),
   /** Message « Centrale » (fil direct) ou « Flotte » ; signalement = fil flotte + type (+ position, sinon dernière connue). */
@@ -455,9 +491,9 @@ export const api = {
     ),
   // --- Réseau partagé (contrat @rydar/shared network.ts ; serveur antérieur : PGRST202, voir isMissingRpc) ------------
   /** Réglage « Courses du réseau partagé », conditions, lisibilité, coordonnées bancaires masquées. */
-  networkState: () => networkRpc("driver_network_state", {}),
+  networkState: () => gated("driver_network_state", () => networkRpc("driver_network_state", {})),
   /** Nouvelle application ouverte (démarrage, retour au premier plan) : offres partenaires possibles. */
-  networkPing: () => networkRpc("driver_network_ping", {}),
+  networkPing: () => gated("driver_network_ping", () => networkRpc("driver_network_ping", {})),
   /** Active (avec la version des conditions acceptée) ou arrête les courses du réseau partagé. */
   setNetwork: (enabled: boolean, version: string | null) => networkRpc("driver_set_network", { p_enabled: enabled, p_version: version }),
   /** Coordonnées bancaires des versements (IBAN toujours masqué : 4 derniers caractères). */

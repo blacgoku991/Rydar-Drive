@@ -17,7 +17,7 @@ import { BigButton, Card, Label, Pill, Screen, ScreenHeader, Segmented } from "@
 import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
-import { earningsPartner, hasPartnerMoney, networkVisible, PARTNER_SETTLEMENTS_TITLE, settleHref } from "@/lib/network";
+import { earningsPartner, earningsPartnerText, PARTNER_SETTLEMENTS_TITLE, partnerAccess, settleHref } from "@/lib/network";
 import { alpha, colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
 
 type Period = "today" | "week" | "month";
@@ -90,9 +90,10 @@ export default function Earnings() {
         : settlement && settlement.to_receive_cents > 0
           ? { icon: "arrow-down-circle-outline" as const, color: colors.green, text: `${formatPrice(settlement.to_receive_cents, currency)} à recevoir` }
           : { icon: "wallet-outline" as const, color: colors.muted, text: "Tout est réglé" };
-  // Flotte : accès aux règlements des courses partenaires (centrale : onglet de l'écran Commissions)
+  // Flotte : accès aux règlements des courses partenaires (centrale : onglet de l'écran Commissions) ; réseau coupé ou
+  // non reçu, sans somme partenaire : aucune entrée (lib/network.ts : partnerAccess)
   const partnerNet = home?.network ?? null;
-  const showPartners = !centrale && (hasPartnerMoney(partnerNet) || networkVisible(network));
+  const showPartners = partnerAccess({ model: data?.model ?? home?.model ?? home?.organization.dispatch_model, homeNetwork: partnerNet, network }).entry;
   const partnerState = partnerNet && partnerNet.owed_cents > 0
     ? { icon: "wallet-outline" as const, color: colors.amber, text: `${formatPrice(partnerNet.owed_cents, currency)} à régler` }
     : partnerNet && partnerNet.payout_due_cents > 0
@@ -356,8 +357,9 @@ export default function Earnings() {
 }
 
 /**
- * Course partenaire : organisation qui l'a confiée, statut du règlement et UN montant (« 12,50 € à reverser à {A} » /
- * « part versée par {A} »), jamais commission ni frais.
+ * Course partenaire : organisation qui l'a confiée, statut du règlement et UN montant accordé à ce statut (« 12,50 € à
+ * reverser à {A} » / « 12,50 € reversés à {A} », « {A} vous versera 37,50 € » / « Part versée par {A} »), jamais
+ * commission ni frais.
  */
 function PartnerSettlement({ r }: { r: EarningsRide }) {
   const p = earningsPartner(r);
@@ -368,9 +370,7 @@ function PartnerSettlement({ r }: { r: EarningsRide }) {
     <View style={styles.settle}>
       <PartnerBadge giver={p.giver} />
       {status ? <Pill label={driverSettlementLabel(status, direction)} color={toneColor(SETTLEMENT_STATUS_META[status].tone)} /> : null}
-      <Text style={styles.settleText}>
-        {p.collects ? `${formatPrice(p.giverPartCents, r.currency)} à reverser à ${p.giver}` : `Part versée par ${p.giver}`}
-      </Text>
+      <Text style={styles.settleText}>{earningsPartnerText(r)}</Text>
     </View>
   );
 }
