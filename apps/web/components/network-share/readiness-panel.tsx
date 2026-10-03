@@ -36,7 +36,7 @@ export function ReadinessPanel({ view, canManage }: { view: OrgReadinessView; ca
         <ul className="divide-y divide-line rounded-xl border border-line" aria-label="Ce qu'il reste à faire">
           {view.items.map((item) => (
             <li key={item.code} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-              <div className="flex min-w-0 flex-1 items-start gap-2.5">
+              <div className="flex min-w-[240px] flex-1 items-start gap-2.5">
                 {item.blocking ? (
                   <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber" aria-hidden />
                 ) : (

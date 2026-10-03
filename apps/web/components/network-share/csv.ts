@@ -128,9 +128,9 @@ export interface NetworkStatementTotals {
   priceCents: number;
   giverPartCents: number;
   driverPartCents: number;
-  /** Payées à bord : montants que les chauffeurs reversent */
+  /** Payées à bord : montants dus par les chauffeurs (part de l'organisation qui confie), réglés ou non */
   driverOwesCents: number;
-  /** Déjà payées : montants versés aux chauffeurs */
+  /** Déjà payées : montants dus aux chauffeurs (leur part), réglés ou non */
   payoutCents: number;
 }
 
@@ -183,8 +183,8 @@ export function networkStatementCsv(opts: {
     csvLine(["Total des prix (€)", euros(t.priceCents)]),
     csvLine(["Part de l'organisation qui confie (€)", euros(t.giverPartCents)]),
     csvLine(["Part des chauffeurs (€)", euros(t.driverPartCents)]),
-    csvLine(["Reversé par les chauffeurs, courses payées à bord (€)", euros(t.driverOwesCents)]),
-    csvLine(["Versé aux chauffeurs, courses déjà payées (€)", euros(t.payoutCents)]),
+    csvLine(["Dû par les chauffeurs, courses payées à bord (€)", euros(t.driverOwesCents)]),
+    csvLine(["Dû aux chauffeurs, courses déjà payées (€)", euros(t.payoutCents)]),
     "",
     csvLine(STATEMENT_HEADER),
     ...rows.map((r) =>

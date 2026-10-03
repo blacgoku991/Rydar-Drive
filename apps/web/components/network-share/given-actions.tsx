@@ -377,7 +377,6 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent title={`Verser ${amount} à ${item.execution.driver_label}`} description={`Course #${item.ride.number} · ${item.execution.partner.name}`}>
         <div className="space-y-5 px-6 py-5">
-          <Summary item={item} />
           <section aria-labelledby="rib-title" className="rounded-xl border border-line bg-white/[0.02] p-4">
             <h3 id="rib-title" className="flex items-center gap-2 text-[13px] font-medium">
               <Landmark className="size-4 text-fg-subtle" /> Coordonnées bancaires du chauffeur

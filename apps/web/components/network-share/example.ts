@@ -22,7 +22,11 @@ export function shareExampleText(giver: NetworkTermsGiverInput, currency = "EUR"
   const price = formatPrice(priceCents, currency);
   return {
     priceCents,
-    onBoard: ex.onBoard ? `Course de ${price} payée à bord → le chauffeur vous reverse ${formatPrice(ex.onBoard.amount_cents, currency)}` : null,
+    onBoard: ex.onBoard
+      ? ex.onBoard.amount_cents > 0
+        ? `Course de ${price} payée à bord → le chauffeur vous reverse ${formatPrice(ex.onBoard.amount_cents, currency)}`
+        : `Course de ${price} payée à bord → le chauffeur garde tout, rien à vous reverser`
+      : null,
     prepaid: ex.prepaid ? `Course de ${price} déjà payée → vous lui versez ${formatPrice(ex.prepaid.amount_cents, currency)}` : null,
     none:
       !ex.onBoard && !ex.prepaid

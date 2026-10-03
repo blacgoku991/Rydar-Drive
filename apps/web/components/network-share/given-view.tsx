@@ -307,8 +307,8 @@ function GivenRow({
             <span className="mono shrink-0 text-[12.5px] text-fg">{formatPrice(t.price_cents, currency)}</span>
             <SplitBar split={{ price: t.price_cents, driver: t.driver_payout_cents, commission: t.commission_cents, platform: t.platform_fee_cents }} className="h-1.5 flex-1" />
           </div>
-          <p className="mt-1 text-[11.5px] text-fg-subtle">
-            part de {orgName} <span className="mono text-fg-muted">{formatPrice(t.giver_cut_cents, currency)}</span> · chauffeur{" "}
+          <p className="mt-1 text-[11.5px] text-fg-subtle" title={`Part de ${orgName} · part du chauffeur`}>
+            votre part <span className="mono text-fg-muted">{formatPrice(t.giver_cut_cents, currency)}</span> · chauffeur{" "}
             <span className="mono text-brand">{formatPrice(t.driver_payout_cents, currency)}</span>
           </p>
         </div>
@@ -321,7 +321,8 @@ function GivenRow({
                 <span className={cn("inline-flex items-center gap-1 text-[11.5px]", owes ? "text-fg-muted" : "text-violet")}>
                   <DirIcon className="size-3" /> {owes ? "à encaisser" : "à verser"}
                 </span>
-                <SettlementBadge settlement={live} />
+                {/* « À régler » / « À verser » redirait le sens : badge seulement pour un autre état (ou un retard) */}
+                {(live.status !== "due" || live.overdue) && <SettlementBadge settlement={live} />}
               </>
             ) : progress ? (
               <Badge tone={progress.tone}>{progress.label}</Badge>
@@ -351,7 +352,7 @@ function GivenRow({
               <Timer className="size-3 shrink-0" /> versement retenu, libéré {fromNow(e.hold_until, now)}
             </p>
           ) : due ? (
-            <p className={cn("truncate text-[11.5px]", toneText[due.tone])}>{due.text}</p>
+            <p className={cn("truncate text-[11.5px]", toneText[due.tone])}>{due.text.replace(/^à verser dans /, "échéance dans ")}</p>
           ) : null}
           {s && (s.status === "disputed" || s.status === "waived") && s.note && (
             <p className="truncate text-[11.5px] text-fg-subtle" title={s.note}>« {s.note} »</p>

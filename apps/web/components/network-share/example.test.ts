@@ -44,6 +44,12 @@ describe("exemple chiffré du partage (taux réels de l'organisation)", () => {
     }
   });
 
+  it("organisation sans frais ni commission : rien à reverser pour une course payée à bord", () => {
+    const ex = shareExampleText({ dispatch_model: "fleet", platform_fee_percent: 0, platform_fee_fixed_cents: 0 });
+    expect(ex.amounts).toEqual({ onBoardCents: 0, prepaidCents: 5000 });
+    expect(ex.onBoard).toBe(`Course de ${eur(5000)} payée à bord → le chauffeur garde tout, rien à vous reverser`);
+  });
+
   it("part du chauffeur nulle avec ces taux : la course ne serait pas proposée, message explicite", () => {
     const ex = shareExampleText({ dispatch_model: "centrale", platform_fee_percent: 50, platform_fee_fixed_cents: 0, driver_commission_percent: 50, driver_commission_fixed_cents: 0 });
     expect(ex.onBoard).toBeNull();

@@ -215,9 +215,20 @@ function ShareCard(p: Props & { pending: boolean; onToggle: (on: boolean) => voi
             </p>
           </div>
           {p.model === "centrale" ? (
-            <PaymentSummary payment={p.payment} canManage={p.canManage} />
+            <PaymentSummary
+              payment={p.payment}
+              action={
+                p.canManage ? (
+                  <Button asChild variant="outline" size="sm">
+                    <Link href="/dashboard/settings?tab=centrale" prefetch={false}>
+                      <Settings2 /> Modifier
+                    </Link>
+                  </Button>
+                ) : null
+              }
+            />
           ) : (
-            <NetworkPaymentMethodsForm {...p} />
+            <FleetPayment {...p} />
           )}
         </section>
       </CardBody>
@@ -225,8 +236,17 @@ function ShareCard(p: Props & { pending: boolean; onToggle: (on: boolean) => voi
   );
 }
 
-/** Centrale : résumé en lecture (une seule source : Réglages › Commission & encaissement). */
-function PaymentSummary({ payment, canManage }: { payment: NetworkPaymentRow | null; canManage: boolean }) {
+/** Moyen « en ligne » renseigné (lien de paiement ou RIB) : condition du partage (spec §6.1). */
+function hasOnlineMethod(payment: NetworkPaymentRow | null): boolean {
+  const methods = payment?.settlement_methods ?? [];
+  return (methods.includes("link") && !!payment?.settlement_link) || (methods.includes("transfer") && !!payment?.settlement_iban);
+}
+
+/**
+ * Résumé des moyens proposés aux chauffeurs. Centrale : lecture + « Modifier » vers Réglages › Commission &
+ * encaissement (une seule source) ; flotte : « Modifier » ouvre la carte « Encaissement » ici.
+ */
+function PaymentSummary({ payment, action }: { payment: NetworkPaymentRow | null; action: React.ReactNode }) {
   const methods = payment?.settlement_methods ?? [];
   const ready: Record<SettlementMethod, boolean> = {
     link: !!payment?.settlement_link,
@@ -251,19 +271,36 @@ function PaymentSummary({ payment, canManage }: { payment: NetworkPaymentRow | n
           })
         )}
       </div>
-      {canManage && (
-        <Button asChild variant="outline" size="sm">
-          <Link href="/dashboard/settings?tab=centrale" prefetch={false}>
-            <Settings2 /> Modifier
-          </Link>
-        </Button>
-      )}
+      {action}
     </div>
   );
 }
 
+/** Flotte : résumé, ou carte « Encaissement » ouverte (aucun moyen en ligne, lien d'action #encaissement, « Modifier »). */
+function FleetPayment(p: Props) {
+  const [editing, setEditing] = useState(() => p.canManage && !hasOnlineMethod(p.payment));
+  useEffect(() => {
+    if (p.canManage && window.location.hash === `#${SETTINGS_ANCHORS.payment}`) setEditing(true);
+  }, [p.canManage]);
+  if (!editing) {
+    return (
+      <PaymentSummary
+        payment={p.payment}
+        action={
+          p.canManage ? (
+            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              <Settings2 /> Modifier
+            </Button>
+          ) : null
+        }
+      />
+    );
+  }
+  return <NetworkPaymentMethodsForm {...p} onDone={hasOnlineMethod(p.payment) ? () => setEditing(false) : undefined} />;
+}
+
 /** Flotte : carte « Encaissement » (bloc partagé avec « Commission & encaissement »), éditable ici. */
-function NetworkPaymentMethodsForm(p: Props) {
+function NetworkPaymentMethodsForm(p: Props & { onDone?: () => void }) {
   const router = useRouter();
   const initial = useMemo<SettlementMethodsValue>(
     () =>
@@ -306,6 +343,7 @@ function NetworkPaymentMethodsForm(p: Props) {
       () => {
         setBaseline(f);
         router.refresh();
+        p.onDone?.();
       },
     );
   };
@@ -323,8 +361,18 @@ function NetworkPaymentMethodsForm(p: Props) {
       />
       {p.canManage && (
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {dirty && (
-            <Button type="button" variant="ghost" size="sm" onClick={() => (setF(baseline), setErrors({}))} disabled={pending}>
+          {(dirty || p.onDone) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setF(baseline);
+                setErrors({});
+                p.onDone?.();
+              }}
+              disabled={pending}
+            >
               Annuler
             </Button>
           )}
@@ -393,6 +441,8 @@ function ReceiveCard(p: Props & { pending: boolean; onToggle: (on: boolean) => v
               <p className="mt-0.5 text-[12.5px] text-fg-muted">
                 Chaque chauffeur active lui-même « Courses du réseau partagé » dans son application et règle lui-même avec
                 l&apos;organisation qui lui confie la course.
+                {p.model === "centrale" &&
+                  " Pour un chauffeur indépendant, renseignez son n° d'inscription au registre des exploitants VTC : il figure sur le bon de réservation."}
               </p>
             </div>
             {p.drivers && drivers.length > 0 && (
@@ -426,12 +476,16 @@ function DriverRow({ d, model, timeZone }: { d: OrgNetworkDriver; model: Dispatc
   const allowed = d.settings?.org_allowed ?? true;
   const name = `${d.driver.first_name} ${d.driver.last_name}`;
   const [opError, setOpError] = useState<string | null>(null);
+  const [editingOp, setEditingOp] = useState(!d.vtc_operator_registration);
   const saveOperator = (value: string) =>
-    run(async () => {
-      const res = await setDriverOperatorRegistration(d.driver.id, value);
-      setOpError(res.ok ? null : (res.fieldErrors?.value ?? res.error));
-      return res;
-    });
+    run(
+      async () => {
+        const res = await setDriverOperatorRegistration(d.driver.id, value);
+        setOpError(res.ok ? null : (res.fieldErrors?.value ?? res.error));
+        return res;
+      },
+      () => setEditingOp(!value.trim()),
+    );
   return (
     <li className="px-4 py-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -460,25 +514,32 @@ function DriverRow({ d, model, timeZone }: { d: OrgNetworkDriver; model: Dispatc
           <Switch checked={allowed} disabled={pending} onCheckedChange={(v) => run(() => setDriverNetworkAllowed(d.driver.id, v))} aria-label={`Autoriser ${name} à recevoir les courses du réseau`} />
         </label>
       </div>
-      {model === "centrale" && (
-        <form
-          className="mt-2.5 flex flex-wrap items-start gap-2 pl-[42px]"
-          onSubmit={submitWith((data) => saveOperator(String(data.get("operator") ?? "")))}
-        >
-          <Field className="min-w-[220px] flex-1" error={opError ?? undefined} hint="Inscription au registre des exploitants VTC du chauffeur indépendant (bon de réservation).">
-            <Input
-              name="operator"
-              defaultValue={d.vtc_operator_registration ?? ""}
-              maxLength={80}
-              placeholder="N° d'exploitant VTC (EVTC…)"
-              aria-label={`N° d'exploitant VTC de ${name}`}
-              className="mono h-9 text-[13px]"
-              aria-invalid={!!opError}
-            />
-          </Field>
-          <Button type="submit" variant="secondary" size="sm" loading={pending}>Enregistrer</Button>
-        </form>
-      )}
+      {/* Centrale : n° d'exploitant VTC du chauffeur indépendant (champ « exploitant » du bon de réservation) */}
+      {model === "centrale" &&
+        (d.vtc_operator_registration && !editingOp ? (
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 pl-[42px] text-[12px] text-fg-muted">
+            N° d&apos;exploitant VTC <span className="mono text-fg">{d.vtc_operator_registration}</span>
+            <Button variant="ghost" size="xs" onClick={() => setEditingOp(true)}>Modifier</Button>
+          </p>
+        ) : (
+          <form
+            className="mt-2 flex flex-wrap items-start gap-2 pl-[42px]"
+            onSubmit={submitWith((data) => saveOperator(String(data.get("operator") ?? "")))}
+          >
+            <Field className="min-w-[220px] flex-1" error={opError ?? undefined}>
+              <Input
+                name="operator"
+                defaultValue={d.vtc_operator_registration ?? ""}
+                maxLength={80}
+                placeholder="N° d'exploitant VTC (EVTC…)"
+                aria-label={`N° d'exploitant VTC de ${name}`}
+                className="mono h-9 text-[13px]"
+                aria-invalid={!!opError}
+              />
+            </Field>
+            <Button type="submit" variant="secondary" size="sm" loading={pending}>Enregistrer</Button>
+          </form>
+        ))}
     </li>
   );
 }

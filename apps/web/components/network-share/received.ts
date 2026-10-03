@@ -8,7 +8,6 @@ import {
 /** État du règlement entre le chauffeur et l'organisation qui confie (ou de la course tant qu'il n'existe pas). */
 export function receivedState(item: NetworkReceivedItem): { label: string; tone: Tone } {
   const s = item.settlement;
-  const giver = item.giver.name;
   if (!s) {
     if (!item.ended_at && item.ride.status !== "COMPLETED") {
       const meta = RIDE_STATUS_META[item.ride.status];
@@ -17,30 +16,29 @@ export function receivedState(item: NetworkReceivedItem): { label: string; tone:
     if (item.end_reason && item.end_reason !== "completed") return { label: NETWORK_EXECUTION_END_LABELS[item.end_reason], tone: "neutral" };
     return { label: "Terminée", tone: "green" };
   }
+  // Libellés courts : l'organisation qui confie est dans sa propre colonne
   const owes = item.money.direction === "driver_owes";
   switch (s.status) {
     case "declared":
-      return { label: `Payé, à confirmer par ${giver}`, tone: "blue" };
+      return { label: "Payé, à confirmer", tone: "blue" };
     case "paid":
-      return owes ? { label: `Reversé à ${giver}`, tone: "green" } : { label: `Versé par ${giver}`, tone: "green" };
+      return owes ? { label: "Reversé", tone: "green" } : { label: "Versé au chauffeur", tone: "green" };
     case "disputed":
-      return { label: `Non reçu par ${giver}`, tone: "red" };
+      return { label: "Non reçu", tone: "red" };
     case "waived":
       return { label: "Annulé", tone: "neutral" };
     default:
-      if (!owes && s.on_hold) return { label: "Retenu : course à vérifier", tone: "amber" };
+      if (!owes && s.on_hold) return { label: "Retenu : à vérifier", tone: "amber" };
       if (s.overdue) return { label: owes ? "Reversement en retard" : "Versement en retard", tone: "red" };
-      return owes ? { label: `À reverser à ${giver}`, tone: "amber" } : { label: `À verser par ${giver}`, tone: "violet" };
+      return owes ? { label: "À reverser", tone: "amber" } : { label: "Versement attendu", tone: "violet" };
   }
 }
 
-/** Une seule ligne d'argent : « Payée à bord · le chauffeur reverse 12,50 € à Taxi Sud ». */
+/** Une seule ligne d'argent : « Payée à bord · le chauffeur reverse 12,50 € » (l'organisation est dans sa colonne). */
 export function receivedMoneyLine(item: NetworkReceivedItem): string {
   const m = item.money;
   const amount = formatPrice(m.amount_cents, m.currency);
-  return m.direction === "driver_owes"
-    ? `Payée à bord · le chauffeur reverse ${amount} à ${item.giver.name}`
-    : `Déjà payée · ${item.giver.name} verse ${amount} au chauffeur`;
+  return m.direction === "driver_owes" ? `Payée à bord · le chauffeur reverse ${amount}` : `Déjà payée · le chauffeur reçoit ${amount}`;
 }
 
 /** « 75011 Paris → Orly » (communes seulement). */
