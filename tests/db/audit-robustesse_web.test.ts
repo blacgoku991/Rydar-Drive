@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
-import { as, createDriver, createOrg, pool, sql, type Driver, type Org } from "./helpers";
+import { as, createDriver, createOrg, pool, sql, sqlImport, type Driver, type Org } from "./helpers";
 
 // Audit « robustesse-web » — flux-annexes#5 : private.document_reminders ne demande plus de déposer le nouveau
 // document quand le chauffeur l'a déjà déposé (renouvellement en attente de validation par la centrale).
@@ -13,7 +13,8 @@ const TZ = "Europe/Paris";
 const DAY = 86_400;
 
 async function insertDoc(org: Org, d: Driver, type: string, days: number, opts: { label?: string; createdAgo?: number } = {}) {
-  const [row] = await sql(
+  // « Visite médicale » : justificatif hérité, enregistré en mode import (plus aucune voie normale, 20260924007300)
+  const [row] = await (type === "medical" ? sqlImport : sql)(
     `insert into public.driver_documents (organization_id, driver_id, type, label, expires_at, status, source, created_at, file_path)
      values ($1::uuid, $2::uuid, $3::public.document_type, $4, (now() at time zone '${TZ}')::date + $5::int, 'valid', 'dashboard',
        now() - make_interval(secs => $6), $1::text || '/' || $2::text || '/ancien.pdf')
@@ -118,14 +119,13 @@ describe("Documents — rappel d'échéance avec un renouvellement déjà dépos
 });
 
 describe("Documents — visite médicale (plus déposable dans l'application)", () => {
-  it("le rappel demande de transmettre le document à la centrale, pas de le déposer dans l'application", async () => {
+  // Conformité (20260924007300) : aucun justificatif médical n'est demandé (donnée de santé) — un justificatif hérité
+  // n'est plus rappelé (avant : « Transmettez le nouveau document à votre centrale »)
+  it("aucun rappel pour un justificatif médical hérité (aucune donnée de santé demandée)", async () => {
     const org = await createOrg("Audit Robustesse Médical");
     const d = await createDriver(org);
     const doc = await insertDoc(org, d, "medical", 5);
     await run();
-    const [n] = await notifOf(doc);
-    expect(n.type).toBe("document_expiring");
-    expect(n.body).toMatch(/^Échéance le \d{2}\/\d{2}\/\d{4}\. Transmettez le nouveau document à votre centrale\.$/);
-    expect(n.body).not.toContain("application");
+    expect(await notifOf(doc)).toEqual([]);
   });
 });

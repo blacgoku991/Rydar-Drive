@@ -264,8 +264,10 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   `20260924006900`, non poussée : 4a côté chauffeur ; 4b côté A, blocages, relances, frais Rydar, dette et
   suppression), 5a (accès : RPC du chauffeur, de A et de B, migration `20260924007000`, non poussée), 5b (journaux,
   alertes, positions, temps réel, notifications, webhooks : même migration `20260924007000`), 6 (administration et cycle
-  de vie, migration `20260924007100`, non poussée). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
-  administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
+  de vie, migration `20260924007100`, non poussée), 7 (tests transverses, relecture adverse, performance : migration
+  `20260924007200`, non poussée). **Numéros pris** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  administration, 007200 corrections du lot 7, 007300 purges de conservation (conformité, hors réseau) ; prochaine
+  migration : **007400** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
   liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
   publiques `/reseau-partage/conditions` et `/chauffeur` (servies sur les mini-sites) ; app = offres et courses
@@ -480,3 +482,20 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   - déploiement de 006700 : une transaction, verrous pris d'emblée, `lock_timeout` 5 s (échec propre, à relancer) ;
     au-delà de quelques dizaines de milliers d'offres ou de notifications en production, arrêter le worker pendant
     la migration.
+- Règles posées par le lot 7 (`20260924007200`, `20260924007300`, non poussées) :
+  - test transverse `tests/db/shared-network-cycle.test.ts` : cycle complet sans 23503, balayage GÉNÉRIQUE des fuites
+    (toute table lisible par A, B ou le chauffeur partenaire, lue sous son rôle : un nouvel identifiant ou une nouvelle
+    colonne lisible le fera échouer), temps réel par topic ; seuls identifiants de B lisibles par A :
+    `rides.driver_id` / `vehicle_id`, `ride_settlements.network_driver_id`, `ride_alerts.driver_id` ; résidu accepté
+    chez B : `drivers.current_ride_id` pendant la course (identifiant opaque, sert à son écran En direct) ;
+  - pendant une course partenaire, pas de signalement routier sur le fil flotte de B ni de coordonnées dans un message
+    (déclencheur `chat_messages_network_guard`, `NETWORK_RIDE_REPORT_BLOCKED`) ;
+  - étape réseau : `private.network_candidates(r, rayon, planifiée, limite)` évalue les contrôles du plus proche au plus
+    loin et s'arrête à la limite (la version à 3 arguments = liste complète) ; contrôle « banni » par index ; compteur
+    `partners_nearby` plafonné à `NETWORK_PARTNERS_NEARBY_MAX` (50) ; interrupteur coupé : comportement identique,
+    surcoût mesuré ≈ 0,8 ms par course et par vague (filet du journal, candidats propres extraits) ;
+  - conformité (007300, sans décision) : ménage horaire = sessions Auth inactives depuis 400 jours supprimées
+    (`auth_sessions_purged`), dernière IP d'une clé d'API effacée après 90 jours (`api_key_ips_purged`) ; plus aucun
+    justificatif « medical » (déclencheur `TYPE_NOT_ALLOWED`) ni rappel ; justificatifs médicaux déjà enregistrés en
+    production : à contrôler (`select count(*) from public.driver_documents where type = 'medical'`) puis purger
+    fichiers compris (Storage, puis lignes).

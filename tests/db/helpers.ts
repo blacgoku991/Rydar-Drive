@@ -223,6 +223,27 @@ export async function insertRideBypass(org: Org, fields: Record<string, unknown>
   }
 }
 
+/**
+ * Requête en mode import (connexion directe + GUC rydar.bypass_ride_rules, sans JWT), comme le seed ou une reprise de
+ * données : p. ex. un justificatif « Visite médicale » hérité, que plus aucune voie normale n'enregistre
+ * (20260924007300).
+ */
+export async function sqlImport<T extends pg.QueryResultRow = any>(text: string, params: unknown[] = []) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select set_config('rydar.bypass_ride_rules', 'on', true)");
+    const { rows } = await client.query<T>(text, params);
+    await client.query("commit");
+    return rows;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
 
 /** Membre supplémentaire d'une organisation (dispatcher, admin…). Renvoie l'id utilisateur. */

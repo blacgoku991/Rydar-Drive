@@ -125,7 +125,7 @@ const rideRow = async (rideId: string) => (await sql(`select * from public.rides
 // n° 30 — Cycle complet sans 23503
 // =============================================================================
 describe("Cycle complet d'une organisation qui confie ses courses (§14.1 n° 30)", () => {
-  it("acceptation, étapes, fin (règlement + frais), annulation par A, retraits (B, A), assign_ride, redispatch_ride, Non effectuée, alertes, rappels — sans 23503", async () => {
+  it("acceptation, étapes, fin (règlement + frais), annulation par A, retraits (B, A), assign_ride, redispatch_ride, Non effectuée, alertes, rappels, clôture et contestation par A, exclusion — sans 23503", async () => {
     const site = nextSite();
     const A = await giver("Centrale Cycle", "centrale");
     await sql(`update public.organizations set phone = '+33140000071' where id = $1`, [A.id]);
@@ -161,6 +161,13 @@ describe("Cycle complet d'une organisation qui confie ses courses (§14.1 n° 30
     expect(gpsAlert).toMatchObject({ status: "open", data: { network: true } });
     await moveTo(partner.id, site);
     await sql("select private.watch_rides()");
+    // Résidu accepté (lots 5b et 7) : pendant la course, B lit drivers.current_ride_id de son chauffeur (identifiant
+    // opaque de la course de A, qui sert à son écran En direct à demander org_network_activity) — jamais la course
+    // elle-même ni sa position
+    const [mine] = await as({ sub: B.ownerId }, (q) => q(`select current_ride_id from public.drivers where id = $1`, [partner.id]));
+    expect(mine.current_ride_id).toBe(r1.ride.id);
+    expect(await as({ sub: B.ownerId }, (q) => q(`select 1 from public.rides where id = $1`, [r1.ride.id]))).toEqual([]);
+    expect(await as({ sub: B.ownerId }, (q) => q(`select 1 from public.driver_locations where driver_id = $1`, [partner.id]))).toEqual([]);
     const report = await expectPgError(
       call(partner.userId, "send_chat_message", [null, "fleet", null, null, "police", site[0], site[1]]),
     );
@@ -270,6 +277,26 @@ describe("Cycle complet d'une organisation qui confie ses courses (§14.1 n° 30
     await sql("select private.expire_unstarted_rides()");
     expect(await rideRow(r7.id)).toMatchObject({ status: "CANCELLED" });
 
+    // 8. Client à bord, partenaire sans position depuis 31 min : clôturée par A (close_network_ride), puis contestée
+    await moveTo(partner.id, north(site, 800));
+    await sql(`update public.drivers set presence = 'available', current_ride_id = null where id = $1`, [partner.id]);
+    const r8 = await sharedImmediate({ payment_method: "cash" });
+    ctx.rides.closedByA = r8.ride.id;
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD"]) {
+      await moveTo(partner.id, site);
+      expect(await stepAs(partner, r8.ride.id, s), s).toMatchObject({ ok: true });
+    }
+    await moveTo(partner.id, site, 1900);
+    expect(await call(A.ownerId, "close_network_ride", [r8.ride.id])).toMatchObject({ ok: true, status: "COMPLETED" });
+    await closeWindow(r8.start);
+    expect(await call(ctx.aAdmin, "contest_network_ride", [r8.ride.id, "Course non effectuée selon le client"])).toMatchObject({ ok: true });
+
+    // 9. Exclusion du partenaire par A (« Ne plus confier de courses à ce chauffeur »), puis levée
+    const [ex1] = await executionsOf(r1.ride.id);
+    const excluded = await call(A.ownerId, "exclude_network_driver", [ex1.id, "Retards répétés"]);
+    expect(excluded).toMatchObject({ ok: true, exclusion: { label: expect.stringMatching(/^Karim Z\./) } });
+    expect(await call(A.ownerId, "lift_network_driver_exclusion", [A.id, excluded.exclusion.id])).toEqual({ ok: true });
+
     // Bilan : chaque exécution close avec le bon motif, partenaire libre, partages clos, frais Rydar chez A seulement
     const reasons = Object.fromEntries(
       await Promise.all(Object.entries(ctx.rides).map(async ([k, id]) => [k, (await executionsOf(id)).map((e) => e.end_reason)])),
@@ -282,6 +309,7 @@ describe("Cycle complet d'une organisation qui confie ses courses (§14.1 n° 30
       removedByA: ["removed_by_giver"],
       redispatched: ["executor_released"],
       notPerformed: ["not_performed"],
+      closedByA: ["completed"],
     });
     expect(await sql(`select 1 from public.ride_network_executions where executor_driver_id = $1 and ended_at is null`, [partner.id])).toEqual([]);
     expect(await sql(`select status from public.ride_network_shares where organization_id = $1 and status = 'open'`, [A.id])).toEqual([]);
@@ -289,7 +317,7 @@ describe("Cycle complet d'une organisation qui confie ses courses (§14.1 n° 30
       .toMatchObject({ current_ride_id: null });
     const fees = await sql(`select organization_id, ride_id from public.platform_fee_entries where organization_id in ($1, $2)`, [A.id, B.id]);
     expect(fees.every((f) => f.organization_id === A.id)).toBe(true);
-    for (const id of [r1.ride.id, r2.ride.id, r4.ride.id, r6.id]) expect(fees.some((f) => f.ride_id === id), id).toBe(true);
+    for (const id of [r1.ride.id, r2.ride.id, r4.ride.id, r6.id, r8.ride.id]) expect(fees.some((f) => f.ride_id === id), id).toBe(true);
     expect((await sql(`select status from public.ride_settlements where id = any ($1) order by direction desc`, [[s1.id, s2.id]])).map((x) => x.status))
       .toEqual(["paid", "paid"]);
     ctx.ownerIds = [A.ownerId, B.ownerId];

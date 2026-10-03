@@ -3,7 +3,7 @@
 // utilisation, justificatifs « Visite médicale » (plus d'ajout ni de rappel).
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
-import { as, createAuthUser, createDriver, createOrg, expectPgError, pool, sql } from "./helpers";
+import { as, createAuthUser, createDriver, createOrg, expectPgError, pool, sql, sqlImport } from "./helpers";
 
 afterAll(async () => {
   await pool.end();
@@ -13,23 +13,6 @@ type Row = Record<string, any>;
 const housekeeping = async () => (await sql("select private.housekeeping() as r"))[0].r as Row;
 /** Le passage horaire (journal d'audit et sessions d'Auth) est rejoué au prochain ménage. */
 const forgetHourlyRun = () => sql("delete from private.housekeeping_runs where task = 'auth_audit'");
-
-/** Écriture sans déclencheurs (données héritées d'avant la règle), données de test seulement. */
-async function legacy(text: string, params: unknown[]) {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
-    await client.query("set local session_replication_role = replica");
-    const { rows } = await client.query(text, params);
-    await client.query("commit");
-    return rows;
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 describe("Sessions d'authentification (auth.sessions)", () => {
   it("ménage horaire : sessions sans utilisation depuis plus de 400 jours supprimées (adresse IP, navigateur) ; les autres restent", async () => {
@@ -127,8 +110,9 @@ describe("Justificatifs « Visite médicale » (donnée de santé)", () => {
     );
     expect((await expectPgError(sql(`update public.driver_documents set type = 'medical' where id = $1`, [card.id]))).code).toBe("22023");
 
-    // Justificatif hérité (enregistré avant la règle) : modifiable (passage à « expiré » par le ménage), jamais rappelé
-    const [medical] = await legacy(
+    // Justificatif hérité (mode import : reprise de données, comme le seed) : modifiable (passage à « expiré » par le
+    // ménage), jamais rappelé
+    const [medical] = await sqlImport(
       `insert into public.driver_documents (organization_id, driver_id, type, status, expires_at, reviewed_at)
        values ($1, $2, 'medical', 'valid', current_date + 5, now()) returning id`,
       [org.id, d.id],
@@ -138,7 +122,7 @@ describe("Justificatifs « Visite médicale » (donnée de santé)", () => {
     expect(notes).toHaveLength(1);
     expect(notes[0].title).not.toMatch(/médical/i);
     expect((await sql(`select reminders_sent from public.driver_documents where id = $1`, [medical.id]))[0].reminders_sent).toEqual([]);
-    await legacy(`update public.driver_documents set expires_at = current_date - 2 where id = $1`, [medical.id]);
+    await sql(`update public.driver_documents set expires_at = current_date - 2 where id = $1`, [medical.id]);
     const res = await housekeeping();
     expect(res.errors).toBeUndefined();
     expect((await sql(`select status from public.driver_documents where id = $1`, [medical.id]))[0].status).toBe("expired");

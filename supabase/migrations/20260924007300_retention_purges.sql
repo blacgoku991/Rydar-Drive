@@ -239,13 +239,17 @@ $$;
 -- =============================================================================
 -- Toute voie d'écriture (RPC, action serveur, droits par colonne du tableau de bord, service role) : un justificatif ne
 -- devient jamais « medical ». Les lignes existantes restent modifiables (statut « expiré » du ménage, revue) jusqu'à
--- leur purge.
+-- leur purge. Seule exception, comme private.enforce_identity_bans : le mode import (connexion directe sans jeton,
+-- rydar.bypass_ride_rules = on), qui reprend des données existantes.
 create or replace function private.driver_documents_no_medical()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
+  if current_setting('rydar.bypass_ride_rules', true) = 'on' and auth.role() is null then
+    return new;
+  end if;
   raise exception 'TYPE_NOT_ALLOWED: les justificatifs médicaux ne sont pas acceptés (aucune donnée de santé n''est collectée)'
     using errcode = '22023';
 end;

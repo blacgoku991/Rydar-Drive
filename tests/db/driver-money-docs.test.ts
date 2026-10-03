@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  ago, as, createAuthUser, createDriver, createOrg, expectPgError, insertRideBypass, pool, sql, type Driver, type Org,
+  ago, as, createAuthUser, createDriver, createOrg, expectPgError, insertRideBypass, pool, sql, sqlImport, type Driver, type Org,
 } from "./helpers";
 
 afterAll(async () => {
@@ -49,7 +49,8 @@ async function insertDoc(
   type: string,
   opts: { days?: number | null; status?: string; createdAgo?: number; label?: string; source?: string } = {},
 ): Promise<string> {
-  const [row] = await sql(
+  // « Visite médicale » : justificatif hérité, enregistré en mode import (plus aucune voie normale, 20260924007300)
+  const [row] = await (type === "medical" ? sqlImport : sql)(
     `insert into public.driver_documents (organization_id, driver_id, type, label, expires_at, status, source, created_at, file_path)
      values ($1::uuid, $2::uuid, $3::public.document_type, $4,
        case when $5::int is null then null else (now() at time zone '${TZ}')::date + $5::int end,
