@@ -550,22 +550,25 @@ function DriverRow({ d, model, timeZone }: { d: OrgNetworkDriver; model: Dispatc
             <Button variant="ghost" size="xs" onClick={() => setEditingOp(true)}>Modifier</Button>
           </p>
         ) : (
-          <form
-            className="mt-2 flex flex-wrap items-start gap-2 pl-[42px]"
-            onSubmit={submitWith((data) => saveOperator(String(data.get("operator") ?? "")))}
-          >
-            <Field className="min-w-[220px] flex-1" error={opError ?? undefined}>
-              <Input
-                name="operator"
-                defaultValue={d.vtc_operator_registration ?? ""}
-                maxLength={80}
-                placeholder="N° d'exploitant VTC (EVTC…)"
-                aria-label={`N° d'exploitant VTC de ${name}`}
-                className="mono h-9 text-[13px]"
-                aria-invalid={!!opError}
-              />
+          <form className="mt-2 pl-[42px]" onSubmit={submitWith((data) => saveOperator(String(data.get("operator") ?? "")))}>
+            {/* Libellé visible relié par Field (le texte indicatif disparaît à la saisie) ; nom du chauffeur ajouté pour
+                les lecteurs d'écran (un champ par ligne de la liste). Bouton dans le Field : erreur sous le champ ET le
+                bouton, toujours alignés */}
+            <Field label={<>N° d&apos;exploitant VTC<span className="sr-only"> de {name}</span></>} optional error={opError ?? undefined}>
+              <div className="flex flex-wrap items-start gap-2">
+                <div className="min-w-[220px] flex-1">
+                  <Input
+                    name="operator"
+                    defaultValue={d.vtc_operator_registration ?? ""}
+                    maxLength={80}
+                    placeholder="EVTC…"
+                    className="mono h-9 text-[13px]"
+                    aria-invalid={!!opError}
+                  />
+                </div>
+                <Button type="submit" variant="secondary" size="sm" loading={pending}>Enregistrer</Button>
+              </div>
             </Field>
-            <Button type="submit" variant="secondary" size="sm" loading={pending}>Enregistrer</Button>
           </form>
         ))}
     </li>
@@ -628,22 +631,25 @@ function CreditLimitForm(p: Props) {
         Total que chacun de vos chauffeurs peut devoir aux organisations partenaires. Au-delà, il ne reçoit plus leurs courses
         jusqu&apos;au règlement. Actuellement&nbsp;: <span className="mono text-fg">{formatPrice(cents, p.currency)}</span>.
       </p>
-      <form className="flex flex-wrap items-start gap-2" onSubmit={submitWith((data) => save(String(data.get("amount") ?? "")))}>
-        <Field className="w-[160px]" error={error ?? undefined}>
-          <div className="relative">
-            <Input
-              name="amount"
-              inputMode="decimal"
-              defaultValue={String(cents / 100).replace(".", ",")}
-              disabled={!p.canManage}
-              aria-label="Plafond par chauffeur en euros"
-              aria-invalid={!!error}
-              className="mono h-9 pr-8 text-[13px]"
-            />
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-fg-subtle">€</span>
+      <form onSubmit={submitWith((data) => save(String(data.get("amount") ?? "")))}>
+        {/* Libellé visible relié par Field (unité dite aux lecteurs d'écran, symbole « € » décoratif) ; bouton dans le
+            Field : erreur sous le champ et le bouton */}
+        <Field label={<>Montant<span className="sr-only"> du plafond par chauffeur, en euros</span></>} error={error ?? undefined}>
+          <div className="flex flex-wrap items-start gap-2">
+            <div className="relative w-[160px]">
+              <Input
+                name="amount"
+                inputMode="decimal"
+                defaultValue={String(cents / 100).replace(".", ",")}
+                disabled={!p.canManage}
+                aria-invalid={!!error}
+                className="mono h-9 pr-8 text-[13px]"
+              />
+              <span aria-hidden className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-fg-subtle">€</span>
+            </div>
+            {p.canManage && <Button type="submit" variant="secondary" size="sm" loading={pending}>Enregistrer</Button>}
           </div>
         </Field>
-        {p.canManage && <Button type="submit" variant="secondary" size="sm" loading={pending}>Enregistrer</Button>}
       </form>
     </section>
   );

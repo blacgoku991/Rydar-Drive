@@ -4,6 +4,7 @@
 // (organization_settings.settlement_*) et même schéma (settlementPaymentSchema) des deux côtés.
 import { SETTLEMENT_LINK_EXAMPLES, formatIban, formatPrice, isValidIban, settlementPaymentLink, type SettlementMethod } from "@rydar/shared";
 import { Check, ExternalLink, Landmark } from "lucide-react";
+import { useId } from "react";
 import { METHOD_ICON, methodLabel } from "@/components/settlements/settlement-ui";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { NewTabHint } from "@/components/ui/new-tab";
@@ -87,11 +88,13 @@ export function SettlementMethodsFields({
     other: f.instructions.trim().length > 0,
   };
   const linkPreview = settlementLinkPreview(f.link);
+  const methodsId = useId();
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="mb-2 text-[12.5px] font-medium text-fg-muted">Moyens acceptés</p>
+      {/* Boutons à bascule (aria-pressed) groupés sous leur intitulé, erreur reliée au groupe (pas de champ unique) */}
+      <div role="group" aria-labelledby={`${methodsId}-label`} aria-describedby={errors.methods ? `${methodsId}-error` : undefined}>
+        <p id={`${methodsId}-label`} className="mb-2 text-[12.5px] font-medium text-fg-muted">Moyens acceptés</p>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {SETTLEMENT_METHODS_ORDER.map((m) => {
             const Icon = METHOD_ICON[m];
@@ -115,7 +118,11 @@ export function SettlementMethodsFields({
             );
           })}
         </div>
-        {errors.methods && <p className="mt-1.5 text-xs text-red">{errors.methods}</p>}
+        {errors.methods && (
+          <p id={`${methodsId}-error`} className="mt-1.5 text-xs text-red">
+            {errors.methods}
+          </p>
+        )}
       </div>
 
       {f.methods.includes("link") && (
