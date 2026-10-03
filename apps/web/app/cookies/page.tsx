@@ -61,7 +61,7 @@ const COOKIES: Line[] = [
   },
   {
     name: "rd_view",
-    role: "Centrale affichée par le tableau de bord (identifiant seulement) : une action n'est jamais enregistrée au nom d'une autre centrale que celle affichée, par exemple après le retrait de votre accès.",
+    role: "Centrale affichée par le tableau de bord (identifiant seulement) : une action n'est jamais enregistrée au nom d'une autre centrale que celle affichée, par exemple après le retrait de votre accès.",
     duration: "Jusqu'à la fermeture du navigateur",
   },
 ];
