@@ -45,22 +45,34 @@ export default async function AccessibilityPage() {
       <LegalSection title="Contrôles réalisés">
         <p>
           Le {ACCESSIBILITY_UPDATED_AT}, l&apos;éditeur a contrôlé, sans valeur d&apos;audit : les règles automatiques des
-          WCAG 2.0, 2.1 et 2.2 (niveaux A et AA, outil axe-core 4.13 dans le navigateur Chromium), le contraste des
-          textes mesuré au pixel, la navigation complète au clavier et la visibilité du focus, l&apos;affichage à
-          320 pixels de large, le texte agrandi à 200 % et le réglage « réduire les animations ». Pages contrôlées :
-          accueil, fonctionnement, avantages, tarifs, questions fréquentes, contact, connexion, mot de passe oublié, pages
-          légales, inscription par lien, mini-site de réservation, ainsi que les principaux écrans du tableau de bord
-          et de l&apos;administration. Aucun lecteur d&apos;écran (NVDA, VoiceOver) n&apos;a encore été utilisé.
+          WCAG 2.0, 2.1 et 2.2 (niveaux A et AA, outil axe-core 4.13 dans le navigateur Chromium), le contraste des
+          textes mesuré au pixel, la navigation au clavier (tabulation dans les deux sens, focus visible et jamais caché
+          par un élément collant, retour du focus à la fermeture des fenêtres, touche Échap), l&apos;affichage à
+          320 pixels de large, le texte agrandi à 200 % et le réglage « réduire les animations ». Aucun lecteur
+          d&apos;écran (NVDA, VoiceOver) n&apos;a encore été utilisé.
         </p>
+        <p>Échantillon contrôlé :</p>
+        <LegalList
+          items={[
+            <>site public : /, /services, /avantages, /tarifs, /faq, /contact, /login, /forgot-password, /driver-app ;</>,
+            <>pages légales : /mentions-legales, /cgu, /cgv, /confidentialite, /cookies, /dpa, /dpa/2026-10-02, /suppression-compte, /abonnement-resiliation, /accessibilite ;</>,
+            <>inscription d&apos;un chauffeur par lien (/rejoindre/…) et mini-site de réservation (/book/…), formulaires envoyés compris ;</>,
+            <>tableau de bord d&apos;une centrale à commission et d&apos;une flotte : centre de commande (/dashboard), journal du dispatch, courses et fenêtre « Nouvelle course », chauffeurs et fenêtre « Ajouter un chauffeur », réseau, encaissements, réglages et abonnement, mini-site ;</>,
+            <>administration : accueil, dispatch, demandes de contact, mentions légales, fiche d&apos;une organisation.</>,
+          ]}
+        />
         <p>
-          Les défauts relevés ont été corrigés : libellés, aides et messages d&apos;erreur reliés aux champs, contraste
-          du texte secondaire et des contours de champs, focus visible et jamais masqué par le bandeau d&apos;information
-          sur les cookies, mouvements arrêtés au bout de 5 secondes (et dès le réglage « réduire les animations »),
-          commande de pause de l&apos;animation du globe, titres de page et hiérarchie des titres, zones défilantes
-          atteignables au clavier, liens ouvrant un nouvel onglet annoncés. Après ces corrections, l&apos;outil
-          automatique ne relève plus de défaut sur les pages contrôlées (pages du site vitrine mesurées avec le réglage
-          « réduire les animations », leurs fondus au défilement faussant la mesure du contraste) : cela ne suffit pas à
-          établir la conformité.
+          Les défauts relevés ont été corrigés : libellés visibles, aides et messages d&apos;erreur reliés aux champs,
+          contraste du texte secondaire et des contours de champs, focus visible, jamais masqué par l&apos;en-tête, les
+          barres collantes ou le bandeau d&apos;information sur les cookies, rendu à l&apos;élément d&apos;origine à la
+          fermeture d&apos;une fenêtre, et placé sur le premier champ en erreur ou sur le titre d&apos;une confirmation ;
+          touche Échap qui ferme une liste de suggestions sans fermer la fenêtre ; mouvements décoratifs arrêtés en moins
+          de 5 secondes (et dès le réglage « réduire les animations ») ; commande de pause de l&apos;animation du globe ;
+          titres de page et hiérarchie des titres, repères de page, sommaire des pages légales ; zones défilantes
+          atteignables au clavier ; cibles d&apos;au moins 24 pixels ; états sélectionnés annoncés ; liens ouvrant un
+          nouvel onglet annoncés. Après ces corrections, l&apos;outil automatique ne relève plus de défaut sur
+          l&apos;échantillon (pages du site vitrine mesurées avec le réglage « réduire les animations », leurs fondus au
+          défilement faussant la mesure du contraste) : cela ne suffit pas à établir la conformité.
         </p>
       </LegalSection>
 
@@ -69,7 +81,7 @@ export default async function AccessibilityPage() {
           items={[
             <>Cartes interactives (centre de commande, suivi d&apos;une course, carte des chauffeurs, mini-site) : non utilisables au lecteur d&apos;écran. Les mêmes informations sont disponibles sous forme de listes et de texte : liste des courses avec leurs adresses et leur statut, liste des chauffeurs avec leur état et l&apos;heure de leur dernière position.</>,
             <>Graphiques des statistiques : les principaux chiffres sont aussi affichés en texte, mais toutes les valeurs d&apos;un graphique ne le sont pas.</>,
-            <>Bandeaux d&apos;acceptation des conditions du tableau de bord : leurs liens s&apos;ouvrent dans un nouvel onglet sans l&apos;annoncer.</>,
+            <>Bandeaux d&apos;acceptation des conditions du tableau de bord : leurs liens s&apos;ouvrent dans un nouvel onglet sans l&apos;annoncer. Sur le centre de commande, lorsque des frais plateforme sont à régler, le bandeau flottant des frais peut recouvrir le bandeau d&apos;acceptation sur un écran de largeur moyenne (tablette) : fermez le bandeau des frais pour lire les conditions.</>,
             <>Mini-sites de réservation : la couleur principale est choisie par chaque centrale ; le réglage signale une couleur trop sombre, sans l&apos;interdire.</>,
             <>Application mobile « Rydar Drive Chauffeur » : non évaluée.</>,
           ]}

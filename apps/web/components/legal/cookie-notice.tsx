@@ -145,12 +145,14 @@ export function FloatingNotice({ href, onClose }: { href: string; onClose: () =>
   return (
     <>
       {/* Réserve en fin de page (bandeau + marges) : le dernier contrôle de la page défile au-dessus du bandeau */}
-      <div aria-hidden="true" style={{ height: height ? height + 24 : 0 }} />
+      {/* Écran bas (zoom 400 %, téléphone à l'horizontale) : bandeau dans le flux, en fin de page, au lieu de couvrir
+          une grande part de l'écran (WCAG 1.4.10) ; la réserve devient inutile */}
+      <div aria-hidden="true" className="[@media(max-height:30rem)]:hidden" style={{ height: height ? height + 24 : 0 }} />
       <div
         ref={ref}
         role="region"
         aria-label="Information sur les cookies"
-        className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] p-3.5 text-[12.5px] leading-relaxed text-fg-muted shadow-float backdrop-blur-xl sm:inset-x-auto sm:left-4 sm:mx-0"
+        className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] p-3.5 text-[12.5px] leading-relaxed text-fg-muted shadow-float backdrop-blur-xl sm:inset-x-auto sm:left-4 sm:mx-0 [@media(max-height:30rem)]:static [@media(max-height:30rem)]:m-3"
       >
         <Cookie className="mt-0.5 size-4 shrink-0 text-fg-subtle" />
         <p className="flex-1">

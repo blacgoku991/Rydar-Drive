@@ -26,11 +26,14 @@ export function LegalLinks({
   withDeletion,
   only,
   prefetch,
+  linkClassName,
 }: {
   className?: string;
   withDeletion?: boolean;
   only?: (typeof LEGAL_LINKS)[number]["href"][];
   prefetch?: false;
+  /** Classe de chaque lien (ex. cible de 24 px de haut quand la liste est serrée : WCAG 2.5.8) */
+  linkClassName?: string;
 }) {
   const links = [
     ...LEGAL_LINKS.filter((l) => !only || only.includes(l.href)),
@@ -39,7 +42,7 @@ export function LegalLinks({
   return (
     <nav aria-label="Informations légales" className={cn("flex flex-wrap gap-x-4 gap-y-1.5 text-fg-muted", className)}>
       {links.map((l) => (
-        <Link key={l.href} href={l.href} prefetch={prefetch} className="hover:text-fg">
+        <Link key={l.href} href={l.href} prefetch={prefetch} className={cn("hover:text-fg", linkClassName)}>
           {l.label}
         </Link>
       ))}

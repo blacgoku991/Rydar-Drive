@@ -97,8 +97,9 @@ export const LEGAL_UPDATED_AT = "27 septembre 2026";
 export const CGV_UPDATED_AT = "2 octobre 2026";
 /**
  * Accord de traitement (sa version suit celle des CGV) : 3 octobre 2026, tableau des sous-traitants corrigé
- * (hébergement réel : serveur de l'éditeur, base auto-hébergée, e-mails envoyés par ce serveur), sauvegardes,
- * contact. Corrections d'exactitude, sans nouvelle ORG_LEGAL_VERSION.
+ * (hébergement réel : serveur de l'éditeur, base auto-hébergée, e-mails envoyés par ce serveur ; services publics
+ * tiers hors du tableau), sauvegardes, TLS, contact. Corrections d'exactitude, sans nouvelle ORG_LEGAL_VERSION : le
+ * texte accepté avant elles reste consultable (/dpa/2026-10-02) ; à reprendre dans la prochaine ORG_LEGAL_VERSION.
  */
 export const DPA_UPDATED_AT = "3 octobre 2026";
 /**

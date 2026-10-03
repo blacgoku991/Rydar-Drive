@@ -10,6 +10,22 @@ export const DialogClose = D.Close;
 type ContentProps = React.ComponentProps<typeof D.Content>;
 
 /**
+ * Dernier élément focalisé HORS d'une fenêtre : repli quand le focus est déjà entré dans la fenêtre au moment où elle
+ * s'ouvre (champ autoFocus, focalisé par React avant Radix, qui n'appelle alors pas onOpenAutoFocus).
+ */
+let lastOutsideFocus: HTMLElement | null = null;
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "focusin",
+    (e) => {
+      const t = e.target;
+      if (t instanceof HTMLElement && !t.closest("[role=dialog],[role=alertdialog]")) lastOutsideFocus = t;
+    },
+    true,
+  );
+}
+
+/**
  * Focus et Échap des fenêtres (motif ARIA « dialog ») :
  *  - à la fermeture, le focus revient à l'élément qui l'avait à l'ouverture (bouton ordinaire, sans Dialog.Trigger :
  *    Radix ne sait le rendre qu'à son déclencheur et le laissait sinon sur <body>, WCAG 2.4.3) ;
@@ -22,15 +38,19 @@ function useDialogFocus({ onOpenAutoFocus, onCloseAutoFocus, onEscapeKeyDown }: 
   const opener = React.useRef<HTMLElement | null>(null);
   return {
     onOpenAutoFocus: (e: Event) => {
-      // Appelé avant que le focus n'entre dans la fenêtre : l'élément actif est celui qui l'a ouverte
+      // Appelé avant que Radix ne place le focus : l'élément actif est celui qui a ouvert la fenêtre, sauf si un champ
+      // autoFocus de la fenêtre l'a déjà pris (repli : dernier élément focalisé hors d'une fenêtre)
       const active = document.activeElement;
-      opener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+      const content = e.currentTarget instanceof Node ? e.currentTarget : null;
+      opener.current =
+        active instanceof HTMLElement && active !== document.body && !content?.contains(active) ? active : lastOutsideFocus;
       onOpenAutoFocus?.(e);
     },
     onCloseAutoFocus: (e: Event) => {
       onCloseAutoFocus?.(e);
       if (e.defaultPrevented) return;
-      const el = opener.current;
+      // Fenêtre dont un champ autoFocus a pris le focus dès l'ouverture : Radix n'appelle pas onOpenAutoFocus
+      const el = opener.current ?? lastOutsideFocus;
       opener.current = null;
       if (el?.isConnected) {
         e.preventDefault();

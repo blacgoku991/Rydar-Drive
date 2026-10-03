@@ -138,7 +138,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
       {notice}
       {/* Pages légales toujours atteignables depuis les espaces connectés (RGPD art. 12, politique cookies,
           déclaration d'accessibilité), y compris dans le menu mobile */}
-      <LegalLinks className="gap-x-3 gap-y-1 px-5 pb-3 text-[11.5px] leading-snug" prefetch={false} />
+      <LegalLinks className="gap-x-3 gap-y-0 px-5 pb-2 text-[11.5px] leading-snug" linkClassName="inline-flex min-h-6 items-center" prefetch={false} />
 
       <div className="border-t border-line p-2">
         <DropdownMenu>
