@@ -1,24 +1,31 @@
 "use server";
-import { bookingRequestSchema, estimatePrice, fieldErrors, haversine, matchFixedFare, type BookingRequest, type PricingRule } from "@rydar/shared";
+import { bookingRequestSchema, bookingSitePublishable, fieldErrors, formatPrice, PAYMENT_METHODS, type BookingRequest, type PaymentMethod } from "@rydar/shared";
 import { z } from "zod";
+import { bookingSitePrice } from "@/lib/booking-price";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
-import { geocodeOne } from "@/lib/geocode";
 import { coordinateProblem, orgAnchor } from "@/lib/geo/anchor";
 import { computeRoute } from "@/lib/geo/routing";
 import { rateLimitAll } from "@/lib/rate-limit";
 import { clientIp, ipBucket } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-type Result = { ok: true; number: number } | { ok: false; error: string; fieldErrors?: Record<string, string> };
+type Result =
+  | { ok: true; number: number }
+  | { ok: false; error: string; fieldErrors?: Record<string, string> }
+  /** Prix recalculé différent du prix affiché : le client voit le nouveau prix (null : plus de prix en ligne) avant de confirmer */
+  | { ok: false; code: "PRICE_CHANGED"; error: string; priceCents: number | null };
 
 const TOO_MANY = "Trop de demandes. Réessayez dans quelques minutes ou appelez-nous.";
 const UNAVAILABLE = "Réservation en ligne indisponible.";
-/** Destination géocodée à plus de cette distance des coordonnées reçues : prix laissé à la centrale. */
-const DROPOFF_MISMATCH_M = 2_000;
 /** Réservation au plus 400 jours à l'avance (trigger rides_before_insert : PICKUP_TOO_FAR). */
 const MAX_ADVANCE_MS = 400 * 86_400_000;
 
-/** Réservation publique (aucun compte client) → course source « booking_site » → dispatch. */
+/**
+ * Réservation publique (aucun compte client) → course source « booking_site » → dispatch. Prix : celui qui a été
+ * affiché au client et qu'il s'est engagé à payer (expectedPriceCents, « Réserver avec obligation de paiement »),
+ * enregistré seulement s'il est identique au calcul du serveur (sinon PRICE_CHANGED) ; sans prix affiché, demande
+ * sans prix (price_cents null), que la centrale confirme au client. Moyen de paiement : celui de la centrale (réglages).
+ */
 export async function submitBooking(slug: string, input: z.input<typeof bookingRequestSchema>): Promise<Result> {
   // IP (IPv6 groupée par /64) avant toute requête : 6 demandes / 10 min et 20 / jour
   const ip = ipBucket(await clientIp());
@@ -38,11 +45,21 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
-    .select("id, status, timezone, booking:booking_sites(enabled, vehicle_categories)")
+    .select(
+      "id, status, timezone, settings:organization_settings(default_payment_method), booking:booking_sites(enabled, vehicle_categories, show_price_estimate, legal_mentions, phone, email)",
+    )
     .eq("slug", slug)
     .maybeSingle();
-  const site = org && ((Array.isArray((org as any).booking) ? (org as any).booking[0] : (org as any).booking) as { enabled: boolean; vehicle_categories: string[] } | null);
+  const one = <T,>(x: unknown) => (Array.isArray(x) ? x[0] : x) as T | null;
+  const site = org
+    ? one<{ enabled: boolean; vehicle_categories: string[]; show_price_estimate: boolean; legal_mentions: string | null; phone: string | null; email: string | null }>(
+        (org as any).booking,
+      )
+    : null;
   if (!org || (org as any).status !== "active" || !site?.enabled) return { ok: false, error: UNAVAILABLE };
+  // Mini-site publié avant la règle, sans les informations dues aux clients (conditions, téléphone, e-mail) : pas de
+  // commande en ligne (C. conso. L111-1, L221-5, L221-14) ; la centrale complète ses réglages
+  if (!bookingSitePublishable(site)) return { ok: false, error: `${UNAVAILABLE} Appelez la centrale pour réserver.` };
   if (!site.vehicle_categories.includes(v.vehicleCategory)) return { ok: false, error: "Catégorie non proposée." };
 
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt;
@@ -72,21 +89,41 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
   // Budget des fournisseurs géo payants : compté au visiteur (IP /64) et au mini-site (lib/geo/budget.ts)
   const consumer = { kind: "visitor" as const, ip, org: (org as any).id as string };
   const route = await computeRoute(v.pickup, v.dropoff, { timeoutMs: 2500, consumer });
-  const { data: rule } = await admin
-    .from("pricing_rules")
-    .select("vehicle_category, base_fare_cents, per_km_cents, per_minute_cents, minimum_fare_cents, night_surcharge_percent, night_start, night_end, fixed_fares")
-    .eq("organization_id", (org as any).id)
-    .eq("vehicle_category", v.vehicleCategory)
-    .eq("is_active", true)
-    .maybeSingle();
-  const fixed = rule ? matchFixedFare(rule as PricingRule, v.pickup.address, v.dropoff.address) : null;
-  let price = fixed?.price_cents ?? (rule ? estimatePrice(rule as PricingRule, route.distanceM, route.durationS, pickupAt, (org as any).timezone || "Europe/Paris") : null);
-  if (price != null && !fixed) {
-    // Prix au compteur calculé sur des coordonnées fournies par le navigateur : la destination affichée au
-    // chauffeur doit correspondre au point tarifé, sinon le prix est laissé à la centrale (à confirmer)
-    const g = await geocodeOne(v.dropoff.address, v.pickup, { precise: false, consumer }).catch(() => null);
-    if (g && haversine(g, v.dropoff) > DROPOFF_MISMATCH_M) price = null;
+  // Même calcul que le devis affiché (lib/booking-price.ts) ; aucun prix si la centrale ne l'affiche pas
+  const computed = site.show_price_estimate
+    ? (
+        await bookingSitePrice(admin, {
+          orgId: (org as any).id,
+          timeZone: (org as any).timezone || "Europe/Paris",
+          category: v.vehicleCategory,
+          pickup: v.pickup,
+          dropoff: v.dropoff,
+          route,
+          pickupAt,
+          consumer,
+        })
+      ).priceCents
+    : null;
+  let price: number | null = null;
+  if (v.expectedPriceCents != null) {
+    // Le client s'est engagé sur le prix affiché : enregistré tel quel s'il est confirmé, sinon nouveau prix montré
+    if (computed !== v.expectedPriceCents) {
+      return {
+        ok: false,
+        code: "PRICE_CHANGED",
+        priceCents: computed,
+        error:
+          computed == null
+            ? "Le prix ne peut plus être confirmé en ligne. Envoyez votre demande\u00a0: la centrale vous confirmera le prix avant la course."
+            : `Le prix a changé\u00a0: ${formatPrice(computed)} TTC. Vérifiez-le avant de réserver.`,
+      };
+    }
+    price = computed;
   }
+  const settings = one<{ default_payment_method: string | null }>((org as any).settings);
+  const payment = (PAYMENT_METHODS as readonly string[]).includes(settings?.default_payment_method ?? "")
+    ? (settings!.default_payment_method as PaymentMethod)
+    : "card";
   const { data, error } = await admin
     .from("rides")
     .insert({
@@ -107,7 +144,7 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
       vehicle_category: v.vehicleCategory,
       flight_number: v.flightNumber ?? null,
       comment: v.comment ?? null,
-      payment_method: "card",
+      payment_method: payment,
       price_cents: price,
       estimated_distance_m: route.distanceM,
       estimated_duration_s: route.durationS,

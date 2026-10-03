@@ -1,5 +1,5 @@
 "use server";
-import { bookingSiteSchema, bookingSiteSchemaFor, describeError, extractErrorCode, humanizeError } from "@rydar/shared";
+import { bookingSiteSchema, bookingSiteSchemaFor, describeError, extractErrorCode, fieldErrors, humanizeError } from "@rydar/shared";
 import { createHash } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { revalidatePath } from "next/cache";
@@ -12,7 +12,7 @@ import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result = { ok: true } | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 /** Mini-sites coupés par la plateforme (super admin) : réglages figés, la base refuse aussi (BOOKING_SITES_DISABLED). */
 const SWITCHED_OFF = (): Result => ({ ok: false, error: humanizeError("BOOKING_SITES_DISABLED") });
@@ -51,7 +51,8 @@ export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>
     .single();
   if (readError) return { ok: false, error: humanizeError(readError.message, actionError(readError)) };
   const parsed = bookingSiteSchemaFor((current as { subdomain: string | null } | null)?.subdomain).safeParse(input);
-  if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS) };
+  // Erreurs aussi rattachées à leurs champs (conditions, téléphone, e-mail exigés pour la mise en ligne)
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   if (v.custom_domain && isPlatformDomain(v.custom_domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
   const { error } = await ctx.supabase

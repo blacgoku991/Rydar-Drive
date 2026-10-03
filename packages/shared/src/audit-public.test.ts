@@ -22,6 +22,8 @@ describe("sous-domaines réservés (mini-site, identifiant de centrale)", () => 
   it("s'applique au sous-domaine du mini-site et à l'identifiant d'une nouvelle centrale", () => {
     const site = {
       enabled: true, subdomain: "admin", primary_color: "#C8F03C", vehicle_categories: ["standard"], show_price_estimate: true,
+      phone: "01 23 45 67 89", email: "contact@centrale.example",
+      legal_mentions: "Élite Paris SAS, 1 rue de l'Exemple, 75001 Paris. Paiement : carte ou espèces à bord.",
     };
     expect(bookingSiteSchema.safeParse(site).success).toBe(false);
     expect(bookingSiteSchema.safeParse({ ...site, subdomain: "elite-paris" }).success).toBe(true);

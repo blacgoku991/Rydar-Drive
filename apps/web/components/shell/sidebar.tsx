@@ -165,7 +165,7 @@ export function Sidebar(props: Props) {
         <NavContent {...props} />
       </aside>
       {/* Mobile */}
-      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-ink-950/90 px-4 backdrop-blur lg:hidden">
+      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-ink-950/90 px-4 backdrop-blur lg:hidden [@media(max-height:30rem)]:static">
         <Logo size={24} />
         <div className="flex items-center gap-2">
           {props.headerAction}

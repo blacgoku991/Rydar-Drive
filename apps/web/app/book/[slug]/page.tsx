@@ -8,6 +8,7 @@ import { LegalLinks } from "@/components/legal/legal-links";
 import { getSession } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { publicAnchor } from "@/lib/geo/anchor";
+import { platformImageUrl } from "@/lib/public-image";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -63,18 +64,22 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
   const brand = site.primary_color ?? "#c8f03c";
   const categoryLabels = ((site.vehicle_categories ?? ["standard"]) as VehicleCategory[]).map((c) => VEHICLE_CATEGORY_META[c]?.label ?? c).join(", ");
   const style = { "--color-brand": brand, "--color-brand-strong": brand, "--color-brand-fg": readableOn(brand) } as React.CSSProperties;
+  // Images servies par la plateforme seulement : jamais de requête vers un tiers choisi par la centrale (lib/public-image.ts)
+  const logo = platformImageUrl(site.logo_url);
+  const hero = platformImageUrl(site.hero_image_url);
 
+  // Repères : en-tête et pied de page hors du contenu principal (RGAA 12.6) ; <main> = présentation et réservation
   return (
-    <main style={style} className="grain relative min-h-dvh overflow-hidden bg-ink-950">
+    <div style={style} className="grain relative min-h-dvh overflow-hidden bg-ink-950">
       <div className="pointer-events-none absolute -left-40 -top-40 size-[640px] rounded-full opacity-[0.12] blur-[140px]" style={{ background: brand }} />
       <div className="pointer-events-none absolute -bottom-60 right-0 size-[520px] rounded-full bg-blue/10 blur-[140px]" />
       <div className="grid-bg pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_at_top,black_20%,transparent_70%)]" />
-      {site.hero_image_url && <div className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.12]" style={{ backgroundImage: `url(${site.hero_image_url})` }} />}
+      {hero && <div className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-[0.12]" style={{ backgroundImage: `url(${JSON.stringify(hero)})` }} />}
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-center gap-3">
           {/* Nom écrit juste à côté : logo décoratif (pas de double lecture) */}
-          {site.logo_url ? <img src={site.logo_url} alt="" className="h-9 w-auto" /> : <span aria-hidden className="grid size-9 place-items-center rounded-xl text-[15px] font-bold" style={{ background: brand, color: readableOn(brand) }}>{(site.title ?? org.name).slice(0, 1)}</span>}
+          {logo ? <img src={logo} alt="" className="h-9 w-auto" /> : <span aria-hidden className="grid size-9 place-items-center rounded-xl text-[15px] font-bold" style={{ background: brand, color: readableOn(brand) }}>{(site.title ?? org.name).slice(0, 1)}</span>}
           <span className="text-[16px] font-semibold tracking-tight">{site.title ?? org.name}</span>
         </div>
         {site.phone && (
@@ -84,7 +89,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
         )}
       </header>
 
-      <section className="relative z-10 mx-auto grid max-w-6xl gap-10 px-6 pb-20 pt-6 lg:grid-cols-[1fr_480px] lg:pt-14">
+      <main id="contenu" className="relative z-10 mx-auto grid max-w-6xl gap-10 px-6 pb-20 pt-6 lg:grid-cols-[1fr_480px] lg:pt-14">
         <div className="lg:pt-10">
           <span className="inline-flex items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.08] px-3 py-1 text-[12px] font-medium text-brand">
             <span aria-hidden className="size-1.5 animate-breathe rounded-full bg-brand" /> Réservation en ligne 24 h/24
@@ -101,7 +106,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
                 [CalendarClock, "Réservation 24 h/24", "Demande en ligne, sans compte"],
                 [Car, "Véhicules proposés", categoryLabels],
                 ...(org.vtc_registration ? [[ShieldCheck, "Exploitant VTC", org.vtc_registration]] : []),
-                ...(site.show_price_estimate ? [[ReceiptText, "Prix estimé avant de réserver", "Selon la grille de la centrale, TTC"]] : []),
+                ...(site.show_price_estimate ? [[ReceiptText, "Prix affiché avant de réserver", "Calculé par la grille de la centrale, TTC"]] : []),
               ] as [typeof ShieldCheck, string, string][]
             ).map(([Icon, t, d]) => {
               const I = Icon;
@@ -137,7 +142,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             conditions={site.legal_mentions}
           />
         </div>
-      </section>
+      </main>
 
       <footer className="relative z-10 border-t border-line">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-6 text-[12px] text-fg-subtle">
@@ -157,6 +162,6 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
           <LegalLinks only={["/mentions-legales", "/confidentialite", "/cookies", "/accessibilite"]} />
         </div>
       </footer>
-    </main>
+    </div>
   );
 }

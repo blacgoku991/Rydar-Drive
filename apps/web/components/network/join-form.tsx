@@ -37,8 +37,13 @@ function SuccessScreen({ result, model }: { result: Extract<JoinResult, { ok: tr
   const approved = result.status === "APPROVED";
   const copy = joinSuccessCopy(result.organizationName, model, approved);
   const ref = useRef<HTMLDivElement>(null);
-  // Mobile : la confirmation remplace le formulaire → on l'amène à l'écran
-  useEffect(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  // La confirmation remplace le formulaire (et son bouton, qui avait le focus) : le titre reçoit le focus, pour être
+  // lu par un lecteur d'écran (WCAG 4.1.3, 2.4.3), puis la confirmation est amenée à l'écran (mobile)
+  useEffect(() => {
+    titleRef.current?.focus({ preventScroll: true });
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
   const steps = [
     { icon: Smartphone, title: "Téléchargez l'application Rydar Drive", text: "Sur l'App Store ou Google Play (recherchez « Rydar Drive »)." },
     { icon: LogIn, title: "Connectez-vous", text: result.email ? `Avec ${result.email} et le mot de passe choisi.` : "Avec votre e-mail et le mot de passe choisi." },
@@ -56,7 +61,7 @@ function SuccessScreen({ result, model }: { result: Extract<JoinResult, { ok: tr
             <Check className="size-7" strokeWidth={3} />
           </span>
         </div>
-        <h2 className="text-[22px] font-semibold leading-tight tracking-tight">
+        <h2 ref={titleRef} tabIndex={-1} className="text-[22px] font-semibold leading-tight tracking-tight outline-none">
           {approved ? "Bienvenue, votre compte est actif" : `Candidature envoyée à ${result.organizationName}`}
         </h2>
         <p className="mt-2 max-w-sm text-[14px] leading-relaxed text-fg-muted">{copy.text}</p>
@@ -232,29 +237,36 @@ export function JoinForm({
             </Field>
           </div>
         </div>
-        <div data-field="vehicle.category">
-          <p className="mb-1.5 text-[12.5px] font-medium text-fg-muted">Catégorie</p>
-          <div
-            role="radiogroup"
-            aria-label="Catégorie du véhicule"
-            aria-describedby={err("vehicle.category") ? "join-category-error" : undefined}
-            className="grid grid-cols-2 gap-2 sm:grid-cols-3"
-          >
+        {/* Vrais boutons radio (masqués visuellement) : flèches pour changer d'option, un seul arrêt de tabulation */}
+        <fieldset
+          data-field="vehicle.category"
+          aria-describedby={err("vehicle.category") ? "join-category-error" : undefined}
+        >
+          <legend className="mb-1.5 text-[12.5px] font-medium text-fg-muted">Catégorie du véhicule</legend>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {VEHICLE_CATEGORIES.map((c) => (
-              <button
+              <label
                 key={c}
-                type="button"
-                role="radio"
-                aria-checked={category === c}
-                onClick={() => {
-                  setCategory(c);
-                  setSeats((s) => (c === "van" ? Math.max(s, 7) : s > 4 && category === "van" ? 4 : s));
-                }}
-                className={cn("min-w-0 rounded-xl border px-3 py-2.5 text-left transition-colors", category === c ? "border-brand/60 bg-brand/[0.08]" : "border-line hover:border-line-strong")}
+                className={cn(
+                  "min-w-0 cursor-pointer rounded-xl border px-3 py-2.5 text-left transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-brand/70",
+                  category === c ? "border-brand/60 bg-brand/[0.08]" : "border-line hover:border-line-strong",
+                )}
               >
+                <input
+                  type="radio"
+                  name="category"
+                  value={c}
+                  checked={category === c}
+                  onChange={() => {
+                    setCategory(c);
+                    setSeats((s) => (c === "van" ? Math.max(s, 7) : s > 4 && category === "van" ? 4 : s));
+                  }}
+                  aria-invalid={err("vehicle.category") ? true : undefined}
+                  className="sr-only"
+                />
                 <span className={cn("block truncate text-[13px] font-semibold", category === c ? "text-brand" : "text-fg")}>{VEHICLE_CATEGORY_META[c].label}</span>
                 <span className="block truncate text-[11px] text-fg-subtle">{VEHICLE_CATEGORY_META[c].description.split(",")[0]}</span>
-              </button>
+              </label>
             ))}
           </div>
           {err("vehicle.category") && (
@@ -262,7 +274,7 @@ export function JoinForm({
               {err("vehicle.category")}
             </p>
           )}
-        </div>
+        </fieldset>
         <div data-field="vehicle.seats" className="flex items-center justify-between gap-4 rounded-xl border border-line px-3.5 py-2.5">
           <span>
             <span className="block text-[13px] font-medium">Places passagers</span>
@@ -308,10 +320,8 @@ export function JoinForm({
             />
             <span className="text-fg-muted">
               J&apos;accepte les{" "}
-              <a href="/cgu" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">conditions d&apos;utilisation<NewTabHint /></a> de Rydar Drive et la
-              transmission de mes informations à <span className="text-fg">{organizationName}</span> pour l&apos;étude de ma candidature (voir la{" "}
-              <a href="/confidentialite" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">politique de confidentialité<NewTabHint /></a>). Je certifie
-              être chauffeur VTC en règle.
+              <a href="/cgu" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">conditions d&apos;utilisation<NewTabHint /></a> de Rydar Drive et je
+              certifie être chauffeur VTC en règle.
             </span>
           </label>
           {err("acceptTerms") && (
@@ -319,6 +329,13 @@ export function JoinForm({
               {err("acceptTerms")}
             </p>
           )}
+          {/* Information (RGPD art. 13), pas un accord à cocher : la transmission à la centrale est une mesure
+              précontractuelle (art. 6.1.b), jamais liée à l'acceptation des CGU */}
+          <p className="mt-2 text-[12px] leading-relaxed text-fg-muted">
+            Vos informations sont transmises à <span className="text-fg">{organizationName}</span> pour l&apos;étude de votre
+            candidature (voir la{" "}
+            <a href="/confidentialite" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">politique de confidentialité<NewTabHint /></a>).
+          </p>
         </div>
 
         {error && (

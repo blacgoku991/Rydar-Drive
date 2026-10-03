@@ -8,6 +8,7 @@ import { JOIN_LINK_INACTIVE, joinInfoModel, joinPageCopy } from "@/components/ne
 import { JoinForm } from "@/components/network/join-form";
 import { OpenInApp } from "@/components/network/open-in-app";
 import { loadJoinInfo } from "@/lib/join";
+import { platformImageUrl } from "@/lib/public-image";
 
 export const dynamic = "force-dynamic";
 
@@ -86,7 +87,8 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
   const benefits = model === "centrale" ? BENEFITS : FLEET_BENEFITS;
 
   return (
-    <main style={style} className="grain relative min-h-dvh overflow-x-clip bg-ink-950">
+    // Repères : en-tête et pied de page hors du contenu principal (RGAA 12.6)
+    <div style={style} className="grain relative min-h-dvh overflow-x-clip bg-ink-950">
       <div className="pointer-events-none absolute -left-40 -top-40 size-[520px] rounded-full opacity-[0.14] blur-[120px]" style={{ background: brand }} />
       <div className="pointer-events-none absolute -right-40 top-[40%] size-[420px] rounded-full bg-blue/10 blur-[140px]" />
       <div className="grid-bg pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_at_top,black_15%,transparent_65%)]" />
@@ -94,9 +96,10 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
       <div className="relative z-10 mx-auto w-full max-w-xl px-4 pb-10 pt-5 sm:px-6 lg:max-w-6xl">
         <header className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            {org.logo_url ? (
-              // Nom de la centrale écrit juste à côté : logo décoratif (pas de double lecture)
-              <img src={org.logo_url} alt="" className="h-10 w-auto max-w-[140px] rounded-lg object-contain" />
+            {platformImageUrl(org.logo_url) ? (
+              // Nom de la centrale écrit juste à côté : logo décoratif (pas de double lecture) ; servi par la
+              // plateforme seulement, jamais chargé chez un tiers (lib/public-image.ts)
+              <img src={platformImageUrl(org.logo_url)!} alt="" className="h-10 w-auto max-w-[140px] rounded-lg object-contain" />
             ) : (
               <span aria-hidden className="grid size-10 shrink-0 place-items-center rounded-xl text-[17px] font-bold" style={{ background: brand, color: readableOn(brand) }}>
                 {org.name.slice(0, 1).toUpperCase()}
@@ -124,45 +127,47 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           )}
         </header>
 
-        <OpenInApp
-          code={code.toLowerCase()}
-          appStoreUrl={process.env.IOS_APP_URL || null}
-          playStoreUrl={process.env.ANDROID_APP_URL || null}
-          organizationName={org.name}
-        />
+        <main id="contenu">
+          <OpenInApp
+            code={code.toLowerCase()}
+            appStoreUrl={process.env.IOS_APP_URL || null}
+            playStoreUrl={process.env.ANDROID_APP_URL || null}
+            organizationName={org.name}
+          />
 
-        <div className="mt-8 grid gap-8 lg:mt-14 lg:grid-cols-[1fr_520px] lg:gap-12">
-          <section className="lg:sticky lg:top-10 lg:self-start lg:pt-6">
-            <span className="inline-flex items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.08] px-3 py-1 text-[12px] font-medium text-brand">
-              <span className="size-1.5 animate-breathe rounded-full bg-brand" /> Recrutement chauffeurs VTC
-            </span>
-            <h1 className="mt-4 text-[30px] font-semibold leading-[1.08] tracking-tight sm:text-[40px] lg:text-[48px]">
-              <span className="text-gradient">{copy.title}</span>
-            </h1>
-            <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-fg-muted">{copy.lead}</p>
-            <ul className="mt-6 grid gap-3 lg:mt-10 lg:gap-5">
-              {benefits.map((b) => (
-                <li key={b.title} className="flex gap-3">
-                  <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.03]">
-                    <b.icon className="size-4 text-brand" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-[14px] font-medium">{b.title}</span>
-                    <span className="block text-[12.5px] leading-relaxed text-fg-subtle">{b.text}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <div className="mt-8 grid gap-8 lg:mt-14 lg:grid-cols-[1fr_520px] lg:gap-12">
+            <section className="lg:sticky lg:top-10 lg:self-start lg:pt-6">
+              <span className="inline-flex items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.08] px-3 py-1 text-[12px] font-medium text-brand">
+                <span className="size-1.5 animate-breathe rounded-full bg-brand" /> Recrutement chauffeurs VTC
+              </span>
+              <h1 className="mt-4 text-[30px] font-semibold leading-[1.08] tracking-tight sm:text-[40px] lg:text-[48px]">
+                <span className="text-gradient">{copy.title}</span>
+              </h1>
+              <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-fg-muted">{copy.lead}</p>
+              <ul className="mt-6 grid gap-3 lg:mt-10 lg:gap-5">
+                {benefits.map((b) => (
+                  <li key={b.title} className="flex gap-3">
+                    <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.03]">
+                      <b.icon className="size-4 text-brand" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[14px] font-medium">{b.title}</span>
+                      <span className="block text-[12.5px] leading-relaxed text-fg-subtle">{b.text}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
 
-          <section aria-label="Formulaire d'inscription" className="glass relative overflow-hidden rounded-3xl">
-            <div className="hairline-top border-b border-line px-5 py-4 sm:px-7">
-              <h2 className="text-[17px] font-semibold tracking-tight">{autoApprove ? "Créer mon compte chauffeur" : "Ma candidature"}</h2>
-              <p className="mt-0.5 text-[12.5px] text-fg-muted">{copy.formSubtitle}</p>
-            </div>
-            <JoinForm code={code.toLowerCase()} organizationName={org.name} autoApprove={autoApprove} model={model} />
-          </section>
-        </div>
+            <section aria-label="Formulaire d'inscription" className="glass relative overflow-hidden rounded-3xl">
+              <div className="hairline-top border-b border-line px-5 py-4 sm:px-7">
+                <h2 className="text-[17px] font-semibold tracking-tight">{autoApprove ? "Créer mon compte chauffeur" : "Ma candidature"}</h2>
+                <p className="mt-0.5 text-[12.5px] text-fg-muted">{copy.formSubtitle}</p>
+              </div>
+              <JoinForm code={code.toLowerCase()} organizationName={org.name} autoApprove={autoApprove} model={model} />
+            </section>
+          </div>
+        </main>
 
         <footer className="mt-10 space-y-3 border-t border-line pt-5 text-[12px] text-fg-subtle">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -174,6 +179,6 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           <LegalLinks only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies", "/accessibilite"]} />
         </footer>
       </div>
-    </main>
+    </div>
   );
 }

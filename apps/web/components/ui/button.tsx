@@ -35,20 +35,35 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   loading?: boolean;
 }
 
-export function Button({ className, variant, size, asChild, loading, children, disabled, ...props }: ButtonProps) {
+/**
+ * Pendant l'envoi (`loading`), le bouton reste focalisable : aria-disabled et aria-busy plutôt que l'attribut disabled
+ * (un bouton désactivé perd le focus, qui tombait sur <body> : WCAG 2.4.3), clic et envoi par Entrée bloqués, nom
+ * accessible gardé (libellé transparent, pas invisible) et « en cours » annoncé.
+ */
+export function Button({ className, variant, size, asChild, loading, children, disabled, onClick, ...props }: ButtonProps) {
   const Comp = asChild ? Slot.Root : "button";
+  const busy = !!loading && !asChild;
   return (
-    <Comp className={cn(buttonVariants({ variant, size }), className)} disabled={disabled || loading} {...props}>
+    <Comp
+      className={cn(buttonVariants({ variant, size }), busy && "cursor-wait", className)}
+      {...props}
+      disabled={busy ? undefined : disabled || loading}
+      aria-disabled={busy || props["aria-disabled"] || undefined}
+      aria-busy={busy || props["aria-busy"] || undefined}
+      // Bouton d'envoi : empêcher le clic empêche aussi l'envoi implicite du formulaire par Entrée
+      onClick={busy ? (e: React.MouseEvent<HTMLButtonElement>) => e.preventDefault() : onClick}
+    >
       {asChild ? (
         children
       ) : (
         <>
           {loading && (
-            <span className="absolute inset-0 grid place-items-center">
+            <span aria-hidden className="absolute inset-0 grid place-items-center">
               <span className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
             </span>
           )}
-          <span className={cn("inline-flex items-center gap-2", loading && "invisible")}>{children}</span>
+          <span className={cn("inline-flex items-center gap-2", loading && "opacity-0")}>{children}</span>
+          {loading && <span className="sr-only"> (en cours)</span>}
         </>
       )}
     </Comp>

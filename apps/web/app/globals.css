@@ -123,6 +123,13 @@
   :root {
     color-scheme: dark;
   }
+  /* Focus au clavier jamais caché par un élément collant (WCAG 2.2, 2.4.11) : en-tête du site (64 px) et barre du
+     haut du tableau de bord sous lg (56 px) en haut ; barres « Enregistrer » collantes en bas. Le bandeau cookies
+     flottant remplace la marge du bas (style en ligne) tant qu'il est affiché. Sert aussi aux ancres (#article-N). */
+  html {
+    scroll-padding-top: 5rem;
+    scroll-padding-bottom: 6rem;
+  }
   html,
   body {
     background: var(--color-ink-900);

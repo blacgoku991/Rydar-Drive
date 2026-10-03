@@ -10,8 +10,9 @@ export type PlaceValue = { address: string; lat: number | null; lng: number | nu
 const KIND_ICON = { airport: Plane, station: TrainFront, poi: Building2, address: MapPin, city: MapPin };
 
 /**
- * Adresse avec suggestions (combobox ARIA : liste, option active annoncée). Nom accessible : `label`, sinon le texte
- * indicatif ; relié par Field (id, aide ou erreur, état d'erreur) comme un champ ordinaire.
+ * Adresse avec suggestions (combobox ARIA : liste, option active annoncée, Échap ferme la liste). Nom accessible : le
+ * libellé visible de Field (`labelled`), sinon `label`, sinon le texte indicatif ; relié par Field (id, aide ou
+ * erreur, état d'erreur) comme un champ ordinaire.
  */
 export const AddressInput = asFieldControl(function AddressInput({
   value,
@@ -22,6 +23,7 @@ export const AddressInput = asFieldControl(function AddressInput({
   autoFocus,
   near,
   label,
+  labelled,
   id,
   "aria-describedby": describedBy,
   "aria-invalid": ariaInvalid,
@@ -36,6 +38,8 @@ export const AddressInput = asFieldControl(function AddressInput({
   near?: { lat: number; lng: number } | null;
   /** Nom accessible (par défaut : le texte indicatif) */
   label?: string;
+  /** Libellé visible relié par Field (label for) : aucun aria-label, qui le remplacerait (WCAG 2.5.3) */
+  labelled?: boolean;
   id?: string;
   "aria-describedby"?: string;
   "aria-invalid"?: boolean;
@@ -95,7 +99,7 @@ export const AddressInput = asFieldControl(function AddressInput({
         placeholder={placeholder}
         value={query}
         autoFocus={autoFocus}
-        aria-label={label ?? placeholder}
+        aria-label={labelled ? undefined : (label ?? placeholder)}
         aria-describedby={describedBy}
         aria-invalid={ariaInvalid ?? invalid}
         role="combobox"
@@ -112,6 +116,12 @@ export const AddressInput = asFieldControl(function AddressInput({
           onChange({ address: e.target.value, lat: null, lng: null });
         }}
         onKeyDown={(e) => {
+          // Échap : ferme la liste seule (la fenêtre qui contient le champ reste ouverte, voir components/ui/dialog.tsx)
+          if (e.key === "Escape" && open && results.length > 0) {
+            e.preventDefault();
+            setOpen(false);
+            return;
+          }
           if (!results.length) return;
           if (e.key === "ArrowDown") {
             e.preventDefault();

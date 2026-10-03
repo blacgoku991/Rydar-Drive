@@ -264,14 +264,34 @@ describe("/cookies : inventaire réel du navigateur", () => {
 });
 
 describe("mini-site : commande d'un client particulier", () => {
-  it("bouton de commande explicite (L221-14), conditions de la centrale avant le bouton, information sans case de consentement", () => {
+  it("« Réserver avec obligation de paiement » seulement avec un prix affiché (L221-14), sinon demande sans engagement", () => {
     const form = flat(source("components/booking/booking-form.tsx"));
-    expect(form).toMatch(/<Button type="submit"[^>]*> Réserver avec obligation de paiement <\/Button>/);
-    const submit = form.indexOf('<Button type="submit"');
-    expect(form.indexOf("{conditions && (")).toBeGreaterThan(-1);
-    expect(form.indexOf("{conditions && (")).toBeLessThan(submit);
-    expect(form.indexOf("Vos coordonnées sont transmises à")).toBeLessThan(submit);
+    expect(form).toContain("const priced = estimate != null;");
+    expect(form).toContain('{priced ? "Réserver avec obligation de paiement" : "Envoyer ma demande de réservation"}');
+    expect(form).toContain("Sans engagement&nbsp;: {centrale} vous confirme le prix avant la course.");
+    // Prix rappelé juste avant le bouton ; prix d'une ancienne saisie jamais proposé (clé du devis)
+    expect(form).toContain("const estimate = showPrice && quote?.key === quoteKey");
+  });
+
+  it("conditions de la centrale (moyens de paiement) en tête du formulaire, information sans case de consentement", () => {
+    const form = flat(source("components/booking/booking-form.tsx"));
+    const conditions = form.indexOf("{conditions && (");
+    expect(conditions).toBeGreaterThan(-1);
+    expect(conditions).toBeLessThan(form.indexOf('data-field="pickup"'));
+    expect(form.indexOf("Vos coordonnées sont transmises à")).toBeLessThan(form.indexOf('<Button type="submit"'));
     expect(form).not.toContain('type="checkbox"');
+  });
+
+  it("serveur : seul le prix affiché est enregistré (sinon PRICE_CHANGED), moyen de paiement de la centrale, mini-site complet", () => {
+    const action = flat(source("app/book/[slug]/actions.ts"));
+    expect(action).toContain('code: "PRICE_CHANGED"');
+    expect(action).toContain("if (v.expectedPriceCents != null) {");
+    expect(action).toContain("payment_method: payment,");
+    expect(action).not.toContain('payment_method: "card"');
+    expect(action).toContain("if (!bookingSitePublishable(site))");
+    // Devis et réservation : un seul calcul du prix
+    expect(source("app/api/book/[slug]/quote/route.ts")).toContain("bookingSitePrice(admin");
+    expect(action).toContain("bookingSitePrice(admin");
   });
 });
 
