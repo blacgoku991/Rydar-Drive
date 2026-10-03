@@ -8,6 +8,13 @@
 # Ne charge JAMAIS supabase/seed.sql (comptes de démonstration).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Une migration = un numéro (registre par numéro) : de deux fichiers de même numéro, le second serait sauté sans erreur
+DUPLICATES="$(for f in "$ROOT"/supabase/migrations/*.sql; do b="$(basename "$f" .sql)"; echo "${b%%_*}"; done | sort | uniq -d)"
+if [ -n "$DUPLICATES" ]; then
+  echo "✗ numéro de migration en double : $(echo "$DUPLICATES" | tr '\n' ' ')— rien n'a été appliqué."
+  echo "  Une des deux migrations doit être renumérotée dans le dépôt (jamais sur le serveur), puis relancez."
+  exit 1
+fi
 ENV_FILE="$ROOT/deploy/.env"
 [ -f "$ENV_FILE" ] || { echo "✗ $ENV_FILE introuvable (lancez d'abord deploy/install.sh)"; exit 1; }
 DATABASE_URL="$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"

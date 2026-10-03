@@ -17,8 +17,8 @@
 --  * un règlement réseau (ride_settlements) a network_driver_org_id non NULL et driver_id NULL : les fonctions des
 --    règlements propres l'ignorent par construction ; contrepartie TOUJOURS le chauffeur (décision Q2 : colonnes
 --    contraintes à 'driver', une extension se fera par une nouvelle migration) ;
---  * termes figés : network_terms d'une offre et terms d'une exécution complets et cohérents (contrôle en base,
---    private.network_terms_complete), jamais modifiés ensuite ;
+--  * termes figés : network_terms d'une offre et terms d'une exécution complets et cohérents (contrôlés à l'insertion,
+--    private.network_terms_insert_check), jamais modifiés ensuite (G2) ;
 --  * gardes G1 à G13 (§8.4) en triggers private, search_path vide ; sans definer quand elles ne s'exécutent qu'en
 --    contexte privilégié (RPC definer, worker, service role), definer quand elles lisent ou écrivent, pendant une
 --    écriture du tableau de bord, des lignes que l'appelant ne voit pas (G6, G7, G9, G10, G11, G12, G13) ;
@@ -26,11 +26,36 @@
 --    network_memberships, network_exclusions et driver_network_settings (lignes de sa propre organisation) ;
 --    network_terms d'une offre illisible côté client (commission et frais Rydar de A : jamais montrés au chauffeur).
 --
--- Remplissage des nouvelles colonnes par lots, sans diffusion temps réel ni date de modification touchée
--- (rides_c_broadcast / ride_alerts_broadcast et touch_updated_at désactivés le temps du remplissage), puis clés
--- étrangères reconstruites « not valid » + « validate constraint ». Supabase hébergé : rien sur auth.*, storage.*,
--- realtime.messages ; trigger seulement sur public.users.
+-- Déploiement (deploy/migrate.sh : ce fichier en UNE transaction, ancien worker et web encore en service) : tous les
+-- verrous pris d'emblée dans un ordre fixe, lock_timeout de 5 s (section 0) ; remplissage des nouvelles colonnes par
+-- un UPDATE par table, sans diffusion temps réel ni date de modification touchée (rides_c_broadcast /
+-- ride_alerts_broadcast et touch_updated_at désactivés le temps du remplissage), puis clés étrangères reconstruites
+-- « not valid » + « validate constraint ». Mesuré : 0,3 s sur le seed ; 19 s pour 96 000 courses, 235 000 offres et
+-- 340 000 notifications, toutes ces tables bloquées pendant ce temps (au-delà de quelques dizaines de milliers d'offres
+-- ou de notifications en production, arrêter le worker pendant la migration).
+-- Supabase hébergé : rien sur auth.*, storage.*, realtime.messages ; trigger seulement sur public.users.
 -- =============================================================================
+
+-- =============================================================================
+-- 0. Verrous
+-- =============================================================================
+-- Pris d'emblée, dans l'ordre des RPC (course, offres, chauffeur…) : aucune montée de verrou en cours de route (clé
+-- étrangère vers rides puis ALTER TABLE rides), donc pas d'interblocage avec une RPC qui lit puis écrit une course.
+-- Un verrou indisponible plus de 5 s fait échouer la migration proprement (rien n'est appliqué, à relancer) au lieu de
+-- faire attendre tout le trafic derrière elle. Bloc DO : sans transaction englobante (scripts/db-local.sh, une
+-- instruction à la fois), sans effet et sans erreur.
+do $$
+begin
+  perform set_config('lock_timeout', '5s', true);
+  lock table public.rides, public.ride_offers, public.drivers, public.ride_assignments, public.notifications,
+    public.ride_alerts, public.ride_settlements, public.driver_locations, public.driver_location_history,
+    public.platform_settings, public.legal_acceptances
+    in access exclusive mode;
+  -- Tables seulement référencées (clés étrangères) ou dotées d'un déclencheur : écritures suspendues, lectures libres
+  lock table public.organizations, public.organization_settings, public.users, public.vehicles
+    in share row exclusive mode;
+end;
+$$;
 
 -- =============================================================================
 -- 1. Plateforme : interrupteur et version de la convention (§8.1, §6.3)
@@ -117,7 +142,10 @@ revoke execute on function private.legal_acceptances_signatory() from public, an
 -- =============================================================================
 -- Part de A = commission + frais Rydar ; part du chauffeur = prix − part de A (> 0) ; le chauffeur encaisse à bord
 -- (espèces, carte) → il reverse la part de A (driver_owes), sinon A lui verse sa part (centrale_owes). Montants en
--- centimes entiers. Utilisée par les contraintes de ride_offers.network_terms et ride_network_executions.terms.
+-- centimes entiers. Appelée à l'INSERTION seulement (private.network_terms_insert_check : ride_offers.network_terms,
+-- ride_network_executions.terms), jamais dans une contrainte CHECK : PostgreSQL réévalue un CHECK à chaque UPDATE de
+-- la ligne, et une fonction durcie plus tard (clé ajoutée…) bloquerait alors l'expiration des offres et la fin des
+-- courses partagées. Les termes sont figés ensuite (G2).
 create or replace function private.network_terms_complete(p jsonb)
 returns boolean
 language plpgsql
@@ -168,6 +196,32 @@ begin
      and v_collects = ((p ->> 'payment_method') in ('cash', 'card'))
      and (p ->> 'direction') = case when v_collects then 'driver_owes' else 'centrale_owes' end
      and v_amount = case when v_collects then v_cut else v_payout end;
+end;
+$$;
+
+-- Déclencheur BEFORE INSERT de ride_offers (network_terms, offre réseau) et ride_network_executions (terms) : termes
+-- complets et cohérents, sinon 23514 (même code qu'un CHECK).
+create or replace function private.network_terms_insert_check()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_terms jsonb;
+begin
+  -- Champ propre à chaque table lu dans une instruction séparée (préparée seulement pour cette table)
+  if tg_table_name = 'ride_offers' then
+    v_terms := new.network_terms;
+  else
+    v_terms := new.terms;
+  end if;
+  if v_terms is not null and not private.network_terms_complete(v_terms) then
+    raise exception 'termes du réseau partagé incomplets ou incohérents (contrat NetworkTerms)'
+      using errcode = '23514', table = tg_table_name,
+            constraint = case tg_table_name when 'ride_offers' then 'ride_offers_network_terms_check'
+                                            else 'ride_network_executions_terms_check' end;
+  end if;
+  return new;
 end;
 $$;
 
@@ -263,14 +317,17 @@ create table public.ride_network_executions (
   operator jsonb not null check (jsonb_typeof(operator) = 'object'),
   vehicle jsonb not null check (jsonb_typeof(vehicle) = 'object'),
   checks jsonb not null check (jsonb_typeof(checks) = 'object'),
-  terms jsonb not null constraint ride_network_executions_terms_check check (private.network_terms_complete(terms)),
+  -- Complets et cohérents : contrôlés à l'insertion (private.network_terms_insert_check), figés ensuite (G2)
+  terms jsonb not null constraint ride_network_executions_terms_check check (jsonb_typeof(terms) = 'object'),
   giver_terms_version text not null check (char_length(giver_terms_version) between 1 and 40),
   executor_terms_version text not null check (char_length(executor_terms_version) between 1 and 40),
   driver_terms_version text check (driver_terms_version is null or char_length(driver_terms_version) between 1 and 40),
   accepted_at timestamptz not null default now(),
+  -- Une course partagée terminée = « completed », quelle que soit la voie (chauffeur, close_network_ride : motif
+  -- « closed_by_giver » dans suspect_reasons) : prédicat unique des règlements et frais (lot argent)
   ended_at timestamptz,
   end_reason text check (end_reason is null or end_reason in ('completed', 'cancelled_by_giver', 'removed_by_giver',
-    'reassigned_own', 'executor_released', 'executor_unavailable', 'not_performed', 'closed_by_giver')),
+    'reassigned_own', 'executor_released', 'executor_unavailable', 'not_performed')),
   suspect_reasons text[] not null default '{}'
     check (suspect_reasons <@ array['no_gps', 'far_from_pickup', 'far_from_dropoff', 'too_fast', 'closed_by_giver']::text[]),
   hold_until timestamptz,
@@ -282,7 +339,14 @@ create table public.ride_network_executions (
   client_data_first_read_at timestamptz,
   client_data_last_read_at timestamptz,
   client_data_reads integer not null default 0 check (client_data_reads >= 0),
+  -- Empreinte du RIB du chauffeur à la création du règlement (contrepartie chauffeur, lot argent), posée une fois
+  -- (G2) et comparée à driver_payout_details.iban_hash (alerte « IBAN modifié », S16). Ici, sans lecture client, et
+  -- non dans ride_settlements, que lit tout membre de A (select('*') de la fiche course) : un sha256 d'IBAN se
+  -- retrouve par force brute.
+  payout_iban_hash text check (payout_iban_hash is null or payout_iban_hash ~ '^[0-9a-f]{64}$'),
+  payout_iban_at timestamptz,
   constraint ride_network_executions_partner_check check (executor_org_id <> organization_id),
+  constraint ride_network_executions_payout_iban_check check ((payout_iban_hash is null) = (payout_iban_at is null)),
   constraint ride_network_executions_end_check check ((ended_at is null) = (end_reason is null)),
   constraint ride_network_executions_contest_check check ((contested_at is null) = (contested_reason is null)),
   constraint ride_network_executions_dispute_check check ((driver_disputed_at is null) = (driver_dispute_reason is null)),
@@ -325,7 +389,8 @@ create table public.driver_payout_details (
   payee_name text not null check (char_length(payee_name) between 2 and 120),
   iban text not null check (iban ~ '^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$'),
   bic text check (bic is null or bic ~ '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$'),
-  -- sha256 de l'IBAN normalisé, comparé à ride_settlements.payout_iban_hash (alerte « IBAN modifié »)
+  -- sha256 de l'IBAN normalisé, comparé à ride_network_executions.payout_iban_hash (alerte « IBAN modifié ») ; jamais
+  -- lisible côté client (table sans policy, exécutions de même)
   iban_hash text not null check (iban_hash ~ '^[0-9a-f]{64}$'),
   updated_at timestamptz not null default now(),
   foreign key (organization_id, driver_id) references public.drivers (organization_id, id) on delete cascade
@@ -425,8 +490,6 @@ alter table public.ride_settlements
   add column network_execution_id uuid references public.ride_network_executions (id) on delete restrict,
   add column network_counterparty text constraint ride_settlements_network_counterparty_check
     check (network_counterparty is null or network_counterparty = 'driver'),
-  add column payout_iban_hash text check (payout_iban_hash is null or payout_iban_hash ~ '^[0-9a-f]{64}$'),
-  add column payout_iban_at timestamptz,
   add column driver_disputed_at timestamptz,
   add column driver_dispute_reason text check (driver_dispute_reason is null or char_length(driver_dispute_reason) <= 300);
 comment on column public.ride_settlements.network_driver_org_id is
@@ -443,34 +506,21 @@ comment on column public.driver_location_history.ride_org_id is
   'Organisation de la course en cours au moment du point : un point d''une course partenaire (≠ organization_id) est invisible pour l''organisation du chauffeur.';
 
 -- =============================================================================
--- 6. Remplissage par lots, sans diffusion temps réel (C22)
+-- 6. Remplissage, sans diffusion temps réel (C22)
 -- =============================================================================
 -- Toutes les lignes existantes sont des lignes propres : driver_org_id = organization_id dès qu'un chauffeur est
 -- cité (is_network reste faux, network_at NULL). Diffusions et date de modification coupées le temps du remplissage.
+-- Un UPDATE par table : dans une seule transaction (verrous gardés jusqu'au COMMIT), des lots n'apporteraient rien.
 alter table public.rides disable trigger rides_c_broadcast;
 alter table public.rides disable trigger rides_touch_updated_at;
 alter table public.ride_alerts disable trigger ride_alerts_broadcast;
 alter table public.ride_alerts disable trigger ride_alerts_touch_updated_at;
 
-do $$
-declare
-  t text;
-  v_last uuid;
-  v_ids uuid[];
-begin
-  foreach t in array array['rides', 'ride_offers', 'ride_assignments', 'notifications', 'ride_alerts'] loop
-    v_last := '00000000-0000-0000-0000-000000000000';
-    loop
-      execute format('select array_agg(x.id order by x.id) from (select y.id from public.%I y where y.id > $1 order by y.id limit 5000) x', t)
-        into v_ids using v_last;
-      exit when v_ids is null;
-      execute format('update public.%I set driver_org_id = organization_id where id = any ($1) and driver_id is not null', t)
-        using v_ids;
-      v_last := v_ids[cardinality(v_ids)];
-    end loop;
-  end loop;
-end;
-$$;
+update public.rides set driver_org_id = organization_id where driver_id is not null;
+update public.ride_offers set driver_org_id = organization_id where driver_id is not null;
+update public.ride_assignments set driver_org_id = organization_id where driver_id is not null;
+update public.notifications set driver_org_id = organization_id where driver_id is not null;
+update public.ride_alerts set driver_org_id = organization_id where driver_id is not null;
 
 alter table public.rides enable trigger rides_c_broadcast;
 alter table public.rides enable trigger rides_touch_updated_at;
@@ -488,11 +538,17 @@ alter table public.rides add constraint rides_organization_id_driver_id_fkey
   on delete set null (driver_org_id, driver_id) not valid;
 alter table public.rides validate constraint rides_organization_id_driver_id_fkey;
 
+-- Clé simple « MATCH SIMPLE » : une course SANS chauffeur (driver_org_id NULL) n'est plus contrôlée par elle. Même
+-- garantie qu'avant par G3 (véhicule d'une course sans chauffeur = véhicule de l'organisation de la course ; véhicule
+-- d'un partenaire retiré avec lui) et private.vehicles_detach_rides (véhicule supprimé : courses sans chauffeur
+-- détachées, comme le faisait l'ancienne clé (organization_id, vehicle_id)).
 alter table public.rides drop constraint rides_organization_id_vehicle_id_fkey;
 alter table public.rides add constraint rides_organization_id_vehicle_id_fkey
   foreign key (driver_org_id, vehicle_id) references public.vehicles (organization_id, id)
   on delete set null (vehicle_id) not valid;
 alter table public.rides validate constraint rides_organization_id_vehicle_id_fkey;
+-- Suppression d'un véhicule (clé ci-dessus et vehicles_detach_rides) : sans index, parcours de toutes les courses
+create index rides_vehicle_idx on public.rides (vehicle_id) where vehicle_id is not null;
 
 alter table public.rides add constraint rides_driver_org_check
   check ((driver_id is null) = (driver_org_id is null)) not valid;
@@ -515,9 +571,10 @@ alter table public.ride_offers alter column driver_org_id set not null;
 alter table public.ride_offers add constraint ride_offers_network_check
   check (is_network = (driver_org_id <> organization_id)) not valid;
 alter table public.ride_offers validate constraint ride_offers_network_check;
+-- Termes présents si et seulement si offre réseau ; complets et cohérents : contrôlés à l'insertion
+-- (private.network_terms_insert_check), jamais par ce CHECK (réévalué à chaque UPDATE de la ligne)
 alter table public.ride_offers add constraint ride_offers_network_terms_check
-  check (is_network = (network_terms is not null) and (network_terms is null or private.network_terms_complete(network_terms)))
-  not valid;
+  check (is_network = (network_terms is not null)) not valid;
 alter table public.ride_offers validate constraint ride_offers_network_terms_check;
 
 -- Attributions
@@ -557,8 +614,7 @@ alter table public.ride_settlements add constraint ride_settlements_network_chec
              and network_counterparty is not null and network_execution_id is not null));
 alter table public.ride_settlements add constraint ride_settlements_network_columns_check
   check (network_driver_org_id is not null
-         or (network_driver_id is null and network_execution_id is null and network_counterparty is null
-             and payout_iban_hash is null and payout_iban_at is null));
+         or (network_driver_id is null and network_execution_id is null and network_counterparty is null));
 
 -- =============================================================================
 -- 8. Index (§8.3)
@@ -663,9 +719,13 @@ as $$
     false);
 $$;
 
--- Ferme les offres réseau en attente (paramètres NULL = tous) ; notifications d'offre supprimées par
+-- Ferme les offres réseau en attente (filtres NULL = tous) ; notifications d'offre supprimées par
 -- ride_offers_network_closed ; chauffeurs « sollicités » libérés. Renvoie le nombre d'offres fermées.
-create or replace function private.close_network_offers(p_giver uuid, p_exec_org uuid, p_driver uuid, p_reason text)
+-- Motifs propres à une course : terms_changed, flight_rescheduled (p_ride obligatoire), driver_busy (p_ride et
+-- p_driver) ; network_unavailable, sharing_stopped : par organisation, chauffeur ou course (coupure globale : aucun
+-- filtre). Un motif de course sans sa course fermerait les offres de TOUTES les courses de l'organisation.
+create or replace function private.close_network_offers(p_giver uuid, p_exec_org uuid, p_driver uuid, p_reason text,
+                                                        p_ride uuid default null)
 returns integer
 language plpgsql
 set search_path = ''
@@ -678,11 +738,17 @@ begin
      or p_reason not in ('terms_changed', 'network_unavailable', 'flight_rescheduled', 'sharing_stopped', 'driver_busy') then
     raise exception 'close_network_offers : motif inconnu (%)', p_reason using errcode = '22023';
   end if;
+  if (p_reason in ('terms_changed', 'flight_rescheduled') and p_ride is null)
+     or (p_reason = 'driver_busy' and (p_ride is null or p_driver is null)) then
+    raise exception 'close_network_offers : motif % propre à une course (course, et chauffeur pour driver_busy, obligatoires)',
+      p_reason using errcode = '22023';
+  end if;
   with upd as (
     update public.ride_offers o
        set status = 'closed', closed_reason = p_reason, responded_at = coalesce(o.responded_at, now())
      where o.is_network
        and o.status = 'pending'
+       and (p_ride is null or o.ride_id = p_ride)
        and (p_giver is null or o.organization_id = p_giver)
        and (p_exec_org is null or o.driver_org_id = p_exec_org)
        and (p_driver is null or o.driver_id = p_driver)
@@ -694,9 +760,10 @@ begin
 end;
 $$;
 
--- Q5 : le chauffeur fait en ce moment une course d'une autre organisation (sa course en cours) : sa position est
--- masquée à son organisation (policy driver_locations_select ; diffusions du lot accès). Definer : appelée avec le
--- rôle du lecteur, qui ne voit pas la course de l'autre organisation.
+-- Q5 : le chauffeur fait en ce moment une course d'une autre organisation (sa course en cours) : sa position n'est
+-- pas diffusée à son organisation (diffusions du lot accès, fonctions definer). Fonctions serveur seulement : elle
+-- répond pour n'importe quel chauffeur (la policy passe par member_drivers_on_foreign_ride, bornée aux organisations
+-- du lecteur).
 create or replace function private.driver_on_foreign_ride(p_driver uuid)
 returns boolean
 language sql
@@ -713,8 +780,9 @@ as $$
        and r.status in ('ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS'));
 $$;
 
--- Même règle, pour toute la policy en une fois : chauffeurs des organisations de l'appelant en course partenaire en
--- ce moment (évaluée une seule fois par requête, pas une fois par position lue).
+-- Même règle, pour la policy driver_locations_select en une fois : chauffeurs des organisations de l'appelant en
+-- course partenaire en ce moment (évaluée une seule fois par requête, pas une fois par position lue). Definer :
+-- appelée avec le rôle du lecteur, qui ne voit pas la course de l'autre organisation.
 create or replace function private.member_drivers_on_foreign_ride()
 returns setof uuid
 language sql
@@ -810,8 +878,12 @@ end;
 $$;
 
 -- ----------------------------------------------------------------- G2 : colonnes figées
--- Colonnes passées en arguments du trigger ; « ?colonne » : seul le passage à NULL est permis (clés étrangères
--- « on delete set null »). Même code que l'organisation d'une ligne : FORBIDDEN_TENANT_CHANGE (42501).
+-- Colonnes passées en arguments du trigger, avec un préfixe éventuel :
+--  « ? » seul le passage à NULL est permis (clés étrangères « on delete set null ») ;
+--  « + » seule la première valeur est permise (NULL → valeur, posée une fois) ;
+--  « * » modifiable seulement par l'effacement des traces d'un compte supprimé (réglage local rydar.network_scrub =
+--        on, posé par private.scrub_network_traces, lot administration).
+-- Même code que l'organisation d'une ligne : FORBIDDEN_TENANT_CHANGE (42501).
 create or replace function private.forbid_driver_org_change()
 returns trigger
 language plpgsql
@@ -824,9 +896,12 @@ declare
   v_old jsonb := to_jsonb(old);
 begin
   foreach c in array tg_argv loop
-    v_col := ltrim(c, '?');
+    v_col := ltrim(c, '?+*');
+    -- Réglage absent = NULL : coalesce, sinon « not (vrai and NULL) » laisserait passer le changement
     if (v_new -> v_col) is distinct from (v_old -> v_col)
-       and not (left(c, 1) = '?' and (v_new -> v_col) = 'null'::jsonb) then
+       and not (left(c, 1) = '?' and (v_new -> v_col) = 'null'::jsonb)
+       and not (left(c, 1) = '+' and (v_old -> v_col) = 'null'::jsonb)
+       and not (left(c, 1) = '*' and coalesce(current_setting('rydar.network_scrub', true), '') = 'on') then
       raise exception 'FORBIDDEN_TENANT_CHANGE: % est immuable', v_col using errcode = '42501';
     end if;
   end loop;
@@ -840,6 +915,11 @@ $$;
 -- la course (network_at), paire éligible (private.network_pair_ok : interrupteur, adhésions, validations,
 -- convention, exclusions) ET offre réseau de CE chauffeur sur cette course, du cycle courant (envoyée depuis
 -- network_at), en attente ou acceptée ; sinon FORBIDDEN_TENANT (42501), même pour une fonction definer.
+-- Course tenue par un partenaire : network_at ne change qu'avec le chauffeur (retrait, réattribution), sinon
+-- FORBIDDEN_TENANT_CHANGE (le partage serait clos ou rouvert sous une exécution ouverte).
+-- Véhicule (la clé (driver_org_id, vehicle_id) ne contrôle pas une course sans chauffeur) : partenaire retiré → son
+-- véhicule part avec lui ; course sans chauffeur → véhicule de l'organisation de la course (ancienne clé
+-- (organization_id, vehicle_id), 23503 sinon).
 create or replace function private.rides_executor_guard()
 returns trigger
 language plpgsql
@@ -850,9 +930,24 @@ declare
 begin
   if tg_op = 'INSERT' then
     new.network_at := null;
+  elsif old.driver_id is not null and old.driver_org_id <> old.organization_id
+        and new.driver_id is not distinct from old.driver_id
+        and new.network_at is distinct from old.network_at then
+    raise exception 'FORBIDDEN_TENANT_CHANGE: network_at d''une course tenue par un chauffeur partenaire'
+      using errcode = '42501';
   end if;
   if new.driver_id is null then
     new.driver_org_id := null;
+    if tg_op = 'UPDATE' and old.driver_id is not null and old.driver_org_id <> old.organization_id then
+      new.vehicle_id := null;
+    end if;
+    if new.vehicle_id is not null
+       and (tg_op = 'INSERT' or new.vehicle_id is distinct from old.vehicle_id)
+       and not exists (select 1 from public.vehicles v
+                        where v.id = new.vehicle_id and v.organization_id = new.organization_id) then
+      raise exception 'rides_organization_id_vehicle_id_fkey : véhicule absent de l''organisation d''une course sans chauffeur'
+        using errcode = '23503', constraint = 'rides_organization_id_vehicle_id_fkey';
+    end if;
     return new;
   end if;
   select d.organization_id into v_org from public.drivers d where d.id = new.driver_id;
@@ -874,6 +969,21 @@ begin
     end if;
   end if;
   return new;
+end;
+$$;
+
+-- G3 (suite) : véhicule supprimé → courses SANS chauffeur qui le citent détachées (la clé (driver_org_id, vehicle_id)
+-- ne détache que celles qui ont un chauffeur ; l'ancienne clé (organization_id, vehicle_id) les détachait toutes).
+-- Definer : rides.vehicle_id sans droit client en écriture (véhicule supprimé par owner / admin).
+create or replace function private.vehicles_detach_rides()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.rides r set vehicle_id = null where r.vehicle_id = old.id and r.driver_id is null;
+  return null;
 end;
 $$;
 
@@ -959,11 +1069,13 @@ end;
 $$;
 
 -- ----------------------------------------------------------------- G6 : course confiée verrouillée
--- Exécution réseau ouverte, ou close en « terminée », et prix, paiement, adresses, coordonnées, heure, catégorie,
--- passagers ou commission SAISIE modifiés : NETWORK_RIDE_LOCKED (55000). Exceptions : heure changée par le suivi de
--- vol (réglage local rydar.network_flight_update = on, posé par apply_flight_status) ; commission recalculée par le
--- système (répartition automatique, ni avant ni après saisie manuelle : changement de modèle de A, termes figés de
--- toute façon). Definer : l'exécution est illisible pour le membre qui modifie la course.
+-- Exécution réseau ouverte, ou close en « completed », et prix, paiement, adresses, coordonnées, heure, catégorie,
+-- passagers, bagages, n° de vol ou commission SAISIE modifiés : NETWORK_RIDE_LOCKED (55000). Le n° de vol aussi : le
+-- suivi de vol déplacerait ensuite l'heure selon le retard du NOUVEAU vol (jusqu'à 12 h). Exceptions : heure SEULE
+-- changée par le suivi de vol (réglage local rydar.network_flight_update = on, posé par apply_flight_status ; n° de vol
+-- inchangé) ; commission recalculée par le système (répartition automatique, ni avant ni après saisie manuelle :
+-- changement de modèle de A, termes figés de toute façon). Definer : l'exécution est illisible pour le membre qui
+-- modifie la course.
 -- Déclenchée (clause WHEN) seulement sur une course passée par le réseau ou tenue par un chauffeur d'une autre
 -- organisation, et si l'une de ces valeurs change : coût nul pour les autres courses.
 create or replace function private.rides_network_lock()
@@ -975,17 +1087,17 @@ as $$
 begin
   if current_setting('rydar.network_flight_update', true) = 'on'
      and (new.price_cents, new.payment_method, new.pickup_address, new.pickup_lat, new.pickup_lng, new.dropoff_address,
-          new.dropoff_lat, new.dropoff_lng, new.vehicle_category, new.passengers)
+          new.dropoff_lat, new.dropoff_lng, new.vehicle_category, new.passengers, new.luggage, new.flight_number)
          is not distinct from
          (old.price_cents, old.payment_method, old.pickup_address, old.pickup_lat, old.pickup_lng, old.dropoff_address,
-          old.dropoff_lat, old.dropoff_lng, old.vehicle_category, old.passengers)
+          old.dropoff_lat, old.dropoff_lng, old.vehicle_category, old.passengers, old.luggage, old.flight_number)
      and not ((new.commission_manual or old.commission_manual) and new.commission_cents is distinct from old.commission_cents) then
     return new;
   end if;
   if exists (
     select 1 from public.ride_network_executions e
      where e.ride_id = old.id
-       and (e.ended_at is null or e.end_reason in ('completed', 'closed_by_giver'))) then
+       and (e.ended_at is null or e.end_reason = 'completed')) then
     raise exception 'NETWORK_RIDE_LOCKED: course confiée à un partenaire : retirez-la-lui pour la modifier'
       using errcode = '55000';
   end if;
@@ -1020,6 +1132,30 @@ begin
 end;
 $$;
 
+-- G7 (suite) : statut retiré DIRECTEMENT (droit par colonne des owner / admin de B, écriture sans RPC) alors que le
+-- chauffeur tient une course d'une autre organisation non terminée : refusé (fiche inactive → plus de session, la
+-- course de A resterait attribuée sans que personne ne puisse la finir). Les RPC (set_driver_status, ban_driver :
+-- definer, lot dispatch) retirent d'abord la course partagée (unassign_network_ride) ou refusent si le client est à
+-- bord. Clause WHEN (current_user = 'authenticated') : clients seulement. Definer : courses de A illisibles pour B.
+create or replace function private.drivers_network_status_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1 from public.rides r
+     where r.driver_id = old.id
+       and r.organization_id <> old.organization_id
+       and r.status not in ('COMPLETED', 'CANCELLED', 'NO_DRIVER_FOUND')) then
+    raise exception 'DRIVER_HAS_NETWORK_OBLIGATIONS: course d''une organisation partenaire en cours, statut à changer par set_driver_status'
+      using errcode = '55000';
+  end if;
+  return new;
+end;
+$$;
+
 -- ----------------------------------------------------------------- G8 : course en cours d'un chauffeur
 -- Clé étrangère simple (une course partagée est d'une autre organisation) : une course de son organisation, comme
 -- l'ancienne clé composite (comportement inchangé), ou une course d'une autre organisation qu'il tient lui-même.
@@ -1044,26 +1180,18 @@ end;
 $$;
 
 -- ----------------------------------------------------------------- G9 : termes modifiés pendant la recherche réseau
--- Course proposée au réseau, sans chauffeur, et dont un élément de l'offre change : offres réseau en attente fermées
--- (« terms_changed », notifications d'offre supprimées) ; reproposées à la vague suivante avec les nouveaux termes
--- (une offre « terms_changed » n'exclut pas le chauffeur). Definer : écriture depuis le tableau de bord.
+-- Course proposée au réseau, sans chauffeur, et dont un élément de l'offre change : offres réseau en attente de CETTE
+-- course fermées (« terms_changed », notifications d'offre supprimées, chauffeurs libérés : close_network_offers) ;
+-- reproposées à la vague suivante avec les nouveaux termes (une offre « terms_changed » n'exclut pas le chauffeur).
+-- Definer : écriture depuis le tableau de bord.
 create or replace function private.rides_network_terms_watch()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
-declare
-  v_drivers uuid[];
 begin
-  with upd as (
-    update public.ride_offers o
-       set status = 'closed', closed_reason = 'terms_changed', responded_at = coalesce(o.responded_at, now())
-     where o.ride_id = new.id and o.is_network and o.status = 'pending'
-    returning o.driver_id
-  )
-  select coalesce(array_agg(upd.driver_id), '{}') into v_drivers from upd;
-  perform private.release_offered_drivers(v_drivers);
+  perform private.close_network_offers(new.organization_id, null, null, 'terms_changed', new.id);
   return null;
 end;
 $$;
@@ -1073,11 +1201,12 @@ $$;
 --  * network_at posé ou changé : ouverture (cycle 1) ou réouverture (cycle + 1, compteurs remis à zéro) ;
 --  * chauffeur partenaire posé : « accepted » ; retiré, réseau toujours ouvert : de nouveau « open » ;
 --  * chauffeur propre posé : « reassigned_own » ; network_at → NULL : « closed » ;
---  * COMPLETED (partenaire) : « completed » ; CANCELLED : « cancelled » ou « not_performed »
+--  * COMPLETED (partenaire) : « completed », quelle que soit la voie (close_network_ride : motif « closed_by_giver »
+--    dans suspect_reasons, posé par elle) ; CANCELLED : « cancelled » ou « not_performed »
 --    (private.expire_unstarted_rides, C24) ; NO_DRIVER_FOUND : « no_driver ».
 -- Motif précis passé par l'appelant (réglage local rydar.network_reason : removed_by_giver, executor_released,
--- executor_unavailable, closed_by_giver, not_performed, window_elapsed, flight_rescheduled, error, sharing_stopped,
--- redispatch…), sinon motif par défaut. Étape (rydar.network_stage) déduite sinon : instantanée ; planifiée avant
+-- executor_unavailable, not_performed, window_elapsed, flight_rescheduled, error, sharing_stopped, redispatch…),
+-- sinon motif par défaut. Étape (rydar.network_stage) déduite sinon : instantanée ; planifiée avant
 -- prise en charge − scheduled_dispatch_lead_minutes de A : « scheduled_window », après : « scheduled_geo ».
 -- Émet « network.updated » sur org:{A} avec l'id de la course seulement. Definer : tables sans droits client.
 -- Nommé rides_c_network (avant rides_d_settlement et rides_e_platform_fee) : à la fin de course, règlement et frais
@@ -1112,8 +1241,7 @@ begin
   -- 1. Exécution du partenaire close (la course n'est plus tenue par lui, ou elle est finie)
   if v_old_partner and (v_driver_changed or v_ended) then
     v_end := case
-      when not v_driver_changed and new.status = 'COMPLETED' then
-        case when v_reason = 'closed_by_giver' then 'closed_by_giver' else 'completed' end
+      when not v_driver_changed and new.status = 'COMPLETED' then 'completed'
       when v_ended and new.status = 'CANCELLED' then
         case when v_not_performed then 'not_performed' else 'cancelled_by_giver' end
       when v_own then 'reassigned_own'
@@ -1351,14 +1479,22 @@ create trigger ride_alerts_driver_org before insert on public.ride_alerts
 create trigger ride_alerts_network_guard before insert on public.ride_alerts
   for each row execute function private.network_child_guard();
 
--- G2 : colonnes figées (« ? » : passage à NULL permis)
+-- Termes figés validés à l'insertion seulement (après G1, qui pose is_network)
+create trigger ride_offers_network_terms before insert on public.ride_offers
+  for each row execute function private.network_terms_insert_check();
+create trigger ride_network_executions_terms before insert on public.ride_network_executions
+  for each row execute function private.network_terms_insert_check();
+
+-- G2 : colonnes figées (préfixes : « ? » passage à NULL permis, « + » posée une fois, « * » effacement des traces)
 create trigger ride_offers_driver_org_frozen before update of driver_org_id, driver_id, is_network, network_terms
   on public.ride_offers
   for each row execute function private.forbid_driver_org_change('driver_org_id', 'driver_id', 'is_network', 'network_terms');
 create trigger ride_assignments_driver_org_frozen before update of driver_org_id, driver_id on public.ride_assignments
   for each row execute function private.forbid_driver_org_change('driver_org_id', 'driver_id');
+-- Notifications : clé « on delete cascade », jamais de passage à NULL (une notification de partenaire, organization_id
+-- = A, deviendrait lisible par tous les membres de A par la clause « driver_id is null » de notifications_select)
 create trigger notifications_driver_org_frozen before update of driver_org_id, driver_id on public.notifications
-  for each row execute function private.forbid_driver_org_change('?driver_org_id', '?driver_id');
+  for each row execute function private.forbid_driver_org_change('driver_org_id', 'driver_id');
 create trigger ride_alerts_driver_org_frozen before update of driver_org_id, driver_id on public.ride_alerts
   for each row execute function private.forbid_driver_org_change('?driver_org_id', '?driver_id');
 create trigger ride_settlements_network_frozen
@@ -1366,13 +1502,17 @@ create trigger ride_settlements_network_frozen
   on public.ride_settlements
   for each row execute function private.forbid_driver_org_change(
     'network_driver_org_id', '?network_driver_id', 'network_execution_id', 'network_counterparty');
+-- Exécutions : termes et instantanés (étiquette montrée à A, contrôles des documents U3, exploitant, véhicule) figés ;
+-- étiquette et contrôles réduits seulement par l'effacement des traces (§10.10) ; empreinte du RIB posée une fois
 create trigger ride_network_executions_frozen
-  before update of ride_id, executor_org_id, executor_driver_id, offer_id, counterparty, terms, operator, vehicle,
-    giver_terms_version, executor_terms_version, driver_terms_version, accepted_at
+  before update of ride_id, executor_org_id, executor_driver_id, offer_id, counterparty, driver_label, operator, vehicle,
+    checks, terms, giver_terms_version, executor_terms_version, driver_terms_version, accepted_at, payout_iban_hash,
+    payout_iban_at
   on public.ride_network_executions
   for each row execute function private.forbid_driver_org_change(
-    'ride_id', 'executor_org_id', '?executor_driver_id', 'offer_id', 'counterparty', 'terms', 'operator', 'vehicle',
-    'giver_terms_version', 'executor_terms_version', 'driver_terms_version', 'accepted_at');
+    'ride_id', 'executor_org_id', '?executor_driver_id', 'offer_id', 'counterparty', '*driver_label', 'operator',
+    'vehicle', '*checks', 'terms', 'giver_terms_version', 'executor_terms_version', 'driver_terms_version', 'accepted_at',
+    '+payout_iban_hash', '+payout_iban_at');
 create trigger ride_network_shares_frozen before update of ride_id on public.ride_network_shares
   for each row execute function private.forbid_driver_org_change('ride_id');
 create trigger network_exclusions_frozen before update of excluded_org_id on public.network_exclusions
@@ -1400,8 +1540,11 @@ end;
 $$;
 
 -- G3 (après rides_before_insert, qui retire le chauffeur d'une course créée par l'API ou le tableau de bord)
-create trigger rides_executor_guard before insert or update of driver_id, driver_org_id, network_at on public.rides
+create trigger rides_executor_guard before insert or update of driver_id, driver_org_id, network_at, vehicle_id
+  on public.rides
   for each row execute function private.rides_executor_guard();
+create trigger vehicles_detach_rides after delete on public.vehicles
+  for each row execute function private.vehicles_detach_rides();
 
 -- G5
 create trigger ride_settlements_network_guard before insert on public.ride_settlements
@@ -1412,10 +1555,12 @@ create trigger rides_network_lock before update on public.rides
   for each row
   when ((old.network_at is not null or old.driver_org_id <> old.organization_id)
         and ((new.price_cents, new.payment_method, new.pickup_address, new.pickup_lat, new.pickup_lng,
-              new.dropoff_address, new.dropoff_lat, new.dropoff_lng, new.pickup_at, new.vehicle_category, new.passengers)
+              new.dropoff_address, new.dropoff_lat, new.dropoff_lng, new.pickup_at, new.vehicle_category, new.passengers,
+              new.luggage, new.flight_number)
              is distinct from
              (old.price_cents, old.payment_method, old.pickup_address, old.pickup_lat, old.pickup_lng,
-              old.dropoff_address, old.dropoff_lat, old.dropoff_lng, old.pickup_at, old.vehicle_category, old.passengers)
+              old.dropoff_address, old.dropoff_lat, old.dropoff_lng, old.pickup_at, old.vehicle_category, old.passengers,
+              old.luggage, old.flight_number)
              or ((new.commission_manual or old.commission_manual)
                  and new.commission_cents is distinct from old.commission_cents)))
   execute function private.rides_network_lock();
@@ -1423,6 +1568,10 @@ create trigger rides_network_lock before update on public.rides
 -- G7
 create trigger drivers_network_delete_guard before delete on public.drivers
   for each row execute function private.drivers_network_delete_guard();
+create trigger drivers_network_status_guard before update of status on public.drivers
+  for each row
+  when (current_user = 'authenticated' and old.status = 'active' and new.status is distinct from 'active')
+  execute function private.drivers_network_status_guard();
 
 -- G8
 create trigger drivers_current_ride_guard before insert or update of current_ride_id on public.drivers
@@ -1508,6 +1657,11 @@ create trigger drivers_admin_columns_guard
 -- =============================================================================
 -- Dernières définitions : 20260924000300_security.sql (rides, ride_offers, ride_assignments, driver_locations,
 -- driver_location_history) et 20260924004300_audit_droits.sql (notifications).
+-- Inchangées : ride_settlements_select (A lit ses lignes réseau, sans aucune donnée bancaire : l'empreinte du RIB est
+-- dans ride_network_executions) et ride_alerts_select. Identifiant résiduel accepté chez A (§8.5) : l'UUID de la fiche
+-- EXÉCUTANTE dans rides.driver_id, ride_settlements.network_driver_id et ride_alerts.driver_id (alerte de la course
+-- qu'il tient : même valeur que rides.driver_id, gardée pour la clé « on delete set null » et l'effacement des
+-- traces) ; opaque, sans chemin d'accès ; jamais celui d'un partenaire non retenu.
 
 -- Courses : la clause chauffeur ne couvre que SES courses propres (course partagée : RPC driver_ride, lot accès)
 drop policy rides_select on public.rides;
@@ -1604,13 +1758,15 @@ grant select (id, organization_id, ride_id, driver_id, status, mode, wave, radiu
 grant update (vtc_operator_registration) on public.drivers to authenticated;
 -- Aucun droit client sur driver_org_id, network_at, network_* (écriture par les fonctions seulement)
 
--- Aides : fonctions serveur seulement (RPC definer, worker, service role)
+-- Aides : fonctions serveur seulement (RPC definer, worker, service role). driver_on_foreign_ride répond pour
+-- n'importe quel chauffeur : jamais pour un client.
 revoke all on function
   private.network_terms_ok(text),
   private.network_terms_complete(jsonb),
   private.network_org_reason(uuid, text),
   private.network_pair_ok(uuid, uuid),
-  private.close_network_offers(uuid, uuid, uuid, text),
+  private.close_network_offers(uuid, uuid, uuid, text, uuid),
+  private.driver_on_foreign_ride(uuid),
   private.account_identity_hash(uuid),
   private.driver_identity_keys_of(public.drivers),
   private.refresh_driver_identity_keys(uuid)
@@ -1620,16 +1776,17 @@ grant execute on function
   private.network_terms_complete(jsonb),
   private.network_org_reason(uuid, text),
   private.network_pair_ok(uuid, uuid),
-  private.close_network_offers(uuid, uuid, uuid, text),
+  private.close_network_offers(uuid, uuid, uuid, text, uuid),
+  private.driver_on_foreign_ride(uuid),
   private.account_identity_hash(uuid),
   private.driver_identity_keys_of(public.drivers),
   private.refresh_driver_identity_keys(uuid)
 to service_role;
 
--- Position masquée (Q5) : la policy driver_locations_select est évaluée avec le rôle du lecteur
-revoke all on function private.driver_on_foreign_ride(uuid), private.member_drivers_on_foreign_ride() from public, anon;
-grant execute on function private.driver_on_foreign_ride(uuid), private.member_drivers_on_foreign_ride()
-  to authenticated, service_role;
+-- Position masquée (Q5) : la policy driver_locations_select est évaluée avec le rôle du lecteur (chauffeurs de SES
+-- organisations seulement)
+revoke all on function private.member_drivers_on_foreign_ride() from public, anon;
+grant execute on function private.member_drivers_on_foreign_ride() to authenticated, service_role;
 
 -- Déclencheurs : jamais appelés directement
 revoke all on function
@@ -1640,7 +1797,10 @@ revoke all on function
   private.network_settlement_guard(),
   private.rides_network_lock(),
   private.drivers_network_delete_guard(),
+  private.drivers_network_status_guard(),
   private.drivers_current_ride_guard(),
+  private.network_terms_insert_check(),
+  private.vehicles_detach_rides(),
   private.rides_network_terms_watch(),
   private.ride_network_share_sync(),
   private.broadcast_network_execution(),

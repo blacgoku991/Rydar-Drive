@@ -635,10 +635,14 @@ export const NETWORK_SHARE_CLOSED_LABELS: Record<NetworkShareClosedReason, strin
   sharing_stopped: "Partage arrêté",
 };
 
-/** ride_network_executions.end_reason */
+/**
+ * ride_network_executions.end_reason. Course partagée terminée = toujours « completed », quelle que soit la voie
+ * (clôture par A, close_network_ride : « closed_by_giver » dans suspect_reasons) : prédicat unique des règlements et
+ * des frais Rydar.
+ */
 export const NETWORK_EXECUTION_END_REASONS = [
   "completed", "cancelled_by_giver", "removed_by_giver", "reassigned_own", "executor_released", "executor_unavailable",
-  "not_performed", "closed_by_giver",
+  "not_performed",
 ] as const;
 export type NetworkExecutionEndReason = (typeof NETWORK_EXECUTION_END_REASONS)[number];
 
@@ -650,7 +654,6 @@ export const NETWORK_EXECUTION_END_LABELS: Record<NetworkExecutionEndReason, str
   executor_released: "Retirée par l'organisation du chauffeur",
   executor_unavailable: "Chauffeur indisponible",
   not_performed: "Non effectuée",
-  closed_by_giver: "Clôturée par l'organisation",
 };
 
 /** Contrôles de fin (private.network_completion_checks) : jamais un refus, la course est « à vérifier ». */
@@ -1357,7 +1360,11 @@ export interface SvcNetworkApproveResult {
   ok: boolean;
   code: "APPROVED" | "REFUSED" | "NOT_FOUND" | "IDENTITY_INCOMPLETE" | "REASON_REQUIRED";
   message?: string;
-  /** IDENTITY_INCOMPLETE : champs vides de l'organisation */
+  /**
+   * IDENTITY_INCOMPLETE : champs de l'organisation vides OU invalides pour l'instantané (raison sociale 2 à 160
+   * caractères, SIRET 14 chiffres une fois espaces et séparateurs retirés, n° VTC 3 à 120 caractères) : la saisie des
+   * réglages est libre, svc_network_approve normalise puis contrôle chaque champ (jamais d'erreur 23514).
+   */
   missing?: ("legal_name" | "siret" | "vtc_registration")[];
   membership?: NetworkMembership;
 }

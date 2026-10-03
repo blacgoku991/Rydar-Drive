@@ -12,8 +12,8 @@ import {
 } from "../../packages/shared/src/network";
 import {
   acceptDriverTerms, approveNetwork, as, CHAMPS_ELYSEES, createDriver, createMember, createOrg, createRideAsOwner,
-  enableNetwork, expectPgError, networkTermsJson, networkTermsVersion, north, pingApp, pool, setSharedNetwork, sql,
-  type Driver, type Org,
+  enableNetwork, expectPgError, insertRideBypass, networkTermsJson, networkTermsVersion, north, pingApp, pool,
+  setSharedNetwork, sql, type Driver, type Org,
 } from "./helpers";
 
 afterAll(async () => {
@@ -248,10 +248,10 @@ describe("Schéma : clés étrangères (pg_constraint), contrôles et index", ()
       [[
         "rides_network_exec_idx", "rides_network_open_idx", "ride_offers_network_idx", "ride_settlements_network_driver_idx",
         "ride_settlements_network_org_idx", "ride_settlements_network_exec_org_idx", "ride_network_executions_open_idx",
-        "driver_identity_keys_lookup_idx", "network_exclusions_excluded_idx", "drivers_current_ride_idx",
+        "driver_identity_keys_lookup_idx", "network_exclusions_excluded_idx", "drivers_current_ride_idx", "rides_vehicle_idx",
       ]],
     );
-    expect(indexes).toHaveLength(10);
+    expect(indexes).toHaveLength(11);
     // Toutes les nouvelles tables : RLS activée
     const rls = await sql(
       `select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -261,6 +261,22 @@ describe("Schéma : clés étrangères (pg_constraint), contrôles et index", ()
           ('private', 'network_debtor_identities'))`,
     );
     expect(rls).toHaveLength(9);
+  });
+
+  it("empreinte du RIB : sur l'exécution (aucune lecture client), jamais dans ride_settlements (lu par tout membre de A)", async () => {
+    const cols = await sql(
+      `select table_name, column_name from information_schema.columns
+        where table_schema = 'public' and column_name like 'payout_iban%' order by 1, 2`,
+    );
+    expect(cols).toEqual([
+      { table_name: "ride_network_executions", column_name: "payout_iban_at" },
+      { table_name: "ride_network_executions", column_name: "payout_iban_hash" },
+    ]);
+    // Termes : jamais une contrainte CHECK appelant network_terms_complete (réévaluée à chaque UPDATE de la ligne)
+    const checks = await sql(
+      `select conname from pg_constraint where contype = 'c' and pg_get_constraintdef(oid) like '%network_terms_complete%'`,
+    );
+    expect(checks).toEqual([]);
   });
 
   it("convention : version par défaut = NETWORK_TERMS_VERSION ; interrupteur coupé par la migration", async () => {
@@ -364,6 +380,54 @@ describe("G2 : colonnes figées", () => {
     // Exécution : chauffeur retiré par la clé « on delete set null » → passage à NULL permis
     await sql(`update public.ride_network_executions set executor_driver_id = null where id = $1`, [executionId]);
   });
+
+  it("notification d'un partenaire : jamais de passage à NULL (clé « on delete cascade »), sinon lisible par tout A", async () => {
+    const p = await networkPair();
+    const { ride: r } = await partnerRide(p);
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const [n] = await sql(
+      `insert into public.notifications (organization_id, driver_id, ride_id, type, title, body)
+       values ($1, $2, $3, 'ride_reminder', 'RAPPEL', '12 avenue des Champs-Élysées') returning id`,
+      [p.A.id, p.partner.id, r.id],
+    );
+    for (const set of ["driver_id = null, driver_org_id = null", "driver_id = null", "driver_org_id = null"]) {
+      const e = await expectPgError(sql(`update public.notifications set ${set} where id = $1`, [n.id]));
+      expect(e.code, set).toBe("42501");
+      expect(e.message, set).toContain("FORBIDDEN_TENANT_CHANGE");
+    }
+    expect(await as({ sub: dispatcher }, (q) => q(`select id from public.notifications where id = $1`, [n.id]))).toEqual([]);
+  });
+
+  it("exécution : étiquette et contrôles figés (effacement des traces seul) ; empreinte du RIB posée une fois", async () => {
+    const p = await networkPair();
+    const { executionId } = await partnerRide(p);
+    for (const set of [`checks = '{"vtc_card_number": "Y2"}'`, `driver_label = 'Autre N.'`, `operator = '{"name": "Autre"}'`]) {
+      const e = await expectPgError(sql(`update public.ride_network_executions set ${set} where id = $1`, [executionId]));
+      expect(e.code, set).toBe("42501");
+    }
+    // Effacement des traces d'un compte supprimé (lot administration) : réglage local rydar.network_scrub…
+    await ownerTx(async (q) => {
+      await q(`select set_config('rydar.network_scrub', 'on', true)`);
+      await q(`update public.ride_network_executions set driver_label = 'Chauffeur supprimé · Exécutante', checks = '{}' where id = $1`, [
+        executionId,
+      ]);
+    });
+    // … qui ne touche ni aux termes, ni à l'exploitant
+    for (const set of [`operator = '{}'`, `vehicle = '{}'`]) {
+      const e = await expectPgError(ownerTx(async (q) => {
+        await q(`select set_config('rydar.network_scrub', 'on', true)`);
+        await q(`update public.ride_network_executions set ${set} where id = $1`, [executionId]);
+      }));
+      expect(e.code, set).toBe("42501");
+    }
+    // Empreinte du RIB : les deux colonnes ensemble, posées une fois, jamais changées ni effacées
+    expect((await expectPgError(sql(`update public.ride_network_executions set payout_iban_hash = repeat('a', 64) where id = $1`, [executionId]))).code)
+      .toBe("23514");
+    await sql(`update public.ride_network_executions set payout_iban_hash = repeat('a', 64), payout_iban_at = now() where id = $1`, [executionId]);
+    for (const set of [`payout_iban_hash = repeat('b', 64)`, `payout_iban_hash = null, payout_iban_at = null`, `payout_iban_at = now() + interval '1 day'`]) {
+      expect((await expectPgError(sql(`update public.ride_network_executions set ${set} where id = $1`, [executionId]))).code, set).toBe("42501");
+    }
+  });
 });
 
 // -----------------------------------------------------------------------------
@@ -439,6 +503,49 @@ describe("G3 : chauffeur d'une autre organisation posé sur une course", () => {
     expect((await expectPgError(offerTo(r.id, p.A, stranger))).code).toBe("42501");
     const e = await expectPgError(sql(`update public.rides set driver_id = $2, status = 'ACCEPTED' where id = $1`, [r.id, stranger.id]));
     expect(e.code).toBe("42501");
+  });
+
+  it("course tenue par un partenaire : network_at figé (il ne change qu'avec le chauffeur : retrait, réattribution)", async () => {
+    const p = await networkPair();
+    const { ride: r, executionId } = await partnerRide(p);
+    for (const set of ["network_at = null", "network_at = now() + interval '1 second'"]) {
+      const e = await expectPgError(sql(`update public.rides set ${set} where id = $1`, [r.id]));
+      expect(e.code, set).toBe("42501");
+      expect(e.message, set).toContain("FORBIDDEN_TENANT_CHANGE");
+    }
+    expect(await share(r.id)).toMatchObject({ status: "accepted", cycle: 1 });
+    expect(await executions(r.id)).toEqual([expect.objectContaining({ id: executionId, ended_at: null })]);
+    // Retrait (chauffeur et réseau dans la même instruction) : permis
+    await removePartner(r.id, p, "removed_by_giver");
+    expect(await ride(r.id)).toMatchObject({ driver_id: null, network_at: null });
+    // Course terminée par le partenaire : figé aussi
+    const { ride: done } = await partnerRide(p);
+    await sql(`update public.rides set status = 'COMPLETED', completed_at = now() where id = $1`, [done.id]);
+    expect((await expectPgError(sql(`update public.rides set network_at = null where id = $1`, [done.id]))).code).toBe("42501");
+  });
+
+  it("véhicule (ancienne clé (organization_id, vehicle_id)) : course sans chauffeur → véhicule de son organisation, détaché à la suppression", async () => {
+    const p = await networkPair();
+    // Course propre, chauffeur supprimé par son organisation : le véhicule reste (comme avant) ; véhicule supprimé : détaché
+    const own = await createDriver(p.A);
+    const rideId = await insertRideBypass(p.A, { status: "CANCELLED", cancelled_at: new Date(), driver_id: own.id, vehicle_id: own.vehicleId });
+    await as({ sub: p.A.ownerId }, (q) => q(`delete from public.drivers where id = $1`, [own.id]));
+    expect(await ride(rideId)).toMatchObject({ driver_id: null, driver_org_id: null, vehicle_id: own.vehicleId });
+    await as({ sub: p.A.ownerId }, (q) => q(`delete from public.vehicles where id = $1`, [own.vehicleId]));
+    expect((await ride(rideId)).vehicle_id).toBeNull();
+    // Course sans chauffeur : véhicule d'une autre organisation ou inexistant refusé (23503), le sien permis
+    const r = await createRideAsOwner(p.A);
+    const foreign = await createDriver(p.B);
+    for (const vehicle of [foreign.vehicleId, randomUUID()]) {
+      const e = await expectPgError(sql(`update public.rides set vehicle_id = $2 where id = $1`, [r.id, vehicle]));
+      expect(e.code).toBe("23503");
+    }
+    const mine = await createDriver(p.A);
+    await sql(`update public.rides set vehicle_id = $2 where id = $1`, [r.id, mine.vehicleId]);
+    // Partenaire retiré sans que l'appelant vide le véhicule : son véhicule part avec lui
+    const { ride: held } = await partnerRide(p);
+    await sql(`update public.rides set driver_id = null, network_at = null, status = 'SEARCHING_DRIVER' where id = $1`, [held.id]);
+    expect(await ride(held.id)).toMatchObject({ driver_id: null, vehicle_id: null });
   });
 
   it("accepté : driver_org_id = B ; jamais falsifiable ensuite", async () => {
@@ -612,6 +719,9 @@ describe("G6 : course confiée verrouillée (NETWORK_RIDE_LOCKED)", () => {
       [dispatcher, "pickup_address = '5 rue de la Paix, 75002 Paris'"],
       [dispatcher, "dropoff_lat = 48.9"],
       [dispatcher, "passengers = 3"],
+      // Bagages (élément de l'offre) ; n° de vol (le suivi de vol déplacerait l'heure selon le retard du nouveau vol)
+      [dispatcher, "luggage = 3"],
+      [dispatcher, "flight_number = 'AF1234'"],
     ] as const) {
       const e = await expectPgError(as({ sub: who }, (q) => q(`update public.rides set ${set} where id = $1`, [r.id])));
       expect(e.code, set).toBe("55000");
@@ -630,12 +740,14 @@ describe("G6 : course confiée verrouillée (NETWORK_RIDE_LOCKED)", () => {
       await q(`select set_config('rydar.network_flight_update', 'on', true)`);
       await q(`update public.rides set pickup_at = pickup_at + interval '20 minutes' where id = $1`, [r.id]);
     });
-    // … mais pas un autre champ sous le même réglage
-    const e = await expectPgError(ownerTx(async (q) => {
-      await q(`select set_config('rydar.network_flight_update', 'on', true)`);
-      await q(`update public.rides set pickup_at = pickup_at + interval '5 minutes', price_cents = 9000 where id = $1`, [r.id]);
-    }));
-    expect(e.code).toBe("55000");
+    // … mais pas un autre champ sous le même réglage, n° de vol compris
+    for (const set of ["pickup_at = pickup_at + interval '5 minutes', price_cents = 9000", "flight_number = 'AF1234'", "luggage = 2"]) {
+      const e = await expectPgError(ownerTx(async (q) => {
+        await q(`select set_config('rydar.network_flight_update', 'on', true)`);
+        await q(`update public.rides set ${set} where id = $1`, [r.id]);
+      }));
+      expect(e.code, set).toBe("55000");
+    }
   });
 
   it("centrale : commission saisie refusée ; changement de modèle (répartition recalculée) permis ; course terminée verrouillée ; retirée : modifiable", async () => {
@@ -648,13 +760,17 @@ describe("G6 : course confiée verrouillée (NETWORK_RIDE_LOCKED)", () => {
     expect(e.message).toContain("NETWORK_RIDE_LOCKED");
     // Retrait au partenaire : de nouveau modifiable
     await removePartner(r.id, p, "removed_by_giver");
-    await as({ sub: p.A.ownerId }, (q) => q(`update public.rides set price_cents = 8000, pickup_address = '9 rue Royale, 75008 Paris' where id = $1`, [r.id]));
+    await as({ sub: p.A.ownerId }, (q) =>
+      q(`update public.rides set price_cents = 8000, pickup_address = '9 rue Royale, 75008 Paris', flight_number = 'AF1234', luggage = 2 where id = $1`, [r.id]));
 
     // Course terminée par un partenaire (A flotte) : verrouillée
     const q2 = await networkPair();
     const { ride: done } = await partnerRide(q2);
     await sql(`update public.rides set status = 'COMPLETED', completed_at = now() where id = $1`, [done.id]);
-    expect((await expectPgError(as({ sub: q2.A.ownerId }, (q) => q(`update public.rides set price_cents = 100 where id = $1`, [done.id])))).code).toBe("55000");
+    for (const set of ["price_cents = 100", "flight_number = 'AF1234'", "luggage = 4"]) {
+      expect((await expectPgError(as({ sub: q2.A.ownerId }, (q) => q(`update public.rides set ${set} where id = $1`, [done.id])))).code, set)
+        .toBe("55000");
+    }
   });
 
   it("course propre ou annulée : aucune différence", async () => {
@@ -685,12 +801,38 @@ describe("G7 : fiche avec des obligations réseau", () => {
     expect((await expectPgError(remove())).code).toBe("55000");
     await sql(`update public.ride_settlements set status = 'paid', settled_at = now(), settled_method = 'cash' where id = $1`, [sid]);
     expect(await remove()).toHaveLength(1);
-    // Traces chez A conservées sans la fiche : course sans chauffeur, exécution et règlement détachés
-    expect(await ride(r.id)).toMatchObject({ driver_id: null, driver_org_id: null });
+    // Traces chez A conservées sans la fiche : course sans chauffeur ni véhicule de B, exécution et règlement détachés
+    expect(await ride(r.id)).toMatchObject({ driver_id: null, driver_org_id: null, vehicle_id: null });
     const [x] = await sql(`select executor_driver_id, end_reason from public.ride_network_executions where id = $1`, [executionId]);
     expect(x).toEqual({ executor_driver_id: null, end_reason: "completed" });
     const [s] = await sql(`select network_driver_id, network_driver_org_id from public.ride_settlements where id = $1`, [sid]);
     expect(s).toEqual({ network_driver_id: null, network_driver_org_id: p.B.id });
+  });
+
+  it("B ne retire pas DIRECTEMENT le statut actif d'un chauffeur qui tient une course de A (droit par colonne) ; ensuite, si", async () => {
+    const p = await networkPair();
+    const admin = await createMember(p.B, "admin");
+    const { ride: r } = await partnerRide(p);
+    const setStatus = (who: string, status: string) =>
+      as({ sub: who }, (q) => q(`update public.drivers set status = $2 where id = $1 returning id`, [p.partner.id, status]));
+    for (const [who, status] of [[p.B.ownerId, "inactive"], [admin, "suspended"], [p.B.ownerId, "invited"]] as const) {
+      const e = await expectPgError(setStatus(who, status));
+      expect(e.code, status).toBe("55000");
+      expect(e.message, status).toContain("DRIVER_HAS_NETWORK_OBLIGATIONS");
+    }
+    // Client à bord : de même
+    await sql(`update public.rides set status = 'IN_PROGRESS', started_at = now() where id = $1`, [r.id]);
+    expect((await expectPgError(setStatus(p.B.ownerId, "suspended"))).code).toBe("55000");
+    // Autres colonnes de la fiche : inchangé
+    await as({ sub: p.B.ownerId }, (q) => q(`update public.drivers set notes = 'RAS' where id = $1`, [p.partner.id]));
+    expect((await sql(`select status from public.drivers where id = $1`, [p.partner.id]))[0].status).toBe("active");
+    // Course terminée : statut de nouveau libre
+    await sql(`update public.rides set status = 'COMPLETED', completed_at = now() where id = $1`, [r.id]);
+    expect(await setStatus(p.B.ownerId, "inactive")).toHaveLength(1);
+    // Chauffeur sans course partenaire : inchangé
+    const mate = await createDriver(p.B);
+    expect(await as({ sub: admin }, (q) => q(`update public.drivers set status = 'suspended' where id = $1 returning id`, [mate.id])))
+      .toHaveLength(1);
   });
 
   it("fiche sans lien réseau : suppression inchangée", async () => {
@@ -743,6 +885,22 @@ describe("G9 : termes modifiés pendant la recherche réseau", () => {
     expect((await sql(`select status from public.ride_offers where id = $1`, [ownOffer.id]))[0].status).toBe("pending");
     // Reproposable avec les nouveaux termes (une offre « terms_changed » n'exclut pas le chauffeur)
     await offerTo(r.id, p.A, p.partner, { terms: networkTermsJson({ price: 8000, fee: 800 }) });
+  });
+
+  it("une seule course : les offres réseau des autres courses de A restent ouvertes (close_network_offers, filtre course)", async () => {
+    const p = await networkPair();
+    const r1 = await rideInNetwork(p.A);
+    const o1 = await offerTo(r1.id, p.A, p.partner);
+    const r2 = await rideInNetwork(p.A);
+    const o2 = await offerTo(r2.id, p.A, p.partner);
+    await as({ sub: p.A.ownerId }, (q) => q(`update public.rides set passengers = 3 where id = $1`, [r1.id]));
+    const status = async (id: string) => (await sql(`select status, closed_reason from public.ride_offers where id = $1`, [id]))[0];
+    expect(await status(o1.id)).toEqual({ status: "closed", closed_reason: "terms_changed" });
+    expect(await status(o2.id)).toEqual({ status: "pending", closed_reason: null });
+    // Vol retardé (lot dispatch) : même portée
+    const [{ n }] = await sql(`select private.close_network_offers($1, null, null, 'flight_rescheduled', $2) as n`, [p.A.id, r2.id]);
+    expect(n).toBe(1);
+    expect(await status(o2.id)).toEqual({ status: "closed", closed_reason: "flight_rescheduled" });
   });
 });
 
@@ -804,6 +962,18 @@ describe("G10 : état du partage et fin d'exécution (seul endroit)", () => {
     await sql(`select private.expire_unstarted_rides()`);
     expect((await executions(late.id))[0].end_reason).toBe("not_performed");
     expect(await share(late.id)).toMatchObject({ status: "closed", closed_reason: "not_performed" });
+
+    // Clôture par A (close_network_ride, lot dispatch) : « completed » comme toute fin (motif dans suspect_reasons)
+    const { ride: closed, executionId: closedExecution } = await partnerRide(p);
+    await ownerTx(async (q) => {
+      await q(`select set_config('rydar.network_reason', 'closed_by_giver', true)`);
+      await q(`update public.rides set status = 'COMPLETED', completed_at = now() where id = $1`, [closed.id]);
+    });
+    expect((await executions(closed.id))[0].end_reason).toBe("completed");
+    expect(await share(closed.id)).toMatchObject({ status: "completed" });
+    const e = await expectPgError(sql(`update public.ride_network_executions set end_reason = 'closed_by_giver' where id = $1`, [closedExecution]));
+    expect(e.code).toBe("23514");
+    await sql(`update public.ride_network_executions set suspect_reasons = array['closed_by_giver'] where id = $1`, [closedExecution]);
 
     const nobody = await rideInNetwork(p.A);
     await sql(`update public.rides set status = 'NO_DRIVER_FOUND', no_driver_at = now(), next_dispatch_at = null where id = $1`, [nobody.id]);
@@ -1096,6 +1266,9 @@ describe("Droits : écritures réseau par les fonctions seulement", () => {
       [p.A.ownerId, `select private.network_pair_ok($1, $2)`, [p.A.id, p.B.id]],
       [p.A.ownerId, `select private.network_org_reason($1, 'out')`, [p.A.id]],
       [p.A.ownerId, `select private.close_network_offers($1, null, null, 'sharing_stopped')`, [p.A.id]],
+      // Répond pour n'importe quel chauffeur : fonctions serveur seulement (la policy passe par member_drivers_on_foreign_ride)
+      [p.A.ownerId, `select private.driver_on_foreign_ride($1)`, [p.partner.id]],
+      [p.B.ownerId, `select private.driver_on_foreign_ride($1)`, [p.partner.id]],
     ];
     for (const [who, stmt, params] of denied) {
       const e = await expectPgError(as({ sub: who }, (q) => q(stmt, params)));
@@ -1278,11 +1451,54 @@ describe("Contrats du lot 0 (@rydar/shared/network.ts) : mêmes valeurs que le S
     expect(c.def).toContain(`<= ${NETWORK_PARAMS.executorCreditLimitMaxCents}`);
   });
 
-  it("motifs de fermeture des offres réseau (NetworkOfferClosedReason) ; motif inconnu refusé", async () => {
-    for (const reason of ["terms_changed", "network_unavailable", "flight_rescheduled", "sharing_stopped", "driver_busy"]) {
+  it("motifs de fermeture des offres réseau (NetworkOfferClosedReason) ; motif inconnu refusé ; motif d'une course sans sa course refusé", async () => {
+    const [rideId, driverId] = [randomUUID(), randomUUID()];
+    for (const reason of ["network_unavailable", "sharing_stopped"]) {
       await sql(`select private.close_network_offers(gen_random_uuid(), null, null, $1)`, [reason]);
+      await sql(`select private.close_network_offers(null, null, null, $1, $2)`, [reason, rideId]);
+    }
+    for (const reason of ["terms_changed", "flight_rescheduled"]) {
+      await sql(`select private.close_network_offers(gen_random_uuid(), null, null, $1, $2)`, [reason, rideId]);
+      expect((await expectPgError(sql(`select private.close_network_offers(gen_random_uuid(), null, null, $1)`, [reason]))).code, reason)
+        .toBe("22023");
+    }
+    await sql(`select private.close_network_offers(null, null, $1, 'driver_busy', $2)`, [driverId, rideId]);
+    for (const args of [[null, rideId], [driverId, null]]) {
+      expect((await expectPgError(sql(`select private.close_network_offers(null, null, $1, 'driver_busy', $2)`, args))).code).toBe("22023");
     }
     expect((await expectPgError(sql(`select private.close_network_offers(null, null, null, 'autre')`))).code).toBe("22023");
+  });
+
+  it("termes validés à l'insertion seulement : une fonction de contrôle durcie plus tard ne bloque ni l'expiration d'une offre ni la fin d'une course", async () => {
+    const p = await networkPair();
+    const r = await rideInNetwork(p.A);
+    const pending = await offerTo(r.id, p.A, p.partner);
+    const { ride: held, executionId } = await partnerRide(p);
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      // Contrôle durci (clé « currency » exigée) : plus aucune ligne existante ne le satisfait
+      await client.query(
+        `create or replace function private.network_terms_complete(p jsonb) returns boolean language sql immutable
+           set search_path = '' as $f$ select p ? 'currency' $f$`,
+      );
+      await client.query(`update public.ride_offers set status = 'expired', responded_at = now() where id = $1`, [pending.id]);
+      await client.query(`update public.rides set status = 'COMPLETED', completed_at = now() where id = $1`, [held.id]);
+      const { rows } = await client.query(`select end_reason from public.ride_network_executions where id = $1`, [executionId]);
+      expect(rows[0].end_reason).toBe("completed");
+      // … mais toute nouvelle offre réseau est contrôlée
+      const e = await expectPgError(
+        client.query(
+          `insert into public.ride_offers (organization_id, ride_id, driver_id, status, mode, wave, expires_at, network_terms)
+           values ($1, $2, $3, 'pending', 'geo', 8, now() + interval '30 seconds', $4)`,
+          [p.A.id, r.id, p.partner.id, TERMS],
+        ),
+      );
+      expect(e.code).toBe("23514");
+    } finally {
+      await client.query("rollback");
+      client.release();
+    }
   });
 
   it("exécution : la lecture des données client par le partenaire n'est pas diffusée", async () => {
