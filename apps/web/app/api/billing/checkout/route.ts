@@ -1,3 +1,4 @@
+import { ORG_LEGAL_VERSION } from "@rydar/shared";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
@@ -18,15 +19,28 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: "Offre invalide." }, { status: 422 });
 
   const admin = createAdminClient();
-  const [{ data: plan }, { data: org }, { data: live, error: liveError }] = await Promise.all([
+  const [{ data: plan }, { data: org }, { data: live, error: liveError }, { data: terms, error: termsError }] = await Promise.all([
     admin.from("plans").select("id, code, is_public, stripe_price_monthly_id, stripe_price_yearly_id").eq("code", parsed.data.planCode).eq("is_active", true).maybeSingle(),
     admin.from("organizations").select("id, name, email, stripe_customer_id, plan_id").eq("id", ctx.org.id).single(),
     // Abonnement Stripe encore vivant : Checkout en créerait un SECOND (double facturation)
     admin.from("subscriptions").select("id").eq("organization_id", ctx.org.id).not("stripe_subscription_id", "is", null)
       .in("status", ["active", "trialing", "past_due", "unpaid", "paused"]).limit(1),
+    // CGV et accord de traitement EN VIGUEUR acceptés au nom de l'organisation avant tout paiement (C. civ. 1119 : des
+    // conditions générales non acceptées ne sont pas opposables) ; « dpa » suffit, les deux sont enregistrés ensemble
+    admin.from("legal_acceptances").select("version").eq("organization_id", ctx.org.id).eq("document", "dpa")
+      .eq("version", ORG_LEGAL_VERSION).limit(1),
   ]);
-  if (liveError) return NextResponse.json({ error: "Abonnement indisponible pour le moment : réessayez." }, { status: 503 });
+  if (liveError || termsError) return NextResponse.json({ error: "Abonnement indisponible pour le moment : réessayez." }, { status: 503 });
   if (live?.length) return NextResponse.json({ error: "Vous avez déjà un abonnement : changez d'offre avec le bouton « Gérer »." }, { status: 409 });
+  if (!terms?.length) {
+    return NextResponse.json(
+      {
+        error:
+          "Acceptez d'abord, au nom de votre organisation, les conditions générales de vente et l'accord de traitement des données (bandeau en haut du tableau de bord).",
+      },
+      { status: 409 },
+    );
+  }
   const priceId = parsed.data.interval === "year" ? (plan as any)?.stripe_price_yearly_id : (plan as any)?.stripe_price_monthly_id;
   // Offre non publique (négociée) : seulement celle que le super admin a attribuée à cette centrale
   const allowed = plan && ((plan as any).is_public || (plan as any).id === (org as any)?.plan_id);

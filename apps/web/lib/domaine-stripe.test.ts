@@ -1,3 +1,4 @@
+import { ORG_LEGAL_VERSION } from "@rydar/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Facturation Stripe : webhook (/api/stripe/webhook) et Checkout (/api/billing/checkout), avec Stripe et Supabase simulés.
@@ -157,6 +158,8 @@ beforeEach(() => {
     ],
     subscriptions: [],
     invoices: [],
+    // CGV et accord de traitement en vigueur acceptés au nom de la centrale (exigés avant tout paiement)
+    legal_acceptances: [{ organization_id: ORG, document: "dpa", version: ORG_LEGAL_VERSION }],
   };
   h.ctx = { org: { id: ORG }, role: "owner", user: { id: "u1" }, profile: { email: "owner@test.dev" } };
 });
@@ -289,5 +292,21 @@ describe("Checkout Stripe", () => {
     expect((await call("partenaire")).status).toBe(422);
     org().plan_id = PRIVATE;
     expect((await call("partenaire")).status).toBe(200);
+  });
+
+  it("CGV et accord de traitement en vigueur non acceptés : 409, aucun paiement (version antérieure seule comprise)", async () => {
+    h.db.legal_acceptances = [{ organization_id: ORG, document: "dpa", version: "2000-01-01" }];
+    const res = await call("starter");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/conditions générales de vente/);
+    expect(h.sessions).toHaveLength(0);
+    h.db.legal_acceptances.push({ organization_id: ORG, document: "dpa", version: ORG_LEGAL_VERSION });
+    expect((await call("starter")).status).toBe(200);
+  });
+
+  it("acceptation illisible (base en erreur) : 503, aucun paiement", async () => {
+    h.fail = { table: "legal_acceptances", op: "select" };
+    expect((await call("starter")).status).toBe(503);
+    expect(h.sessions).toHaveLength(0);
   });
 });
