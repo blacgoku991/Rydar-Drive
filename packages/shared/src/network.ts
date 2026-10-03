@@ -703,6 +703,45 @@ export const NETWORK_CLOSE_CAUSES = ["driver_inactive", "executor_inactive", "no
 export type NetworkCloseCause = (typeof NETWORK_CLOSE_CAUSES)[number];
 
 /**
+ * Course tenue par un chauffeur partenaire, client à bord : annulation refusée par la base à tout membre
+ * (NETWORK_RIDE_IN_PROGRESS, private.cancel_ride_internal) — « Annuler » n'est pas proposé ; seule voie si le partenaire
+ * ne peut plus la terminer : « Clôturer la course » (close_network_ride). Jusqu'à DRIVER_ARRIVED : annulation inchangée.
+ */
+export const NETWORK_ONBOARD_STATUSES = ["PASSENGER_ONBOARD", "IN_PROGRESS"] as const satisfies readonly RideStatus[];
+export function networkCancelBlocked(status: RideStatus, heldByPartner: boolean): boolean {
+  return heldByPartner && (NETWORK_ONBOARD_STATUSES as readonly RideStatus[]).includes(status);
+}
+
+/** Libellés (organisation qui confie la course) des retraits, des causes du chien de garde et de la clôture. */
+export const NETWORK_UNASSIGN_REASON_LABELS: Record<NetworkUnassignReason, string> = {
+  removed_by_giver: "retirée par votre organisation",
+  executor_released: "retirée par l'organisation du chauffeur",
+  executor_unavailable: "chauffeur partenaire indisponible",
+};
+/** Mêmes mots que le message du journal (private.network_watch, 20260924006800). */
+export const NETWORK_WATCH_CAUSE_LABELS: Record<NetworkWatchCause, string> = {
+  driver_inactive: "chauffeur désactivé",
+  executor_inactive: "organisation suspendue",
+  executor_suspended: "organisation suspendue du réseau partagé",
+  driver_withdrawn: "retiré du réseau partagé par son organisation",
+};
+export const NETWORK_CLOSE_CAUSE_LABELS: Record<NetworkCloseCause, string> = {
+  driver_inactive: "chauffeur désactivé",
+  executor_inactive: "organisation du chauffeur inactive",
+  no_position: "sans position depuis 30 min",
+};
+/**
+ * Titres des alertes de l'organisation qui confie la course (tableau de bord) pour les événements réseau d'une course
+ * (ride_events, type) ; le détail vient du message du journal (libellé court du partenaire, jamais son identifiant).
+ */
+export const NETWORK_RIDE_ALERT_TITLES = {
+  "network.executor_unavailable": "Chauffeur partenaire indisponible",
+  "ride.network_unassigned": "Course retirée au chauffeur partenaire",
+  "ride.network_closed": "Course partenaire clôturée",
+} as const satisfies Partial<Record<NetworkRideEventType, string>>;
+export type NetworkRideAlertEventType = keyof typeof NETWORK_RIDE_ALERT_TITLES;
+
+/**
  * Plafond du compteur « chauffeurs partenaires à proximité » du journal dispatch.network (private.network_open,
  * 20260924007200) : le comptage s'arrête là (contrôles coûteux), la valeur atteinte se lit « au moins autant ».
  */

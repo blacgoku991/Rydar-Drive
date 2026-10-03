@@ -1,6 +1,6 @@
 import {
   DRIVER_STATUS_META, OFFER_STATUS_META, PAYMENT_METHOD_LABELS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, canAssign, canCancel, canRedispatch,
-  formatDistance, formatDuration, formatPhone, formatPrice, formatTime, haversine,
+  formatDistance, formatDuration, formatPhone, formatPrice, formatTime, haversine, networkCancelBlocked,
   type DriverStatus, type OfferStatus, type OrgNetworkRide, type PaymentMethod, type RideSource, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeft, ArrowLeftRight, BellRing, Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
@@ -170,7 +170,8 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
             <RideActions
               rideId={ride.id}
               number={ride.number}
-              canCancel={canCancel(status)}
+              // Client à bord d'un chauffeur partenaire : annulation refusée par la base (« Clôturer la course » seulement)
+              canCancel={canCancel(status) && !networkCancelBlocked(status, !!partnerOrg)}
               canRedispatch={canRedispatch(status) && !ride.driver_id}
               canAssign={canAssign(status) || status === "DRIVER_EN_ROUTE" || status === "DRIVER_ARRIVED"}
               assignLabel={ride.driver_id ? "Réattribuer" : "Attribuer"}

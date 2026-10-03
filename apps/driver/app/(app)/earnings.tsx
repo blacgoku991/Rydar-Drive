@@ -178,7 +178,9 @@ export default function Earnings() {
                   <View style={styles.net}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.netLabel}>Courses {formatPrice(p.revenue_cents, currency)}</Text>
-                      <Text style={styles.netHint}>Moins commission et frais de la centrale</Text>
+                      {/* Courses partenaires de la période : leur part (organisations qui les ont confiées) est à part, jamais
+                          présentée comme une commission ; la commission ne porte que sur les courses de la centrale */}
+                      <Text style={styles.netHint}>Moins commission et frais de la centrale{partnerPart ? " sur ses courses" : ""}</Text>
                     </View>
                     <Text style={styles.netValue} accessibilityLabel={`Moins ${formatPrice(p.commission_cents ?? 0, currency)}`}>
                       −{formatPrice(p.commission_cents ?? 0, currency)}

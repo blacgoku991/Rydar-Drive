@@ -2,7 +2,9 @@
 // (information), aucun chauffeur après le réseau, acceptation par un chauffeur partenaire, règlement d'une course
 // confiée. Module pur (tests : alerts.test.ts). Les événements ne contiennent jamais d'identifiant de partenaire.
 import {
-  NETWORK_PARTNERS_NEARBY_MAX, networkPartnersFromNoDriver, type NetworkNoDriverEventData, type NetworkShareStage,
+  NETWORK_CLOSE_CAUSE_LABELS, NETWORK_PARTNERS_NEARBY_MAX, NETWORK_RIDE_ALERT_TITLES, NETWORK_UNASSIGN_REASON_LABELS,
+  NETWORK_WATCH_CAUSE_LABELS, networkPartnersFromNoDriver, type NetworkCloseCause, type NetworkNoDriverEventData,
+  type NetworkShareStage, type NetworkUnassignReason, type NetworkWatchCause,
 } from "@rydar/shared";
 import { networkShareHref } from "./paths";
 
@@ -64,4 +66,60 @@ export function noDriverNetworkLine(e: { message?: string | null; data?: Network
 export function networkSettlementLink(action: "created" | "declared", direction: "driver_owes" | "centrale_owes"): { href: string; cta: string } {
   const filter = action === "declared" ? "to_confirm" : direction === "centrale_owes" ? "to_pay" : "to_collect";
   return { href: networkShareHref({ tab: "confiees", filter }), cta: "Réseau partagé" };
+}
+
+export type NetworkRideAlert = { title: string; body: string; level: "warning" | "info"; /** « Clôturer la course » */ close: boolean };
+
+/**
+ * Événements réseau d'une course confiée (journal, `ride.event`) affichés en alerte :
+ *  - « network.executor_unavailable » : partenaire devenu indisponible, client à bord — il peut terminer, sinon A
+ *    clôture la course (bouton « Clôturer la course », owner / admin) ;
+ *  - « ride.network_unassigned » : course rendue (organisation du chauffeur, chauffeur indisponible) et relancée chez A,
+ *    ses chauffeurs d'abord — rien quand A l'a retirée elle-même (« removed_by_giver » : déjà sous les yeux de l'auteur) ;
+ *  - « ride.network_closed » : course clôturée par A, marquée « à vérifier ».
+ * null : autre événement. Jamais l'identifiant du partenaire (les données n'en contiennent pas).
+ */
+export function networkRideAlert(
+  e: { type?: string | null; data?: { reason?: string; cause?: string; auto?: boolean } | null },
+  ride: { label: string; route: string },
+): NetworkRideAlert | null {
+  const label = ride.label ? ` ${ride.label}` : "";
+  const join = (parts: (string | null | undefined)[]) => parts.filter(Boolean).join(" · ");
+  const d = e.data ?? {};
+  switch (e.type) {
+    case "network.executor_unavailable": {
+      const cause = NETWORK_WATCH_CAUSE_LABELS[d.cause as NetworkWatchCause];
+      return {
+        title: `${NETWORK_RIDE_ALERT_TITLES["network.executor_unavailable"]}${label ? ` ·${label}` : ""}`,
+        body: join([cause ? `Client à bord (${cause})` : "Client à bord", "il peut terminer la course ; sinon, clôturez-la", ride.route]),
+        level: "warning",
+        close: true,
+      };
+    }
+    case "ride.network_unassigned": {
+      if (d.reason === "removed_by_giver") return null;
+      const reason = NETWORK_UNASSIGN_REASON_LABELS[d.reason as NetworkUnassignReason];
+      return {
+        title: `Course${label} retirée au chauffeur partenaire`,
+        body: join([
+          reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : null,
+          d.auto === false ? "à attribuer à l'un de vos chauffeurs" : "recherche relancée, vos chauffeurs d'abord",
+          ride.route,
+        ]),
+        level: "warning",
+        close: false,
+      };
+    }
+    case "ride.network_closed": {
+      const cause = NETWORK_CLOSE_CAUSE_LABELS[d.cause as NetworkCloseCause];
+      return {
+        title: `Course${label} clôturée`,
+        body: join(["Course partenaire marquée « à vérifier »", cause, ride.route]),
+        level: "info",
+        close: false,
+      };
+    }
+    default:
+      return null;
+  }
 }

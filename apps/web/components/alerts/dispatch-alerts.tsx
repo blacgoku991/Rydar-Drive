@@ -14,7 +14,9 @@
 //    (useLiveSync : rien tant que l'onglet est caché).
 // Réseau partagé (20260924006700, jamais émis tant que le réseau est fermé) : `dispatch.network` en information
 // (course proposée aux chauffeurs partenaires), « aucun chauffeur » qui mentionne le réseau, acceptation par un
-// chauffeur partenaire (libellé court) ; règlements des courses confiées → onglet « Réseau partagé » (jamais WhatsApp).
+// chauffeur partenaire (libellé court) ; règlements des courses confiées → onglet « Réseau partagé » (jamais WhatsApp) ;
+// course confiée : partenaire indisponible client à bord (« Clôturer la course », owner / admin), course rendue au
+// partenaire puis relancée, course clôturée (alertes fermées quand la course se termine).
 import {
   DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatPhone, formatPrice, formatRideDate, formatTime,
   platformFeeScopeText, shortAddress,
@@ -31,11 +33,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { Popover as P } from "radix-ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { confirmNetworkSettlement } from "@/app/dashboard/reseau-partage/actions";
+import { closeNetworkRide, confirmNetworkSettlement } from "@/app/dashboard/reseau-partage/actions";
 import { redispatchRide } from "@/app/dashboard/rides/actions";
 import { confirmSettlements } from "@/app/dashboard/settlements/actions";
 import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/components/alerts/ride-alert-ui";
-import { acceptedBy, networkProposedAlert, networkSettlementLink, noDriverNetworkLine } from "@/components/network-share/alerts";
+import { acceptedBy, networkProposedAlert, networkRideAlert, networkSettlementLink, noDriverNetworkLine } from "@/components/network-share/alerts";
 import { feeTermsText, frSpaces, scheduledFeeChangeText } from "@/components/platform-fees/org-platform-format";
 import { isPlatformFeesPath, platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
@@ -76,6 +78,8 @@ export type AlertItem = {
   alert?: { id: string; kind: RideAlertKind; severity: RideAlertSeverity; driverId: string | null; driverName?: string; rideNumber?: number };
   /** Alerte traitée ou résolue (historique de la cloche). */
   done?: boolean;
+  /** Réseau partagé : partenaire indisponible, client à bord — « Clôturer la course » (owner / admin). */
+  networkClose?: boolean;
   /** Mode centrale : règlement de fin de course (à encaisser, à verser, « J'ai payé » à confirmer). */
   settlement?: {
     id: string;
@@ -131,6 +135,7 @@ function visual(i: AlertItem): { icon: LucideIcon; color: string; emoji?: string
     if (i.level === "warning") return { icon: BellRing, color: LEVEL_COLOR.warning };
     return BASE.platform;
   }
+  if (i.kind === "network" && i.level === "warning") return { icon: AlertTriangle, color: LEVEL_COLOR.warning };
   if (i.kind === "settlement" && i.settlement) {
     if (i.settlement.action === "declared") return { icon: CheckCheck, color: "var(--color-blue)" };
     if (i.settlement.direction === "centrale_owes") return { icon: ArrowUpRight, color: "var(--color-violet)" };
@@ -181,7 +186,9 @@ function behavior(i: AlertItem): { sound: SoundKind | null; desktop: boolean; du
         ? { sound: "notice", desktop: true, duration: 20_000 }
         : { sound: "notice", desktop: false, duration: 10_000 };
     case "network":
-      // Information : la recherche continue chez les partenaires (rien à faire) ; « aucun chauffeur » suivra sinon
+      // Information : la recherche continue chez les partenaires (rien à faire) ; « aucun chauffeur » suivra sinon.
+      // Partenaire indisponible client à bord (à clôturer si besoin) ou course rendue : à traiter
+      if (i.level === "warning") return { sound: "alert", desktop: true, duration: i.networkClose ? Infinity : 15_000 };
       return { sound: null, desktop: false, duration: 8000 };
   }
 }
@@ -528,7 +535,21 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     return r ? { label: `#${r.number}`, route: `${shortAddress(r.pickup)} → ${shortAddress(r.dropoff)}`, number: r.number } : { label: "", route: "", number: undefined };
   };
 
+  // Réseau partagé : alerte « partenaire indisponible » d'une course close (terminée, clôturée, rendue, annulée)
+  const dismissNetworkClose = (rideId: string) => {
+    const prefix = `nxu:${rideId}:`;
+    for (const i of itemsRef.current) {
+      if (!i.id.startsWith(prefix)) continue;
+      toast.dismiss(i.id);
+      shown.current.delete(i.id);
+    }
+    update((list) =>
+      list.some((i) => i.id.startsWith(prefix) && !i.done) ? list.map((i) => (i.id.startsWith(prefix) ? { ...i, done: true } : i)) : list,
+    );
+  };
+
   useRealtimeEvent("ride.updated", (p) => {
+    if (p?.id && (p.status === "COMPLETED" || p.status === "CANCELLED")) dismissNetworkClose(p.id);
     if (!p?.id || p.number == null) return;
     rides.current.set(p.id, {
       number: p.number, pickup: p.pickup_address, dropoff: p.dropoff_address, price: p.price_cents,
@@ -579,6 +600,16 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     } else if (e.type === "dispatch.network") {
       // Information : aucun de vos chauffeurs n'a accepté, la course est proposée aux chauffeurs partenaires proches
       push({ id: `net:${e.id}`, kind: "network", rideId: e.ride_id, level: "info", ...networkProposedAlert(e, { label, route }) });
+    } else if (e.type === "network.executor_unavailable" || e.type === "ride.network_unassigned" || e.type === "ride.network_closed") {
+      // Course confiée : partenaire indisponible client à bord (clôture possible), rendue puis relancée, clôturée
+      if (e.type !== "network.executor_unavailable") dismissNetworkClose(e.ride_id);
+      const a = networkRideAlert(e, { label, route });
+      if (a) {
+        push({
+          id: a.close ? `nxu:${e.ride_id}:${e.id}` : `nev:${e.id}`,
+          kind: "network", rideId: e.ride_id, level: a.level, title: a.title, body: a.body, networkClose: a.close,
+        });
+      }
     } else if (e.type === "dispatch.escalated") {
       push({ id: `esc:${e.id}`, kind: "escalated", rideId: e.ride_id, title: `Planifiée ${label} toujours sans chauffeur`.trim(), body: [route, "Recherche GPS lancée autour du départ."].filter(Boolean).join(" · ") });
     } else if (e.type === "ride.cancelled" && (e.actor_type === "api" || e.actor_type === "booking_site")) {
@@ -1002,6 +1033,7 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
               <RotateCw className={cn("size-3.5", busy && "animate-spin")} /> Relancer
             </button>
           )}
+          {item.networkClose && <CloseNetworkRideButton rideId={item.rideId} api={api} onClose={onClose} btn={btn} />}
         </div>
       ) : item.kind === "settlement" && item.settlement ? (
         <SettlementToastActions item={item} api={api} onClose={onClose} btn={btn} />
@@ -1034,6 +1066,41 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
         <X className="size-3.5" />
       </button>
     </div>
+  );
+}
+
+/**
+ * « Clôturer la course » (réseau partagé, owner / admin : close_network_ride) : le partenaire indisponible ne peut plus
+ * terminer la course dans l'application. Deux appuis (le premier arme la confirmation 5 s) ; refus de la base affiché.
+ */
+function CloseNetworkRideButton({ rideId, api, onClose, btn }: { rideId: string; api: Api; onClose: () => void; btn: string }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = window.setTimeout(() => setArmed(false), 5000);
+    return () => window.clearTimeout(t);
+  }, [armed]);
+  const role = api.centrale()?.role;
+  if (role !== "owner" && role !== "admin") return null;
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={async () => {
+        if (!armed) return setArmed(true);
+        setBusy(true);
+        const res = await runAction(() => closeNetworkRide(rideId)).finally(() => setBusy(false));
+        if (!res) return;
+        if (res.ok) {
+          toast.success(res.message);
+          onClose();
+        } else toast.error(res.error);
+      }}
+      className={cn(btn, armed ? "bg-red font-semibold text-white hover:bg-red/90" : "bg-amber font-semibold text-ink-950 hover:opacity-90", "disabled:opacity-60")}
+    >
+      {armed ? "Confirmer la clôture" : "Clôturer la course"}
+    </button>
   );
 }
 

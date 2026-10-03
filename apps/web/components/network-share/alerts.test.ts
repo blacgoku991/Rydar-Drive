@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acceptedBy, networkProposedAlert, networkSettlementLink, noDriverNetworkLine } from "./alerts";
+import { acceptedBy, networkProposedAlert, networkRideAlert, networkSettlementLink, noDriverNetworkLine } from "./alerts";
 
 // Alertes du rattacheur : réseau partagé en information, « aucun chauffeur » qui mentionne le réseau, acceptation
 // par un chauffeur partenaire (libellé court seulement), règlements des courses confiées vers « Réseau partagé ».
@@ -51,5 +51,37 @@ describe("alertes du réseau partagé", () => {
     expect(networkSettlementLink("created", "centrale_owes").href).toBe("/dashboard/reseau-partage?tab=confiees&filtre=to_pay");
     // Payée à bord : « À encaisser » (et non toute la liste) ; sous-onglet toujours explicite
     expect(networkSettlementLink("created", "driver_owes").href).toBe("/dashboard/reseau-partage?tab=confiees&filtre=to_collect");
+  });
+
+  it("événements réseau d'une course confiée : indisponible (clôture), rendue (relance), clôturée ; rien sinon", () => {
+    const ride = { label: "#1783", route: "Bastille → Orly" };
+    expect(networkRideAlert({ type: "network.executor_unavailable", data: { cause: "executor_inactive" } }, ride)).toEqual({
+      title: "Chauffeur partenaire indisponible · #1783",
+      body: "Client à bord (organisation suspendue) · il peut terminer la course ; sinon, clôturez-la · Bastille → Orly",
+      level: "warning",
+      close: true,
+    });
+    expect(networkRideAlert({ type: "network.executor_unavailable", data: null }, { label: "", route: "" })).toMatchObject({
+      title: "Chauffeur partenaire indisponible",
+      body: "Client à bord · il peut terminer la course ; sinon, clôturez-la",
+    });
+    expect(networkRideAlert({ type: "ride.network_unassigned", data: { reason: "executor_released", auto: true } }, ride)).toEqual({
+      title: "Course #1783 retirée au chauffeur partenaire",
+      body: "Retirée par l'organisation du chauffeur · recherche relancée, vos chauffeurs d'abord · Bastille → Orly",
+      level: "warning",
+      close: false,
+    });
+    expect(networkRideAlert({ type: "ride.network_unassigned", data: { reason: "executor_unavailable", auto: false } }, ride)?.body).toBe(
+      "Chauffeur partenaire indisponible · à attribuer à l'un de vos chauffeurs · Bastille → Orly",
+    );
+    // Retirée par A elle-même : déjà sous les yeux de l'auteur
+    expect(networkRideAlert({ type: "ride.network_unassigned", data: { reason: "removed_by_giver" } }, ride)).toBeNull();
+    expect(networkRideAlert({ type: "ride.network_closed", data: { cause: "no_position" } }, ride)).toEqual({
+      title: "Course #1783 clôturée",
+      body: "Course partenaire marquée « à vérifier » · sans position depuis 30 min · Bastille → Orly",
+      level: "info",
+      close: false,
+    });
+    expect(networkRideAlert({ type: "dispatch.network", data: {} }, ride)).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 import {
   DEFAULT_DISPATCH_RADII_M, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, VEHICLE_CATEGORY_META, canCancel, formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate,
-  formatTime, haversine, initials, type DriverPresence, type PaymentMethod, type RideStatus, type VehicleCategory,
+  formatTime, haversine, initials, networkCancelBlocked, type DriverPresence, type PaymentMethod, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeft, BellOff, ExternalLink, Luggage, MessageSquareText, Phone, Users } from "lucide-react";
 import Link from "next/link";
@@ -298,7 +298,8 @@ export function RideFocus({
               compact
               rideId={ride.id}
               number={ride.number}
-              canCancel={canCancel(status)}
+              // Client à bord d'un chauffeur partenaire : annulation refusée par la base (« Clôturer la course » seulement)
+              canCancel={canCancel(status) && !networkCancelBlocked(status, !!network?.held)}
               canRedispatch={status === "NO_DRIVER_FOUND" || SEARCHING.has(status)}
               canAssign={ASSIGNABLE.has(status)}
               assignLabel={ride.driver_id || network?.held ? "Réattribuer" : "Attribuer"}

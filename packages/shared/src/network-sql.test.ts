@@ -11,7 +11,7 @@ import {
   NETWORK_CLOSED_RPCS, NETWORK_EXECUTION_END_REASONS, NETWORK_GIVEN_FILTERS, NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS,
   NETWORK_PARTNERS_NEARBY_MAX, NETWORK_PICKUP_HIDDEN_LABEL, NETWORK_RECEIVED_FILTERS, NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS,
   NETWORK_SUSPECT_REASONS, NETWORK_SUSPENDED_CREDITOR_RPCS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
-  NETWORK_RPC_ACCESS, ORG_NETWORK_READINESS_CODES, type DriverNetworkSettlementItem, type NetworkDriverMoney,
+  NETWORK_ONBOARD_STATUSES, NETWORK_RPC_ACCESS, NETWORK_WATCH_CAUSE_LABELS, ORG_NETWORK_READINESS_CODES, networkCancelBlocked, type DriverNetworkSettlementItem, type NetworkDriverMoney,
   type NetworkOfferNotificationData, type NetworkPayoutWarning, type NetworkRpcs, type RemindNetworkDriverResult,
   type NetworkDriverBroadcastFields, type NetworkRideBroadcastFields, NETWORK_ADMIN_THRESHOLDS, type NetworkAdminFlag,
   type SvcNetworkApproveResult,
@@ -542,5 +542,24 @@ describe("Réseau partagé, administration (lot 6, 20260924007100) : SQL = contr
     expect([...codes].sort()).toEqual((["APPROVED", "IDENTITY_INCOMPLETE", "NOT_FOUND", "REASON_REQUIRED", "REFUSED"] satisfies SvcNetworkApproveResult["code"][]).sort());
     const missing = [...approve.matchAll(/v_missing := v_missing \|\| '([a-z_]+)'::text/g)].map((m) => m[1]);
     expect(missing).toEqual(["legal_name", "siret", "vtc_registration"] satisfies NonNullable<SvcNetworkApproveResult["missing"]>);
+  });
+
+  it("« Annuler » masqué (web) pour une course partenaire client à bord : mêmes statuts que private.cancel_ride_internal", () => {
+    const cancel = lastSqlDefinition("private.cancel_ride_internal");
+    const statuses = NETWORK_ONBOARD_STATUSES.map((x) => `'${x}'`).join(", ");
+    expect(cancel).toMatch(new RegExp(`if r\\.status in \\(${statuses}\\) and r\\.driver_id is not null\\s+and r\\.driver_org_id <> r\\.organization_id`));
+    expect(cancel).toContain("'NETWORK_RIDE_IN_PROGRESS'");
+    expect(networkCancelBlocked("PASSENGER_ONBOARD", true)).toBe(true);
+    expect(networkCancelBlocked("IN_PROGRESS", true)).toBe(true);
+    expect(networkCancelBlocked("DRIVER_ARRIVED", true)).toBe(false);
+    expect(networkCancelBlocked("IN_PROGRESS", false)).toBe(false);
+  });
+
+  it("alerte « partenaire indisponible » : causes du chien de garde = mots du journal (private.network_watch)", () => {
+    const watch = lastSqlDefinition("private.network_watch");
+    for (const [cause, label] of Object.entries(NETWORK_WATCH_CAUSE_LABELS)) {
+      if (cause === "driver_withdrawn") expect(watch).toContain(`else '${label}'`);
+      else expect(watch).toContain(`when '${cause}' then '${label}'`);
+    }
   });
 });

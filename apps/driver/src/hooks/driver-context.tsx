@@ -788,6 +788,14 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         router.dismissTo("/home");
         return;
       }
+      // Réseau partagé : course partenaire annulée par l'organisation qui l'avait confiée (« COURSE ANNULÉE — {A} », sans
+      // adresse) : direction le planning, sans ouvrir la course (elle n'est plus lisible)
+      if (type === "ride_cancelled" && isNetworkData(data)) {
+        await refresh();
+        router.dismissTo("/home");
+        router.push("/planning");
+        return;
+      }
     }
     if (r.actionIdentifier === "ACCEPT" && offerId) {
       // Refus levé en erreur (course partenaire modifiée, créneau déjà pris…) : motif affiché ; réseau : null
