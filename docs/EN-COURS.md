@@ -185,3 +185,37 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
 - Carte VTC obligatoire à l'inscription (anti-fraude).
 - Frais plateforme : minimum, relances par e-mail. Webhook WhatsApp (statut de remise).
 - Empreintes d'identité en HMAC (secret serveur). `invoices` encore en cascade à la suppression d'une organisation.
+
+## Réseau partagé (branche `shared-network`, en cours, interrupteur plateforme coupé)
+- Lots faits : 0 (contrats `packages/shared/src/network.ts`), 2 (schéma, gardes, droits : migration `20260924006700`,
+  non poussée). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
+- **Avant d'écrire 006800** : fusionner la branche principale une fois le chantier CGV (`20260924006600`) fusionné, puis
+  partir de ses définitions (« Dernière définition : 20260924006600… », contrôlé par `migrations.test.ts`) :
+  `public.assign_ride`, `public.redispatch_ride`, `private.apply_flight_status` (lot 3), `private.platform_account`
+  (lot 4), `private.housekeeping` (lots 5 et 6 ; il applique les hausses de frais programmées), et
+  `private.platform_fees_enabled`, `private.rides_platform_block` si un lot les touche. 006600 ne touche ni à
+  `legal_acceptances` ni aux fonctions redéfinies par 006700. À la fusion, ajouter les tests de non-régression :
+  `private.housekeeping()` renvoie toujours `platform_fee_changes_applied`, `private.platform_account` toujours
+  `scheduled_change`.
+- Règles posées par la revue du lot 2, pour les lots suivants :
+  - course tenue par un partenaire : `network_at` ne change qu'avec le chauffeur (retrait, réattribution) ; prix,
+    paiement, adresses, heure, catégorie, passagers, **bagages, n° de vol** verrouillés (G6) ; `apply_flight_status`
+    pose `rydar.network_flight_update = on` et ne change alors QUE `pickup_at` ;
+  - fin d'exécution : toujours `completed` pour une course terminée (prédicat unique des règlements et frais) ;
+    `close_network_ride` ajoute `closed_by_giver` à `suspect_reasons` ;
+  - `private.close_network_offers(…, p_ride)` : `terms_changed` / `flight_rescheduled` exigent la course, `driver_busy`
+    la course et le chauffeur ;
+  - B ne peut plus retirer directement le statut actif d'un chauffeur qui tient une course de A
+    (`DRIVER_HAS_NETWORK_OBLIGATIONS`) : `set_driver_status` / `ban_driver` (lot 3) doivent d'abord
+    `unassign_network_ride`, ou refuser si le client est à bord ;
+  - empreinte du RIB : `ride_network_executions.payout_iban_hash / payout_iban_at` (posée une fois par
+    `sync_network_settlement`, lot 4), jamais dans `ride_settlements` (lu par tout membre de A) ;
+  - effacement des traces (lot 6) : `rydar.network_scrub = on` pour réécrire `driver_label` et `checks` d'une exécution ;
+  - identifiant résiduel accepté chez A : UUID de la fiche exécutante aussi dans `ride_alerts.driver_id` (test n° 31 du
+    lot 7) ;
+  - `svc_network_approve` (lot 6) : SIRET normalisé (chiffres seuls), chaque champ contrôlé, `IDENTITY_INCOMPLETE` pour
+    un champ vide OU invalide (jamais 23514) ;
+  - déploiement de 006700 : une transaction, verrous pris d'emblée, `lock_timeout` 5 s (échec propre, à relancer) ;
+    au-delà de quelques dizaines de milliers d'offres ou de notifications en production, arrêter le worker pendant
+    la migration.

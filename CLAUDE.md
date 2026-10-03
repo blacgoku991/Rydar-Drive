@@ -21,13 +21,15 @@ la centrale doit les frais plateforme à Rydar.
   Service `mailer` (même image, `dist/mailer.js`, réseau de l'hôte) : file `email_outbox` → SMTP 127.0.0.1:25 (Postfix du VPS) ;
   SMTP injoignable = file en pause (aucun essai compté), relancée à son retour ; état en base `mailer_status` (/admin/contacts).
 - `packages/shared` (`@rydar/shared`) : types, schémas zod 4, libellés FR, navigation, centrale, platform-fees, whatsapp.
-- `supabase/migrations` = source de vérité (numéro suivant = dernier de `ls supabase/migrations` + 100) ; `tests/db` vitest sur PG réel.
-  TypeScript épinglé 5.9.
+- `supabase/migrations` = source de vérité (numéro suivant = dernier de `ls supabase/migrations` + 100 ; 006700 à 007100 RÉSERVÉS au
+  réseau partagé, branche `shared-network` → hors réseau : 007200 ; numéro unique, contrôlé par `migrations.test.ts` et
+  `deploy/migrate.sh`) ; `tests/db` vitest sur PG réel. TypeScript épinglé 5.9.
 
 ## Règles impératives
 - **Migration poussée = jamais modifiée** : correction dans une NOUVELLE migration (le VPS a pu l'appliquer) ; non poussée = modifiable.
 - Redéfinir une fonction SQL : partir de sa DERNIÈRE version (`grep -n 'function public.x(' supabase/migrations/*.sql | tail -1`),
-  noter `-- Dernière définition : <migr>` ; signature changée → `drop function` + grants refaits.
+  noter `-- Dernière définition : <migr>` (contrôlé par `migrations.test.ts`, y compris après une fusion de branches) ;
+  signature changée → `drop function` + grants refaits.
 - Nouvelle fonction SQL : `set search_path = ''` + revoke/grant explicites (EXECUTE accordé à anon par défaut) ; RPC `public` en
   `security definer` = RLS contournée → contrôler l'accès DANS la fonction (`private.assert_org_member(org, roles)`,
   `private.current_driver_id()`, `private.assert_platform_actor`) ; helpers/triggers `private` sans definer.
@@ -67,6 +69,9 @@ la centrale doit les frais plateforme à Rydar.
 ## Sécurité (audit 09/2026, `docs/AUDIT.md` — ne pas réintroduire)
 - `organizations` : lecture client par GRANT PAR COLONNE (004300) → une nouvelle colonne lue côté client doit y être ajoutée
   (sinon `select('*')` échoue) ; `drivers.status/trust_level/suspended_reason` réservés owner/admin (trigger).
+- `ride_offers` : idem (006700) : colonne lue côté client → l'ajouter au grant, jamais `network_terms` ni `select('*')`.
+  Embed `ride_settlements` ↔ `drivers` : toujours nommer la clé (`!ride_settlements_organization_id_driver_id_fkey` ou
+  `!ride_settlements_network_driver_fkey`), sinon PGRST201 (ambigu).
 - Compte EXISTANT nommé gérant (équipe, création de centrale, accès, create-admin.sh) : jamais rattaché directement → adhésion
   `invited` + lien e-mail (`accept_member_invitations`) ; recherche d'e-mail par ÉGALITÉ (jamais `ilike`) ; contrôles d'adhésion
   avec `private.jwt_issued_after` (jeton émis avant l'activation refusé).
