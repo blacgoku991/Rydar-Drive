@@ -170,7 +170,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
               Propulsé par <RadarMark size={16} /> <span className="text-fg-muted">Rydar Drive</span>
             </span>
           </div>
-          <LegalLinks only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies"]} />
+          <LegalLinks only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies", "/accessibilite"]} />
         </footer>
       </div>
     </main>

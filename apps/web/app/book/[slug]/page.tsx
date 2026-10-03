@@ -147,7 +147,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             {org.address ? ` · ${[org.address, [org.postal_code, org.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}` : ""}.
             Rydar Drive fournit uniquement le logiciel de réservation.
           </p>
-          <LegalLinks only={["/mentions-legales", "/confidentialite", "/cookies"]} />
+          <LegalLinks only={["/mentions-legales", "/confidentialite", "/cookies", "/accessibilite"]} />
         </div>
       </footer>
     </main>

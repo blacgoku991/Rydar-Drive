@@ -72,7 +72,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             Espace réservé aux rattacheurs, centrales et à l'équipe Rydar. Chauffeurs : connectez-vous depuis l'application
             mobile Rydar Drive.
           </p>
-          <LegalLinks className="mt-4 text-[12px]" only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies"]} />
+          <LegalLinks className="mt-4 text-[12px]" only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies", "/accessibilite"]} />
         </div>
       </section>
     </main>

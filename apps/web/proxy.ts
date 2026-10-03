@@ -73,7 +73,7 @@ async function hasSession(supabase: ReturnType<typeof createServerClient>): Prom
 
 const PROTECTED = ["/dashboard", "/admin"];
 /** Pages légales de la plateforme : servies telles quelles sur les mini-sites (liens du mini-site et du bandeau cookies). */
-const LEGAL_PATHS = new Set(["/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte"]);
+const LEGAL_PATHS = new Set(["/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte", "/abonnement-resiliation", "/accessibilite"]);
 /** Pages légales, versions précédentes des CGV comprises (/cgv/AAAA-MM-JJ : pages figées, lien « Version précédente »). */
 const isLegalPath = (pathname: string) => LEGAL_PATHS.has(pathname) || /^\/cgv\/\d{4}-\d{2}-\d{2}$/.test(pathname);
 /**

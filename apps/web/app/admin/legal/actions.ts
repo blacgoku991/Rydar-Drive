@@ -42,7 +42,9 @@ export async function updateLegalInfo(input: LegalInfoInput): Promise<{ ok: true
   if (error) return { ok: false, error: actionError(error, "Enregistrement impossible.") };
   const res = (data ?? {}) as { ok?: boolean; message?: string };
   if (!res.ok) return { ok: false, error: res.message ?? "Enregistrement impossible." };
-  for (const p of ["/admin/legal", "/mentions-legales", "/confidentialite", "/cgu", "/cgv", "/cookies", "/dpa", "/suppression-compte"]) revalidatePath(p);
+  for (const p of ["/admin/legal", "/mentions-legales", "/confidentialite", "/cgu", "/cgv", "/cookies", "/dpa", "/suppression-compte", "/abonnement-resiliation", "/accessibilite"]) {
+    revalidatePath(p);
+  }
   return { ok: true };
 }
 

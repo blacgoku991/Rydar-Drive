@@ -12,6 +12,9 @@ export const LEGAL_LINKS = [
   { href: "/confidentialite", label: "Confidentialité" },
   { href: "/cookies", label: "Cookies" },
   { href: "/dpa", label: "Traitement des données (RGPD)" },
+  { href: "/abonnement-resiliation", label: "Résiliation et remboursement" },
+  // État de conformité dans l'intitulé du lien (usage du RGAA) : « non conforme » tant qu'aucun audit n'a été réalisé
+  { href: "/accessibilite", label: "Accessibilité : non conforme" },
 ] as const;
 
 export function LegalLinks({ className, withDeletion, only }: { className?: string; withDeletion?: boolean; only?: (typeof LEGAL_LINKS)[number]["href"][] }) {

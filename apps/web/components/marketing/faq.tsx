@@ -97,6 +97,19 @@ const FAQ_GROUPS: { id: string; title: string; items: Question[] }[] = [
         ),
       },
       {
+        q: "Où trouver les règles de résiliation et de remboursement ?",
+        a: (
+          <>
+            {fr(
+              "Sur une page qui reprend les conditions générales de vente : arrêt du renouvellement, résiliation, remboursement au prorata en cas de refus d'une hausse, frais par course, fin du contrat et export des données.",
+            )}{" "}
+            <Link href="/abonnement-resiliation" className={link}>
+              Abonnement, résiliation et remboursement
+            </Link>
+          </>
+        ),
+      },
+      {
         q: "Puis-je récupérer mes données ?",
         a: (
           <>
