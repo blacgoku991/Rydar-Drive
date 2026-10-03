@@ -1,5 +1,5 @@
-import type { VehicleCategory } from "@rydar/shared";
-import { Clock, MapPin, Phone, ShieldCheck, Sparkles, Star } from "lucide-react";
+import { VEHICLE_CATEGORY_META, type VehicleCategory } from "@rydar/shared";
+import { CalendarClock, Car, MapPin, Phone, ReceiptText, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { BookingForm } from "@/components/booking/booking-form";
@@ -61,6 +61,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
     if (!session?.memberships.some((m) => m.org.id === org.id)) notFound();
   }
   const brand = site.primary_color ?? "#c8f03c";
+  const categoryLabels = ((site.vehicle_categories ?? ["standard"]) as VehicleCategory[]).map((c) => VEHICLE_CATEGORY_META[c]?.label ?? c).join(", ");
   const style = { "--color-brand": brand, "--color-brand-strong": brand, "--color-brand-fg": readableOn(brand) } as React.CSSProperties;
 
   return (
@@ -77,7 +78,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
         </div>
         {site.phone && (
           <a href={`tel:${site.phone.replace(/\s/g, "")}`} className="flex items-center gap-2 rounded-full border border-line-strong bg-white/[0.03] px-4 py-2 text-[13px] font-medium hover:border-white/20">
-            <Phone className="size-4 text-brand" /> {site.phone}
+            <Phone aria-hidden className="size-4 text-brand" /> {site.phone}
           </a>
         )}
       </header>
@@ -85,39 +86,43 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
       <section className="relative z-10 mx-auto grid max-w-6xl gap-10 px-6 pb-20 pt-6 lg:grid-cols-[1fr_480px] lg:pt-14">
         <div className="lg:pt-10">
           <span className="inline-flex items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.08] px-3 py-1 text-[12px] font-medium text-brand">
-            <span className="size-1.5 animate-breathe rounded-full bg-brand" /> Chauffeurs disponibles 24 h/24
+            <span aria-hidden className="size-1.5 animate-breathe rounded-full bg-brand" /> Réservation en ligne 24 h/24
           </span>
           <h1 className="mt-6 text-[44px] font-semibold leading-[1.05] tracking-tight sm:text-[56px]">
             <span className="text-gradient">{site.tagline ?? "Votre chauffeur privé,"}</span>
           </h1>
           {site.description && <p className="mt-5 max-w-lg text-[16px] leading-relaxed text-fg-muted">{site.description}</p>}
+          {/* Faits que le logiciel connaît (réglages de la centrale), jamais une promesse commerciale écrite par Rydar
+              à sa place (pratique commerciale trompeuse, C. conso. L121-2) */}
           <ul className="mt-10 grid max-w-lg gap-4 sm:grid-cols-2">
-            {[
-              [ShieldCheck, "Chauffeurs VTC professionnels", "Cartes VTC et assurances vérifiées"],
-              [Clock, "Ponctualité garantie", "Suivi des vols et attente incluse"],
-              [Sparkles, "Véhicules haut de gamme", "Berlines, vans et prestige"],
-              [Star, "Prix annoncé à l'avance", "Aucune surprise à l'arrivée"],
-            ].map(([Icon, t, d]) => {
-              const I = Icon as typeof ShieldCheck;
+            {(
+              [
+                [CalendarClock, "Réservation 24 h/24", "Demande en ligne, sans compte"],
+                [Car, "Véhicules proposés", categoryLabels],
+                ...(org.vtc_registration ? [[ShieldCheck, "Exploitant VTC", org.vtc_registration]] : []),
+                ...(site.show_price_estimate ? [[ReceiptText, "Prix estimé avant de réserver", "Selon la grille de la centrale, TTC"]] : []),
+              ] as [typeof ShieldCheck, string, string][]
+            ).map(([Icon, t, d]) => {
+              const I = Icon;
               return (
-                <li key={t as string} className="flex gap-3">
-                  <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.03]"><I className="size-4 text-brand" /></span>
+                <li key={t} className="flex gap-3">
+                  <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.03]"><I aria-hidden className="size-4 text-brand" /></span>
                   <span>
-                    <span className="block text-[14px] font-medium">{t as string}</span>
-                    <span className="block text-[12.5px] text-fg-subtle">{d as string}</span>
+                    <span className="block text-[14px] font-medium">{t}</span>
+                    <span className="block text-[12.5px] text-fg-subtle">{d}</span>
                   </span>
                 </li>
               );
             })}
           </ul>
           {site.service_area && (
-            <p className="mt-10 flex items-start gap-2 text-[13px] text-fg-muted"><MapPin className="mt-0.5 size-4 shrink-0 text-brand" /> {site.service_area}</p>
+            <p className="mt-10 flex items-start gap-2 text-[13px] text-fg-muted"><MapPin aria-hidden className="mt-0.5 size-4 shrink-0 text-brand" /> {site.service_area}</p>
           )}
         </div>
         <div className="glass relative overflow-hidden rounded-3xl">
           <div className="hairline-top border-b border-line px-6 py-5">
             <h2 className="text-[17px] font-semibold tracking-tight">Réserver une course</h2>
-            <p className="mt-0.5 text-[12.5px] text-fg-muted">Sans compte · confirmation immédiate</p>
+            <p className="mt-0.5 text-[12.5px] text-fg-muted">Sans compte · demande transmise aussitôt à la centrale</p>
           </div>
           <BookingForm
             near={await publicAnchor(data.org.id).catch(() => null)}
@@ -128,6 +133,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             phone={site.phone}
             operator={org.legal_name || org.name}
             privacyUrl="/confidentialite"
+            conditions={site.legal_mentions}
           />
         </div>
       </section>

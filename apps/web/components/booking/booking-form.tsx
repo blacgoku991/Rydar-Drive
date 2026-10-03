@@ -10,23 +10,25 @@ import { RoutePreview } from "@/components/map/route-preview";
 import { AddressInput, type PlaceValue } from "@/components/rides/address-input";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 
 const empty: PlaceValue = { address: "", lat: null, lng: null };
 
-function Counter({ value, set, min, max }: { value: number; set: (v: number) => void; min: number; max: number }) {
+/** Compteur (passagers, bagages) : groupe nommé, boutons explicites, valeur annoncée quand elle change. */
+function Counter({ value, set, min, max, label, unit }: { value: number; set: (v: number) => void; min: number; max: number; label: string; unit: string }) {
   return (
-    <div className="flex h-11 items-center justify-between rounded-lg border border-line-strong bg-ink-850 px-1.5">
-      <button type="button" onClick={() => set(Math.max(min, value - 1))} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5" aria-label="Moins"><Minus className="size-4" /></button>
-      <span className="num text-[16px] font-semibold">{value}</span>
-      <button type="button" onClick={() => set(Math.min(max, value + 1))} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5" aria-label="Plus"><Plus className="size-4" /></button>
+    <div role="group" aria-label={label} className="flex h-11 items-center justify-between rounded-lg border border-line-strong bg-ink-850 px-1.5">
+      <button type="button" onClick={() => set(Math.max(min, value - 1))} disabled={value <= min} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5 disabled:opacity-40" aria-label={`Un ${unit} de moins`}><Minus aria-hidden className="size-4" /></button>
+      <span className="num text-[16px] font-semibold" aria-live="polite">{value}</span>
+      <button type="button" onClick={() => set(Math.min(max, value + 1))} disabled={value >= max} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5 disabled:opacity-40" aria-label={`Un ${unit} de plus`}><Plus aria-hidden className="size-4" /></button>
     </div>
   );
 }
 
 export function BookingForm({
-  slug, categories, timeZone = "Europe/Paris", showPrice, phone, near, operator, privacyUrl,
+  slug, categories, timeZone = "Europe/Paris", showPrice, phone, near, operator, privacyUrl, conditions,
 }: {
   slug: string;
   categories: VehicleCategory[];
@@ -39,6 +41,8 @@ export function BookingForm({
   operator?: string;
   /** Politique de confidentialité (adresse absolue de la plateforme) */
   privacyUrl?: string;
+  /** Conditions de la centrale pour ses clients (réservation, annulation, paiement, médiateur), saisies par elle */
+  conditions?: string | null;
 }) {
   const [pickup, setPickup] = useState<PlaceValue>(empty);
   const [dropoff, setDropoff] = useState<PlaceValue>(empty);
@@ -141,7 +145,6 @@ export function BookingForm({
             vehicleCategory: category,
             flightNumber: String(f.get("flight") ?? ""),
             comment: String(f.get("comment") ?? ""),
-            consent: f.get("consent") === "on",
             website: String(f.get("website") ?? ""),
           } as never);
           if (!res.ok) {
@@ -152,14 +155,14 @@ export function BookingForm({
       })}
     >
       <div className="space-y-2.5">
-        <Field error={errors.pickup}><AddressInput marker="pickup" value={pickup} onChange={setPickup} near={near} placeholder="Adresse de prise en charge" /></Field>
-        <Field error={errors.dropoff}><AddressInput marker="dropoff" value={dropoff} onChange={setDropoff} near={pickup.lat != null && pickup.lng != null ? { lat: pickup.lat, lng: pickup.lng } : near} placeholder="Destination (aéroport, gare, adresse…)" /></Field>
+        <Field error={errors.pickup}><AddressInput marker="pickup" value={pickup} onChange={setPickup} near={near} placeholder="Adresse de prise en charge" label="Adresse de prise en charge" /></Field>
+        <Field error={errors.dropoff}><AddressInput marker="dropoff" value={dropoff} onChange={setDropoff} near={pickup.lat != null && pickup.lng != null ? { lat: pickup.lat, lng: pickup.lng } : near} placeholder="Destination (aéroport, gare, adresse…)" label="Destination" /></Field>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 rounded-xl border border-line bg-ink-850 p-1">
+      <div role="group" aria-label="Moment de la prise en charge" className="grid grid-cols-2 gap-2 rounded-xl border border-line bg-ink-850 p-1">
         {([["now", "Dès que possible", Zap], ["scheduled", "Réserver à l'avance", CalendarClock]] as const).map(([k, label, Icon]) => (
-          <button key={k} type="button" onClick={() => setWhen(k)} className={cn("flex h-10 items-center justify-center gap-2 rounded-lg text-[13px] font-medium", when === k ? "bg-ink-600 text-fg" : "text-fg-muted")}>
-            <Icon className={cn("size-4", when === k && "text-brand")} /> {label}
+          <button key={k} type="button" aria-pressed={when === k} onClick={() => setWhen(k)} className={cn("flex h-10 items-center justify-center gap-2 rounded-lg text-[13px] font-medium", when === k ? "bg-ink-600 text-fg" : "text-fg-muted")}>
+            <Icon aria-hidden className={cn("size-4", when === k && "text-brand")} /> {label}
           </button>
         ))}
       </div>
@@ -171,9 +174,9 @@ export function BookingForm({
         </div>
       )}
 
-      <div className={cn("grid gap-2", categories.length > 2 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2")}>
+      <div role="group" aria-label="Catégorie de véhicule" className={cn("grid gap-2", categories.length > 2 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2")}>
         {categories.map((c) => (
-          <button key={c} type="button" onClick={() => setCategory(c)} className={cn("rounded-xl border px-3 py-2.5 text-left", category === c ? "border-brand/60 bg-brand/[0.07]" : "border-line hover:border-line-strong")}>
+          <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)} className={cn("rounded-xl border px-3 py-2.5 text-left", category === c ? "border-brand/60 bg-brand/[0.07]" : "border-line hover:border-line-strong")}>
             <span className={cn("block text-[13px] font-semibold", category === c ? "text-brand" : "text-fg")}>{VEHICLE_CATEGORY_META[c].label}</span>
             <span className="block text-[11px] text-fg-subtle">jusqu&apos;à {VEHICLE_CATEGORY_META[c].seats} pers.</span>
           </button>
@@ -181,15 +184,15 @@ export function BookingForm({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Passagers"><Counter value={passengers} set={setPassengers} min={1} max={8} /></Field>
-        <Field label="Bagages"><Counter value={luggage} set={setLuggage} min={0} max={10} /></Field>
+        <Field label="Passagers"><Counter value={passengers} set={setPassengers} min={1} max={8} label="Passagers" unit="passager" /></Field>
+        <Field label="Bagages"><Counter value={luggage} set={setLuggage} min={0} max={10} label="Bagages" unit="bagage" /></Field>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Nom" error={errors.customerName}><Input name="name" required autoComplete="name" className="h-11" /></Field>
         <Field label="Téléphone" error={errors.customerPhone}><Input name="phone" required inputMode="tel" autoComplete="tel" className="h-11" /></Field>
         <Field label="E-mail" optional error={errors.customerEmail}><Input name="email" type="email" autoComplete="email" className="h-11" /></Field>
-        <Field label={<span className="flex items-center gap-1.5"><Plane className="size-3.5" /> N° de vol</span>} optional error={errors.flightNumber}><Input name="flight" className="h-11 uppercase" /></Field>
+        <Field label={<span className="flex items-center gap-1.5"><Plane aria-hidden className="size-3.5" /> N° de vol</span>} optional error={errors.flightNumber}><Input name="flight" className="h-11 uppercase" /></Field>
       </div>
       <Field label="Précisions" optional><Textarea name="comment" placeholder="Siège enfant, pancarte, arrêt intermédiaire…" /></Field>
       <input type="text" name="website" tabIndex={-1} autoComplete="off" className="hidden" aria-hidden />
@@ -213,7 +216,7 @@ export function BookingForm({
             </span>
             {estimate != null && (
               <span className="text-right">
-                <span className="block text-[11.5px] text-fg-subtle">{quote?.fixedFare ? `Forfait ${quote.fixedFare}` : "Prix estimé"}</span>
+                <span className="block text-[11.5px] text-fg-subtle">{quote?.fixedFare ? `Forfait ${quote.fixedFare}, TTC` : "Prix estimé TTC"}</span>
                 <span className="num text-[20px] font-semibold text-brand">{formatPrice(estimate)}</span>
               </span>
             )}
@@ -221,24 +224,33 @@ export function BookingForm({
         </div>
       )}
 
-      <label className="flex items-start gap-2.5 text-[12px] leading-relaxed text-fg-muted">
-        <input type="checkbox" name="consent" required className="mt-0.5 accent-[var(--color-brand)]" />
-        <span>
-          J&apos;accepte que mes coordonnées soient transmises à {operator ?? "la centrale"} et utilisées pour organiser cette course (aucun compte n&apos;est
-          créé).
-          {privacyUrl && (
-            <>
-              {" "}
-              <a href={privacyUrl} target="_blank" rel="noopener" className="text-fg underline underline-offset-2">
-                Données personnelles
-              </a>
-            </>
-          )}
-        </span>
-      </label>
-      {(error || errors.consent) && <p className="rounded-lg border border-red/25 bg-red/10 px-3 py-2 text-[13px] text-red">{error ?? errors.consent}</p>}
+      {conditions && (
+        <div className="space-y-1 rounded-lg border border-line px-3 py-2.5 text-[12px] leading-relaxed text-fg-muted">
+          <p className="font-medium text-fg">Conditions de {operator ?? "la centrale"}</p>
+          <p className="whitespace-pre-line">{conditions}</p>
+        </div>
+      )}
+      {/* Information (RGPD art. 13) plutôt qu'une case à cocher : les coordonnées servent à exécuter la course demandée */}
+      <p className="text-[12px] leading-relaxed text-fg-muted">
+        Vos coordonnées sont transmises à {operator ?? "la centrale"}, qui organise la course, et servent uniquement à cette
+        réservation (aucun compte n&apos;est créé).
+        {privacyUrl && (
+          <>
+            {" "}
+            <a href={privacyUrl} target="_blank" rel="noopener" className="text-fg underline underline-offset-2">
+              Données personnelles
+              <NewTabHint />
+            </a>
+          </>
+        )}
+      </p>
+      {error && (
+        <p role="alert" className="rounded-lg border border-red/25 bg-red/10 px-3 py-2 text-[13px] text-red">
+          {error}
+        </p>
+      )}
       <Button type="submit" variant="primary" size="lg" loading={pending} className="w-full">Réserver mon chauffeur</Button>
-      <p className="flex items-center justify-center gap-1.5 text-[11.5px] text-fg-subtle"><ShieldCheck className="size-3.5" /> Réservation sécurisée · confirmation immédiate</p>
+      <p className="flex items-center justify-center gap-1.5 text-[11.5px] text-fg-subtle"><ShieldCheck aria-hidden className="size-3.5" /> Demande transmise aussitôt à {operator ?? "la centrale"}</p>
     </form>
   );
 }

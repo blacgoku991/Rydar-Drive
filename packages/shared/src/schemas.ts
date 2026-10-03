@@ -182,7 +182,8 @@ export const bookingRequestSchema = z.object({
     .optional()
     .transform((v) => (v ? v.replace(/\s/g, "") : undefined)),
   comment: optionalText(500),
-  consent: z.literal(true, { error: "Merci d'accepter le traitement de vos données" }),
+  // Plus de case « J'accepte… » : les coordonnées servent à exécuter la course demandée (RGPD art. 6.1.b), le client en
+  // est informé sous le formulaire ; un ancien champ « consent » encore envoyé est ignoré
   // Pot de miel anti-robot : accepté par le schéma (sinon l'erreur de validation prévient le robot),
   // l'action répond « ok » sans rien créer s'il est rempli
   website: z.string().max(200).optional(),
@@ -362,6 +363,9 @@ const bookingSiteObjectSchema = z.object({
   service_area: optionalText(300),
   vehicle_categories: z.array(vehicleCategorySchema).min(1),
   show_price_estimate: z.boolean(),
+  // Informations précontractuelles de la centrale pour ses clients particuliers (conditions de réservation,
+  // d'annulation et de paiement, médiateur de la consommation) : affichées avant le bouton de réservation
+  legal_mentions: optionalText(2000),
 });
 
 /**

@@ -31,6 +31,7 @@ const BOOKING_LABELS: Record<string, string> = {
   subdomain: "Sous-domaine", custom_domain: "Domaine personnalisé", title: "Titre", tagline: "Accroche", description: "Description",
   logo_url: "Logo", hero_image_url: "Image d'en-tête", primary_color: "Couleur principale", phone: "Téléphone", email: "E-mail",
   whatsapp: "WhatsApp", service_area: "Zone desservie", vehicle_categories: "Catégories de véhicules",
+  legal_mentions: "Conditions pour vos clients",
 };
 
 export async function domainToken(orgId: string) {
@@ -55,7 +56,7 @@ export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>
   if (v.custom_domain && isPlatformDomain(v.custom_domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
   const { error } = await ctx.supabase
     .from("booking_sites")
-    .update({ ...v, email: v.email || null, custom_domain: v.custom_domain || null })
+    .update({ ...v, email: v.email || null, custom_domain: v.custom_domain || null, legal_mentions: v.legal_mentions ?? null })
     .eq("organization_id", ctx.org.id);
   if (error) {
     // Seuls les domaines VÉRIFIÉS sont uniques (migration 20260924005000) : un conflit ne peut venir que du sous-domaine

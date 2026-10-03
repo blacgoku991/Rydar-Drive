@@ -191,7 +191,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
               <Field label="Places"><Input name="seats" type="number" defaultValue={driver.vehicle?.seats ?? 4} /></Field>
               <Field label="Bagages"><Input name="luggage" type="number" defaultValue={driver.vehicle?.luggage_capacity ?? 3} /></Field>
             </div>
-            <Field label="Notes (visibles par le chauffeur)" optional hint="Le chauffeur peut les lire : n'y notez rien de confidentiel." className="col-span-2">
+            <Field label="Notes (visibles par le chauffeur)" optional hint="Le chauffeur peut les lire : n'y notez rien de confidentiel, ni aucune donnée sensible (santé, opinions, infractions)." className="col-span-2">
               <Textarea name="notes" defaultValue={driver.notes ?? ""} />
             </Field>
             <div className="col-span-2 mt-4 flex justify-end gap-2">

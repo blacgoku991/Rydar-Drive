@@ -29,7 +29,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
         enabled: s.enabled, subdomain: s.subdomain || null, custom_domain: s.custom_domain || null, title: s.title ?? "", tagline: s.tagline ?? "",
         description: s.description ?? "", logo_url: s.logo_url ?? "", hero_image_url: s.hero_image_url ?? "", primary_color: s.primary_color,
         phone: s.phone ?? "", email: s.email ?? "", whatsapp: s.whatsapp ?? "", service_area: s.service_area ?? "",
-        vehicle_categories: s.vehicle_categories, show_price_estimate: s.show_price_estimate,
+        vehicle_categories: s.vehicle_categories, show_price_estimate: s.show_price_estimate, legal_mentions: s.legal_mentions ?? "",
       });
       if (!res.ok) return void toast.error(res.error);
       toast.success("Mini-site enregistré");
@@ -85,7 +85,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
             <Field label="Couleur principale">
               <div className="flex gap-2">
                 <input type="color" value={s.primary_color} onChange={(e) => set("primary_color", e.target.value.toUpperCase())} disabled={!canEdit} className="h-10 w-12 cursor-pointer rounded-lg border border-line-strong bg-ink-850 p-1" />
-                <Input value={s.primary_color} onChange={(e) => set("primary_color", e.target.value)} className="num" disabled={!canEdit} />
+                <Input value={s.primary_color} onChange={(e) => set("primary_color", e.target.value)} className="num" disabled={!canEdit} aria-label="Couleur principale, code hexadécimal" />
               </div>
             </Field>
             <Field label="Accroche" className="sm:col-span-2"><Input value={s.tagline ?? ""} onChange={(e) => set("tagline", e.target.value)} disabled={!canEdit} /></Field>
@@ -109,9 +109,16 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
               </div>
             </div>
             <label className="flex items-center justify-between gap-4 rounded-xl border border-line bg-white/[0.02] px-4 py-3 sm:col-span-2">
-              <span className="text-[13px]">Afficher une estimation de prix (grille tarifaire)</span>
+              <span className="text-[13px]">Afficher une estimation de prix (grille tarifaire, montants toutes taxes comprises)</span>
               <Switch checked={s.show_price_estimate} onCheckedChange={(v) => set("show_price_estimate", v)} disabled={!canEdit} />
             </label>
+            <Field
+              label="Conditions pour vos clients"
+              className="sm:col-span-2"
+              hint="Affichées avant le bouton de réservation. Pour des clients particuliers : conditions de réservation, d'annulation et de paiement, et nom et site web de votre médiateur de la consommation (Code de la consommation, articles L111-1 et L612-1). Rydar ne les rédige pas pour vous."
+            >
+              <Textarea value={s.legal_mentions ?? ""} onChange={(e) => set("legal_mentions", e.target.value)} disabled={!canEdit} maxLength={2000} />
+            </Field>
             {canEdit && <div className="flex justify-end sm:col-span-2"><Button variant="primary" loading={pending} onClick={save}>Enregistrer</Button></div>}
           </CardBody>
         </Card>
@@ -129,7 +136,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
           action={
             <div className="flex gap-1">
               <Button size="icon-sm" variant="ghost" onClick={() => setFrameKey((k) => k + 1)} aria-label="Rafraîchir l'aperçu"><RefreshCw /></Button>
-              <Button asChild size="icon-sm" variant="ghost"><a href={previewUrl} target="_blank" rel="noreferrer" aria-label="Ouvrir"><ExternalLink /></a></Button>
+              <Button asChild size="icon-sm" variant="ghost"><a href={previewUrl} target="_blank" rel="noreferrer" aria-label="Ouvrir le mini-site (nouvel onglet)"><ExternalLink /></a></Button>
             </div>
           }
         />
