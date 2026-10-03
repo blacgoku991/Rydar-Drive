@@ -259,6 +259,16 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   non poussée), 3 (dispatch, migration `20260924006800`, non poussée : 3a éligibilité, étape réseau des immédiates et
   des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
+- Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
+  liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
+  publiques `/reseau-partage/conditions` et `/chauffeur` (servies sur les mini-sites) ; app = offres et courses
+  partenaires, conditions, « Courses partenaires », RIB, bon de réservation. Ils appellent des RPC des lots 4 à 6 pas
+  encore écrites (web : erreur non bloquante ; app : repli PGRST202) : conventions et ajouts au contrat = commentaires
+  « Ajout web » / « Ajouts de l'app » de `network.ts`, à respecter par le SQL. Reste au web (suite du lot 3b) : alerte
+  et libellé de `network.executor_unavailable` (« Clôturer la course »), `ride.network_unassigned`,
+  `ride.network_closed` ; « Annuler » encore proposé sur une course partenaire client à bord (refusé par la base). À
+  valider par le propriétaire : bon de réservation sur toutes les courses une fois le réseau ouvert, libellés de l'app
+  (« Course partenaire · {A} », « J'accepte et j'active », onglet « Partenaires »), textes centrale de l'onglet (juriste).
 - **Avant d'écrire 006800** : fusionner la branche principale une fois le chantier CGV (`20260924006600`) fusionné, puis
   partir de ses définitions (« Dernière définition : 20260924006600… », contrôlé par `migrations.test.ts`) :
   `public.assign_ride`, `public.redispatch_ride`, `private.apply_flight_status` (lot 3), `private.platform_account`
