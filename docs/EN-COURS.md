@@ -69,15 +69,28 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   dispatcher n'a rien à ré-accepter, aucune mise à jour de l'app) ; `/dpa` : version d'ensemble 2026-10-02, contenu
   inchangé depuis le 27 septembre.
   **À faire par le propriétaire** : (1) déployer puis cliquer « Prévenir par e-mail » (`/admin/legal`) AU PLUS TARD le
-  5 octobre 2026 (30 jours avant le 5 novembre, CGV art. 16) ; sinon repousser `ORG_LEGAL_EFFECTIVE_AT`
-  (`packages/shared/src/features.ts`) avant de publier ; (2) facture récapitulative des frais de chaque cycle (tâche
-  manuelle : montants TTC, TVA détaillée, échéance et mentions de pénalités) ; (3) Stripe : prix des offres réglés pour
-  facturer HT + TVA (Stripe Tax ou prix TTC) ; (4) engagements tenus à la main (le code ne les contrôle pas) : modèle
-  changé seulement à la demande de l'organisation, « Frais ajoutés » seulement pour une erreur de calcul (sinon accord
-  écrit), cycle / délai / seuil de blocage changés en sa défaveur seulement avec son accord écrit ; (5) modèle WhatsApp
-  neutre à faire approuver pour relancer aussi les flottes (WHATSAPP.md ; l'art. 5 ne prévoit WhatsApp qu'en centrale) ;
-  (6) relecture par un juriste. Amélioration possible : figer les taux en centrale comme en flotte (aujourd'hui : taux
-  du calcul de la répartition, y compris après la course).
+  5 octobre 2026 (heure de Paris) : passé ce jour, le bouton est bloqué et la base refuse l'envoi (moins de 30 jours
+  avant le 5 novembre, CGV art. 16) — repousser alors `ORG_LEGAL_EFFECTIVE_AT` (`packages/shared/src/features.ts`) et
+  redéployer avant d'envoyer ; une organisation ni signataire ni prévenue ne peut recevoir aucune hausse annoncée
+  (accord écrit seulement) ; (2) facture récapitulative de chaque cycle, dès sa fin (tâche manuelle) : `/admin/frais/<org>`
+  › « Frais à facturer » › cycle écoulé → CSV (frais pris en compte pendant le cycle, TTC) → facture avec la TVA
+  détaillée, l'échéance indiquée et les mentions de pénalités et d'indemnité de 40 € ; **ne régler aucun seuil de
+  blocage** pour une organisation qui ne reçoit pas cette facture à chaque cycle ou n'a pas accepté les CGV en vigueur
+  (blocage, relances et pénalités contestables) ; (3) Stripe : activer Stripe Tax, prix des offres « TVA non comprise »
+  et égaux aux offres (DEPLOYMENT § 4) — sans Stripe Tax, le paiement en ligne est refusé ; (4) résiliation pour refus
+  d'une hausse ou d'une modification défavorable : rembourser au prorata la part d'abonnement payée d'avance (Stripe,
+  remboursement partiel) et archiver l'organisation à la date choisie ; (5) engagements tenus à la main : « Frais
+  ajoutés » seulement pour une erreur de calcul (sinon accord écrit), cycle / délai / seuil de blocage changés en sa
+  défaveur seulement avec son accord écrit, refus d'une baisse seulement motivé (sinon acceptée d'office au bout de
+  30 jours) ; le changement de modèle exige désormais la note « demande / accord écrit » (base) ; (6) vérifier qu'aucune
+  organisation n'a un délai de paiement au-delà de 45 jours (`select name, platform_payment_days from organizations
+  where platform_payment_days > 45;` — la garde ne réécrit pas un délai déjà enregistré) ; (7) modèle WhatsApp neutre à
+  faire approuver pour relancer aussi les flottes (WHATSAPP.md ; l'art. 5 ne prévoit WhatsApp qu'en centrale) ;
+  (8) prochaine version de la politique de confidentialité : annoncer la conservation 10 ans des e-mails d'annonce
+  (frais Rydar, CGV), aujourd'hui couverte par « actions sur les frais plateforme gardées avec ce registre » ;
+  (9) relecture par un juriste. Améliorations possibles : figer les taux en centrale comme en flotte (aujourd'hui :
+  taux du calcul de la répartition, y compris après la course) ; suivre les factures dans l'outil (date d'émission →
+  échéance et blocage jamais avant la facture + délai) au lieu de la consigne (2).
 - **Frais Rydar : hausses annoncées (migration `20260924006600` + web)** : réglage par
   `svc_platform_set_fees` (création : tout de suite ; baisse : tout de suite ; HAUSSE : programmée au plus tôt au premier
   minuit après 30 jours, et pas avant `ORG_LEGAL_EFFECTIVE_AT` si l'organisation n'a pas accepté `ORG_LEGAL_VERSION`, ou
@@ -96,6 +109,18 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   `fleetPlatformFee` arrondi comme la base (`percentOfCents`). E-mails relus avec les CGV : « au moins 30 jours à
   l'avance » seulement quand c'est vrai (hausse moindre gardant la date déjà annoncée : « ne dépasse pas celui annoncé
   précédemment »), même règle dans l'encart ; seuil de blocage toujours affiché dans la carte des frais.
+  **Après revue (3 commits « CGV : corrections après revue »)** : annonce des CGV refusée à moins de 30 jours
+  (`TERMS_NOTICE_TOO_SHORT`, `private.notice_min_on` = `noticeMinDay`) ; hausse annoncée seulement si l'organisation a
+  accepté ou reçu l'annonce des CGV (`TERMS_NOT_NOTIFIED`), jamais avant la date qu'elle a reçue, et avec une adresse
+  e-mail (`NO_EMAIL`) ; appliquée seulement si un e-mail d'annonce est PARTI 30 jours avant (sinon annulée, journal
+  « warning » ; `notice_change_id` pour une hausse moindre gardant la date) ; e-mail des frais à la création (fixés une
+  fois le propriétaire rattaché) et acceptation des CGV exigée avant la première course d'une organisation qui n'en a
+  jamais accepté ; changement de modèle noté (demande / accord écrit, `CONSENT_REQUIRED`) ; principaux changements
+  complets (`ORG_LEGAL_CHANGES` : CGV, bandeau, e-mail) ; bandeau « en vigueur depuis » après la date ; résiliation pour
+  refus avec remboursement au prorata ; ménage : hausses appliquées en dernier, baisses sans décision acceptées au bout
+  de 30 jours ; annonces gardées 10 ans ; délai de paiement 45 jours au plus ; export « Frais à facturer » par cycle
+  (`admin_platform_invoice_lines`) ; Stripe Tax au Checkout, prix exact dans l'Abonnement ; « à régler » au lieu de
+  « à reverser » ; typographie des messages SQL (`private.fr_typo`).
 - **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour
   de l'app)** : centre de commande « En direct » : positions GPS regroupées (au plus un rendu par seconde, rien onglet
   caché), carte mise à jour seulement pour ce qui change (tracés et rayon redessinés si une position utile ou la course

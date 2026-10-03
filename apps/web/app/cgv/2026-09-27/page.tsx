@@ -5,13 +5,14 @@ import { getLegalInfo } from "@/lib/legal";
 
 export const dynamic = "force-dynamic";
 
-// Version du 27 septembre 2026 des CGV, remplacée par celle du 2 octobre 2026 (ORG_LEGAL_VERSION) : copie FIGÉE du
+// Version du 27 septembre 2026 des CGV, remplacée par celle du 2 octobre 2026 (ORG_LEGAL_VERSION, mise en ligne à son
+// déploiement : jamais « remplacée le 2 octobre », date de la version et non de sa publication) : copie FIGÉE du
 // texte publié (commit 4a3714e), gardée consultable pour les centrales qui l'avaient acceptée. Ne jamais la modifier :
 // une nouvelle version s'écrit dans app/cgv/page.tsx (lien « Version précédente »). Non indexée ; servie telle quelle
 // sur les mini-sites (proxy.ts, LEGAL_PATHS).
 export const metadata: Metadata = {
   title: { absolute: "Conditions générales de vente (version du 27 septembre 2026) — Rydar Drive" },
-  description: "Version du 27 septembre 2026 des conditions générales de vente de Rydar Drive, remplacée le 2 octobre 2026.",
+  description: "Version du 27 septembre 2026 des conditions générales de vente de Rydar Drive, remplacée par la version du 2 octobre 2026.",
   robots: { index: false, follow: true },
 };
 
@@ -30,7 +31,7 @@ export default async function PreviousTermsOfSalePage() {
   return (
     <LegalPage title="Conditions générales de vente" updatedAt={UPDATED_AT}>
       <p className="rounded-lg border border-amber/25 bg-amber/[0.06] px-4 py-3 text-[13.5px] text-fg-muted">
-        <span className="font-medium text-amber">Version remplacée le 2 octobre 2026.</span> Ce texte est conservé pour
+        <span className="font-medium text-amber">Version remplacée par celle du 2 octobre 2026.</span> Ce texte est conservé pour
         consultation : il reste applicable à une centrale qui l&apos;avait accepté jusqu&apos;à ce que la version suivante
         s&apos;applique à elle (voir le préambule de la version en vigueur).{" "}
         <Link href="/cgv" className={link}>

@@ -99,11 +99,13 @@ la centrale doit les frais plateforme à Rydar.
 - Lien /rejoindre : flotte ET centrale (006300, menu « Inscriptions » / « Réseau », textes `network/join-copy.ts`), jamais coupé par un changement de modèle ;
   flotte : validé à la main = « trusted », validation auto = reste « new » (plafonné si passage en centrale).
 - Frais plateforme : dus dès la fin de course (même si le règlement chauffeur est annulé/contesté), registre immuable
-  `platform_fee_entries` (changement = correction delta ; BAISSE `pending` jusqu'à validation super admin), paiements FIFO.
+  `platform_fee_entries` (changement = correction delta ; BAISSE `pending` : décision super admin, acceptée au bout de 30 j), paiements FIFO.
   Flottes aussi (006400) : % prix (0 sans prix) + fixe, taux figés fin de course (`private.fleet_fee_basis`), menu « Frais Rydar ».
-  Taux par `svc_platform_set_fees` (006600) : HAUSSE programmée ≥ 30 j (et ≥ `ORG_LEGAL_EFFECTIVE_AT` sans CGV acceptées ;
-  e-mail, ménage) ou accord écrit, baisse immédiate, hausse en UPDATE direct refusée ; web : modèle seul = sans taux (taux
-  actuels renvoyés = annonce annulée) ; arrondi `percentOfCents`. CGV art. 5 et e-mails décrivent CE code : les changer ensemble.
+  Taux par `svc_platform_set_fees` (006600) : HAUSSE programmée ≥ 30 j (et ≥ `ORG_LEGAL_EFFECTIVE_AT` sans CGV acceptées,
+  refusée sans CGV acceptées ni annoncées ou sans e-mail ; appliquée par le ménage seulement si l'e-mail d'annonce est PARTI
+  30 j avant) ou accord écrit, baisse immédiate, hausse en UPDATE direct refusée ; changement de modèle = note d'accord
+  obligatoire ; délai de paiement ≤ 45 j ; web : modèle seul = sans taux (taux actuels renvoyés = annonce annulée) ;
+  arrondi `percentOfCents`. CGV art. 5, `ORG_LEGAL_CHANGES` et e-mails décrivent CE code : les changer ensemble.
 - Temps réel : `realtime.send` topics `org:{id}` (lu par TOUT membre, dispatcher compris : rien qu'un dispatcher ne lirait pas via
   RLS ; `platform.updated` = ids seulement), `driver:{id}`, `fleet:{org}`.
 - Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` idempotente ; versions séparées (`@rydar/shared`) :

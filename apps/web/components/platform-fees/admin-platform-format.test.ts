@@ -1,6 +1,32 @@
 import type { PlatformAccount } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
-import { csvText, monthSignals, originParts, rideSettlementLabel, zeroPriceText } from "./admin-platform-format";
+import { ISO_DAY_RE, csvText, invoiceCycles, monthSignals, originParts, rideSettlementLabel, zeroPriceText } from "./admin-platform-format";
+
+describe("invoiceCycles : cycles de la facture récapitulative (frais à facturer)", () => {
+  it("mensuel : mois civils du fuseau, le mois en cours d'abord, fin exclue", () => {
+    // 1er octobre 2026, 00:30 à Paris (30 septembre 22:30 UTC) : déjà octobre
+    const c = invoiceCycles("monthly", new Date("2026-09-30T22:30:00Z"), "Europe/Paris", 3);
+    expect(c).toEqual([
+      { from: "2026-10-01", to: "2026-11-01", label: "Octobre 2026", current: true },
+      { from: "2026-09-01", to: "2026-10-01", label: "Septembre 2026", current: false },
+      { from: "2026-08-01", to: "2026-09-01", label: "Août 2026", current: false },
+    ]);
+    expect(invoiceCycles("monthly", new Date("2026-12-15T12:00:00Z"), "Europe/Paris", 1)[0]).toMatchObject({ from: "2026-12-01", to: "2027-01-01" });
+  });
+
+  it("hebdomadaire : du lundi au dimanche (fin exclue : lundi suivant)", () => {
+    // Samedi 3 octobre 2026 : semaine du lundi 28 septembre
+    const c = invoiceCycles("weekly", new Date("2026-10-03T10:00:00Z"), "Europe/Paris", 2);
+    expect(c.map(({ from, to, current }) => ({ from, to, current }))).toEqual([
+      { from: "2026-09-28", to: "2026-10-05", current: true },
+      { from: "2026-09-21", to: "2026-09-28", current: false },
+    ]);
+    expect(c[0]!.label).toContain("Semaine du 28");
+    // Lundi même : sa propre semaine
+    expect(invoiceCycles("weekly", new Date("2026-10-05T08:00:00Z"), "Europe/Paris", 1)[0]).toMatchObject({ from: "2026-10-05", to: "2026-10-12" });
+    for (const x of c) expect(ISO_DAY_RE.test(x.from) && ISO_DAY_RE.test(x.to)).toBe(true);
+  });
+});
 
 describe("csvText : cellule CSV d'un texte libre (export super admin des frais)", () => {
   it("un retour chariot isolé ne coupe pas la ligne et ne fait pas passer de formule", () => {

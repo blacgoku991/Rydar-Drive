@@ -86,7 +86,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
         title="Encaissements"
         description={
           canManage
-            ? "Frais plateforme à reverser à Rydar, commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez, relancez, réclamez en un clic."
+            ? "Frais plateforme à régler à Rydar, commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez, relancez, réclamez en un clic."
             : "Commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez les paiements, relancez les retardataires, réclamez en un clic."
         }
         actions={

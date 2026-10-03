@@ -10,6 +10,7 @@ type Reply = { data?: unknown; error?: unknown } | undefined;
 const h = vi.hoisted(() => ({
   ops: [] as Op[],
   audits: [] as Record<string, any>[],
+  deletedUsers: [] as string[],
   handle: (() => undefined) as (op: Op) => Reply,
   session: null as any,
 }));
@@ -42,7 +43,7 @@ function fakeDb() {
       admin: {
         createUser: async () => ({ data: { user: { id: NEW_USER } }, error: null }),
         inviteUserByEmail: async () => ({ data: { user: { id: NEW_USER } }, error: null }),
-        deleteUser: async () => ({ error: null }),
+        deleteUser: async (id: string) => (h.deletedUsers.push(id), { error: null }),
       },
     },
   };
@@ -73,6 +74,7 @@ const writes = (table: string) => h.ops.filter((o) => o.table === table && ["ins
 beforeEach(() => {
   h.ops.length = 0;
   h.audits.length = 0;
+  h.deletedUsers.length = 0;
   h.handle = () => undefined;
   h.session = { user: { id: ACTOR } };
 });
@@ -104,9 +106,14 @@ describe("création d'une organisation : frais appliqués tout de suite (« init
     ]);
     // Taux jamais écrits directement (garde SQL organizations_platform_rates_guard)
     expect(writes("organizations").filter((o) => o.action === "update")).toEqual([]);
+    // Réglé une fois le propriétaire rattaché : la base lui envoie l'e-mail des frais appliqués dès l'ouverture
+    const owner = h.ops.findIndex((o) => o.table === "organization_users" && o.action === "insert");
+    const setup = h.ops.findIndex((o) => o.table === "rpc:svc_platform_set_fees");
+    expect(owner).toBeGreaterThanOrEqual(0);
+    expect(setup).toBeGreaterThan(owner);
   });
 
-  it("réglage initial refusé : organisation retirée, erreur de champ, aucun compte propriétaire créé", async () => {
+  it("réglage initial refusé : organisation retirée (propriétaire compris), erreur de champ, compte créé ici supprimé", async () => {
     h.handle = (op) =>
       op.table === "organizations" && op.action === "insert"
         ? { data: { id: ORG } }
@@ -120,7 +127,8 @@ describe("création d'une organisation : frais appliqués tout de suite (« init
       fieldErrors: { platformFeeFixedCents: "Frais fixes par course : entre 0 et 1 000 €." },
     });
     expect(writes("organizations").map((o) => o.action)).toEqual(["insert", "delete"]);
-    expect(writes("organization_users")).toEqual([]);
+    expect(writes("organization_users").map((o) => o.action)).toEqual(["insert"]);
+    expect(h.deletedUsers).toEqual([NEW_USER]);
 
     // Erreur de la RPC elle-même (transaction annulée) : organisation retirée, message générique
     h.ops.length = 0;
@@ -136,12 +144,14 @@ describe("création d'une organisation : frais appliqués tout de suite (« init
 });
 
 describe("fiche organisation : hausse annoncée, accord écrit, modèle seul", () => {
-  it("modèle seul : aucun taux envoyé (la hausse annoncée reste prévue)", async () => {
+  it("modèle seul : aucun taux envoyé (la hausse annoncée reste prévue) ; demande ou accord écrit de l'organisation transmis", async () => {
     h.handle = (op) =>
       op.table === "rpc:svc_platform_set_fees"
         ? { data: { ok: true, code: "APPLIED", message: "Modèle d'exploitation enregistré.", scheduled_change: null, emails_queued: 0 } }
         : undefined;
-    expect(await actions.updateDispatchModel(ORG, { dispatchModel: "centrale" })).toMatchObject({ ok: true, code: "APPLIED" });
+    expect(await actions.updateDispatchModel(ORG, { dispatchModel: "centrale", consentNote: " Demande du gérant, e-mail du 03/10/2026 " })).toMatchObject({
+      ok: true, code: "APPLIED",
+    });
     expect(rpcCalls("svc_platform_set_fees")[0]).toMatchObject({
       p_org: ORG,
       p_actor: ACTOR,
@@ -150,7 +160,8 @@ describe("fiche organisation : hausse annoncée, accord écrit, modèle seul", (
       p_dispatch_model: "centrale",
       p_mode: "notice",
       p_effective_on: null,
-      p_consent_note: null,
+      // CGV art. 3 : contrôlée par la base (CONSENT_REQUIRED sans elle)
+      p_consent_note: "Demande du gérant, e-mail du 03/10/2026",
       p_org_legal_version: ORG_LEGAL_VERSION,
       p_org_legal_effective_on: ORG_LEGAL_EFFECTIVE_AT,
     });

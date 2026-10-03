@@ -1,23 +1,26 @@
 import {
   DISPATCH_MODEL_META,
+  ORG_LEGAL_VERSION,
   ORG_STATUS_META,
   PLATFORM_CYCLE_META,
   formatNumber,
   formatPrice,
   isoDayLabel,
+  legalAcceptanceState,
+  legalDateLabel,
   platformDueSummary,
   type AdminPlatformAccount,
   type AdminPlatformOverview,
   type PlatformEntry,
 } from "@rydar/shared";
-import { AlarmClock, ArrowLeft, BellRing, Building2, CalendarClock, CircleDollarSign, HandCoins, Inbox, TrendingUp } from "lucide-react";
+import { AlarmClock, AlertTriangle, ArrowLeft, BellRing, Building2, CalendarClock, CircleDollarSign, Download, HandCoins, Inbox, Receipt, TrendingUp } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { formatPlatformFee } from "@/components/admin/fees";
 import { PageBody } from "@/components/layout/page-header";
 import { AccountActions, TermsForm } from "@/components/platform-fees/admin-account-actions";
-import { MONTH_RE, ago, cancelledOnboard, formatDay, lastMonths, monthKey, overdueInfo, zeroPriceText } from "@/components/platform-fees/admin-platform-format";
+import { MONTH_RE, ago, cancelledOnboard, formatDay, invoiceCycles, lastMonths, monthKey, overdueInfo, zeroPriceText } from "@/components/platform-fees/admin-platform-format";
 import { PlatformLive } from "@/components/platform-fees/admin-platform-live";
 import { Metric } from "@/components/platform-fees/admin-platform-metric";
 import { OriginBreakdown, PaymentsHistory, PaymentsToConfirm, PendingReductions, StatementView } from "@/components/platform-fees/admin-platform-sections";
@@ -35,7 +38,11 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
   if (!UUID.test(orgId)) notFound();
   const session = await requireSuperAdmin();
   const month = mois && MONTH_RE.test(mois) ? mois : null;
-  const { data, error } = await session.supabase.rpc("admin_platform_account", { p_org: orgId, p_month: month });
+  const [{ data, error }, acceptances] = await Promise.all([
+    session.supabase.rpc("admin_platform_account", { p_org: orgId, p_month: month }),
+    // CGV + accord de traitement au nom de l'organisation (« dpa » suffit : enregistrés ensemble)
+    session.supabase.from("legal_acceptances").select("version").eq("organization_id", orgId).eq("document", "dpa"),
+  ]);
   if (error) {
     return (
       <PageBody>
@@ -63,6 +70,11 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
   const fee = formatPlatformFee(a.fee_percent, a.fee_fixed_cents);
   const feeText = fee === "Aucun" ? "aucun frais par course" : `frais ${fee} par course`;
   const onboard = cancelledOnboard(a);
+  // CGV en vigueur pas encore acceptées : relances, blocage et pénalités s'appuient sur des conditions qu'elle n'a pas
+  // acceptées (CGV non opposables, art. 1119 du Code civil) — null : lecture en échec
+  const terms = acceptances.error ? null : legalAcceptanceState(((acceptances.data ?? []) as { version: string }[]).map((x) => x.version), ORG_LEGAL_VERSION);
+  // Factures récapitulatives : le cycle en cours et les précédents (frais pris en compte pendant chaque cycle)
+  const cycles = invoiceCycles(a.cycle, new Date(), tz, a.cycle === "weekly" ? 8 : 6);
 
   return (
     <>
@@ -101,6 +113,15 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
               <p className="mt-1 flex items-center gap-1.5 text-[12.5px] text-fg-subtle">
                 <BellRing className="size-3.5" /> Relancée {ago(a.reminded_at)}
                 {a.reminder_note ? ` : « ${a.reminder_note} »` : ""}
+              </p>
+            )}
+            {terms && terms !== "accepted" && (
+              <p className="mt-1 flex items-start gap-1.5 text-[12.5px] text-amber">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  CGV du {legalDateLabel(ORG_LEGAL_VERSION)} pas encore acceptées ({terms === "updated" ? "version antérieure seulement" : "aucune version"}){"\u00a0"}:
+                  seuil de blocage, relances et pénalités s&apos;appuieraient sur des conditions qu&apos;elle n&apos;a pas acceptées.
+                </span>
               </p>
             )}
           </div>
@@ -196,6 +217,37 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
             </CardBody>
           </Card>
         </div>
+
+        <Card>
+          <CardHeader
+            title="Frais à facturer"
+            icon={<Receipt />}
+            description={
+              "Facture récapitulative à envoyer dès la fin de chaque cycle (CGV, article 5)\u00a0: frais pris en compte pendant le cycle " +
+              "(écritures enregistrées, baisses acceptées), toutes taxes comprises — une écriture créée après coup arrive dans le cycle de son " +
+              "enregistrement, jamais dans un cycle déjà facturé. Le relevé mensuel ci-dessous, lui, range chaque écriture à la date de sa course."
+            }
+          />
+          <CardBody className="pt-3">
+            <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {cycles.map((c) => (
+                <li key={c.from}>
+                  <a
+                    href={`${basePath}/factures?du=${c.from}&au=${c.to}`}
+                    download
+                    className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2 text-[13px] text-fg-muted hover:border-line-strong hover:text-fg"
+                  >
+                    <span className="min-w-0 truncate">
+                      {c.label}
+                      {c.current ? " (en cours)" : ""}
+                    </span>
+                    <Download className="size-4 shrink-0" />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
 
         <PaymentsHistory payments={payments} orgName={org.name} currency={cur} timeZone={tz} />
 

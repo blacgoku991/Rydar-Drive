@@ -1,12 +1,12 @@
-import type { SettlementMethod } from "@rydar/shared";
+import { localIsoDay, type SettlementMethod } from "@rydar/shared";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
-import { TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
-import { USER_TERMS_DOCUMENTS, termsBannerChoice } from "@/components/legal/terms-state";
+import { OrgTermsGate, TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
+import { USER_TERMS_DOCUMENTS, orgTermsGate, termsBannerChoice } from "@/components/legal/terms-state";
 import { loadChatCounts } from "@/app/dashboard/messages/queries";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
-import { LEGAL_VERSION } from "@/lib/legal";
+import { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT } from "@/lib/legal";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -66,6 +66,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
     orgVersions: terms && !terms.error ? ((terms.data ?? []) as { version: string }[]).map((a) => a.version) : null,
     userDocuments: userTerms.error ? null : ((userTerms.data ?? []) as { document: string }[]).map((a) => a.document),
   });
+  // Organisation qui n'a jamais accepté les CGV : acceptation exigée avant sa première course (lue seulement dans ce cas)
+  let gate = false;
+  if (termsBanner?.kind === "org" && !termsBanner.updated) {
+    const { data: anyRide, error: rideError } = await ctx.supabase.from("rides").select("id").eq("organization_id", ctx.org.id).limit(1);
+    gate = orgTermsGate(termsBanner, rideError ? null : (anyRide ?? []).length > 0);
+  }
+  // Date d'entrée en vigueur au plus tard des CGV atteinte (heure de Paris, comme la base) : bandeau « en vigueur depuis »
+  const termsEffectivePassed = localIsoDay(new Date(), "Europe/Paris") >= ORG_LEGAL_EFFECTIVE_AT;
   const cs = (centraleSettings?.data ?? null) as {
     settlement_link: string | null;
     settlement_instructions: string | null;
@@ -98,8 +106,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       }}
       centraleCounts={centraleCounts}
       topBanner={
-        termsBanner?.kind === "org" ? (
-          <TermsBanner orgName={ctx.org.name} updated={termsBanner.updated} />
+        gate ? null : termsBanner?.kind === "org" ? (
+          <TermsBanner orgName={ctx.org.name} updated={termsBanner.updated} effectivePassed={termsEffectivePassed} />
         ) : termsBanner?.kind === "user" ? (
           <UserTermsBanner />
         ) : null
@@ -108,7 +116,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       bookingSites={bookingSites}
       rydarFees={fleetFees?.data === true}
     >
-      {children}
+      {gate ? <OrgTermsGate orgName={ctx.org.name} /> : children}
     </DashboardShell>
   );
 }

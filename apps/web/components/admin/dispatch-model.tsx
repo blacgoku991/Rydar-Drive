@@ -3,8 +3,10 @@
 // et frais plateforme Rydar dus sur chaque course terminée, dans les deux modèles (20260924006400) :
 // centrale → calculés sur le prix (plafonnés au prix) ; flotte → % du prix (0 sans prix) + fixe, facturés à la flotte.
 // Changement des frais par course (20260924006600, svc_platform_set_fees) : baisse tout de suite ; HAUSSE annoncée au
-// moins 30 jours à l'avance (et pas avant l'entrée en vigueur des CGV non acceptées), ou tout de suite sur accord
-// écrit de l'organisation ; hausse annoncée annulable ; historique des changements.
+// moins 30 jours à l'avance par e-mail (et pas avant l'entrée en vigueur des CGV non acceptées ; impossible sans CGV
+// acceptées ni annoncées, ou sans adresse e-mail), ou tout de suite sur accord écrit de l'organisation ; hausse annoncée
+// annulable ; historique des changements. Changement de modèle : seulement à la demande de l'organisation ou avec son
+// accord écrit, noté (CGV art. 3).
 import {
   DISPATCH_MODEL_META, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, PLATFORM_FEE_CHANGE_MODE_META, PLATFORM_FEE_CHANGE_STATUS_META,
   PLATFORM_FEE_MIN_REASON_LABEL, addIsoDays, fleetPlatformFee, formatDate, formatPrice, isoDayLabel, legalDateLabel, type AdminPlatformFeeSchedule,
@@ -133,8 +135,16 @@ export function feeRule(model: DispatchModel) {
     : "Calculés sur le prix de chaque course terminée (jamais plus que le prix), avant la part chauffeur et la commission\u00a0; dus par la centrale à Rydar. Taux appliqués\u00a0: ceux en vigueur au calcul de la répartition (création de la course, puis chaque changement de prix, de commission ou de mode de paiement, même après la course).";
 }
 
-/** Acceptation des CGV et de l'accord de traitement en vigueur (ORG_LEGAL_VERSION) par l'organisation. */
-export type OrgTermsStatus = { state: LegalAcceptanceState; acceptedAt: string | null };
+/**
+ * Acceptation des CGV et de l'accord de traitement en vigueur (ORG_LEGAL_VERSION) par l'organisation, et annonce par
+ * e-mail de cette version (svc_org_terms_notify) : sans l'une ni l'autre, aucune hausse annoncée (accord écrit seulement).
+ */
+export type OrgTermsStatus = {
+  state: LegalAcceptanceState;
+  acceptedAt: string | null;
+  notifiedAt?: string | null;
+  notifiedEffectiveOn?: string | null;
+};
 
 /** Fiche organisation : choix du modèle + frais par course (hausse annoncée ou sur accord écrit), confirmations. */
 export function DispatchModelForm({
@@ -172,7 +182,7 @@ export function DispatchModelForm({
   const [mode, setMode] = useState<"notice" | "consent">("notice");
   const [effectiveOn, setEffectiveOn] = useState("");
   const [consentNote, setConsentNote] = useState("");
-  const [errors, setErrors] = useState<{ percent?: string; fixed?: string; effectiveOn?: string; consentNote?: string; dispatchModel?: string }>({});
+  const [errors, setErrors] = useState<{ percent?: string; fixed?: string; effectiveOn?: string; consentNote?: string; dispatchModel?: string; mode?: string }>({});
   const [confirm, setConfirm] = useState(false);
 
   const fees = readFees(percent, fixed);
@@ -193,6 +203,17 @@ export function DispatchModelForm({
   const nextText = fees.valid ? ratesText(fees.percent, fees.fixedCents) : "";
   const currentText = ratesText(Number(feePercent), feeFixedCents);
   const fixedAfter = plan.sendRates && fees.valid ? fees.fixedCents : feeFixedCents;
+  const modelChanged = value !== model;
+  // Note d'accord écrit : hausse appliquée tout de suite, ou changement de modèle (demande / accord de l'organisation)
+  const needsNote = (increase && mode === "consent") || modelChanged;
+  // Hausse annoncée impossible (svc_platform_set_fees la refuserait) : CGV ni acceptées ni annoncées, ou aucune adresse
+  const noticeBlocked = !schedule
+    ? null
+    : schedule.terms && !schedule.terms.accepted && !schedule.terms.notified_at
+      ? `CGV du ${legalDateLabel(ORG_LEGAL_VERSION)} ni acceptées par l'organisation ni annoncées par e-mail : prévenez-la d'abord (Informations légales, « Prévenir par e-mail »), ou choisissez « Accord écrit reçu ».`
+      : schedule.email_recipients === 0
+        ? "Aucune adresse e-mail valide pour le propriétaire ni pour l'organisation : corrigez l'adresse pour annoncer la hausse, ou choisissez « Accord écrit reçu »."
+        : null;
 
   const reset = () => {
     setValue(model);
@@ -213,7 +234,7 @@ export function DispatchModelForm({
         platformFeeFixedCents: plan.sendRates ? fees.fixedCents : null,
         mode: increase ? mode : "notice",
         effectiveOn: increase && mode === "notice" ? plan.sendOn : null,
-        consentNote: increase && mode === "consent" ? consentNote : null,
+        consentNote: needsNote ? consentNote : null,
       });
       if (!res.ok) {
         setConfirm(false);
@@ -224,6 +245,7 @@ export function DispatchModelForm({
           effectiveOn: f.effectiveOn,
           consentNote: f.consentNote,
           dispatchModel: f.dispatchModel,
+          mode: f.mode,
         });
         // Préavis trop court (la date au plus tôt a pu avancer d'un jour depuis l'ouverture de la page) : date proposée
         if (res.minEffectiveOn) setEffectiveOn(res.minEffectiveOn);
@@ -240,13 +262,18 @@ export function DispatchModelForm({
 
   const submit = () => {
     if (ratesTouched && !fees.valid) return void setErrors(fees.errors);
-    if (increase && mode === "consent" && consentNote.trim().length < 3) {
-      return void setErrors({ consentNote: "Précisez la date et la forme de l'accord écrit (e-mail, courrier…)" });
+    if (needsNote && consentNote.trim().length < 3) {
+      return void setErrors({
+        consentNote: modelChanged && !(increase && mode === "consent")
+          ? "Précisez la demande ou l'accord écrit de l'organisation pour ce changement de modèle (date et forme : e-mail, courrier…)"
+          : "Précisez la date et la forme de l'accord écrit (e-mail, courrier…)",
+      });
     }
+    if (increase && mode === "notice" && noticeBlocked && !plan.sameAsScheduled) return void setErrors({ mode: noticeBlocked });
     if (increase && mode === "notice" && plan.dateError) return void setErrors({ effectiveOn: plan.dateError });
     setErrors({});
-    // Confirmation : retour au mode flotte, ou hausse (annoncée ou appliquée tout de suite)
-    if (toFleet || (increase && !plan.sameAsScheduled)) setConfirm(true);
+    // Confirmation : changement de modèle (dans les deux sens), ou hausse (annoncée ou appliquée tout de suite)
+    if (modelChanged || (increase && !plan.sameAsScheduled)) setConfirm(true);
     else save();
   };
 
@@ -283,8 +310,11 @@ export function DispatchModelForm({
                 checked={mode === "notice"}
                 onSelect={() => setMode("notice")}
                 title="Programmer avec préavis"
-                description="Annoncée dès l'enregistrement par e-mail au propriétaire (et dans son tableau de bord), appliquée à la date d'effet."
+                description="Annoncée dès l'enregistrement par e-mail au propriétaire (et dans son tableau de bord), appliquée à la date d'effet si l'e-mail est parti au moins 30 jours avant (sinon annulée)."
               />
+              {mode === "notice" && (noticeBlocked || errors.mode) && (
+                <p className="pl-7 text-[12px] leading-[18px] text-red">{frSpaces(errors.mode ?? noticeBlocked ?? "")}</p>
+              )}
               {mode === "notice" && (
                 <Field
                   label="Date d'effet"
@@ -318,7 +348,7 @@ export function DispatchModelForm({
               />
               {mode === "consent" && (
                 <Field
-                  label="Accord écrit"
+                  label={modelChanged ? "Accord écrit (hausse et changement de modèle)" : "Accord écrit"}
                   htmlFor={`${formId}-consent`}
                   error={errors.consentNote}
                   hint={frSpaces(`Date et forme de l'accord (ex. « e-mail du propriétaire du 3 octobre 2026 »). ${consentNote.length}/500`)}
@@ -335,6 +365,24 @@ export function DispatchModelForm({
                 </Field>
               )}
             </fieldset>
+          )}
+          {modelChanged && !(increase && mode === "consent") && (
+            <Field
+              label="Demande ou accord écrit de l'organisation"
+              htmlFor={`${formId}-model-note`}
+              error={errors.consentNote}
+              hint={frSpaces(`Changement de modèle : seulement à la demande de l'organisation ou avec son accord écrit (CGV, article 3). Date et forme (ex. « e-mail du propriétaire du 3 octobre 2026 »). ${consentNote.length}/500`)}
+            >
+              <Textarea
+                id={`${formId}-model-note`}
+                value={consentNote}
+                onChange={(e) => setConsentNote(e.target.value)}
+                maxLength={500}
+                disabled={pending}
+                className="min-h-[64px]"
+                aria-invalid={!!errors.consentNote}
+              />
+            </Field>
           )}
           <PlanPreview plan={plan} mode={mode} nextText={nextText} scheduled={scheduled} ratesTouched={ratesTouched} />
         </form>
@@ -376,11 +424,15 @@ export function DispatchModelForm({
 
       <Dialog open={confirm} onOpenChange={(o) => !pending && setConfirm(o)}>
         <DialogContent
-          title={frSpaces(toFleet ? "Repasser en mode flotte ?" : mode === "consent" ? "Appliquer la hausse maintenant ?" : "Programmer la hausse ?")}
+          title={frSpaces(
+            toFleet ? "Repasser en mode flotte ?" : toCentrale ? "Passer en centrale à commission ?" : mode === "consent" ? "Appliquer la hausse maintenant ?" : "Programmer la hausse ?",
+          )}
           description={frSpaces(
             toFleet
               ? "Le compte redevient une flotte classique : plus de répartition part chauffeur / commission sur les nouvelles courses."
-              : `Frais par course : ${currentText} → ${nextText}.`,
+              : toCentrale
+                ? "Le logiciel calcule en plus, pour chaque course, la part du chauffeur et la commission de la centrale, et suit leur règlement."
+                : `Frais par course : ${currentText} → ${nextText}.`,
           )}
         >
           <ul className="space-y-2 text-[13px] text-fg-muted">
@@ -394,8 +446,19 @@ export function DispatchModelForm({
                 <li className="flex gap-2">
                   <span className="text-amber">•</span> Frais Rydar{"\u00a0"}: ceux réglés ci-dessus s&apos;appliquent aux courses terminées en flotte{"\u00a0"}; les frais déjà dus restent dus.
                 </li>
-                <li className="flex gap-2"><span className="text-amber">•</span> Vous pourrez repasser en centrale à tout moment.</li>
+                <li className="flex gap-2">
+                  <span className="text-amber">•</span> Repasser en centrale{"\u00a0"}: seulement à la demande de l&apos;organisation ou avec son accord écrit (CGV, article 3).
+                </li>
               </>
+            )}
+            {modelChanged && (
+              <li className="flex gap-2">
+                <span className="text-amber">•</span>
+                <span>
+                  Changement de modèle à la demande de l&apos;organisation ou avec son accord écrit (CGV, article 3), gardé au journal d&apos;audit{"\u00a0"}:
+                  «{"\u00a0"}{consentNote.trim()}{"\u00a0"}».
+                </span>
+              </li>
             )}
             {increase && !plan.sameAsScheduled && (mode === "consent" ? (
               <>
@@ -429,7 +492,13 @@ export function DispatchModelForm({
               Annuler
             </Button>
             <Button type="button" variant={toFleet ? "danger" : "primary"} loading={pending} onClick={save}>
-              {toFleet ? "Passer en mode flotte" : mode === "consent" && increase ? "Appliquer maintenant" : "Programmer"}
+              {toFleet
+                ? "Passer en mode flotte"
+                : toCentrale
+                  ? "Passer en centrale"
+                  : mode === "consent" && increase
+                    ? "Appliquer maintenant"
+                    : "Programmer"}
             </Button>
           </div>
         </DialogContent>
@@ -471,11 +540,17 @@ function TermsLine({ terms, today }: { terms: OrgTermsStatus | null; today: stri
       <AlertTriangle className="mt-px size-3.5 shrink-0 text-amber" />
       <span>
         <span className="font-medium text-amber">CGV du {version} pas encore acceptées</span> (
-        {terms.state === "updated" ? "version antérieure acceptée" : "aucune version acceptée"})
-        {today < ORG_LEGAL_EFFECTIVE_AT ? (
+        {terms.state === "updated" ? "version antérieure acceptée" : "aucune version acceptée"}
+        {terms.notifiedAt ? `, annoncées par e-mail le ${formatDate(terms.notifiedAt)}` : ", pas encore annoncées par e-mail"})
+        {!terms.notifiedAt ? (
           <>
-            {"\u00a0"}: sans accord écrit, une hausse s&apos;applique au plus tôt le {limit} (leur entrée en vigueur), et au moins 30{"\u00a0"}jours après son
-            annonce.
+            {"\u00a0"}: aucune hausse annoncée possible tant qu&apos;elles ne sont ni acceptées ni annoncées (Informations légales, «{"\u00a0"}Prévenir
+            par e-mail{"\u00a0"}»), seulement une hausse sur accord écrit.
+          </>
+        ) : today < (terms.notifiedEffectiveOn ?? ORG_LEGAL_EFFECTIVE_AT) ? (
+          <>
+            {"\u00a0"}: sans accord écrit, une hausse s&apos;applique au plus tôt le {legalDateLabel(terms.notifiedEffectiveOn ?? ORG_LEGAL_EFFECTIVE_AT)} (leur
+            entrée en vigueur annoncée), et au moins 30{"\u00a0"}jours après son annonce.
           </>
         ) : (
           <>
@@ -533,6 +608,7 @@ function ScheduledFeeChange({ orgId, change, currentText, timeZone }: { orgId: s
   const [pending, start] = useTransition();
   const target = ratesText(Number(change.percent), change.fixed_cents);
   const mail = emailsSummary(change);
+  const late = noticeLate(change);
 
   return (
     <div className="rounded-lg border border-amber/25 bg-amber/[0.06] px-3.5 py-3 text-[12.5px]" role="status">
@@ -548,6 +624,11 @@ function ScheduledFeeChange({ orgId, change, currentText, timeZone }: { orgId: s
             Annoncée le {formatDate(change.created_at, timeZone)}
             {change.created_by_name ? ` par ${change.created_by_name}` : ""} · <span className={mail.tone}>{mail.text}</span>
           </p>
+          {late && (
+            <p className="mt-0.5 text-red">
+              {frSpaces("E-mail d'annonce pas parti au moins 30 jours avant la date d'effet : la hausse ne sera pas appliquée (annulée à cette date). Annulez-la et reprogrammez-la, ou appliquez-la sur accord écrit.")}
+            </p>
+          )}
         </div>
         <Button type="button" variant="outline" size="xs" onClick={() => setOpen(true)}>
           <X /> Annuler ce changement
@@ -589,6 +670,16 @@ function ScheduledFeeChange({ orgId, change, currentText, timeZone }: { orgId: s
       </Dialog>
     </div>
   );
+}
+
+/**
+ * Hausse programmée dont l'e-mail d'annonce n'est pas (ou ne sera plus) parti au moins 30 jours avant la date d'effet :
+ * le ménage l'annulera (private.apply_platform_fee_changes). Envoi encore possible à temps : pas d'alerte.
+ */
+function noticeLate(c: Pick<PlatformFeeChangeRow, "status" | "mode" | "effective_at" | "notice_sent_at">, now = Date.now()): boolean {
+  if (c.status !== "scheduled" || c.mode !== "notice") return false;
+  const limit = Date.parse(c.effective_at) - 30 * 86_400_000;
+  return c.notice_sent_at ? Date.parse(c.notice_sent_at) > limit : now > limit;
 }
 
 /** E-mails d'un changement (annonce, confirmation, annulation) : envoyés, en attente, en échec, ou aucune adresse. */

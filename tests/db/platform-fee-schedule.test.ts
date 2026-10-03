@@ -1,9 +1,11 @@
 // Frais Rydar : hausses annoncées au moins 30 jours à l'avance, accord écrit, annulation, application par le ménage,
-// e-mails d'annonce (contenu fixe), annonce des CGV, libellés neutres et relance WhatsApp d'une flotte
-// (migration 20260924006600_platform_fee_schedule).
+// e-mails d'annonce (contenu fixe), annonce des CGV, libellés neutres et relance WhatsApp d'une flotte, délai de
+// paiement, frais à facturer, baisses sans décision, conservation des annonces (migration
+// 20260924006600_platform_fee_schedule).
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ERROR_MESSAGES } from "../../packages/shared/src/domain";
+import { ORG_LEGAL_CHANGES } from "../../packages/shared/src/features";
 import {
   as, createAuthUser, createMember, createOrg, createRideAsOwner, expectPgError, insertRideBypass, pool, sql, type Org,
 } from "./helpers";
@@ -107,6 +109,27 @@ const audits = (o: Org, action: string) =>
   ]);
 const housekeeping = async () => (await sql("select private.housekeeping() as r"))[0].r as Record<string, any>;
 
+/** Texte fixe passé par private.fr_typo : espace insécable avant « : ; ! ? » et à l'intérieur des guillemets. */
+const typo = (t: string) => t.replace(/ ([:;!?»])/g, `${NBSP}$1`).replace(/« /g, `«${NBSP}`);
+
+/** Annonce des CGV reçue par l'organisation (comme svc_org_terms_notify), avec la date d'entrée en vigueur annoncée. */
+async function notifyTerms(o: Org, effectiveOn = LEGAL_ON, version = VERSION) {
+  await sql(
+    `insert into public.org_terms_notices (organization_id, version, effective_on, emails_queued) values ($1, $2, $3, 1)`,
+    [o.id, version, effectiveOn],
+  );
+}
+
+/** E-mails (annonce…) d'un changement de frais partis : envoyés par le mailer à l'instant SQL `at`. */
+const markSent = (changeId: string, at = "now() - interval '31 days'") =>
+  sql(`update public.email_outbox set status = 'sent', sent_at = ${at} where platform_fee_change_id = $1`, [changeId]);
+
+/** Hausse programmée arrivée à sa date d'effet (une minute passée), annonce partie 31 jours avant. */
+async function dueNow(changeId: string, sent = true) {
+  await sql(`update public.platform_fee_changes set effective_at = now() - interval '1 minute' where id = $1`, [changeId]);
+  if (sent) await markSent(changeId);
+}
+
 /** Typographie française d'un texte fixe : espace insécable avant « : ; ! ? » et dans les guillemets. */
 function expectFrenchTypography(text: string) {
   expect(text).not.toMatch(/ [:;!?»]/);
@@ -141,7 +164,7 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
       min_reason: "notice_30_days", emails_queued: 1,
       scheduled_change: { percent: 0, fixed_cents: 200, from_percent: 0, from_fixed_cents: 0, effective_on: MIN_30 },
     });
-    expect(res.message).toBe(`Hausse programmée : 2 € par course terminée à partir du ${ddmmyyyy(MIN_30)}. Annonce envoyée par e-mail au propriétaire (1 e-mail).`);
+    expect(res.message).toBe(typo(`Hausse programmée : 2 € par course terminée à partir du ${ddmmyyyy(MIN_30)}. Annonce envoyée par e-mail au propriétaire (1 e-mail).`));
     // Rien ne change avant la date d'effet
     expect(await rates(o)).toEqual({ model: "fleet", percent: 0, fixed: 0 });
     const [c] = await changes(o);
@@ -178,15 +201,37 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     expect(await rates(mixed)).toMatchObject({ percent: 10, fixed: 0 });
   });
 
-  it("CGV non acceptées (ou version antérieure seulement) : pas avant leur entrée en vigueur", async () => {
+  it("CGV non acceptées (ou version antérieure seulement) : annoncées d'abord, puis pas avant leur entrée en vigueur", async () => {
     const sa = await superAdmin();
     const o = await org("Préavis CGV");
     await acceptTerms(o, "2026-09-27"); // version antérieure : ne compte pas
+    // Ni acceptées ni annoncées par e-mail : aucune hausse annoncée (les CGV ne lui sont pas opposables)
+    const unknown = await setFees(o, sa, { fixed: 200 });
+    expect(unknown).toMatchObject({ ok: false, code: "TERMS_NOT_NOTIFIED", field: "mode", terms_accepted: false });
+    expect(unknown.message).toBe(
+      typo("CGV du 2 octobre 2026 ni acceptées par l'organisation ni annoncées par e-mail : prévenez-la d'abord (Informations légales, « Prévenir par e-mail »), ou appliquez la hausse sur son accord écrit."),
+    );
+    expect(await changes(o)).toEqual([]);
+    expect(await emailsOf(o)).toEqual([]);
+    await notifyTerms(o);
     const tooEarly = await setFees(o, sa, { fixed: 200, on: MIN_30 });
     expect(tooEarly).toMatchObject({ ok: false, code: "NOTICE_TOO_SHORT", min_effective_on: LEGAL_ON, min_reason: "terms_effective", terms_accepted: false });
     expect(tooEarly.message).toContain("entrée en vigueur des CGV, que l'organisation n'a pas encore acceptées");
     const res = await setFees(o, sa, { fixed: 200 });
     expect(res).toMatchObject({ ok: true, code: "SCHEDULED", terms_accepted: false, scheduled_change: { effective_on: LEGAL_ON } });
+
+    // Annonce reçue avec une date plus tardive (date repoussée entre deux envois) : jamais avant la date reçue, même si
+    // l'entrée en vigueur générale (ORG_LEGAL_EFFECTIVE_AT) est plus proche
+    const late = await org("Préavis CGV Annonce Tardive");
+    await acceptTerms(late, "2026-09-27");
+    await notifyTerms(late, addDays(LEGAL_ON, 10));
+    expect(await setFees(late, sa, { fixed: 200, on: LEGAL_ON })).toMatchObject({
+      ok: false, code: "NOTICE_TOO_SHORT", min_effective_on: addDays(LEGAL_ON, 10), min_reason: "terms_effective",
+    });
+    expect(await setFees(late, sa, { fixed: 200 })).toMatchObject({ ok: true, code: "SCHEDULED", scheduled_change: { effective_on: addDays(LEGAL_ON, 10) } });
+    // Accord écrit : possible sans annonce des CGV
+    const consent = await org("Préavis CGV Accord Écrit");
+    expect(await setFees(consent, sa, { fixed: 200, mode: "consent", note: "E-mail du gérant du 03/10/2026" })).toMatchObject({ ok: true, code: "APPLIED" });
     // Sans version des CGV : pas de hausse programmée (la base ne connaît aucune version)
     const other = await org("Préavis Sans Version");
     expect(await setFees(other, sa, { fixed: 200, version: null })).toMatchObject({ ok: false, code: "TERMS_VERSION_INVALID" });
@@ -203,7 +248,7 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
 
     const res = await setFees(o, sa, { percent: 5, fixed: 150, mode: "consent", note: "E-mail du gérant du 02/10/2026" });
     expect(res).toMatchObject({ ok: true, code: "APPLIED", fee_percent: 5, fee_fixed_cents: 150, scheduled_change: null, emails_queued: 1 });
-    expect(res.message).toBe("Accord écrit enregistré : 5 % du prix + 1,50 € par course terminée dès maintenant. Confirmation envoyée par e-mail au propriétaire.");
+    expect(res.message).toBe(typo("Accord écrit enregistré : 5 % du prix + 1,50 € par course terminée dès maintenant. Confirmation envoyée par e-mail au propriétaire."));
     expect(await rates(o)).toEqual({ model: "centrale", percent: 5, fixed: 150 });
     const [c] = await changes(o);
     expect(c).toMatchObject({ mode: "consent", status: "applied", consent_note: "E-mail du gérant du 02/10/2026", emails_queued: 1 });
@@ -230,7 +275,7 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     await acceptTerms(o);
     const res = await setFees(o, sa, { fixed: 200 });
     expect(res).toMatchObject({ ok: true, code: "APPLIED", fee_fixed_cents: 200, emails_queued: 0, scheduled_change: null });
-    expect(res.message).toBe("Frais par course enregistrés dès maintenant : 2 € par course terminée.");
+    expect(res.message).toBe(typo("Frais par course enregistrés dès maintenant : 2 € par course terminée."));
     expect(await rates(o)).toMatchObject({ fixed: 200 });
     expect(await changes(o)).toEqual([expect.objectContaining({ mode: "decrease", status: "applied", from_fixed_cents: 300, to_fixed_cents: 200 })]);
     expect(await emailsOf(o)).toEqual([]);
@@ -241,7 +286,7 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     expect(announced.code).toBe("SCHEDULED");
     const lower = await setFees(o, sa, { fixed: 100 });
     expect(lower).toMatchObject({ ok: true, code: "APPLIED", fee_fixed_cents: 100, scheduled_change: null, replaced_change_id: announced.scheduled_change.id });
-    expect(lower.message).toBe("Frais par course enregistrés dès maintenant : 1 € par course terminée. Le changement programmé est annulé.");
+    expect(lower.message).toBe(typo("Frais par course enregistrés dès maintenant : 1 € par course terminée. Le changement programmé est annulé."));
     const rows = await changes(o);
     expect(rows.find((r) => r.id === announced.scheduled_change.id)).toMatchObject({
       status: "replaced", close_reason: "Remplacé par des frais appliqués tout de suite",
@@ -256,18 +301,35 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     expect(await events(o)).toEqual(["rates", "rates_scheduled", "rates"]);
   });
 
-  it("création d'une organisation : taux et modèle appliqués tout de suite ; organisation déjà en service : refusé", async () => {
+  it("création d'une organisation : taux et modèle appliqués tout de suite, e-mail des frais au propriétaire ; organisation déjà en service : refusé", async () => {
     const sa = await superAdmin();
     const fresh = await createOrg("Création Immédiate");
     const res = await setFees(fresh, sa, { percent: 2, fixed: 50, model: "centrale", mode: "initial", version: null, legalOn: null });
-    expect(res).toMatchObject({ ok: true, code: "APPLIED", dispatch_model: "centrale", fee_percent: 2, fee_fixed_cents: 50, emails_queued: 0 });
-    expect(res.message).toBe("Modèle d'exploitation enregistré. Frais par course : 2 % du prix + 0,50 € par course terminée.");
+    expect(res).toMatchObject({ ok: true, code: "APPLIED", dispatch_model: "centrale", fee_percent: 2, fee_fixed_cents: 50, emails_queued: 1 });
+    expect(res.message).toBe(typo("Modèle d'exploitation enregistré. Frais par course : 2 % du prix + 0,50 € par course terminée. Communiqués par e-mail au propriétaire."));
     expect(await rates(fresh)).toEqual({ model: "centrale", percent: 2, fixed: 50 });
-    expect(await changes(fresh)).toEqual([expect.objectContaining({ mode: "initial", status: "applied", to_percent: 2, to_fixed_cents: 50 })]);
-    expect(await emailsOf(fresh)).toEqual([]);
+    const [initial] = await changes(fresh);
+    expect(initial).toMatchObject({ mode: "initial", status: "applied", to_percent: 2, to_fixed_cents: 50, emails_queued: 1 });
+    // Trace écrite des frais appliqués dès l'ouverture (contenu fixe) : taux, CGV à accepter avant la première course
+    const [mail] = await emailsOf(fresh);
+    expect(mail).toMatchObject({ kind: "platform_fee_change", platform_fee_change_id: initial.id, created_by: sa });
+    expect(mail.subject).toBe(`Rydar Drive${NBSP}: vos frais par course`);
+    expect(mail.body_text).toContain(typo("Ses frais plateforme (frais Rydar) : 2 % du prix + 0,50 € par course terminée, appliqués dès l'ouverture du compte."));
+    expect(mail.body_text).toContain("aux taux en vigueur au calcul de la répartition du prix");
+    expect(mail.body_text).toContain("dans le tableau de bord, avant la première course.\nhttps://app.rydar.example/dashboard");
+    expect(mail.body_text).toContain("Toute hausse de ces frais vous sera annoncée au moins 30 jours à l'avance, sauf accord écrit de votre part.");
+    expect(mail.body_text).toContain(`menu «${NBSP}Encaissements${NBSP}»`);
+    expectFrenchTypography(mail.subject);
+    expectFrenchTypography(mail.body_text);
     expect(await audits(fresh, "organization.dispatch_model_changed")).toEqual([
-      expect.objectContaining({ severity: "warning", metadata: expect.objectContaining({ mode: "initial", after: expect.objectContaining({ dispatch_model: "centrale" }) }) }),
+      expect.objectContaining({ severity: "warning", metadata: expect.objectContaining({ mode: "initial", emails: 1, after: expect.objectContaining({ dispatch_model: "centrale" }) }) }),
     ]);
+    // Sans frais : ni changement, ni e-mail
+    const free = await createOrg("Création Sans Frais");
+    expect(await setFees(free, sa, { percent: 0, fixed: 0, model: "fleet", mode: "initial", version: null, legalOn: null })).toMatchObject({
+      ok: true, code: "UNCHANGED", emails_queued: 0,
+    });
+    expect(await emailsOf(free)).toEqual([]);
 
     // Plus d'une heure après la création, ou une course déjà créée : réglage initial refusé
     const old = await org("Création Ancienne");
@@ -290,7 +352,7 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     expect(await svc("svc_platform_cancel_fee_change", [o.id, sa, null, null, APP_URL])).toMatchObject({ ok: false, code: "FEE_CHANGE_NOT_PENDING" });
     const cancel = await svc("svc_platform_cancel_fee_change", [o.id, sa, id, "Geste commercial", APP_URL]);
     expect(cancel).toMatchObject({ ok: true, code: "CANCELLED", emails_queued: 1 });
-    expect(cancel.message).toBe("Changement annulé. Frais inchangés : 1 € par course terminée. Le propriétaire est prévenu par e-mail.");
+    expect(cancel.message).toBe(typo("Changement annulé. Frais inchangés : 1 € par course terminée. Le propriétaire est prévenu par e-mail."));
     expect((await changes(o))[0]).toMatchObject({ status: "cancelled", close_reason: "Geste commercial" });
     expect(await rates(o)).toMatchObject({ fixed: 100 });
     const mails = await emailsOf(o);
@@ -316,7 +378,7 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     // Même réglage renvoyé (double clic, nouvel essai) : rien, aucun nouvel e-mail
     const again = await setFees(o, sa, { fixed: 200 });
     expect(again).toMatchObject({ ok: true, code: "UNCHANGED", scheduled_change: { id: first.scheduled_change.id }, emails_queued: 0 });
-    expect(again.message).toBe(`Aucun changement. Le changement programmé reste prévu le ${ddmmyyyy(MIN_30)}.`);
+    expect(again.message).toBe(typo(`Aucun changement. Le changement programmé reste prévu le ${ddmmyyyy(MIN_30)}.`));
     expect(await emailsOf(o)).toHaveLength(1);
 
     // Hausse plus forte : remplace l'annonce (nouvel e-mail qui le dit)
@@ -347,33 +409,44 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     expect(smallerMail.subject).toBe(`Rydar Drive${NBSP}: vos frais par course changent le ${ddmmyyyy(soon)}`);
     expect(smallerMail.body_text).not.toContain("au moins 30 jours");
     expect(smallerMail.body_text).toContain(
-      `Ce changement ne dépasse pas celui annoncé précédemment et ne s'applique pas plus tôt${NBSP}: il ne demande donc pas de nouveau préavis (article 5 des CGV). Si vous ne l'acceptez pas, vous pouvez résilier avant cette date, sans frais.`,
+      typo("Ce changement ne dépasse pas celui annoncé précédemment et ne s'applique pas plus tôt : il ne demande donc pas de nouveau préavis (article 5 des CGV). Si vous ne l'acceptez pas, vous pouvez résilier avant cette date, sans frais ni préavis ; la part de l'abonnement payée d'avance pour la période restant à courir vous est alors remboursée au prorata (article 7 des CGV)."),
     );
+    // Préavis porté par l'annonce remplacée (celle de la hausse à 3 €) : c'est son e-mail que le ménage vérifiera
+    const chained = (await sql(`select notice_change_id from public.platform_fee_changes where id = $1`, [smaller.scheduled_change.id]))[0];
+    expect(chained.notice_change_id).toBe(higher.scheduled_change.id);
     expectFrenchTypography(smallerMail.body_text);
     expect(await setFees(o, sa, { fixed: 250, on: addDays(soon, -1) })).toMatchObject({ ok: false, code: "NOTICE_TOO_SHORT", min_effective_on: soon });
 
     // Réglage égal aux taux actuels : annule l'annonce (« un nouveau réglage la remplace »), sans changer les taux
     const keep = await setFees(o, sa, { fixed: 0 });
     expect(keep).toMatchObject({ ok: true, code: "CANCELLED", scheduled_change: null });
-    expect(keep.message).toBe("Changement programmé annulé. Frais inchangés : aucuns frais par course.");
+    expect(keep.message).toBe(typo("Changement programmé annulé. Frais inchangés : aucuns frais par course."));
     rows = await changes(o);
     expect(rows.filter((r) => r.status === "scheduled")).toEqual([]);
     expect(rows.at(-1)).toMatchObject({ status: "replaced", close_reason: "Annulé : frais actuels maintenus" });
     expect((await events(o)).at(-1)).toBe("rates_cancelled");
   });
 
-  it("modèle changé en gardant la hausse annoncée : modèle appliqué, annonce conservée", async () => {
+  it("modèle changé (demande ou accord écrit noté) en gardant la hausse annoncée : modèle appliqué, annonce conservée", async () => {
     const sa = await superAdmin();
     const o = await org("Modèle Et Annonce");
     await acceptTerms(o);
     const first = await setFees(o, sa, { fixed: 200 });
-    const res = await setFees(o, sa, { fixed: 200, model: "centrale" });
+    // CGV art. 3 : modèle changé seulement à la demande de l'organisation ou avec son accord écrit, noté
+    const noNote = await setFees(o, sa, { fixed: 200, model: "centrale" });
+    expect(noNote).toMatchObject({ ok: false, code: "CONSENT_REQUIRED", field: "consentNote" });
+    expect(noNote.message).toContain(typo("Changement de modèle : précisez la demande ou l'accord écrit de l'organisation"));
+    expect(await rates(o)).toMatchObject({ model: "fleet" });
+    const res = await setFees(o, sa, { fixed: 200, model: "centrale", note: "Demande du gérant, e-mail du 03/10/2026" });
     expect(res).toMatchObject({ ok: true, code: "APPLIED", dispatch_model: "centrale", scheduled_change: { id: first.scheduled_change.id } });
-    expect(res.message).toBe(`Modèle d'exploitation enregistré. Le changement programmé reste prévu le ${ddmmyyyy(MIN_30)}.`);
+    expect(res.message).toBe(typo(`Modèle d'exploitation enregistré. Le changement programmé reste prévu le ${ddmmyyyy(MIN_30)}.`));
     expect(await rates(o)).toEqual({ model: "centrale", percent: 0, fixed: 0 });
     expect(await events(o)).toEqual(["rates_scheduled", "model"]);
+    expect(await audits(o, "organization.dispatch_model_changed")).toEqual([
+      expect.objectContaining({ severity: "warning", metadata: expect.objectContaining({ model_note: "Demande du gérant, e-mail du 03/10/2026" }) }),
+    ]);
     // Modèle seul (aucun taux transmis) : taux et annonce inchangés
-    const back = await setFees(o, sa, { percent: null, fixed: null, model: "fleet" });
+    const back = await setFees(o, sa, { percent: null, fixed: null, model: "fleet", note: "Demande du gérant du 04/10/2026" });
     expect(back).toMatchObject({ ok: true, code: "APPLIED", dispatch_model: "fleet", fee_fixed_cents: 0, scheduled_change: { id: first.scheduled_change.id } });
     expect(await setFees(o, sa, { percent: null, fixed: null })).toMatchObject({ ok: true, code: "UNCHANGED", scheduled_change: { fixed_cents: 200 } });
     // Taux à moitié fournis : refusés
@@ -399,7 +472,8 @@ describe("Application à la date d'effet par le ménage", () => {
     const before = await insertRideBypass(o, { completed_at: new Date() });
     expect(await sql(`select 1 from public.platform_fee_entries where ride_id = $1`, [before])).toEqual([]);
 
-    await sql(`update public.platform_fee_changes set effective_at = now() - interval '1 minute' where id = $1`, [id]);
+    // Date d'effet atteinte, annonce partie 31 jours avant
+    await dueNow(id);
     const r = await housekeeping();
     expect(r.errors?.platform_fee_changes).toBeUndefined();
     expect(r.platform_fee_changes_applied).toBeGreaterThanOrEqual(1);
@@ -428,7 +502,7 @@ describe("Application à la date d'effet par le ménage", () => {
     const o = await org("Ménage Concurrence");
     await acceptTerms(o);
     const res = await setFees(o, sa, { fixed: 200 });
-    await sql(`update public.platform_fee_changes set effective_at = now() - interval '1 minute' where id = $1`, [res.scheduled_change.id]);
+    await dueNow(res.scheduled_change.id);
 
     // Transaction en cours qui termine une course de l'organisation (numéro de course : ligne de l'organisation verrouillée)
     const client = await pool.connect();
@@ -461,6 +535,70 @@ describe("Application à la date d'effet par le ménage", () => {
     expect(await rates(o)).toMatchObject({ fixed: 200 });
     expect(await sql(`select 1 from public.platform_fee_entries where ride_id = $1`, [rideId!])).toEqual([]);
     expect(await events(o)).toEqual(["rates_scheduled", "rates"]);
+  });
+
+  it("annonce pas partie au moins 30 jours avant (mailer en panne, e-mail en échec, envoi tardif) : hausse jamais appliquée, annulée", async () => {
+    const sa = await superAdmin();
+    for (const [name, state] of [
+      ["Ménage Annonce En Attente", "pending"],
+      ["Ménage Annonce En Échec", "failed"],
+      ["Ménage Annonce Tardive", "late"],
+    ] as const) {
+      const o = await org(name, { fixed: 100 });
+      await acceptTerms(o);
+      const res = await setFees(o, sa, { fixed: 300 });
+      const id = res.scheduled_change.id as string;
+      await dueNow(id, false);
+      if (state === "failed") await sql(`update public.email_outbox set status = 'failed' where platform_fee_change_id = $1`, [id]);
+      // Parti, mais 29 jours seulement avant la date d'effet
+      if (state === "late") await markSent(id, "now() - interval '29 days'");
+      const r = await housekeeping();
+      expect(r.errors?.platform_fee_changes, name).toBeUndefined();
+      expect(await rates(o), name).toMatchObject({ fixed: 100 });
+      expect((await changes(o))[0], name).toMatchObject({
+        status: "cancelled", close_reason: "Non appliqué : aucun e-mail d'annonce parti au moins 30 jours avant la date d'effet",
+      });
+      const mails = await emailsOf(o);
+      expect(mails, name).toHaveLength(2);
+      expect(mails[1].subject).toBe(`Rydar Drive${NBSP}: changement de vos frais par course annulé`);
+      expect(mails[1].body_text).toContain(`Vos frais restent inchangés${NBSP}: 1 € par course terminée.`);
+      expect(await events(o), name).toEqual(["rates_scheduled", "rates_cancelled"]);
+      expect(await audits(o, "organization.platform_fee_schedule_cancelled"), name).toEqual([
+        expect.objectContaining({ actor_type: "system", severity: "warning", metadata: expect.objectContaining({ change_id: id, reason: "notice_not_sent", emails: 1 }) }),
+      ]);
+      expect(await audits(o, "organization.platform_fee_changed"), name).toEqual([]);
+    }
+  });
+
+  it("hausse moindre gardant la date d'une hausse annoncée : le préavis repose sur l'e-mail de la première annonce", async () => {
+    const sa = await superAdmin();
+    const o = await org("Ménage Annonce Remplacée");
+    await acceptTerms(o);
+    const first = await setFees(o, sa, { fixed: 300 });
+    const firstId = first.scheduled_change.id as string;
+    // Annoncée il y a 16 jours (e-mail parti), pour dans 15 jours
+    const soon = addDays(await day("(now() at time zone 'Europe/Paris')::date"), 15);
+    await sql(`update public.platform_fee_changes set effective_at = ($2::date)::timestamp at time zone 'Europe/Paris' where id = $1`, [firstId, soon]);
+    await markSent(firstId, "now() - interval '16 days'");
+    const smaller = await setFees(o, sa, { fixed: 250 });
+    expect(smaller).toMatchObject({ ok: true, code: "SCHEDULED", min_reason: "already_announced", scheduled_change: { effective_on: soon } });
+    const id = smaller.scheduled_change.id as string;
+    // Date d'effet atteinte : l'e-mail de la première annonce est parti plus de 30 jours avant ; celui du remplacement
+    // (pas encore parti) ne compte pas
+    await sql(`update public.platform_fee_changes set effective_at = now() - interval '1 minute' where id = $1`, [id]);
+    await markSent(firstId, "now() - interval '31 days'");
+    await housekeeping();
+    expect(await rates(o)).toMatchObject({ fixed: 250 });
+    expect((await changes(o)).find((c) => c.id === id)).toMatchObject({ status: "applied" });
+  });
+
+  it("ménage : hausses appliquées en dernier (verrou de l'organisation pas gardé pendant les purges)", async () => {
+    const [{ src }] = await sql(`select pg_get_functiondef('private.housekeeping()'::regprocedure) as src`);
+    const apply = (src as string).indexOf("v_fee_changes := private.apply_platform_fee_changes()");
+    for (const purge of ["delete from public.notifications", "update public.audit_logs set ip = null", "private.purge_expired_bans()", "auth.audit_log_entries"]) {
+      expect((src as string).indexOf(purge), purge).toBeGreaterThan(0);
+      expect((src as string).indexOf(purge), purge).toBeLessThan(apply);
+    }
   });
 });
 
@@ -497,7 +635,7 @@ describe("E-mails d'annonce : destinataires, contenu fixe, idempotence", () => {
           `Les frais plateforme (frais Rydar) de votre organisation, référence ${ref}, vont changer.`,
           `Frais actuels${NBSP}: aucuns frais par course.\nÀ partir du ${ddmmyyyy(MIN_30)}${NBSP}: 1,5 % du prix + 0,50 € par course terminée.`,
           "Les nouveaux frais s'appliquent aux courses terminées à partir de cette date. Une course terminée avant garde ses frais.",
-          "Ce changement vous est annoncé au moins 30 jours à l'avance. Si vous ne l'acceptez pas, vous pouvez résilier avant cette date, sans frais.",
+          typo("Ce changement vous est annoncé au moins 30 jours à l'avance. Si vous ne l'acceptez pas, vous pouvez résilier avant cette date, sans frais ni préavis ; la part de l'abonnement payée d'avance pour la période restant à courir vous est alors remboursée au prorata (article 7 des CGV)."),
           `Calcul des frais${NBSP}: article 5 des conditions générales de vente (CGV) de Rydar Drive.\nhttps://app.rydar.example/cgv\n`
             + `Détail dans votre tableau de bord, menu «${NBSP}Frais Rydar${NBSP}».\nhttps://app.rydar.example/dashboard/rydar`,
           `Message automatique de Rydar Drive. Une question${NBSP}? Répondez à cet e-mail.`,
@@ -526,13 +664,18 @@ describe("E-mails d'annonce : destinataires, contenu fixe, idempotence", () => {
     expect(m.body_text).not.toContain("http");
     expect(m.body_text).toContain(`Une question${NBSP}? Écrivez-nous depuis la page Contact du site Rydar Drive.`);
 
-    // Personne à prévenir : la hausse est programmée, le super admin est averti
+    // Personne à prévenir (aucune adresse valide) : hausse annoncée refusée (CGV art. 5 : annoncée par e-mail) ; accord
+    // écrit possible
     const nobody = await org("Personne À Prévenir");
     await acceptTerms(nobody);
     await sql(`update public.organization_users set status = 'disabled' where organization_id = $1`, [nobody.id]);
     const res2 = await setFees(nobody, sa, { fixed: 100 });
-    expect(res2).toMatchObject({ ok: true, code: "SCHEDULED", emails_queued: 0 });
-    expect(res2.message).toContain("Aucune adresse e-mail valide pour le propriétaire : prévenez l'organisation vous-même.");
+    expect(res2).toMatchObject({ ok: false, code: "NO_EMAIL", field: "mode" });
+    expect(res2.message).toBe(
+      typo("Aucune adresse e-mail valide pour le propriétaire ni pour l'organisation : corrigez l'adresse pour annoncer la hausse, ou appliquez-la sur son accord écrit."),
+    );
+    expect(await changes(nobody)).toEqual([]);
+    expect(await setFees(nobody, sa, { fixed: 100, mode: "consent", note: "Courrier du gérant du 02/10/2026" })).toMatchObject({ ok: true, code: "APPLIED", emails_queued: 0 });
   });
 
   it("centrale : règle honnête (taux au calcul de la répartition, y compris après la course) et menu « Encaissements »", async () => {
@@ -714,7 +857,8 @@ describe("Annonce des CGV par e-mail (svc_org_terms_notify)", () => {
     const noMail = await org("CGV Sans Adresse");
     await sql(`update public.organization_users set status = 'disabled' where organization_id = $1`, [noMail.id]);
     await sql(`update public.organizations set email = null where id = $1`, [noMail.id]);
-    // Clientes avant la publication de la version ; « recent » : créée après (aucune date d'entrée en vigueur imposée)
+    // Clientes avant la publication de la version ; « recent » : créée après la date de la version mais avant sa mise en
+    // ligne (avant la première annonce) — déjà cliente elle aussi : date limite et résiliation sans frais
     await sql(`update public.organizations set created_at = '2026-09-01T10:00:00Z' where id = any($1::uuid[])`, [[pending.id, older.id, noMail.id]]);
     const recent = await org("CGV Cliente Récente");
     await sql(`update public.organizations set created_at = '2026-10-02T10:00:00Z' where id = $1`, [recent.id]);
@@ -741,15 +885,18 @@ describe("Annonce des CGV par e-mail (svc_org_terms_notify)", () => {
     };
     expect(m.subject).toBe(`Rydar Drive${NBSP}: nouvelles conditions générales de vente (version du 2 octobre 2026)`);
     expect(m.body_text).toContain("version du 2 octobre 2026");
-    expect(m.body_text).toContain(
-      `Ce qui change${NBSP}: des frais plateforme par course peuvent s'appliquer aux flottes comme aux centrales à commission, en plus de l'abonnement (articles 3 à 5 des CGV)${NBSP}; ces frais s'entendent toutes taxes comprises. Toute hausse de ces frais vous sera annoncée au moins 30 jours à l'avance, sauf accord écrit de votre part. L'accord de traitement des données ne change pas.`,
-    );
-    expect(m.body_text).toContain(`dès son acceptation, et au plus tard le ${long(LEGAL_ON)}. Si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`);
+    // Principaux changements : même liste que le préambule des CGV et le bandeau (ORG_LEGAL_CHANGES), défavorables compris
+    expect(m.body_text).toContain(typo(`Principaux changements :\n${ORG_LEGAL_CHANGES.map((c) => `- ${c}`).join("\n")}`));
+    expect(ORG_LEGAL_CHANGES.join(" ")).toContain("n'attend plus le renouvellement de l'abonnement");
+    expect(ORG_LEGAL_CHANGES.join(" ")).toContain("le blocage vise aussi la relance ou l'attribution d'une course sans chauffeur");
+    expect(ORG_LEGAL_CHANGES.join(" ")).toContain("Nouvelle obligation");
+    const deadline = (on: string) =>
+      typo(`dès son acceptation, et au plus tard le ${long(on)}. Si vous ne l'acceptez pas, vous pouvez résilier sans frais ni préavis avant cette date ; la part de l'abonnement payée d'avance pour la période restant à courir vous est alors remboursée au prorata (article 7 des CGV).`);
+    expect(m.body_text).toContain(deadline(LEGAL_ON));
     const [r] = await emailsOf(recent);
-    expect(r.body_text).toContain("Pour votre organisation, cette version s'applique dès son acceptation.");
-    expect(r.body_text).not.toContain("au plus tard");
+    expect(r.body_text).toContain(deadline(LEGAL_ON));
     const [ro] = await emailsOf(recentOld);
-    expect(ro.body_text).toContain(`dès son acceptation, et au plus tard le ${long(LEGAL_ON)}. Si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`);
+    expect(ro.body_text).toContain(deadline(LEGAL_ON));
     expect(m.body_text).toContain(`Texte complet, avec un lien vers la version précédente${NBSP}: page «${NBSP}Conditions générales de vente${NBSP}» du site Rydar Drive.`);
     expect(m.body_text).toContain("https://app.rydar.example/dashboard");
     expect(m.body_text).toContain("https://app.rydar.example/cgv");
@@ -762,15 +909,43 @@ describe("Annonce des CGV par e-mail (svc_org_terms_notify)", () => {
       expect.objectContaining({ actor_user_id: sa, metadata: { version: VERSION, effective_on: LEGAL_ON, emails: 1 } }),
     ]);
 
-    // Deuxième clic : rien de nouveau ; adresse corrigée : seule cette organisation est prévenue
+    // Deuxième clic : rien de nouveau ; adresse corrigée : cette organisation est prévenue (cliente d'avant : date
+    // limite) ; organisation arrivée APRÈS la première annonce : la version s'applique dès son acceptation
     const again = await svc("svc_org_terms_notify", [sa, VERSION, LEGAL_ON, APP_URL]);
     expect(again).toMatchObject({ ok: true, code: "NOTHING_TO_NOTIFY", organizations: 0, emails: 0 });
     expect(again.already_notified).toBeGreaterThanOrEqual(2);
     expect(await emailsOf(pending)).toHaveLength(1);
     await sql(`update public.organizations set email = 'gerant@sansadresse.example' where id = $1`, [noMail.id]);
+    const newcomer = await org("CGV Cliente Arrivée Après");
+    await sql(`update public.organizations set created_at = now() + interval '1 second' where id = $1`, [newcomer.id]);
     const third = await svc("svc_org_terms_notify", [sa, VERSION, LEGAL_ON, APP_URL]);
-    expect(third).toMatchObject({ ok: true, code: "NOTIFIED", organizations: 1, emails: 1 });
-    expect((await emailsOf(noMail)).map((x) => x.to_email)).toEqual(["gerant@sansadresse.example"]);
+    expect(third).toMatchObject({ ok: true, code: "NOTIFIED", organizations: 2, emails: 2 });
+    const [fixed] = await emailsOf(noMail);
+    expect(fixed.to_email).toBe("gerant@sansadresse.example");
+    expect(fixed.body_text).toContain(deadline(LEGAL_ON));
+    const [n] = await emailsOf(newcomer);
+    expect(n.body_text).toContain("Pour votre organisation, cette version s'applique dès son acceptation.");
+    expect(n.body_text).not.toContain("au plus tard");
+
+    // Moins de 30 jours avant la date annoncée (CGV art. 16) : refus, rien n'est envoyé — le premier minuit (Paris) après
+    // maintenant + 30 jours est accepté
+    const pendingBefore = (await emailsOf(pending)).length;
+    const short = await svc("svc_org_terms_notify", [sa, VERSION, addDays(MIN_30, -1), APP_URL]);
+    expect(short).toMatchObject({ ok: false, code: "TERMS_NOTICE_TOO_SHORT", min_effective_on: MIN_30 });
+    expect(short.message).toContain(typo("Préavis insuffisant : l'annonce dit"));
+    expect(short.message).toContain("ORG_LEGAL_EFFECTIVE_AT");
+    expect(ERROR_MESSAGES.TERMS_NOTICE_TOO_SHORT).toBeTruthy();
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("set local role service_role");
+      const { rows } = await client.query("select public.svc_org_terms_notify($1, $2, $3, $4) as r", [sa, VERSION, MIN_30, APP_URL]);
+      expect(rows[0].r).toMatchObject({ ok: true });
+    } finally {
+      await client.query("rollback").catch(() => undefined);
+      client.release();
+    }
+    expect(await emailsOf(pending)).toHaveLength(pendingBefore);
 
     // Entrée en vigueur passée, version ou date invalide : refus
     const today = await day("(now() at time zone 'Europe/Paris')::date");
@@ -791,10 +966,11 @@ describe("Flottes : libellés neutres et relance WhatsApp", () => {
     await insertRideBypass(o, { completed_at: new Date(Date.now() - 75 * 86_400_000) });
     expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 5, 1])).code).toBe("SAVED");
     const created = await expectPgError(createRideAsOwner(o));
-    expect(created.message).toBe(`PLATFORM_FEES_OVERDUE: frais plateforme en retard — ${NEUTRAL} pour créer de nouvelles courses`);
+    expect(created.message).toBe(typo(`PLATFORM_FEES_OVERDUE: frais plateforme en retard — ${NEUTRAL} pour créer de nouvelles courses`));
     const relaunch = await rpc(o.ownerId, "redispatch_ride", [open]);
-    expect(relaunch).toEqual({ ok: false, code: "PLATFORM_FEES_OVERDUE", message: `Frais plateforme en retard : ${NEUTRAL} pour relancer ou attribuer une course.` });
-    expect(ERROR_MESSAGES.PLATFORM_FEES_OVERDUE).toBe(`Frais plateforme en retard : ${NEUTRAL} pour créer de nouvelles courses.`);
+    expect(relaunch).toEqual({ ok: false, code: "PLATFORM_FEES_OVERDUE", message: typo(`Frais plateforme en retard : ${NEUTRAL} pour relancer ou attribuer une course.`) });
+    // Libellé du web : même texte, typographie française (espaces insécables)
+    expect(ERROR_MESSAGES.PLATFORM_FEES_OVERDUE).toBe(typo(`Frais plateforme en retard : ${NEUTRAL} pour créer de nouvelles courses.`));
     // Plus aucun texte SQL ne renvoie une flotte vers « Encaissements » seul
     const [{ n }] = await sql(
       `select count(*)::int as n from pg_proc p join pg_namespace s on s.oid = p.pronamespace
@@ -809,11 +985,130 @@ describe("Flottes : libellés neutres et relance WhatsApp", () => {
     await insertRideBypass(o, { completed_at: new Date() });
     const refused = await svc("svc_platform_remind", [o.id, sa, null, true]);
     expect(refused).toMatchObject({ ok: false, code: "WHATSAPP_FLEET_UNSUPPORTED" });
-    expect(refused.message).toContain("le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte");
+    expect(refused.message).toContain(typo("le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte"));
+    expectFrenchTypography(refused.message);
     expect((await sql(`select platform_reminded_at from public.organizations where id = $1`, [o.id]))[0].platform_reminded_at).toBeNull();
     const [target] = await as({ sub: sa }, (q) => q(`select public.admin_platform_whatsapp($1) as r`, [o.id]));
     expect(target.r).toMatchObject({ ready: false, reason: "FLEET_UNSUPPORTED" });
     expect(await svc("svc_platform_remind", [o.id, sa, "Merci de régler", false])).toMatchObject({ ok: true, code: "REMINDED", whatsapp: false });
     expect(ERROR_MESSAGES.WHATSAPP_FLEET_UNSUPPORTED).toBeTruthy();
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("Facturation : délai de paiement, frais à facturer par cycle, baisses sans décision, annonces conservées", () => {
+  it("délai de paiement : 45 jours au plus pour tout nouveau réglage (facture périodique) ; un délai déjà enregistré n'est pas réécrit", async () => {
+    const sa = await superAdmin();
+    const o = await org("Délai De Paiement");
+    const tooLong = await svc("svc_platform_terms", [o.id, sa, "monthly", 46, null]);
+    expect(tooLong).toMatchObject({ ok: false, code: "INVALID_DAYS" });
+    expect(tooLong.message).toBe(typo("Délai de paiement : entre 0 et 45 jours (facture récapitulative, article L441-10 du Code de commerce)."));
+    expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 45, null])).code).toBe("SAVED");
+    // Écriture directe d'un délai plus long : refusée (garde), même par le service role
+    const e = await expectPgError(as({ role: "service_role" }, (q) => q("update public.organizations set platform_payment_days = 50 where id = $1", [o.id])));
+    expect(e.code).toBe("23514");
+    expect(e.message).toContain("PLATFORM_PAYMENT_DAYS_MAX");
+    expect(ERROR_MESSAGES.PLATFORM_PAYMENT_DAYS_MAX).toBeTruthy();
+    // Délai de 60 jours enregistré avant la garde : conservé (autres colonnes modifiables), seul un nouveau réglage le borne
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("set local session_replication_role = replica");
+      await client.query("update public.organizations set platform_payment_days = 60 where id = $1", [o.id]);
+      await client.query("commit");
+    } finally {
+      client.release();
+    }
+    await as({ role: "service_role" }, (q) => q("update public.organizations set name = 'Délai Conservé' where id = $1", [o.id]));
+    expect((await sql(`select platform_payment_days from public.organizations where id = $1`, [o.id]))[0].platform_payment_days).toBe(60);
+    expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 60, null])).code).toBe("INVALID_DAYS");
+    expect((await svc("svc_platform_terms", [o.id, sa, "monthly", 30, null])).code).toBe("SAVED");
+  });
+
+  it("frais à facturer : écritures prises en compte pendant le cycle (enregistrement ou baisse acceptée), jamais dans un cycle déjà clos", async () => {
+    const sa = await superAdmin();
+    const o = await org("Frais À Facturer", { percent: 10 });
+    const [{ from, to, prev }] = await sql(
+      `select date_trunc('month', now() at time zone 'Europe/Paris')::date::text as from,
+              (date_trunc('month', now() at time zone 'Europe/Paris') + interval '1 month')::date::text as to,
+              (date_trunc('month', now() at time zone 'Europe/Paris') - interval '1 month')::date::text as prev`,
+    );
+    const lines = (p: string, q: string, who: { sub: string } = { sub: sa }) =>
+      as(who, (x) => x(`select public.admin_platform_invoice_lines($1, $2, $3) as r`, [o.id, p, q])).then((rows) => rows[0].r as Record<string, any>);
+
+    // Course terminée maintenant : 5 € (10 % de 50 €)
+    const now = await insertRideBypass(o, { completed_at: new Date() });
+    // Course terminée il y a 40 jours sans prix (aucuns frais), prix saisi maintenant : première écriture créée maintenant
+    // (date de la course 40 jours plus tôt, échéance du cycle en cours)
+    const old = await insertRideBypass(o, { completed_at: new Date(Date.now() - 40 * 86_400_000), pickup_at: new Date(Date.now() - 40 * 86_400_000), price_cents: null });
+    expect(await sql(`select 1 from public.platform_fee_entries where ride_id = $1`, [old])).toEqual([]);
+    await as({ sub: o.ownerId }, (q) => q(`update public.rides set price_cents = 3000 where id = $1`, [old]));
+    // Prix de la première course corrigé à la baisse : baisse en attente (pas encore à facturer)
+    await as({ sub: o.ownerId }, (q) => q(`update public.rides set price_cents = 4000 where id = $1`, [now]));
+
+    let cur = await lines(from, to);
+    expect(cur).toMatchObject({ ok: true, from, to, total_cents: 800, organization: { reference: expect.stringMatching(/^RYD-/), payment_days: 5 } });
+    expect(cur.entries.map((e: any) => [e.kind, e.amount_cents, e.status])).toEqual([["ride", 500, "posted"], ["ride", 300, "posted"]]);
+    expect(cur.entries[1].ride.number).toBeGreaterThan(0);
+    // Le cycle précédent (déjà clos) ne reçoit rien après coup
+    expect((await lines(prev, from)).entries).toEqual([]);
+
+    // Baisse acceptée maintenant : prise en compte à sa décision (avoir du cycle en cours)
+    const [pending] = await sql(`select id from public.platform_fee_entries where ride_id = $1 and status = 'pending'`, [now]);
+    expect((await svc("svc_platform_review_entry", [pending.id, sa, true, null])).code).toBe("APPROVED");
+    cur = await lines(from, to);
+    expect(cur.total_cents).toBe(700);
+    expect(cur.entries.map((e: any) => e.amount_cents)).toEqual([500, 300, -100]);
+
+    // Période invalide ; réservé au super admin
+    expect(await lines(to, from)).toMatchObject({ ok: false, code: "INVALID" });
+    expect(await lines(prev, addDays(prev, 40))).toMatchObject({ ok: false, code: "INVALID" });
+    expect((await expectPgError(lines(from, to, { sub: o.ownerId }))).code).toBe("42501");
+    expect((await expectPgError(as({ role: "anon" }, (q) => q(`select public.admin_platform_invoice_lines($1, $2, $3)`, [o.id, from, to]))))).toBeTruthy();
+  });
+
+  it("baisse en attente depuis 30 jours sans décision : acceptée par le ménage (CGV art. 5) ; plus récente : toujours en attente", async () => {
+    const o = await org("Baisse Sans Décision", { model: "centrale", percent: 10 });
+    const ride = await insertRideBypass(o, { completed_at: new Date(Date.now() - 40 * 86_400_000) });
+    const insertPending = (age: string) =>
+      sql(
+        `insert into public.platform_fee_entries (organization_id, ride_id, kind, amount_cents, status, label, reason, occurred_at, due_at, created_at)
+         values ($1, $2, 'correction', -100, 'pending', 'Correction course test', 'Prix modifié après la course', now() - $3::interval, now(), now() - $3::interval)
+         returning id`,
+        [o.id, ride, age],
+      ).then((rows) => rows[0].id as string);
+    const stale = await insertPending("31 days");
+    const recent = await insertPending("29 days");
+    await sql("delete from realtime.messages where topic = $1", [`org:${o.id}`]);
+    const r = await housekeeping();
+    expect(r.errors?.platform_reductions).toBeUndefined();
+    expect(r.platform_reductions_accepted).toBeGreaterThanOrEqual(1);
+    const rows = await sql(`select id, status, reviewed_by, review_note from public.platform_fee_entries where id = any($1::uuid[]) order by created_at`, [[stale, recent]]);
+    expect(rows).toEqual([
+      { id: stale, status: "posted", reviewed_by: null, review_note: "Acceptée automatiquement : aucune décision de Rydar dans les 30 jours (CGV, article 5)" },
+      { id: recent, status: "pending", reviewed_by: null, review_note: null },
+    ]);
+    expect(await audits(o, "platform_fee.reduction_approved")).toEqual([
+      expect.objectContaining({ actor_type: "system", actor_user_id: null, metadata: expect.objectContaining({ automatic: true, amount_cents: -100 }) }),
+    ]);
+    expect(await events(o)).toEqual(["reduction_approved"]);
+  });
+
+  it("annonces aux organisations (frais Rydar, CGV) gardées 10 ans comme preuve, pas 1 an comme les e-mails de test", async () => {
+    const o = await org("Annonces Conservées");
+    const insert = (kind: string, age: string) =>
+      sql(
+        `insert into public.email_outbox (kind, organization_id, to_email, subject, body_text, status, sent_at, created_at)
+         values ($1, $2, 'gerant@annonces.example', 'Objet', 'Texte', 'sent', now() - $3::interval, now() - $3::interval) returning id`,
+        [kind, kind === "test" ? null : o.id, age],
+      ).then((rows) => rows[0].id as number);
+    const fee2 = await insert("platform_fee_change", "2 years");
+    const terms2 = await insert("org_terms_update", "2 years");
+    const fee11 = await insert("platform_fee_change", "11 years");
+    const test2 = await insert("test", "2 years");
+    const [{ r }] = await sql("select private.purge_contact_data() as r");
+    expect(r.emails).toBeGreaterThanOrEqual(2);
+    const left = (await sql(`select id from public.email_outbox where id = any($1::bigint[]) order by id`, [[fee2, terms2, fee11, test2]])).map((x) => Number(x.id));
+    expect(left).toEqual([fee2, terms2].map(Number));
   });
 });

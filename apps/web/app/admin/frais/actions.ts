@@ -1,5 +1,5 @@
 "use server";
-// Super admin : frais plateforme reversés par les centrales à Rydar.
+// Super admin : frais plateforme réglés à Rydar par les centrales et les flottes.
 // Écritures par le service role APRÈS requireSuperAdmin() ; chaque fonction SQL (svc_platform_*) revérifie
 // que l'auteur est super admin et écrit elle-même audit_logs (ne pas doubler l'audit ici).
 import {

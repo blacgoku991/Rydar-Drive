@@ -65,7 +65,10 @@ export function scheduledFeeChangeText(
   };
 }
 
-/** « Facturation mensuelle · à régler au plus tard le 5 du mois suivant ». */
+/**
+ * « Facturation mensuelle · à régler au plus tard le 5 du mois suivant ». Au-delà de 28 jours (le « 31 du mois
+ * suivant » n'existe pas toujours, et un délai de 45 jours tombe le mois d'après) : « sous N jours après la fin du mois ».
+ */
 export function cycleText(a: Pick<PlatformAccount, "cycle" | "payment_days">) {
   const n = a.payment_days;
   if (a.cycle === "weekly") {
@@ -73,6 +76,7 @@ export function cycleText(a: Pick<PlatformAccount, "cycle" | "payment_days">) {
       ? `Facturation hebdomadaire · à régler sous ${n} jour${n > 1 ? "s" : ""} après la fin de la semaine`
       : "Facturation hebdomadaire · à régler avant la fin de la semaine";
   }
+  if (n > 28) return `Facturation mensuelle · à régler sous ${n} jours après la fin du mois`;
   return n > 0
     ? `Facturation mensuelle · à régler au plus tard le ${n === 1 ? "1er" : n} du mois suivant`
     : "Facturation mensuelle · à régler avant la fin du mois";

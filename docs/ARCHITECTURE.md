@@ -196,18 +196,25 @@ Frais ou modèle changés → `platform.updated` (`rates` / `model`, trigger `or
 tableau de bord ouvert se relit sans rechargement. **Changement des taux (006600)** : `svc_platform_set_fees` seulement
 (service role, super admin revérifié) — création et baisse tout de suite ; HAUSSE programmée (`platform_fee_changes`,
 un seul changement en attente) au plus tôt au premier minuit (fuseau de l'organisation) après 30 jours, et pas avant
-l'entrée en vigueur des CGV (`ORG_LEGAL_EFFECTIVE_AT`) si l'organisation n'a pas accepté `ORG_LEGAL_VERSION`, ou tout de
-suite sur accord écrit (note) ; annulation `svc_platform_cancel_fee_change` ; application par le ménage
-(`private.apply_platform_fee_changes`, 5 min) ; e-mails aux propriétaires par `email_outbox` (annonce, confirmation,
-annulation ; contenu fixe) ; owner / admin : `account.scheduled_change` ; super admin : `admin_platform_fee_schedule`
-(acceptation des CGV, date au plus tôt, aperçu, historique) ; temps réel `rates_scheduled` / `rates_cancelled`. Garde
-`organizations_platform_rates_guard` : hausse en UPDATE direct par le service role refusée. Annonce des CGV :
-`svc_org_terms_notify` (une fois par organisation et par version, `org_terms_notices`). Paiements
+l'entrée en vigueur des CGV (`ORG_LEGAL_EFFECTIVE_AT`, ou la date annoncée à l'organisation) si l'organisation n'a pas
+accepté `ORG_LEGAL_VERSION` (ni acceptées ni annoncées, ou aucune adresse e-mail : refusée), ou tout de suite sur accord
+écrit (note) ; changement de modèle seulement avec une note « demande / accord écrit » ; annulation
+`svc_platform_cancel_fee_change` ; application par le ménage (`private.apply_platform_fee_changes`, 5 min, en dernier),
+seulement si un e-mail d'annonce est parti 30 jours avant (sinon annulée) ; e-mails aux propriétaires par
+`email_outbox` (frais à la création, annonce, confirmation, annulation ; contenu fixe ; gardés 10 ans) ; owner /
+admin : `account.scheduled_change` ; super admin : `admin_platform_fee_schedule` (acceptation et annonce des CGV,
+destinataires, date au plus tôt, aperçu, historique avec l'envoi de l'annonce) ; temps réel `rates_scheduled` /
+`rates_cancelled`. Garde `organizations_platform_rates_guard` : hausse en UPDATE direct par le service role refusée.
+Annonce des CGV : `svc_org_terms_notify` (une fois par organisation et par version, `org_terms_notices` ; refusée à
+moins de 30 jours de l'entrée en vigueur annoncée). Baisse sans décision du super admin : acceptée au bout de 30 jours
+(`private.accept_stale_platform_reductions`). Délai de paiement : 45 jours au plus (garde). Paiements
 (`platform_payments`) : déclarés par l'organisation, confirmés par le super admin, soldent les échéances les plus
 anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création, relance et attribution d'une course sans chauffeur
 refusées après N jours de retard ; suspendu 7 jours au plus par un paiement déclaré qui couvre la somme échue,
 `private.platform_position`). Montants toutes taxes comprises (aucune TVA ajoutée par le code) ; le relevé n'est pas une
-facture (facture récapitulative de chaque cycle : tâche manuelle du propriétaire).
+facture (facture récapitulative de chaque cycle : tâche manuelle du propriétaire, à partir de l'export « Frais à
+facturer » de `/admin/frais/<org>` — `admin_platform_invoice_lines`, frais pris en compte pendant le cycle :
+enregistrement ou baisse acceptée, jamais dans un cycle déjà clos).
 
 ## Temps réel
 

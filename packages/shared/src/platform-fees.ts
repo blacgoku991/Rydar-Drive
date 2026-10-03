@@ -55,7 +55,7 @@ export interface PlatformAccount {
   with_drivers_cents: number;
   /** Frais de courses dont la centrale a annulé la dette du chauffeur (toujours dus à Rydar) */
   waived_by_centrale_cents: number;
-  /** Encaissé par la centrale et pas encore reversé */
+  /** Encaissé par la centrale et pas encore réglé à Rydar */
   held_by_centrale_cents: number;
   /** Création de courses refusée (retard au-delà du seuil choisi par le super admin) */
   blocked: boolean;
@@ -256,6 +256,13 @@ export interface PlatformFeeChangeRow {
   closed_by_name: string | null;
   close_reason: string | null;
   emails: { to_email: string; status: "pending" | "sending" | "sent" | "failed"; sent_at: Iso | null; subject: string; created_at: Iso }[];
+  /** Hausse qui garde la date d'une hausse déjà annoncée : changement dont l'e-mail ouvre le préavis (null : le sien) */
+  notice_change_id?: Uuid | null;
+  /**
+   * Hausse annoncée : premier envoi réussi de l'e-mail qui ouvre le préavis (null : pas encore parti). La hausse n'est
+   * appliquée que s'il est parti au moins 30 jours avant `effective_at` ; sinon le ménage l'annule.
+   */
+  notice_sent_at?: Iso | null;
 }
 
 /** RPC admin_platform_fee_schedule(p_org, p_org_legal_version, p_org_legal_effective_on, p_percent?, p_fixed_cents?). */
@@ -266,8 +273,21 @@ export interface AdminPlatformFeeSchedule {
   currency: string;
   current: { percent: number; fixed_cents: number; terms_text: string };
   scheduled: PlatformFeeChangeRow | null;
-  /** null : version des CGV non fournie ou invalide */
-  terms: { version: string; accepted: boolean; accepted_at: Iso | null; effective_on: string } | null;
+  /**
+   * null : version des CGV non fournie ou invalide. `notified_at` : annonce par e-mail de cette version
+   * (svc_org_terms_notify ; sans elle ni acceptation, aucune hausse annoncée : TERMS_NOT_NOTIFIED), `notified_effective_on` :
+   * entrée en vigueur annoncée à l'organisation (jamais de hausse annoncée avant).
+   */
+  terms: {
+    version: string;
+    accepted: boolean;
+    accepted_at: Iso | null;
+    effective_on: string;
+    notified_at?: Iso | null;
+    notified_effective_on?: string | null;
+  } | null;
+  /** Adresses qui recevraient l'annonce d'une hausse (propriétaires actifs, sinon l'organisation) : 0 = NO_EMAIL */
+  email_recipients?: number;
   /** Date au plus tôt d'une hausse annoncée maintenant (sans tenir compte du changement déjà annoncé) */
   min_effective_on: string;
   min_reason: PlatformFeeMinReason;
@@ -304,7 +324,7 @@ export type SetPlatformFeesResult =
       ok: false;
       code:
         | "INVALID" | "NOT_FOUND" | "ORG_NOT_NEW" | "SETTLEMENTS_OPEN" | "CONSENT_REQUIRED" | "NOTICE_TOO_SHORT"
-        | "TERMS_VERSION_INVALID";
+        | "TERMS_VERSION_INVALID" | "TERMS_NOT_NOTIFIED" | "NO_EMAIL";
       message: string;
       field?: "platformFeePercent" | "platformFeeFixedCents" | "dispatchModel" | "effectiveOn" | "consentNote" | "mode";
       min_effective_on?: string;
@@ -334,7 +354,28 @@ export type OrgTermsNotifyResult =
       /** Organisations actives ou suspendues qui n'ont pas accepté la version */
       not_accepted: number;
     }
-  | { ok: false; code: "TERMS_VERSION_INVALID" | "TERMS_EFFECTIVE_PASSED"; message: string };
+  | { ok: false; code: "TERMS_VERSION_INVALID" | "TERMS_EFFECTIVE_PASSED" | "TERMS_NOTICE_TOO_SHORT"; message: string; min_effective_on?: string };
+
+/**
+ * RPC admin_platform_invoice_lines(p_org, p_from, p_to) (super admin) : frais à facturer d'un cycle — écritures comptées
+ * prises en compte du jour `from` (inclus) au jour `to` (exclu), jours locaux de l'organisation (enregistrement, ou
+ * acceptation d'une baisse : `counted_at`). Facture récapitulative de chaque cycle (CGV art. 5).
+ */
+export type AdminPlatformInvoiceLines =
+  | {
+      ok: true;
+      organization: {
+        id: Uuid; name: string; slug: string; currency: string; timezone: string; reference: string;
+        dispatch_model: "fleet" | "centrale"; cycle: PlatformBillingCycle; payment_days: number;
+      };
+      from: string;
+      to: string;
+      /** Échéance des frais enregistrés pendant la période (fin de leur cycle + délai de paiement) */
+      due_at: Iso;
+      total_cents: number;
+      entries: (PlatformEntry & { counted_at: Iso })[];
+    }
+  | { ok: false; code: "INVALID"; message: string };
 
 /** Taux de frais par course : % du prix et montant fixe (centimes). */
 export type PlatformFeeRates = { percent: number | string; fixed_cents: number };
@@ -581,10 +622,16 @@ export const platformAdjustSchema = z.object({
   reason: z.string().trim().min(3, "Motif requis").max(500),
 });
 
+/**
+ * Délai de paiement des frais au plus : 45 jours après la fin du cycle (la facture récapitulative, émise à la fin du
+ * cycle, est une facture périodique : article L441-10 du Code de commerce ; garde SQL de 20260924006600).
+ */
+export const PLATFORM_PAYMENT_DAYS_MAX = 45;
+
 /** Super admin : cycle, délai et blocage d'une centrale. */
 export const platformTermsSchema = z.object({
   cycle: z.enum(["weekly", "monthly"]),
-  paymentDays: z.coerce.number().int().min(0, "Entre 0 et 60 jours").max(60, "Entre 0 et 60 jours"),
+  paymentDays: z.coerce.number().int().min(0, "Entre 0 et 45 jours").max(PLATFORM_PAYMENT_DAYS_MAX, "Entre 0 et 45 jours"),
   blockAfterDays: z.union([z.literal(""), z.null(), z.undefined(), z.coerce.number().int().min(1, "Entre 1 et 90 jours").max(90, "Entre 1 et 90 jours")])
     .transform((v) => (v === "" || v == null ? null : v)),
 });

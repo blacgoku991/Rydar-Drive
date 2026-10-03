@@ -1,4 +1,4 @@
-// Relevé mensuel des frais plateforme reversés à Rydar (owner / admin), rendu serveur commun aux deux modèles :
+// Relevé mensuel des frais plateforme à régler à Rydar (owner / admin), rendu serveur commun aux deux modèles :
 //   • centrale : /dashboard/settlements/rydar (retour « Encaissements ») ;
 //   • flotte : /dashboard/rydar/releve (retour « Frais Rydar ») — pas de colonne « règlement chauffeur ».
 //   ?mois=YYYY-MM  (défaut : mois en cours, fuseau de l'organisation)
@@ -39,7 +39,7 @@ export async function OrgStatementPage({ searchParams }: { searchParams: Promise
             <EmptyState
               icon={<Landmark />}
               title="Réservé aux administrateurs"
-              description={`Le relevé des frais reversés à Rydar est visible par le propriétaire et les administrateurs ${fleet ? "de la flotte" : "de la centrale"}.`}
+              description={`Le relevé des frais Rydar est visible par le propriétaire et les administrateurs ${fleet ? "de la flotte" : "de la centrale"}.`}
             />
           </Card>
         </PageBody>
@@ -96,7 +96,7 @@ export async function OrgStatementPage({ searchParams }: { searchParams: Promise
         title={title}
         description={
           <>
-            Frais reversés à Rydar par {acc.organization.name} : chaque course, correction, avoir et paiement du mois. Référence à indiquer sur vos
+            Frais Rydar de {acc.organization.name}, à régler à Rydar : chaque course, correction, avoir et paiement du mois. Référence à indiquer sur vos
             virements : <span className="mono whitespace-nowrap text-fg">{a.reference}</span>.
           </>
         }

@@ -35,3 +35,14 @@ export function termsBannerChoice({
   if (userDocuments && !USER_TERMS_DOCUMENTS.every((d) => userDocuments.includes(d))) return { kind: "user" };
   return null;
 }
+
+/**
+ * Acceptation EXIGÉE avant la première course (écran plein à la place du tableau de bord, OrgTermsGate) : owner / admin
+ * d'une organisation qui n'a jamais accepté les CGV (ni aucune version antérieure) et qui n'a encore aucune course — des
+ * CGV non acceptées ne sont pas opposables, alors que d'éventuels frais par course s'appliquent dès l'ouverture du
+ * compte. Une organisation déjà en service, ou qui avait accepté une version antérieure, garde le bandeau non bloquant.
+ * `hasRides` null (lecture en échec) : jamais bloquant.
+ */
+export function orgTermsGate(choice: TermsBannerChoice, hasRides: boolean | null): boolean {
+  return choice?.kind === "org" && !choice.updated && hasRides === false;
+}

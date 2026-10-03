@@ -8,22 +8,26 @@
 -- 1. Changement des frais par course (% et / ou € par course terminée) — public.platform_fee_changes, un seul
 --    changement en attente par organisation (index unique partiel), écrit seulement par les RPC svc_* :
 --    • création d'une organisation (p_mode 'initial', organisation de moins d'une heure, sans course) : taux appliqués
---      tout de suite ;
+--      tout de suite, e-mail au propriétaire (taux « dès l'ouverture du compte », CGV à accepter) s'il y a des frais ;
 --    • baisse, ou taux égaux aux taux actuels : tout de suite (un changement en attente est remplacé, donc annulé) ;
 --      aucun taux transmis (changement de modèle seul) : taux et changement en attente inchangés ;
 --    • HAUSSE (l'un des deux taux augmente, y compris 0 → > 0) sur une organisation existante :
 --        - par défaut PROGRAMMÉE (p_mode 'notice') : date d'effet = un jour (minuit, fuseau de l'organisation) au plus
---          tôt le premier minuit après max(maintenant + 30 jours, entrée en vigueur des CGV p_org_legal_effective_on
---          si l'organisation n'a pas accepté la version p_org_legal_version — CGV ET accord de traitement) ; date plus
---          proche refusée (NOTICE_TOO_SHORT) ; date choisie : un an au plus ; remplacement d'une hausse annoncée par
---          une hausse moindre ou égale (les deux taux ≤ ceux annoncés) : la date déjà annoncée reste possible (et
---          reste la date par défaut d'un remplacement quand elle est permise) ;
+--          tôt le premier minuit après maintenant + 30 jours (private.notice_min_on) et, si l'organisation n'a pas
+--          accepté la version p_org_legal_version (CGV ET accord de traitement), pas avant l'entrée en vigueur des CGV
+--          (p_org_legal_effective_on) ni avant la date annoncée à CETTE organisation (org_terms_notices) ; organisation
+--          qui n'a ni accepté ni reçu l'annonce de cette version : refusée (TERMS_NOT_NOTIFIED) ; aucune adresse
+--          e-mail pour l'annoncer : refusée (NO_EMAIL) ; date plus proche refusée (NOTICE_TOO_SHORT) ; date choisie :
+--          un an au plus ; remplacement d'une hausse annoncée par une hausse moindre ou égale (les deux taux ≤ ceux
+--          annoncés) : la date déjà annoncée reste possible (et reste la date par défaut d'un remplacement quand elle
+--          est permise), le préavis reposant alors sur la première annonce (notice_change_id) ;
 --        - ou tout de suite sur « accord écrit de l'organisation reçu » (p_mode 'consent', note obligatoire,
 --          journalisée en « warning ») ;
 --    • annulable (svc_platform_cancel_fee_change) ; un nouveau réglage remplace le changement en attente ; même
 --      réglage (mêmes taux, même date) renvoyé : rien (UNCHANGED, aucun nouvel e-mail) ;
 --    • changement de modèle d'exploitation (p_dispatch_model) : appliqué tout de suite, dans le même appel (garde
---      SETTLEMENTS_OPEN pour un retour en flotte) ; un changement de modèle seul n'est pas une hausse de taux ;
+--      SETTLEMENTS_OPEN pour un retour en flotte), seulement avec la demande ou l'accord écrit de l'organisation noté
+--      (p_consent_note, CGV art. 3 ; journalisé) ; un changement de modèle seul n'est pas une hausse de taux ;
 --    • garde SQL (organizations_platform_rates_guard) : une hausse écrite directement par le web (service role) ou un
 --      client est refusée (PLATFORM_FEE_NOTICE_REQUIRED) ; une baisse directe reste possible.
 --    La règle des taux APPLIQUÉS aux courses ne change pas : flotte = taux en vigueur à la fin de la course
@@ -32,29 +36,40 @@
 -- 2. Annonce automatique : e-mail aux propriétaires actifs (sinon à l'adresse de l'organisation) par la file
 --    public.email_outbox (le web n'envoie rien lui-même), contenu FIXE (référence RYD-… issue du slug, taux, date
 --    d'effet, règle du modèle ; jamais un texte saisi par l'organisation), adresses validées comme la colonne
---    to_email ; Reply-To = e-mail de l'éditeur (platform_legal) s'il est valide. Hausse programmée : annonce ;
---    hausse sur accord écrit : confirmation ; changement annoncé annulé ou remplacé par des frais immédiats : avis
---    d'annulation. Owner / admin : private.platform_account → « scheduled_change » (org_platform_account,
---    org_platform_status : encart « À partir du JJ/MM/AAAA »), menu « Frais Rydar » d'une flotte affiché dès
---    l'annonce (private.platform_fees_enabled). Temps réel : « platform.updated » rates_scheduled / rates_cancelled
---    (identifiants seulement) ; taux changés : action « rates » du déclencheur existant, une seule fois.
--- 3. Application à la date d'effet par le ménage (private.housekeeping, worker toutes les 5 min) :
---    private.apply_platform_fee_changes, idempotente (statut 'scheduled' → 'applied' une fois), organisation
---    verrouillée d'abord (même ordre que les RPC ; organisation occupée → passage suivant), diffusion « rates » par
---    le seul déclencheur organizations_platform_rates_broadcast. Une course qui se termine au même moment prend les
---    anciens taux (validée avant) ou les nouveaux (validée après) : jamais de double frais (base figée unique).
---    Les courses terminées entre minuit et le passage du ménage (5 min au plus) gardent les anciens taux.
+--    to_email ; Reply-To = e-mail de l'éditeur (platform_legal) s'il est valide. Création avec des frais : taux
+--    appliqués dès l'ouverture ; hausse programmée : annonce ; hausse sur accord écrit : confirmation ; changement
+--    annoncé annulé ou remplacé par des frais immédiats : avis d'annulation. Owner / admin : private.platform_account →
+--    « scheduled_change » (org_platform_account, org_platform_status : encart « À partir du JJ/MM/AAAA »), menu « Frais
+--    Rydar » d'une flotte affiché dès l'annonce (private.platform_fees_enabled). Temps réel : « platform.updated »
+--    rates_scheduled / rates_cancelled (identifiants seulement) ; taux changés : action « rates » du déclencheur
+--    existant, une seule fois. E-mails d'annonce gardés 10 ans (preuve, private.purge_contact_data), pas 1 an.
+-- 3. Application à la date d'effet par le ménage (private.housekeeping, worker toutes les 5 min, en DERNIER : le
+--    verrou de l'organisation ne dure pas pendant les purges) : private.apply_platform_fee_changes, idempotente
+--    (statut 'scheduled' → 'applied' une fois), organisation verrouillée d'abord (même ordre que les RPC ; organisation
+--    occupée → passage suivant), diffusion « rates » par le seul déclencheur organizations_platform_rates_broadcast.
+--    Hausse dont aucun e-mail d'annonce n'est PARTI (statut « sent ») au moins 30 jours avant la date d'effet (mailer
+--    en panne, adresse en échec) : jamais appliquée, annulée (journal « warning », avis d'annulation, temps réel).
+--    Une course qui se termine au même moment prend les anciens taux (validée avant) ou les nouveaux (validée après) :
+--    jamais de double frais (base figée unique). Les courses terminées entre minuit et le passage du ménage (5 min au
+--    plus) gardent les anciens taux. Au même passage : baisse d'une correction en attente depuis 30 jours sans décision
+--    du super admin acceptée (CGV art. 5, private.accept_stale_platform_reductions).
 -- 4. Annonce des CGV (svc_org_terms_notify) : e-mail aux propriétaires des organisations actives ou suspendues qui
---    n'ont pas accepté la version, une seule fois par organisation et par version (public.org_terms_notices).
+--    n'ont pas accepté la version, une seule fois par organisation et par version (public.org_terms_notices) ; refusée
+--    si la date d'entrée en vigueur annoncée laisse moins de 30 jours (TERMS_NOTICE_TOO_SHORT : la repousser).
 -- 5. Libellés neutres (une flotte n'a pas de menu « Encaissements ») : « réglez vos frais Rydar (menu « Frais
 --    Rydar » ou « Encaissements ») » dans private.rides_platform_block, assign_ride, redispatch_ride et
---    private.apply_flight_status ; relance WhatsApp de Rydar refusée pour une FLOTTE (modèle approuvé
---    « rappel_frais_plateforme » = « onglet Encaissements ») tant qu'un modèle neutre n'est pas approuvé.
+--    private.apply_flight_status (typographie française : private.fr_typo) ; relance WhatsApp de Rydar refusée pour
+--    une FLOTTE (modèle approuvé « rappel_frais_plateforme » = « onglet Encaissements ») tant qu'un modèle neutre n'est
+--    pas approuvé.
+-- 6. Délai de paiement des frais : 45 jours au plus (facture récapitulative = facture périodique, article L441-10 du
+--    Code de commerce) pour tout nouveau réglage (svc_platform_terms, garde organizations_platform_payment_days_guard ;
+--    un délai déjà enregistré au-delà reste tel quel). Frais à facturer par cycle : admin_platform_invoice_lines.
 --
 -- Fonctions redéfinies (dernières définitions) : private.platform_fees_enabled, private.platform_account,
 -- public.svc_platform_remind (20260924006400), public.admin_platform_whatsapp (20260924003700),
--- private.housekeeping (20260924005900), private.rides_platform_block (20260924003000), public.assign_ride,
--- public.redispatch_ride (20260924004500), private.apply_flight_status (20260924005400).
+-- private.housekeeping (20260924005900), private.rides_platform_block, public.svc_platform_terms (20260924003000),
+-- public.assign_ride, public.redispatch_ride (20260924004500), private.apply_flight_status (20260924005400),
+-- private.purge_contact_data (20260924005700).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -83,6 +98,21 @@ as $$
     || ' ' || (array['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre',
                      'novembre', 'décembre'])[extract(month from p_date)::integer]
     || ' ' || extract(year from p_date)::integer::text;
+$$;
+
+-- Premier jour (minuit dans le fuseau p_tz) au moins 30 jours après maintenant : une annonce faite maintenant laisse
+-- au moins 30 × 24 heures avant ce minuit (hausse des frais par course, entrée en vigueur d'une version des CGV)
+create or replace function private.notice_min_on(p_tz text)
+returns date
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  v_local timestamp := (now() + interval '30 days') at time zone coalesce(p_tz, 'Europe/Paris');
+begin
+  return v_local::date + case when v_local::time > time '00:00' then 1 else 0 end;
+end;
 $$;
 
 -- Adresse acceptée par public.email_outbox.to_email (mêmes règles : une seule @, ni espace, ni séparateur)
@@ -206,8 +236,11 @@ as $$
 $$;
 
 -- Premier jour (minuit, fuseau de l'organisation) où une hausse annoncée maintenant peut s'appliquer : au moins
--- 30 jours après l'annonce et, si l'organisation n'a pas accepté la version p_version des CGV, pas avant leur
--- entrée en vigueur p_legal_on (version et date null : 30 jours seulement)
+-- 30 jours après l'annonce (private.notice_min_on) et, si l'organisation n'a pas accepté la version p_version des
+-- CGV, pas avant leur entrée en vigueur p_legal_on, ni avant la date annoncée à CETTE organisation par e-mail
+-- (org_terms_notices : jamais plus tôt que ce qu'elle a reçu, même si p_legal_on avance). Version et date null :
+-- 30 jours seulement. Organisation ni signataire ni prévenue : aucune hausse annoncée (contrôle de
+-- svc_platform_set_fees, private.org_terms_notified).
 create or replace function private.platform_fee_min_effective_on(p_org uuid, p_version text, p_legal_on date)
 returns date
 language plpgsql
@@ -216,16 +249,33 @@ set search_path = ''
 as $$
 declare
   v_tz text;
-  v_at timestamptz := now() + interval '30 days';
-  v_local timestamp;
+  v_min date;
+  v_notice date;
 begin
   select coalesce(o.timezone, 'Europe/Paris') into v_tz from public.organizations o where o.id = p_org;
   v_tz := coalesce(v_tz, 'Europe/Paris');
+  v_min := private.notice_min_on(v_tz);
   if p_legal_on is not null and not private.org_terms_accepted(p_org, p_version) then
-    v_at := greatest(v_at, p_legal_on::timestamp at time zone v_tz);
+    select t.effective_on into v_notice
+      from public.org_terms_notices t
+     where t.organization_id = p_org and t.version = p_version;
+    v_min := greatest(v_min, p_legal_on, coalesce(v_notice, p_legal_on));
   end if;
-  v_local := v_at at time zone v_tz;
-  return v_local::date + case when v_local::time > time '00:00' then 1 else 0 end;
+  return v_min;
+end;
+$$;
+
+-- L'organisation a reçu l'annonce par e-mail de la version p_version des CGV (svc_org_terms_notify, une fois par
+-- organisation et par version)
+create or replace function private.org_terms_notified(p_org uuid, p_version text)
+returns boolean
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  return p_version is not null
+     and exists (select 1 from public.org_terms_notices t where t.organization_id = p_org and t.version = p_version);
 end;
 $$;
 
@@ -250,6 +300,9 @@ create table public.platform_fee_changes (
   terms_version text check (terms_version is null or char_length(terms_version) <= 40),
   terms_accepted boolean,
   emails_queued integer not null default 0 check (emails_queued >= 0),
+  -- Hausse moindre ou égale qui garde la date d'une hausse déjà annoncée sans nouveau préavis (« already_announced ») :
+  -- changement dont l'annonce par e-mail ouvre le préavis (premier de la chaîne) ; null : sa propre annonce
+  notice_change_id uuid references public.platform_fee_changes (id),
   created_at timestamptz not null default now(),
   created_by uuid references public.users (id) on delete set null,
   applied_at timestamptz,
@@ -259,7 +312,8 @@ create table public.platform_fee_changes (
   check ((status = 'applied') = (applied_at is not null)),
   check ((status in ('cancelled', 'replaced')) = (closed_at is not null)),
   check (mode <> 'consent' or consent_note is not null),
-  check (status <> 'scheduled' or mode = 'notice')
+  check (status <> 'scheduled' or mode = 'notice'),
+  check (notice_change_id is null or mode = 'notice')
 );
 comment on table public.platform_fee_changes is
   'Changements des frais Rydar par course d''une organisation : hausse annoncée (au moins 30 jours) puis appliquée par le ménage, ou appliquée tout de suite (création, baisse, accord écrit). Lecture : super admin ; écriture : RPC svc_*.';
@@ -267,6 +321,8 @@ comment on column public.platform_fee_changes.effective_at is
   'Hausse annoncée : minuit (fuseau de l''organisation) du jour d''effet, appliquée par private.housekeeping ; sinon : moment de l''application.';
 comment on column public.platform_fee_changes.terms_accepted is
   'L''organisation avait accepté terms_version (CGV + accord de traitement) au moment du réglage.';
+comment on column public.platform_fee_changes.notice_change_id is
+  'Hausse qui garde la date d''une hausse déjà annoncée : changement dont l''e-mail d''annonce ouvre le préavis de 30 jours (private.apply_platform_fee_changes le vérifie).';
 
 -- Un seul changement en attente par organisation ; changements dus (ménage) ; historique d'une organisation
 create unique index platform_fee_changes_one_scheduled on public.platform_fee_changes (organization_id) where status = 'scheduled';
@@ -362,8 +418,9 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Textes des e-mails (contenu fixe : référence issue du slug, taux, dates, règle du modèle)
 -- -----------------------------------------------------------------------------
--- p_kind : 'notice' (hausse annoncée, p_on = jour d'effet), 'consent' (hausse appliquée sur accord écrit, p_on = jour
--- de l'application), 'cancel' (changement annoncé pour p_replaced_on annulé ; p_to = frais désormais en vigueur).
+-- p_kind : 'initial' (création de l'organisation avec des frais, appliqués dès l'ouverture), 'notice' (hausse annoncée,
+-- p_on = jour d'effet), 'consent' (hausse appliquée sur accord écrit, p_on = jour de l'application), 'cancel'
+-- (changement annoncé pour p_replaced_on annulé ; p_to = frais désormais en vigueur).
 -- p_replaced_on (notice, consent) : date du changement annoncé que celui-ci remplace.
 create or replace function private.platform_fee_change_email(
   p_kind text,
@@ -397,6 +454,8 @@ declare
   v_footer text;
   v_subject text;
   v_parts text[];
+  -- Résiliation pour refus d'une hausse (CGV art. 5 et 7)
+  v_quit text := 'Si vous ne l''acceptez pas, vous pouvez résilier avant cette date, sans frais ni préavis ; la part de l''abonnement payée d''avance pour la période restant à courir vous est alors remboursée au prorata (article 7 des CGV).';
 begin
   v_links := 'Calcul des frais : article 5 des conditions générales de vente (CGV) de Rydar Drive.'
     || coalesce(E'\n' || v_url || '/cgv', '')
@@ -406,7 +465,21 @@ begin
     || case when v_reply then 'Une question ? Répondez à cet e-mail.'
             else 'Une question ? Écrivez-nous depuis la page Contact du site Rydar Drive.' || coalesce(E'\n' || v_url || '/contact', '') end;
 
-  if p_kind = 'notice' then
+  if p_kind = 'initial' then
+    v_subject := 'Rydar Drive : vos frais par course';
+    v_parts := array[
+      'Bonjour,',
+      format('Votre organisation, référence %s, est ouverte sur Rydar Drive. Ses frais plateforme (frais Rydar) : %s, appliqués dès l''ouverture du compte.',
+        v_ref, v_to),
+      case when v_fleet
+        then 'Ils sont dus pour chaque course terminée, aux taux en vigueur à la fin de la course, en plus de l''abonnement éventuel.'
+        else 'Ils sont calculés sur le prix de chaque course terminée, aux taux en vigueur au calcul de la répartition du prix, en plus de l''abonnement éventuel.'
+      end,
+      'Ils sont régis par les conditions générales de vente (CGV) de Rydar Drive : le propriétaire ou un administrateur les accepte, avec l''accord de traitement des données, dans le tableau de bord, avant la première course.'
+        || coalesce(E'\n' || v_url || '/dashboard', ''),
+      'Toute hausse de ces frais vous sera annoncée au moins 30 jours à l''avance, sauf accord écrit de votre part.',
+      v_links, v_footer, 'L''équipe Rydar Drive'];
+  elsif p_kind = 'notice' then
     v_subject := format('Rydar Drive : vos frais par course changent le %s', to_char(p_on, 'DD/MM/YYYY'));
     v_parts := array[
       'Bonjour,',
@@ -419,8 +492,8 @@ begin
       case when p_replaced_on is not null
         then format('Ce message remplace l''annonce précédente (changement prévu le %s).', to_char(p_replaced_on, 'DD/MM/YYYY')) end,
       case when v_full_notice
-        then 'Ce changement vous est annoncé au moins 30 jours à l''avance. Si vous ne l''acceptez pas, vous pouvez résilier avant cette date, sans frais.'
-        else 'Ce changement ne dépasse pas celui annoncé précédemment et ne s''applique pas plus tôt : il ne demande donc pas de nouveau préavis (article 5 des CGV). Si vous ne l''acceptez pas, vous pouvez résilier avant cette date, sans frais.'
+        then 'Ce changement vous est annoncé au moins 30 jours à l''avance. ' || v_quit
+        else 'Ce changement ne dépasse pas celui annoncé précédemment et ne s''applique pas plus tôt : il ne demande donc pas de nouveau préavis (article 5 des CGV). ' || v_quit
       end,
       v_links, v_footer, 'L''équipe Rydar Drive'];
   elsif p_kind = 'consent' then
@@ -455,10 +528,11 @@ end;
 $$;
 
 -- Annonce d'une nouvelle version des CGV (et de l'accord de traitement) à une organisation qui ne l'a pas acceptée.
--- Organisation déjà cliente (créée avant le jour de la version, heure de Paris, ou qui avait accepté une version
--- antérieure — créée entre la date de la version et sa mise en ligne) : la version s'applique dès son acceptation et
--- au plus tard à p_effective_on, résiliation sans frais possible avant (préambule des CGV) ; sinon : dès son
--- acceptation (aucune date imposée).
+-- Organisation déjà cliente avant la mise en ligne de la version — créée avant la PREMIÈRE annonce de cette version
+-- (svc_org_terms_notify, faite après la mise en ligne ; à défaut, maintenant), ou qui avait accepté une version
+-- antérieure : la version s'applique dès son acceptation et au plus tard à p_effective_on, résiliation sans frais
+-- possible avant (préambule des CGV) ; sinon (cliente arrivée après la première annonce) : dès son acceptation.
+-- « Principaux changements » : même liste que le préambule des CGV et le bandeau (ORG_LEGAL_CHANGES, @rydar/shared).
 create or replace function private.org_terms_email(p_org uuid, p_version text, p_effective_on date, p_url text)
 returns jsonb
 language plpgsql
@@ -472,7 +546,7 @@ declare
   v_before boolean;
   v_parts text[];
 begin
-  select o.created_at < (p_version::date)::timestamp at time zone 'Europe/Paris'
+  select o.created_at < coalesce((select min(t.created_at) from public.org_terms_notices t where t.version = p_version), now())
          or exists (select 1 from public.legal_acceptances a
                      where a.organization_id = p_org and a.document in ('cgv', 'dpa')
                        and a.version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' and a.version < p_version)
@@ -482,13 +556,21 @@ begin
     'Bonjour,',
     format('Rydar Drive a publié une nouvelle version de ses conditions générales de vente (CGV), à accepter avec son accord de traitement des données : version du %s. Elle concerne votre organisation, référence %s.',
       private.fr_long_date(p_version::date), v_ref),
-    -- Résumé propre à chaque version (contenu fixe)
+    -- Principaux changements, propres à chaque version (contenu fixe ; même liste que ORG_LEGAL_CHANGES)
     case p_version
-      when '2026-10-02' then 'Ce qui change : des frais plateforme par course peuvent s''appliquer aux flottes comme aux centrales à commission, en plus de l''abonnement (articles 3 à 5 des CGV) ; ces frais s''entendent toutes taxes comprises. Toute hausse de ces frais vous sera annoncée au moins 30 jours à l''avance, sauf accord écrit de votre part. L''accord de traitement des données ne change pas.'
-      else 'Les changements sont résumés au début des CGV.'
+      when '2026-10-02' then 'Principaux changements :' || E'\n' || array_to_string(array[
+        '- Des frais plateforme par course peuvent s''appliquer aux flottes comme aux centrales à commission, en plus ou à la place de l''abonnement (articles 3 à 5) ; en modèle flotte, ils n''ont pas de plafond et leur montant fixe est dû même pour une course sans prix.',
+        '- Ces frais s''entendent toutes taxes comprises (article 5).',
+        '- Une hausse de ces frais est annoncée au moins 30 jours à l''avance, sauf accord écrit de la centrale, et n''attend plus le renouvellement de l''abonnement : le préavis de 30 jours et l''application au renouvellement suivant de l''article 4 ne visent plus que le prix de l''abonnement (articles 4 et 5).',
+        '- En cas de retard de paiement, le blocage vise aussi la relance ou l''attribution d''une course sans chauffeur ; un paiement déclaré ne le suspend que s''il couvre la somme échue, 7 jours au plus comptés depuis la première déclaration des 30 derniers jours, et pas dans les 7 jours qui suivent un paiement marqué « non reçu » (article 5).',
+        '- L''éditeur peut inscrire au relevé, avec son motif, la correction d''une erreur de calcul des frais (article 5).',
+        '- Nouvelle obligation : tenir à jour l''adresse e-mail et le téléphone du propriétaire et de la centrale (article 10).',
+        '- En faveur de la centrale : facture récapitulative à chaque cycle, baisse d''une correction acceptée sans décision de l''éditeur sous 30 jours, modèle d''exploitation changé seulement à sa demande ou avec son accord écrit, résiliation sans frais ni préavis avant une hausse ou une modification défavorable, avec remboursement au prorata de l''abonnement payé d''avance (articles 3, 5 et 7).',
+        '- L''accord de traitement des données ne change pas.'], E'\n')
+      else 'Les principaux changements sont résumés au début des CGV.'
     end,
     case when coalesce(v_before, true)
-      then format('Pour votre organisation, cette version s''applique dès son acceptation, et au plus tard le %s. Si vous ne l''acceptez pas, vous pouvez résilier sans frais avant cette date.',
+      then format('Pour votre organisation, cette version s''applique dès son acceptation, et au plus tard le %s. Si vous ne l''acceptez pas, vous pouvez résilier sans frais ni préavis avant cette date ; la part de l''abonnement payée d''avance pour la période restant à courir vous est alors remboursée au prorata (article 7 des CGV).',
         private.fr_long_date(p_effective_on))
       else 'Pour votre organisation, cette version s''applique dès son acceptation.' end,
     'Le propriétaire ou un administrateur l''accepte depuis le bandeau affiché dans le tableau de bord Rydar Drive.'
@@ -548,6 +630,13 @@ as $$
     'terms_version', c.terms_version,
     'terms_accepted', c.terms_accepted,
     'emails_queued', c.emails_queued,
+    -- Hausse annoncée : changement dont l'e-mail ouvre le préavis, et premier envoi réussi de cet e-mail (null : pas
+    -- encore parti) ; appliquée seulement s'il est parti au moins 30 jours avant effective_at
+    'notice_change_id', c.notice_change_id,
+    'notice_sent_at', case when c.mode = 'notice' then
+      (select min(e.sent_at) from public.email_outbox e
+        where e.platform_fee_change_id = coalesce(c.notice_change_id, c.id) and e.kind = 'platform_fee_change'
+          and e.status = 'sent') end,
     'created_at', c.created_at,
     'created_by_name', (select u.full_name from public.users u where u.id = c.created_by),
     'applied_at', c.applied_at,
@@ -562,13 +651,15 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Super admin : réglage des frais par course (et du modèle d'exploitation)
 -- -----------------------------------------------------------------------------
--- Appelée par les actions serveur createOrganization (p_mode 'initial') et updateDispatchModel, avec la version des
--- CGV en vigueur (ORG_LEGAL_VERSION) et leur date d'entrée en vigueur pour les organisations déjà clientes
--- (ORG_LEGAL_EFFECTIVE_AT) : la base ne connaît aucune version. p_percent et p_fixed_cents : les deux, ou aucun
--- (changement de modèle seul : taux et changement en attente inchangés) ; des taux égaux aux taux ACTUELS alors qu'une
--- hausse est annoncée l'annulent (« un nouveau réglage la remplace »). p_app_url : origine du site pour les liens des
--- e-mails (facultatif). Champs d'erreur (« field ») : platformFeePercent, platformFeeFixedCents, dispatchModel,
--- effectiveOn, consentNote, mode.
+-- Appelée par les actions serveur createOrganization (p_mode 'initial', une fois le propriétaire rattaché : e-mail des
+-- frais à l'ouverture) et updateDispatchModel, avec la version des CGV en vigueur (ORG_LEGAL_VERSION) et leur date
+-- d'entrée en vigueur pour les organisations déjà clientes (ORG_LEGAL_EFFECTIVE_AT) : la base ne connaît aucune
+-- version. p_percent et p_fixed_cents : les deux, ou aucun (changement de modèle seul : taux et changement en attente
+-- inchangés) ; des taux égaux aux taux ACTUELS alors qu'une hausse est annoncée l'annulent (« un nouveau réglage la
+-- remplace »). p_consent_note : accord écrit d'une hausse appliquée tout de suite (p_mode 'consent') ET demande ou
+-- accord écrit de l'organisation pour un changement de modèle (CGV art. 3), obligatoire dans ces deux cas. p_app_url :
+-- origine du site pour les liens des e-mails (facultatif). Champs d'erreur (« field ») : platformFeePercent,
+-- platformFeeFixedCents, dispatchModel, effectiveOn, consentNote, mode.
 create or replace function public.svc_platform_set_fees(
   p_org uuid,
   p_actor uuid,
@@ -629,12 +720,12 @@ begin
   -- Taux : les deux, ou aucun (changement de modèle seul : taux et changement en attente inchangés)
   if v_rates_given and (p_percent is null or round(p_percent, 2) < 0 or round(p_percent, 2) > 50) then
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'platformFeePercent',
-      'message', 'Frais plateforme (%) : entre 0 et 50.');
+      'message', private.fr_typo('Frais plateforme (%) : entre 0 et 50.'));
   end if;
   v_percent := round(p_percent, 2);
   if v_rates_given and (v_fixed is null or v_fixed < 0 or v_fixed > 100000) then
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'platformFeeFixedCents',
-      'message', 'Frais fixes par course : entre 0 et 1 000 €.');
+      'message', private.fr_typo('Frais fixes par course : entre 0 et 1 000 €.'));
   end if;
   if p_dispatch_model is not null and p_dispatch_model not in ('fleet', 'centrale') then
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'dispatchModel', 'message', 'Modèle d''exploitation inconnu.');
@@ -665,7 +756,15 @@ begin
   if v_mode = 'initial' and (o.created_at < now() - interval '1 hour'
                              or exists (select 1 from public.rides r where r.organization_id = p_org)) then
     return jsonb_build_object('ok', false, 'code', 'ORG_NOT_NEW',
-      'message', 'Réglage initial réservé à une organisation tout juste créée, sans course : programmez la hausse ou indiquez l''accord écrit.');
+      'message', private.fr_typo('Réglage initial réservé à une organisation tout juste créée, sans course : programmez la hausse ou indiquez l''accord écrit.'));
+  end if;
+
+  -- Changement de modèle d'exploitation (hors création) : seulement à la demande de l'organisation ou avec son accord
+  -- écrit (CGV art. 3), noté (date et forme) et journalisé — passer de centrale à flotte peut augmenter ses frais (fixe
+  -- dû même sans prix, plus de plafond au prix)
+  if v_model_changed and v_mode <> 'initial' and (v_note is null or char_length(v_note) < 3) then
+    return jsonb_build_object('ok', false, 'code', 'CONSENT_REQUIRED', 'field', 'consentNote',
+      'message', private.fr_typo('Changement de modèle : précisez la demande ou l''accord écrit de l''organisation (date et forme : e-mail, courrier…), CGV article 3.'));
   end if;
 
   -- Retour au mode flotte : refusé tant qu'un règlement chauffeur est ouvert (même garde que le déclencheur
@@ -675,9 +774,9 @@ begin
      where x.organization_id = p_org and x.status in ('due', 'declared', 'disputed');
     if v_open > 0 then
       return jsonb_build_object('ok', false, 'code', 'SETTLEMENTS_OPEN', 'count', v_open, 'field', 'dispatchModel',
-        'message', format('%s règlement%s chauffeur encore ouvert%s (à régler, signalé%s payé%s ou contesté%s) : la centrale doit les solder ou les annuler dans Encaissements avant le retour au mode flotte.',
+        'message', private.fr_typo(format('%s règlement%s chauffeur encore ouvert%s (à régler, signalé%s payé%s ou contesté%s) : la centrale doit les solder ou les annuler dans Encaissements avant le retour au mode flotte.',
           v_open, case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end,
-          case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end));
+          case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end, case when v_open > 1 then 's' else '' end)));
     end if;
   end if;
 
@@ -697,7 +796,7 @@ begin
     -- Accord écrit de l'organisation : tout de suite, note obligatoire
     if v_note is null or char_length(v_note) < 3 then
       return jsonb_build_object('ok', false, 'code', 'CONSENT_REQUIRED', 'field', 'consentNote',
-        'message', 'Accord écrit : précisez sa date et sa forme (e-mail, courrier…) pour appliquer la hausse tout de suite.');
+        'message', private.fr_typo('Accord écrit : précisez sa date et sa forme (e-mail, courrier…) pour appliquer la hausse tout de suite.'));
     end if;
     v_now_percent := v_percent;
     v_now_fixed := v_fixed;
@@ -707,6 +806,18 @@ begin
     if v_version is null or p_org_legal_effective_on is null then
       return jsonb_build_object('ok', false, 'code', 'TERMS_VERSION_INVALID',
         'message', 'Version des CGV et date de leur entrée en vigueur requises pour programmer une hausse.');
+    end if;
+    -- CGV en vigueur ni acceptées ni annoncées à cette organisation : aucune hausse annoncée (elle ne lui sont pas
+    -- opposables) ; accord écrit possible
+    if not v_accepted and not private.org_terms_notified(p_org, v_version) then
+      return jsonb_build_object('ok', false, 'code', 'TERMS_NOT_NOTIFIED', 'field', 'mode', 'terms_accepted', false,
+        'message', private.fr_typo(format('CGV du %s ni acceptées par l''organisation ni annoncées par e-mail : prévenez-la d''abord (Informations légales, « Prévenir par e-mail »), ou appliquez la hausse sur son accord écrit.',
+          private.fr_long_date(v_version::date))));
+    end if;
+    -- Annonce par e-mail impossible (CGV art. 5 : annoncée au propriétaire par e-mail, à défaut à l'organisation)
+    if private.org_owner_emails(p_org) is null then
+      return jsonb_build_object('ok', false, 'code', 'NO_EMAIL', 'field', 'mode',
+        'message', private.fr_typo('Aucune adresse e-mail valide pour le propriétaire ni pour l''organisation : corrigez l''adresse pour annoncer la hausse, ou appliquez-la sur son accord écrit.'));
     end if;
     v_std := private.platform_fee_min_effective_on(p_org, v_version, p_org_legal_effective_on);
     v_30 := private.platform_fee_min_effective_on(p_org, null, null);
@@ -722,16 +833,16 @@ begin
     if v_on < v_min then
       return jsonb_build_object('ok', false, 'code', 'NOTICE_TOO_SHORT', 'field', 'effectiveOn',
         'min_effective_on', v_min, 'min_reason', v_reason, 'terms_accepted', v_accepted,
-        'message', format('Préavis insuffisant : cette hausse peut s''appliquer au plus tôt le %s (%s). Pour l''appliquer avant, indiquez l''accord écrit de l''organisation.',
+        'message', private.fr_typo(format('Préavis insuffisant : cette hausse peut s''appliquer au plus tôt le %s (%s). Pour l''appliquer avant, indiquez l''accord écrit de l''organisation.',
           to_char(v_min, 'DD/MM/YYYY'),
           case v_reason
             when 'terms_effective' then 'entrée en vigueur des CGV, que l''organisation n''a pas encore acceptées'
             when 'already_announced' then 'date déjà annoncée'
-            else '30 jours après l''annonce' end));
+            else '30 jours après l''annonce' end)));
     end if;
     if v_on > v_today + 366 then
       return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'effectiveOn',
-        'message', 'Date d''effet trop lointaine : un an au plus.');
+        'message', private.fr_typo('Date d''effet trop lointaine : un an au plus.'));
     end if;
     if c.id is not null and c.to_percent = v_percent and c.to_fixed_cents = v_fixed and v_pending_on = v_on then
       v_keep := true;
@@ -770,21 +881,24 @@ begin
   end if;
 
   if v_schedule then
+    -- Date gardée d'une hausse déjà annoncée, plus proche que 30 jours : le préavis repose sur la première annonce
     insert into public.platform_fee_changes (organization_id, mode, status, from_percent, from_fixed_cents, to_percent,
-      to_fixed_cents, effective_at, terms_version, terms_accepted, created_by)
+      to_fixed_cents, effective_at, terms_version, terms_accepted, created_by, notice_change_id)
     values (p_org, 'notice', 'scheduled', o.platform_fee_percent, o.platform_fee_fixed_cents, v_percent, v_fixed,
-      v_on::timestamp at time zone v_tz, v_version, v_accepted, p_actor)
+      v_on::timestamp at time zone v_tz, v_version, v_accepted, p_actor,
+      case when v_on < v_std then coalesce(c.notice_change_id, c.id) end)
     returning * into n;
   end if;
 
-  -- E-mails aux propriétaires : annonce, confirmation d'une hausse sur accord écrit, ou annulation d'une annonce
+  -- E-mails aux propriétaires : annonce, confirmation d'une hausse sur accord écrit, frais à l'ouverture du compte, ou
+  -- annulation d'une annonce
   if v_schedule then
     v_mail := private.platform_fee_change_email('notice', p_org, v_model, o.platform_fee_percent, o.platform_fee_fixed_cents,
       v_percent, v_fixed, v_on, case when v_close then v_pending_on end, p_app_url);
     v_emails := private.queue_org_emails(p_org, 'platform_fee_change', v_mail ->> 'subject', v_mail ->> 'body', n.id, p_actor);
     update public.platform_fee_changes set emails_queued = v_emails where id = n.id returning * into n;
-  elsif a.mode = 'consent' then
-    v_mail := private.platform_fee_change_email('consent', p_org, v_model, a.from_percent, a.from_fixed_cents,
+  elsif a.mode in ('consent', 'initial') then
+    v_mail := private.platform_fee_change_email(a.mode, p_org, v_model, a.from_percent, a.from_fixed_cents,
       a.to_percent, a.to_fixed_cents, v_today, case when v_close then v_pending_on end, p_app_url);
     v_emails := private.queue_org_emails(p_org, 'platform_fee_change', v_mail ->> 'subject', v_mail ->> 'body', a.id, p_actor);
     update public.platform_fee_changes set emails_queued = v_emails where id = a.id returning * into a;
@@ -814,8 +928,10 @@ begin
         'after', jsonb_build_object('dispatch_model', v_model, 'platform_fee_percent', v_now_percent,
           'platform_fee_fixed_cents', v_now_fixed),
         'mode', a.mode, 'change_id', a.id, 'consent_note', a.consent_note,
+        -- Demande ou accord écrit de l'organisation pour le changement de modèle (CGV art. 3)
+        'model_note', case when v_model_changed then v_note end,
         'terms_version', v_version, 'terms_accepted', v_accepted,
-        'emails', case when a.mode = 'consent' then v_emails end,
+        'emails', case when a.mode in ('consent', 'initial') then v_emails end,
         -- Lien d'inscription conservé tel quel lors d'un changement de modèle (20260924006300)
         'join_link_enabled', o.join_enabled));
   end if;
@@ -826,6 +942,7 @@ begin
         'from', jsonb_build_object('platform_fee_percent', n.from_percent, 'platform_fee_fixed_cents', n.from_fixed_cents),
         'to', jsonb_build_object('platform_fee_percent', n.to_percent, 'platform_fee_fixed_cents', n.to_fixed_cents),
         'effective_at', n.effective_at, 'effective_on', v_on, 'min_effective_on', v_min, 'min_reason', v_reason,
+        'notice_change_id', n.notice_change_id,
         'terms_version', v_version, 'terms_accepted', v_accepted, 'emails', v_emails,
         'replaced_change_id', case when v_close then c.id end));
   end if;
@@ -853,6 +970,8 @@ begin
         case when a.mode = 'consent' then format('Accord écrit enregistré : %s dès maintenant.', private.platform_fee_terms_text(v_now_percent, v_now_fixed))
                                          || case when v_emails > 0 then ' Confirmation envoyée par e-mail au propriétaire.' else '' end
              when a.mode = 'initial' then format('Frais par course : %s.', private.platform_fee_terms_text(v_now_percent, v_now_fixed))
+                                         || case when v_emails > 0 then ' Communiqués par e-mail au propriétaire.'
+                                                 else ' Aucune adresse e-mail valide : communiquez-les vous-même à l''organisation.' end
              when v_rates_changed then format('Frais par course enregistrés dès maintenant : %s.', private.platform_fee_terms_text(v_now_percent, v_now_fixed)) end,
         case when v_close and a.mode is distinct from 'consent' then 'Le changement programmé est annulé.' end,
         case when v_keep then format('Le changement programmé reste prévu le %s.', to_char(v_pending_on, 'DD/MM/YYYY')) end)
@@ -865,7 +984,7 @@ begin
   return jsonb_build_object(
     'ok', true,
     'code', v_code,
-    'message', v_msg,
+    'message', private.fr_typo(v_msg),
     'dispatch_model', v_model,
     'fee_percent', v_now_percent,
     'fee_fixed_cents', v_now_fixed,
@@ -908,7 +1027,7 @@ begin
   select * into c from public.platform_fee_changes x where x.organization_id = p_org and x.status = 'scheduled' for no key update;
   if not found or p_change is null or c.id <> p_change then
     return jsonb_build_object('ok', false, 'code', 'FEE_CHANGE_NOT_PENDING',
-      'message', 'Ce changement n''est plus en attente (déjà appliqué, annulé ou remplacé) : rechargez la page.');
+      'message', private.fr_typo('Ce changement n''est plus en attente (déjà appliqué, annulé ou remplacé) : rechargez la page.'));
   end if;
   v_tz := coalesce(o.timezone, 'Europe/Paris');
   perform private.set_actor('super_admin', p_actor);
@@ -927,8 +1046,8 @@ begin
       'effective_at', c.effective_at, 'emails', v_emails));
   perform private.broadcast_platform(p_org, 'rates_cancelled');
   return jsonb_build_object('ok', true, 'code', 'CANCELLED', 'emails_queued', v_emails,
-    'message', format('Changement annulé. Frais inchangés : %s.', private.platform_fee_terms_text(o.platform_fee_percent, o.platform_fee_fixed_cents))
-      || case when v_emails > 0 then ' Le propriétaire est prévenu par e-mail.' else '' end);
+    'message', private.fr_typo(format('Changement annulé. Frais inchangés : %s.', private.platform_fee_terms_text(o.platform_fee_percent, o.platform_fee_fixed_cents))
+      || case when v_emails > 0 then ' Le propriétaire est prévenu par e-mail.' else '' end));
 end;
 $$;
 
@@ -1013,7 +1132,13 @@ begin
       'accepted', private.org_terms_accepted(p_org, v_version),
       'accepted_at', (select min(la.accepted_at) from public.legal_acceptances la
                        where la.organization_id = p_org and la.document = 'cgv' and la.version = v_version),
-      'effective_on', p_org_legal_effective_on) end,
+      'effective_on', p_org_legal_effective_on,
+      -- Annonce par e-mail de cette version (svc_org_terms_notify) : date et entrée en vigueur annoncée ; sans elle ni
+      -- acceptation, aucune hausse annoncée (TERMS_NOT_NOTIFIED)
+      'notified_at', (select t.created_at from public.org_terms_notices t where t.organization_id = p_org and t.version = v_version),
+      'notified_effective_on', (select t.effective_on from public.org_terms_notices t where t.organization_id = p_org and t.version = v_version)) end,
+    -- Adresses qui recevraient une annonce (propriétaires actifs, sinon l'organisation) : 0 = hausse annoncée impossible
+    'email_recipients', coalesce(cardinality(private.org_owner_emails(p_org)), 0),
     'min_effective_on', v_std,
     'min_reason', case when v_std > v_30 then 'terms_effective' else 'notice_30_days' end,
     'preview', v_preview,
@@ -1031,6 +1156,11 @@ $$;
 -- « platform.updated » (rates) part du seul déclencheur organizations_platform_rates_broadcast, une fois, et seulement
 -- si les taux changent vraiment. Une course qui se termine en même temps lit les taux sans verrou : anciens taux si
 -- elle est validée avant, nouveaux après (une seule base figée par course : jamais de double frais).
+-- CGV art. 5 : une hausse est annoncée au propriétaire par e-mail au moins 30 jours avant sa date d'effet. Aucun e-mail
+-- de l'annonce (celle de ce changement, ou de la hausse dont il garde la date : notice_change_id) PARTI (statut
+-- « sent ») au moins 30 jours avant effective_at — mailer arrêté, serveur mail en panne, adresse en échec — : la hausse
+-- n'est PAS appliquée ; elle est annulée (journal « warning » pour le super admin, avis d'annulation au propriétaire,
+-- temps réel « rates_cancelled »), à reprogrammer.
 create or replace function private.apply_platform_fee_changes(p_limit integer default 100)
 returns integer
 language plpgsql
@@ -1040,6 +1170,9 @@ declare
   x record;
   o public.organizations;
   c public.platform_fee_changes;
+  v_sent timestamptz;
+  v_mail jsonb;
+  v_emails integer;
   v_count integer := 0;
 begin
   for x in
@@ -1054,6 +1187,29 @@ begin
     select * into c from public.platform_fee_changes where id = x.id for no key update;
     continue when not found or c.status <> 'scheduled' or c.effective_at > now();
     perform private.set_actor('system', null);
+
+    select min(e.sent_at) into v_sent
+      from public.email_outbox e
+     where e.platform_fee_change_id = coalesce(c.notice_change_id, c.id) and e.kind = 'platform_fee_change'
+       and e.status = 'sent';
+    if v_sent is null or v_sent > c.effective_at - interval '30 days' then
+      update public.platform_fee_changes
+         set status = 'cancelled', closed_at = now(), closed_by = null,
+             close_reason = 'Non appliqué : aucun e-mail d''annonce parti au moins 30 jours avant la date d''effet'
+       where id = c.id;
+      v_mail := private.platform_fee_change_email('cancel', o.id, o.dispatch_model, o.platform_fee_percent, o.platform_fee_fixed_cents,
+        o.platform_fee_percent, o.platform_fee_fixed_cents, null, (c.effective_at at time zone coalesce(o.timezone, 'Europe/Paris'))::date, null);
+      v_emails := private.queue_org_emails(o.id, 'platform_fee_change', v_mail ->> 'subject', v_mail ->> 'body', c.id, null);
+      insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+      values (o.id, 'system', null, 'organization.platform_fee_schedule_cancelled', 'organizations', o.id::text, 'warning',
+        jsonb_build_object('change_id', c.id, 'reason', 'notice_not_sent', 'notice_change_id', c.notice_change_id,
+          'notice_sent_at', v_sent, 'effective_at', c.effective_at,
+          'to', jsonb_build_object('platform_fee_percent', c.to_percent, 'platform_fee_fixed_cents', c.to_fixed_cents),
+          'emails', v_emails));
+      perform private.broadcast_platform(o.id, 'rates_cancelled');
+      continue;
+    end if;
+
     update public.organizations
        set platform_fee_percent = c.to_percent, platform_fee_fixed_cents = c.to_fixed_cents
      where id = o.id
@@ -1067,7 +1223,45 @@ begin
         'after', jsonb_build_object('dispatch_model', o.dispatch_model, 'platform_fee_percent', c.to_percent,
           'platform_fee_fixed_cents', c.to_fixed_cents),
         'mode', 'notice', 'change_id', c.id, 'announced_at', c.created_at, 'announced_by', c.created_by,
-        'effective_at', c.effective_at, 'emails', c.emails_queued));
+        'notice_sent_at', v_sent, 'effective_at', c.effective_at, 'emails', c.emails_queued));
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end;
+$$;
+
+-- Baisses (corrections de prix après la course) en attente depuis 30 jours sans décision du super admin : acceptées
+-- (CGV art. 5 : l'éditeur ne refuse une baisse que par une décision motivée, prise dans les 30 jours). Même effet qu'une
+-- acceptation par svc_platform_review_entry (comptée, journal, temps réel), auteur « système ». Par lots de 500.
+create or replace function private.accept_stale_platform_reductions()
+returns integer
+language plpgsql
+set search_path = ''
+as $$
+declare
+  e public.platform_fee_entries;
+  v_count integer := 0;
+begin
+  for e in
+    with stale as (
+      select x.id from public.platform_fee_entries x
+       where x.status = 'pending' and x.created_at < now() - interval '30 days'
+       order by x.created_at
+       limit 500
+       for update skip locked
+    )
+    update public.platform_fee_entries x
+       set status = 'posted', reviewed_at = now(),
+           review_note = 'Acceptée automatiquement : aucune décision de Rydar dans les 30 jours (CGV, article 5)'
+      from stale
+     where x.id = stale.id
+    returning x.*
+  loop
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (e.organization_id, 'system', null, 'platform_fee.reduction_approved', 'platform_fee_entries', e.id::text, 'warning',
+      jsonb_build_object('amount_cents', e.amount_cents, 'automatic', true, 'pending_since', e.created_at));
+    perform private.broadcast_platform(e.organization_id, 'reduction_approved',
+      jsonb_build_object('entry', private.platform_entry_json(e)));
     v_count := v_count + 1;
   end loop;
   return v_count;
@@ -1080,7 +1274,11 @@ $$;
 -- Organisations actives ou suspendues qui n'ont pas accepté p_version (CGV + accord de traitement) : e-mail à leurs
 -- propriétaires (sinon à l'adresse de l'organisation), une seule fois par organisation et par version
 -- (public.org_terms_notices) ; une organisation sans adresse valide n'est pas notée (nouvel essai possible une fois
--- l'adresse corrigée). Refusé une fois la date d'entrée en vigueur passée (le texte dit « au plus tard le … »).
+-- l'adresse corrigée). Le texte dit « au plus tard le p_effective_on » : refusé si cette date laisse moins de 30 jours
+-- (CGV art. 16, même règle que les hausses : premier minuit, heure de Paris, après maintenant + 30 jours,
+-- TERMS_NOTICE_TOO_SHORT) — la repousser (ORG_LEGAL_EFFECTIVE_AT) puis redéployer —, et une fois cette date passée
+-- (TERMS_EFFECTIVE_PASSED). Chaque organisation prévenue garde la date reçue (org_terms_notices.effective_on : jamais
+-- de hausse annoncée avant, private.platform_fee_min_effective_on).
 create or replace function public.svc_org_terms_notify(p_actor uuid, p_version text, p_effective_on date, p_app_url text default null)
 returns jsonb
 language plpgsql
@@ -1097,18 +1295,26 @@ declare
   v_already integer := 0;
   v_no_email integer := 0;
   v_pending integer := 0;
+  v_min date := private.notice_min_on('Europe/Paris');
 begin
   perform private.assert_platform_actor(p_actor);
   if not private.legal_version_ok(v_version) then
     return jsonb_build_object('ok', false, 'code', 'TERMS_VERSION_INVALID', 'message', 'Version des CGV invalide.');
   end if;
   if p_effective_on is null or p_effective_on < v_version::date then
-    return jsonb_build_object('ok', false, 'code', 'TERMS_VERSION_INVALID', 'message', 'Date d''entrée en vigueur des CGV invalide.');
+    return jsonb_build_object('ok', false, 'code', 'TERMS_VERSION_INVALID',
+      'message', 'Date d''entrée en vigueur des CGV invalide.');
   end if;
   if p_effective_on <= (now() at time zone 'Europe/Paris')::date then
     return jsonb_build_object('ok', false, 'code', 'TERMS_EFFECTIVE_PASSED',
-      'message', format('Entrée en vigueur des CGV atteinte (%s) : l''annonce, qui dit « au plus tard le %s », n''est plus envoyée.',
-        to_char(p_effective_on, 'DD/MM/YYYY'), private.fr_long_date(p_effective_on)));
+      'message', private.fr_typo(format('Entrée en vigueur des CGV atteinte (%s) : l''annonce, qui dit « au plus tard le %s », n''est plus envoyée.',
+        to_char(p_effective_on, 'DD/MM/YYYY'), private.fr_long_date(p_effective_on))));
+  end if;
+  -- CGV art. 16 : modification défavorable annoncée au moins 30 jours avant son entrée en vigueur
+  if p_effective_on < v_min then
+    return jsonb_build_object('ok', false, 'code', 'TERMS_NOTICE_TOO_SHORT', 'min_effective_on', v_min,
+      'message', private.fr_typo(format('Préavis insuffisant : l''annonce dit « au plus tard le %s », moins de 30 jours après aujourd''hui (au plus tôt le %s). Repoussez d''abord la date d''entrée en vigueur (ORG_LEGAL_EFFECTIVE_AT, @rydar/shared), puis redéployez.',
+        private.fr_long_date(p_effective_on), private.fr_long_date(v_min))));
   end if;
   -- Un envoi à la fois (double clic, deux onglets) ; la clé primaire (organisation, version) garde le premier
   perform pg_advisory_xact_lock(hashtextextended('rydar.org_terms_notify', 0));
@@ -1149,7 +1355,7 @@ begin
     'already_notified', v_already,
     'without_email', v_no_email,
     'not_accepted', v_pending,
-    'message', concat_ws(' ',
+    'message', private.fr_typo(concat_ws(' ',
       case when v_orgs > 0
         then format('%s organisation%s prévenue%s par e-mail (%s e-mail%s).', v_orgs, case when v_orgs > 1 then 's' else '' end,
           case when v_orgs > 1 then 's' else '' end, v_emails, case when v_emails > 1 then 's' else '' end)
@@ -1157,7 +1363,7 @@ begin
       case when v_already > 0
         then format('%s déjà prévenue%s pour cette version.', v_already, case when v_already > 1 then 's' else '' end) end,
       case when v_no_email > 0
-        then format('%s sans adresse e-mail valide (propriétaire ni organisation).', v_no_email) end));
+        then format('%s sans adresse e-mail valide (propriétaire ni organisation).', v_no_email) end)));
 end;
 $$;
 
@@ -1294,8 +1500,12 @@ begin
 end;
 $$;
 
--- Dernière définition : 20260924005900_expire_unstarted_rides.sql. Seul ajout : hausses annoncées appliquées à leur
--- date d'effet (private.apply_platform_fee_changes, compteur « platform_fee_changes_applied », erreur isolée).
+-- Dernière définition : 20260924005900_expire_unstarted_rides.sql. Ajouts (erreurs isolées, retentées au passage
+-- suivant) : baisses en attente depuis 30 jours sans décision acceptées (private.accept_stale_platform_reductions,
+-- « platform_reductions_accepted ») ; hausses annoncées appliquées à leur date d'effet
+-- (private.apply_platform_fee_changes, « platform_fee_changes_applied ») EN DERNIER : l'UPDATE de l'organisation garde
+-- son verrou jusqu'à la fin de la transaction, et la création d'une course de cette organisation (compteur de courses)
+-- l'attend — il ne doit pas durer pendant les purges.
 create or replace function private.housekeeping()
 returns jsonb
 language plpgsql
@@ -1315,6 +1525,7 @@ declare
   v_auth integer;
   v_expired integer;
   v_fee_changes integer;
+  v_reductions integer;
   v_rides integer := 0;
   v_count integer;
   v_org uuid;
@@ -1332,15 +1543,6 @@ begin
   exception when others then
     v_expired := null;
     v_errors := v_errors || jsonb_build_object('rides_expired', left(sqlerrm, 300));
-  end;
-
-  -- Frais Rydar : hausses annoncées arrivées à leur date d'effet (20260924006600). Erreur isolée comme les purges ;
-  -- retentée au passage suivant.
-  begin
-    v_fee_changes := private.apply_platform_fee_changes();
-  exception when others then
-    v_fee_changes := null;
-    v_errors := v_errors || jsonb_build_object('platform_fee_changes', left(sqlerrm, 300));
   end;
 
   delete from public.driver_location_history where recorded_at < now() - interval '30 days';
@@ -1433,7 +1635,25 @@ begin
     end;
   end if;
 
+  -- Frais Rydar (20260924006600) : baisses en attente depuis 30 jours sans décision du super admin acceptées (CGV
+  -- art. 5)
+  begin
+    v_reductions := private.accept_stale_platform_reductions();
+  exception when others then
+    v_reductions := null;
+    v_errors := v_errors || jsonb_build_object('platform_reductions', left(sqlerrm, 300));
+  end;
+  -- Hausses annoncées arrivées à leur date d'effet, EN DERNIER : le verrou de l'organisation (UPDATE des taux) est gardé
+  -- jusqu'à la fin de la transaction, et la création d'une course de l'organisation l'attend
+  begin
+    v_fee_changes := private.apply_platform_fee_changes();
+  exception when others then
+    v_fee_changes := null;
+    v_errors := v_errors || jsonb_build_object('platform_fee_changes', left(sqlerrm, 300));
+  end;
+
   return jsonb_build_object('rides_expired', v_expired, 'platform_fee_changes_applied', v_fee_changes,
+    'platform_reductions_accepted', v_reductions,
     'history_purged', v_history, 'api_logs_purged', v_logs,
     'documents_expired', v_docs, 'notifications_purged', v_notifs, 'chat_purged', v_chat,
     'fleet_events_purged', v_fleet, 'audit_network_purged', v_network, 'rides_purged', v_rides,
@@ -1482,11 +1702,11 @@ begin
     -- relance par heure ; la relance sans WhatsApp reste possible (affichée dans son tableau de bord).
     if o.dispatch_model = 'fleet' then
       return jsonb_build_object('ok', false, 'code', 'WHATSAPP_FLEET_UNSUPPORTED',
-        'message', 'WhatsApp indisponible pour une flotte : le modèle approuvé par Meta renvoie à l''onglet « Encaissements », absent d''une flotte. Relancez sans WhatsApp (rappel affiché dans son tableau de bord).');
+        'message', private.fr_typo('WhatsApp indisponible pour une flotte : le modèle approuvé par Meta renvoie à l''onglet « Encaissements », absent d''une flotte. Relancez sans WhatsApp (rappel affiché dans son tableau de bord).'));
     end if;
     if not private.whatsapp_ready('platform', null) then
       return jsonb_build_object('ok', false, 'code', 'WHATSAPP_NOT_CONFIGURED',
-        'message', 'WhatsApp de Rydar non configuré : renseignez le numéro dans Frais plateforme › WhatsApp.');
+        'message', private.fr_typo('WhatsApp de Rydar non configuré : renseignez le numéro dans Frais plateforme › WhatsApp.'));
     end if;
     v_target := private.platform_whatsapp_target(p_org);
     if v_target ->> 'to' is null then
@@ -1555,7 +1775,8 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Libellés neutres : une flotte n'a pas de menu « Encaissements » (elle a « Frais Rydar »)
 -- -----------------------------------------------------------------------------
--- Dernière définition : 20260924003000_platform_fees.sql. Seul changement : texte de PLATFORM_FEES_OVERDUE.
+-- Dernière définition : 20260924003000_platform_fees.sql. Seul changement : texte de PLATFORM_FEES_OVERDUE (neutre,
+-- typographie française ; le code en tête, « PLATFORM_FEES_OVERDUE: », est inchangé).
 create or replace function private.rides_platform_block()
 returns trigger
 language plpgsql
@@ -1568,7 +1789,7 @@ begin
   end if;
   if exists (select 1 from public.organizations o where o.id = new.organization_id and o.platform_block_after_days is not null)
      and private.platform_blocked(new.organization_id) then
-    raise exception 'PLATFORM_FEES_OVERDUE: frais plateforme en retard — réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour créer de nouvelles courses'
+    raise exception '%', private.fr_typo('PLATFORM_FEES_OVERDUE: frais plateforme en retard — réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour créer de nouvelles courses')
       using errcode = '55000';
   end if;
   return new;
@@ -1621,7 +1842,7 @@ begin
     if exists (select 1 from public.organizations o where o.id = r.organization_id and o.platform_block_after_days is not null)
        and private.platform_blocked(r.organization_id) then
       return jsonb_build_object('ok', false, 'code', 'PLATFORM_FEES_OVERDUE',
-        'message', 'Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.');
+        'message', private.fr_typo('Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.'));
     end if;
     v_max := nullif(coalesce(private.org_limits(r.organization_id), '{}'::jsonb) ->> 'max_rides_per_month', '')::bigint;
     if v_max is not null then
@@ -1716,7 +1937,7 @@ begin
   if exists (select 1 from public.organizations o where o.id = r.organization_id and o.platform_block_after_days is not null)
      and private.platform_blocked(r.organization_id) then
     return jsonb_build_object('ok', false, 'code', 'PLATFORM_FEES_OVERDUE',
-      'message', 'Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.');
+      'message', private.fr_typo('Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.'));
   end if;
   v_max := nullif(coalesce(private.org_limits(r.organization_id), '{}'::jsonb) ->> 'max_rides_per_month', '')::bigint;
   if v_max is not null then
@@ -2015,7 +2236,7 @@ begin
       format('Prise en charge repoussée à %s : course non relancée — %s',
         private.fmt_local_time(v_target, v_tz, v_reference),
         case v_restart_block
-          when 'PLATFORM_FEES_OVERDUE' then 'frais plateforme en retard (réglez vos frais Rydar, menu « Frais Rydar » ou « Encaissements », puis relancez-la)'
+          when 'PLATFORM_FEES_OVERDUE' then private.fr_typo('frais plateforme en retard (réglez vos frais Rydar, menu « Frais Rydar » ou « Encaissements », puis relancez-la)')
           else 'limite mensuelle de courses atteinte pour votre offre'
         end),
       'timeline', 'warning', jsonb_build_object('code', v_restart_block, 'pickup_at', v_target), 'system', null);
@@ -2188,6 +2409,171 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
+-- Délai de paiement des frais : 45 jours au plus (facture récapitulative = facture périodique)
+-- -----------------------------------------------------------------------------
+-- Article L441-10 du Code de commerce : le délai de paiement d'une facture périodique (3 du I de l'article 289 du CGI)
+-- ne dépasse pas 45 jours à compter de son émission ; la facture de chaque cycle est émise à sa fin (CGV art. 5).
+-- Garde : un NOUVEAU délai au-delà de 45 jours est refusé (insertion, ou changement de la valeur) ; un délai déjà
+-- enregistré n'est jamais réécrit d'office (changement défavorable sans l'accord de l'organisation).
+create or replace function private.organizations_platform_payment_days_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.platform_payment_days > 45
+     and (tg_op = 'INSERT' or new.platform_payment_days is distinct from old.platform_payment_days) then
+    raise exception 'PLATFORM_PAYMENT_DAYS_MAX: délai de paiement des frais plateforme : 45 jours au plus'
+      using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists organizations_platform_payment_days_guard on public.organizations;
+create trigger organizations_platform_payment_days_guard
+  before insert or update of platform_payment_days on public.organizations
+  for each row execute function private.organizations_platform_payment_days_guard();
+
+-- Dernière définition : 20260924003000_platform_fees.sql. Seuls changements : délai de paiement de 0 à 45 jours (au
+-- lieu de 60, article L441-10 du Code de commerce) ; messages en typographie française.
+create or replace function public.svc_platform_terms(
+  p_org uuid,
+  p_actor uuid,
+  p_cycle text,
+  p_payment_days integer,
+  p_block_after_days integer default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  o public.organizations;
+begin
+  perform private.assert_platform_actor(p_actor);
+  select * into o from public.organizations where id = p_org for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Organisation introuvable.');
+  end if;
+  if p_cycle is null or p_cycle not in ('weekly', 'monthly') then
+    return jsonb_build_object('ok', false, 'code', 'INVALID_CYCLE', 'message', 'Cycle invalide (hebdomadaire ou mensuel).');
+  end if;
+  if p_payment_days is null or p_payment_days not between 0 and 45 then
+    return jsonb_build_object('ok', false, 'code', 'INVALID_DAYS',
+      'message', private.fr_typo('Délai de paiement : entre 0 et 45 jours (facture récapitulative, article L441-10 du Code de commerce).'));
+  end if;
+  if p_block_after_days is not null and p_block_after_days not between 1 and 90 then
+    return jsonb_build_object('ok', false, 'code', 'INVALID_BLOCK', 'message', private.fr_typo('Blocage : entre 1 et 90 jours de retard.'));
+  end if;
+  perform private.set_actor('super_admin', p_actor);
+  update public.organizations
+     set platform_billing_cycle = p_cycle, platform_payment_days = p_payment_days, platform_block_after_days = p_block_after_days
+   where id = p_org;
+  insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+  values (p_org, 'super_admin', p_actor, 'platform_fee.terms_changed', 'organizations', p_org::text, 'info',
+    jsonb_build_object(
+      'before', jsonb_build_object('cycle', o.platform_billing_cycle, 'payment_days', o.platform_payment_days,
+        'block_after_days', o.platform_block_after_days),
+      'after', jsonb_build_object('cycle', p_cycle, 'payment_days', p_payment_days, 'block_after_days', p_block_after_days)));
+  perform private.broadcast_platform(p_org, 'terms');
+  return jsonb_build_object('ok', true, 'code', 'SAVED',
+    'message', 'Conditions enregistrées (les frais déjà enregistrés gardent leur échéance).');
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Super admin : frais à facturer (facture récapitulative de chaque cycle, CGV art. 5)
+-- -----------------------------------------------------------------------------
+-- Écritures COMPTÉES prises en compte du jour p_from (inclus) au jour p_to (exclu), jours locaux de l'organisation :
+-- prise en compte = enregistrement (created_at), ou acceptation d'une baisse (reviewed_at). Chaque écriture appartient
+-- à une seule période et n'arrive jamais dans une période déjà close : une première écriture créée après la course
+-- (prix saisi ensuite) est prise en compte à son enregistrement, comme son échéance (le relevé mensuel, lui, la range à
+-- la date de la course, occurred_at). Période de 1 à 31 jours (un cycle).
+create or replace function public.admin_platform_invoice_lines(p_org uuid, p_from date, p_to date)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  o public.organizations;
+  v_tz text;
+  v_from timestamptz;
+  v_to timestamptz;
+begin
+  if not private.is_super_admin() then
+    raise exception 'FORBIDDEN: réservé au super admin' using errcode = '42501';
+  end if;
+  select * into o from public.organizations where id = p_org;
+  if not found then
+    return null;
+  end if;
+  if p_from is null or p_to is null or p_to <= p_from or p_to > p_from + 31 then
+    return jsonb_build_object('ok', false, 'code', 'INVALID', 'message', 'Période invalide (1 à 31 jours).');
+  end if;
+  v_tz := coalesce(o.timezone, 'Europe/Paris');
+  v_from := p_from::timestamp at time zone v_tz;
+  v_to := p_to::timestamp at time zone v_tz;
+  return jsonb_build_object(
+    'ok', true,
+    'organization', jsonb_build_object('id', o.id, 'name', o.name, 'slug', o.slug, 'currency', o.currency, 'timezone', v_tz,
+      'reference', private.platform_reference(o.id), 'dispatch_model', o.dispatch_model,
+      'cycle', o.platform_billing_cycle, 'payment_days', o.platform_payment_days),
+    'from', p_from,
+    'to', p_to,
+    -- Échéance des frais enregistrés pendant la période (fin de leur cycle + délai de paiement en vigueur)
+    'due_at', private.platform_due_at(o.id, v_from),
+    'total_cents', (select coalesce(sum(e.amount_cents), 0) from public.platform_fee_entries e
+                     where e.organization_id = p_org and e.status = 'posted'
+                       and coalesce(e.reviewed_at, e.created_at) >= v_from and coalesce(e.reviewed_at, e.created_at) < v_to),
+    'entries', coalesce((select jsonb_agg(private.platform_entry_json(e)
+                                            || jsonb_build_object('counted_at', coalesce(e.reviewed_at, e.created_at))
+                                order by coalesce(e.reviewed_at, e.created_at), e.id)
+                         from public.platform_fee_entries e
+                         where e.organization_id = p_org and e.status = 'posted'
+                           and coalesce(e.reviewed_at, e.created_at) >= v_from
+                           and coalesce(e.reviewed_at, e.created_at) < v_to), '[]'::jsonb));
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Durées de conservation : annonces aux organisations gardées comme preuve
+-- -----------------------------------------------------------------------------
+-- Dernière définition : 20260924005700_contact_requests.sql. Seul changement : les annonces aux organisations
+-- (« platform_fee_change » : frais Rydar, préavis de 30 jours ; « org_terms_update » : CGV) ne partent plus au bout d'un
+-- an avec les e-mails de test : gardées 10 ans, preuve de l'annonce, avec le registre des frais et le journal qui s'y
+-- rapporte (CGV art. 8 ; politique de confidentialité : actions sur les frais plateforme gardées avec ce registre).
+create or replace function private.purge_contact_data()
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_requests integer;
+  v_spam integer;
+  v_emails integer;
+  v_ips integer;
+begin
+  delete from public.contact_requests where created_at < now() - interval '3 years';
+  get diagnostics v_requests = row_count;
+  delete from public.contact_requests where status = 'spam' and updated_at < now() - interval '30 days';
+  get diagnostics v_spam = row_count;
+  delete from public.email_outbox
+   where contact_request_id is null and status in ('sent', 'failed')
+     and created_at < now() - case when kind in ('platform_fee_change', 'org_terms_update') then interval '10 years'
+                                   else interval '1 year' end;
+  get diagnostics v_emails = row_count;
+  update public.contact_requests set ip_hash = null
+   where ip_hash is not null and created_at < now() - interval '1 year';
+  get diagnostics v_ips = row_count;
+  return jsonb_build_object('requests', v_requests, 'spam', v_spam, 'emails', v_emails, 'ip_hashes', v_ips);
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- Droits d'exécution (deny-by-default, cf. 20260924000900) — fonctions redéfinies : droits conservés
 -- -----------------------------------------------------------------------------
 -- Outils, textes et ménage : appelés seulement par les fonctions security definer ci-dessus et par
@@ -2209,7 +2595,11 @@ revoke execute on function
   private.platform_scheduled_change_json(uuid, text),
   private.platform_fee_change_admin_json(public.platform_fee_changes, text),
   private.apply_platform_fee_changes(integer),
-  private.organizations_platform_rates_guard()
+  private.organizations_platform_rates_guard(),
+  private.notice_min_on(text),
+  private.org_terms_notified(uuid, text),
+  private.accept_stale_platform_reductions(),
+  private.organizations_platform_payment_days_guard()
 from public, anon, authenticated, service_role;
 
 -- Super admin : actions serveur (service role, auteur p_actor revérifié par private.assert_platform_actor)
@@ -2227,3 +2617,5 @@ to service_role;
 -- Super admin : lecture par sa session (contrôle private.is_super_admin dans la fonction)
 revoke execute on function public.admin_platform_fee_schedule(uuid, text, date, numeric, integer) from public, anon;
 grant execute on function public.admin_platform_fee_schedule(uuid, text, date, numeric, integer) to authenticated, service_role;
+revoke execute on function public.admin_platform_invoice_lines(uuid, date, date) from public, anon;
+grant execute on function public.admin_platform_invoice_lines(uuid, date, date) to authenticated, service_role;
