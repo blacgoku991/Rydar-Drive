@@ -176,7 +176,7 @@ Depuis l'app (`POST /api/driver/delete-account`) ou, pour une demande reçue par
 
 ### 12. Documents légaux (migration 003900)
 
-`platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). La version en vigueur est `LEGAL_VERSION` (`@rydar/shared`), commune au site et à l'app. Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
+`platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). Deux versions en vigueur (`@rydar/shared`, aucune en base) : `LEGAL_VERSION` pour les CGU et la politique (site et app, qui l'embarque) et `ORG_LEGAL_VERSION` pour les CGV et l'accord de traitement (web seul ; bandeau « mise à jour » pour une organisation qui avait accepté une version antérieure, entrée en vigueur au plus tard `ORG_LEGAL_EFFECTIVE_AT`). Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
 
 ### 13. Frais Rydar (centrales et flottes, migrations 003000, 003100, 006400)
 

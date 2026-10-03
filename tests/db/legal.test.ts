@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
+import { LEGAL_VERSION, ORG_LEGAL_VERSION, legalAcceptanceState } from "../../packages/shared/src/features";
 import {
   as, createAuthUser, createDriver, createMember, createOrg, expectPgError, insertRideBypass, pool, sql, type Org,
 } from "./helpers";
@@ -221,6 +222,47 @@ describe("Acceptation des documents légaux (accept_legal_documents)", () => {
     // CGU au nom d'une centrale : membre de cette centrale seulement
     expect(await accept(dispatcher, ["cgu"], "2026-09-27", org.id)).toMatchObject({ ok: true });
     expect((await expectPgError(accept(other.ownerId, ["cgu"], "2026-09-27", org.id))).code).toBe("42501");
+  });
+
+  it("versions séparées (@rydar/shared) : CGV + accord à ORG_LEGAL_VERSION, CGU + politique à LEGAL_VERSION, sans migration", async () => {
+    const org = await createOrg("Légal deux versions");
+    const dispatcher = await createMember(org, "dispatcher");
+    // Lectures de dashboard/layout.tsx (RLS) : versions de l'accord de l'organisation, CGU + politique de la personne
+    const orgState = async () =>
+      legalAcceptanceState(
+        (await as({ sub: org.ownerId }, (q) => q<{ version: string }>(
+          "select version from public.legal_acceptances where organization_id = $1 and document = 'dpa'", [org.id],
+        ))).map((r) => r.version),
+        ORG_LEGAL_VERSION,
+      );
+    const personal = async (sub: string) =>
+      (await as({ sub }, (q) => q<{ document: string }>(
+        "select document from public.legal_acceptances where user_id = $1 and version = $2 and document in ('cgu', 'privacy') order by document",
+        [sub, LEGAL_VERSION],
+      ))).map((r) => r.document);
+
+    // Organisation cliente avant la version : tout accepté le 27/09 (une seule version à l'époque)
+    expect(await accept(org.ownerId, ["cgv", "dpa", "cgu", "privacy"], "2026-09-27", org.id)).toMatchObject({ ok: true });
+    expect(await accept(dispatcher, ["cgu", "privacy"], "2026-09-27", org.id)).toMatchObject({ ok: true });
+    expect(await orgState()).toBe("updated"); // bandeau « mise à jour » (owner / admin)
+    // Dispatcher : rien à ré-accepter, LEGAL_VERSION n'a pas changé (2026-09-27, legal-version.test.ts)
+    expect(await personal(dispatcher)).toEqual(["cgu", "privacy"]);
+
+    // acceptOrgTerms : deux appels, une version chacun (la date du jour ou d'avant passe le contrôle « pas de futur »)
+    expect(await accept(org.ownerId, ["cgv", "dpa"], ORG_LEGAL_VERSION, org.id)).toMatchObject({ ok: true, code: "ACCEPTED" });
+    expect(await accept(org.ownerId, ["cgu", "privacy"], LEGAL_VERSION, org.id)).toMatchObject({ ok: true, code: "ACCEPTED" });
+    expect(await orgState()).toBe("accepted");
+    expect(await personal(org.ownerId)).toEqual(["cgu", "privacy"]);
+
+    const expected = new Set([
+      ...["cgv", "dpa", "cgu", "privacy"].map((d) => `${d}:2026-09-27`),
+      ...["cgv", "dpa"].map((d) => `${d}:${ORG_LEGAL_VERSION}`),
+      ...["cgu", "privacy"].map((d) => `${d}:${LEGAL_VERSION}`),
+    ]);
+    const rows = await sql("select document, version from public.legal_acceptances where user_id = $1", [org.ownerId]);
+    expect(rows.map((r) => `${r.document}:${r.version}`).sort()).toEqual([...expected].sort());
+    // Dispatcher : jamais les CGV ni l'accord, quelle que soit la version
+    expect((await expectPgError(accept(dispatcher, ["cgv", "dpa"], ORG_LEGAL_VERSION, org.id))).code).toBe("42501");
   });
 
   it("documents ou version invalides refusés", async () => {

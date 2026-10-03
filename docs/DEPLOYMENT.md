@@ -435,19 +435,24 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
   (`deploy/configure.sh`) ne servent que de repli ;
 - les textes sont des modèles fidèles au fonctionnement du logiciel (Rydar = éditeur de logiciel, les courses
   appartiennent aux centrales) : **faites-les relire par un juriste** avant l'ouverture ;
-- après toute modification importante des textes, changez `LEGAL_VERSION` (valeur commune au site et à l'app
-  chauffeur, `packages/shared/src/features.ts`, reprise par `apps/web/lib/legal.ts`) et `LEGAL_UPDATED_AT`
-  (`apps/web/lib/legal.ts`). La nouvelle version est alors présentée à tous pour acceptation :
-  - tableau de bord : un bandeau (non bloquant) demande à chaque membre, dispatchers compris, d'accepter les CGU et
-    la politique de confidentialité ; le propriétaire ou un administrateur accepte en plus, au nom de la centrale,
-    les CGV et l'accord de traitement. `/admin/legal` liste les centrales qui n'ont pas encore accepté ;
-  - application chauffeur : un écran plein fait accepter les CGU et la politique de confidentialité à chaque
-    chauffeur, invité par sa centrale ou inscrit par lien (jamais pendant une offre ou une course ; « J'accepte »
-    sans réseau est envoyé dès que possible) ; l'écran de connexion rappelle qu'en se connectant, on les accepte. Les
-    règles du fil « Chauffeurs » (CGU § 8), résumées sur cet écran, sont ainsi acceptées avant toute publication dans
-    le fil ; à défaut, une feuille « Règles du fil » les fait accepter avant le premier envoi ;
-  - **l'app embarque `LEGAL_VERSION`** : après un changement, publiez une mise à jour à distance (EAS Update,
-    [STORES.md](STORES.md) § 10), sinon les chauffeurs ne voient pas la nouvelle version ;
+- après toute modification importante des textes, changez la version du document concerné
+  (`packages/shared/src/features.ts`, reprise par `apps/web/lib/legal.ts`) et sa date affichée
+  (`apps/web/lib/legal.ts` : `LEGAL_UPDATED_AT` pour les CGU, mentions et cookies, `CGV_UPDATED_AT`, `DPA_UPDATED_AT`,
+  `PRIVACY_UPDATED_AT`). Deux versions, pour ne faire ré-accepter que les personnes concernées :
+  - **`LEGAL_VERSION`** (CGU + politique de confidentialité, à titre personnel) : un bandeau (non bloquant) du
+    tableau de bord la fait accepter à chaque membre, dispatchers compris ; dans l'application chauffeur, un écran
+    plein la fait accepter à chaque chauffeur, invité par sa centrale ou inscrit par lien (jamais pendant une offre
+    ou une course ; « J'accepte » sans réseau est envoyé dès que possible) ; l'écran de connexion rappelle qu'en se
+    connectant, on les accepte. Les règles du fil « Chauffeurs » (CGU § 8), résumées sur cet écran, sont ainsi
+    acceptées avant toute publication dans le fil ; à défaut, une feuille « Règles du fil » les fait accepter avant le
+    premier envoi. **L'app embarque `LEGAL_VERSION`** : après un changement, publiez une mise à jour à distance (EAS
+    Update, [STORES.md](STORES.md) § 10), sinon les chauffeurs ne voient pas la nouvelle version ;
+  - **`ORG_LEGAL_VERSION`** (CGV + accord de traitement, au nom de l'organisation) : seuls le propriétaire et les
+    administrateurs la voient, dans le bandeau de l'organisation (qui reprend aussi, à titre personnel, les CGU et la
+    politique). Une organisation qui avait accepté une version antérieure voit un bandeau « mise à jour » : ce qui
+    change et la date d'entrée en vigueur au plus tard (`ORG_LEGAL_EFFECTIVE_AT`, au moins 30 jours après la
+    publication, CGV art. 16 ; à revoir avec chaque version). Web seul : ni chauffeur, ni dispatcher, ni mise à jour
+    de l'app. `/admin/legal` liste les organisations qui ne l'ont pas encore acceptée ;
 - les preuves d'acceptation (`legal_acceptances`) sont en ajout seul : ni modification ni suppression, même en
   service role, et jamais purgées. Un compte supprimé laisse la preuve, détachée du compte (avec l'e-mail du
   signataire pour les CGV et l'accord de traitement) ;

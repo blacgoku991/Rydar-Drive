@@ -2,6 +2,7 @@ import type { SettlementMethod } from "@rydar/shared";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
 import { TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
+import { USER_TERMS_DOCUMENTS, termsBannerChoice } from "@/components/legal/terms-state";
 import { loadChatCounts } from "@/app/dashboard/messages/queries";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
@@ -35,23 +36,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
           .eq("organization_id", ctx.org.id)
           .maybeSingle()
       : Promise.resolve(null),
-    // CGV + accord de traitement acceptés pour la version en vigueur ? (owner / admin)
+    // CGV + accord de traitement (owner / admin) : versions acceptées au nom de la centrale (une ligne par signataire
+    // et par version ; « dpa » suffit, les deux documents sont enregistrés ensemble) → version en vigueur
+    // (ORG_LEGAL_VERSION) acceptée, mise à jour à accepter (version antérieure seulement) ou première acceptation
     admin
       ? ctx.supabase
           .from("legal_acceptances")
-          .select("id", { count: "exact", head: true })
+          .select("version")
           .eq("organization_id", ctx.org.id)
           .eq("document", "dpa")
-          .eq("version", LEGAL_VERSION)
       : Promise.resolve(null),
-    // CGU + politique de confidentialité acceptées à titre personnel (tout membre, dispatcher compris) : ses propres
-    // lignes (RLS), quelle que soit la centrale au nom de laquelle il les a acceptées
+    // CGU + politique de confidentialité acceptées à titre personnel (tout membre, dispatcher compris ; LEGAL_VERSION) :
+    // ses propres lignes (RLS), quelle que soit la centrale au nom de laquelle il les a acceptées
     ctx.supabase
       .from("legal_acceptances")
       .select("document")
       .eq("user_id", ctx.user.id)
       .eq("version", LEGAL_VERSION)
-      .in("document", ["cgu", "privacy"]),
+      .in("document", [...USER_TERMS_DOCUMENTS]),
     // Menu « Mini-site » : masqué tant que les mini-sites sont coupés par la plateforme (super admin)
     bookingSitesEnabled(),
     // Flotte : frais Rydar par course réglés par le super admin (ou historique) → entrée « Frais Rydar » (owner / admin).
@@ -59,9 +61,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     !centrale && admin ? ctx.supabase.rpc("org_platform_fees_enabled", { p_org: ctx.org.id }) : Promise.resolve(null),
   ]);
   // Un seul bandeau à la fois : celui de la centrale (owner / admin, CGU et politique comprises) d'abord
-  const orgTermsDue = admin && !!terms && !terms.error && (terms.count ?? 0) === 0;
-  const accepted = new Set(((userTerms.data ?? []) as { document: string }[]).map((a) => a.document));
-  const userTermsDue = !userTerms.error && !(accepted.has("cgu") && accepted.has("privacy"));
+  const termsBanner = termsBannerChoice({
+    admin,
+    orgVersions: terms && !terms.error ? ((terms.data ?? []) as { version: string }[]).map((a) => a.version) : null,
+    userDocuments: userTerms.error ? null : ((userTerms.data ?? []) as { document: string }[]).map((a) => a.document),
+  });
   const cs = (centraleSettings?.data ?? null) as {
     settlement_link: string | null;
     settlement_instructions: string | null;
@@ -93,7 +97,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
         blockUnpaid: cs?.block_unpaid ?? true,
       }}
       centraleCounts={centraleCounts}
-      topBanner={orgTermsDue ? <TermsBanner orgName={ctx.org.name} /> : userTermsDue ? <UserTermsBanner /> : null}
+      topBanner={
+        termsBanner?.kind === "org" ? (
+          <TermsBanner orgName={ctx.org.name} updated={termsBanner.updated} />
+        ) : termsBanner?.kind === "user" ? (
+          <UserTermsBanner />
+        ) : null
+      }
       superAdmin={ctx.profile.is_super_admin === true}
       bookingSites={bookingSites}
       rydarFees={fleetFees?.data === true}

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
-import { CGV_UPDATED_AT, LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
+import { CGV_UPDATED_AT, ORG_LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +25,7 @@ export default async function TermsOfSalePage() {
         Les présentes conditions générales de vente (CGV) s&apos;appliquent entre <span className="text-fg">{legal.name}</span>{" "}
         (l&apos;« éditeur ») et toute entreprise cliente qui utilise Rydar Drive pour organiser ses courses : centrale de
         réservation, exploitant de VTC ou flotte (la « centrale »), quel que soit son modèle d&apos;exploitation (article 3).
-        Elles sont réservées aux professionnels. Version {LEGAL_VERSION}.
+        Elles sont réservées aux professionnels. Version {ORG_LEGAL_VERSION}.
       </p>
 
       <LegalSection title="1. Rôle de Rydar Drive">

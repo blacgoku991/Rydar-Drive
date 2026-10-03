@@ -292,10 +292,20 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   l'offre à la souscription, cumulable avec les frais), art. 5 « Frais plateforme » décrit le SQL : flotte = % + fixe
   sans plafond, fixe seul sans prix, taux figés à la fin de course ; centrale = prélevés, plafonnés au prix, rien sans
   prix, taux du calcul de la répartition ; changement de taux affiché dans le tableau de bord, jamais sur les frais
-  inscrits ; dus par l'organisation à qui appartient la course (réseau partagé compris). `/confidentialite` § 7
-  (organisations partenaires), `/tarifs` et `pricing.tsx` (flotte comme centrale). `LEGAL_VERSION` → `2026-10-02`
-  (nouvelle acceptation web + app), `CGV_UPDATED_AT` / `PRIVACY_UPDATED_AT` ; `CGV_COVERS_FLEET_FEES` et
-  l'avertissement du super admin retirés. Aucune version légale en dur en SQL : aucune migration.
+  inscrits ; dus par l'organisation à qui appartient la course (réseau partagé compris). `/tarifs` et `pricing.tsx`
+  (flotte comme centrale), `CGV_UPDATED_AT` ; `CGV_COVERS_FLEET_FEES` et l'avertissement du super admin retirés.
+  Aucune version légale en dur en SQL : aucune migration.
+- [x] **Versions légales séparées** (après revue de la version 2026-10-02, qui faisait tout ré-accepter, chauffeurs
+  compris, après une mise à jour de l'app) — `@rydar/shared` : `LEGAL_VERSION` (CGU + politique de confidentialité, à
+  titre personnel, tout utilisateur) reste `2026-09-27` ; `ORG_LEGAL_VERSION` = `2026-10-02` (CGV + accord de
+  traitement, au nom de l'organisation, owner / admin, web seul) ; `ORG_LEGAL_EFFECTIVE_AT` = `2026-11-05` ;
+  `legalAcceptanceState` (acceptée / mise à jour / jamais), `legalDateLabel`. `acceptOrgTerms` = deux appels
+  idempotents (CGV + accord avec `ORG_LEGAL_VERSION`, CGU + politique avec `LEGAL_VERSION`) ; bandeau de
+  l'organisation en mode « mise à jour » (`components/legal/terms-state.ts`) ; `/admin/legal` sur `ORG_LEGAL_VERSION`
+  (version antérieure acceptée ou aucune). `/confidentialite` revenue au texte du 28 septembre (ligne « organisations
+  partenaires » retirée) ; `/dpa` : version 2026-10-02, contenu inchangé depuis le 27 septembre (`DPA_UPDATED_AT`).
+  `accept_legal_documents` accepte déjà une version par appel (pas de version future) : aucune migration. App
+  chauffeur et `/rejoindre` inchangés.
 - [x] **Lenteur, volet serveur / auth / base (10/2026, migration 006500)** : `proxy.ts` = `getSession()` (cookies,
   rafraîchissement gardé) puis `getClaims(jeton)` pour un jeton ES256/RS256 + kid (vérifié sur place, JWKS) ; jeton
   HS256 : aiguillage sans appel à Auth si le JWKS est vide (pile en HS256 seul, rejeté au rendu), sinon vérifié par

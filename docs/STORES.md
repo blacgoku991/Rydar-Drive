@@ -261,9 +261,10 @@ Deux façons de mettre à jour l'app, toutes deux depuis `apps/driver` :
    - Mettre à jour les réponses App Privacy / Sécurité des données (§ 5 et § 6) si l'app collecte une donnée de
      plus, **avant** l'envoi.
 
-Nouvelle version des documents légaux (`LEGAL_VERSION`, `packages/shared/src/features.ts`) : l'app embarque cette
-valeur, donc une mise à jour à distance est nécessaire pour que les chauffeurs voient l'écran d'acceptation de la
-nouvelle version.
+Nouvelle version des CGU ou de la politique de confidentialité (`LEGAL_VERSION`, `packages/shared/src/features.ts`) :
+l'app embarque cette valeur, donc une mise à jour à distance est nécessaire pour que les chauffeurs voient l'écran
+d'acceptation de la nouvelle version. Les CGV et l'accord de traitement (`ORG_LEGAL_VERSION`) ne concernent que les
+organisations (tableau de bord) : aucune mise à jour de l'app pour eux.
 
 Règle : une mise à jour à distance ne s'installe que sur les builds de la **même** version (`runtimeVersion` =
 version). Après un changement natif, il faut donc toujours une nouvelle version et un nouveau build. Une mise à jour

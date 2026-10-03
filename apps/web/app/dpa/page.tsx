@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
-import { LEGAL_UPDATED_AT, LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
+import { DPA_UPDATED_AT, ORG_LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
 
 export const dynamic = "force-dynamic";
 
@@ -138,12 +138,13 @@ export default async function DataProcessingPage() {
     },
   ];
   return (
-    <LegalPage title="Accord de traitement des données" updatedAt={LEGAL_UPDATED_AT}>
+    <LegalPage title="Accord de traitement des données" updatedAt={DPA_UPDATED_AT}>
       <p>
         Le présent accord (article 28 du règlement (UE) 2016/679, « RGPD ») fait partie intégrante des{" "}
         <Link href="/cgv" className={link}>conditions générales de vente</Link>. Il s&apos;applique entre chaque
         centrale cliente et <span className="text-fg">{legal.name}</span> (l&apos;« éditeur ») et prévaut sur toute
-        autre stipulation relative aux données personnelles. Version {LEGAL_VERSION}, acceptée par le propriétaire ou un
+        autre stipulation relative aux données personnelles. Version {ORG_LEGAL_VERSION}, commune aux CGV et au présent
+        accord (contenu de l&apos;accord inchangé depuis le {DPA_UPDATED_AT}), acceptée par le propriétaire ou un
         administrateur de la centrale dans le tableau de bord.
       </p>
 

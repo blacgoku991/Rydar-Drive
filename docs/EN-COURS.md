@@ -54,9 +54,15 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
 - **CGV version 2026-10-02** (validée par le propriétaire) : frais plateforme par course pour les DEUX modèles (art. 3 et
   5 : flotte = % + fixe sans plafond, fixe seul sans prix ; centrale = prélevés, plafonnés au prix), cumulables avec
   l'abonnement (art. 4 : montant de l'offre à la souscription, aucun prix en dur) ; réseau partagé = option régie par une
-  convention distincte (une phrase, frais dus « y compris » avec l'option) ; `/confidentialite` § 7 : organisations
-  partenaires. `LEGAL_VERSION` = `2026-10-02` → tout le monde ré-accepte une fois (bandeaux du tableau de bord ; app
-  chauffeur après `eas update`, JS seul). Avertissement `CGV_COVERS_FLEET_FEES` retiré. Aucune migration.
+  convention distincte (une phrase, frais dus « y compris » avec l'option). Avertissement `CGV_COVERS_FLEET_FEES`
+  retiré. Aucune migration.
+  **Versions légales séparées** : `ORG_LEGAL_VERSION` = `2026-10-02` (CGV + accord de traitement, au nom de
+  l'organisation : seuls owner / admin ré-acceptent, bandeau « mise à jour » si une version antérieure avait été
+  acceptée, `/admin/legal`) ; `LEGAL_VERSION` reste `2026-09-27` (CGU + politique de confidentialité : aucun chauffeur
+  ni dispatcher n'a rien à ré-accepter, AUCUNE mise à jour de l'app). Politique de confidentialité inchangée (ligne
+  « organisations partenaires » retirée, date remise au 28 septembre) ; `/dpa` : version 2026-10-02, contenu inchangé
+  depuis le 27 septembre. `ORG_LEGAL_EFFECTIVE_AT` = `2026-11-05` (entrée en vigueur au plus tard pour une
+  organisation déjà cliente). Le texte du bandeau « mise à jour » est provisoire (à finaliser avec le préambule).
 - **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour
   de l'app)** : centre de commande « En direct » : positions GPS regroupées (au plus un rendu par seconde, rien onglet
   caché), carte mise à jour seulement pour ce qui change (tracés et rayon redessinés si une position utile ou la course
