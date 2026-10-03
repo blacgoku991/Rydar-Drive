@@ -207,8 +207,9 @@ destinataires, date au plus tôt, aperçu, historique avec l'envoi de l'annonce)
 `rates_cancelled`. Garde `organizations_platform_rates_guard` : hausse en UPDATE direct par le service role refusée.
 Annonce des CGV : `svc_org_terms_notify` (une fois par organisation et par version, `org_terms_notices` ; refusée à
 moins de 30 jours de l'entrée en vigueur annoncée). Baisse sans décision du super admin : acceptée au bout de 30 jours
-(`private.accept_stale_platform_reductions`). Délai de paiement : 45 jours au plus (garde). Paiements
-(`platform_payments`) : déclarés par l'organisation, confirmés par le super admin, soldent les échéances les plus
+(`private.accept_stale_platform_reductions`), sauf celle demandée en contestant une course partagée (réseau partagé,
+006900) : jamais acceptée d'office, elle attend la décision du super admin. Délai de paiement : 45 jours au plus
+(garde). Paiements (`platform_payments`) : déclarés par l'organisation, confirmés par le super admin, soldent les échéances les plus
 anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création, relance et attribution d'une course sans chauffeur
 refusées après N jours de retard ; suspendu 7 jours au plus par un paiement déclaré qui couvre la somme échue,
 `private.platform_position`). Montants toutes taxes comprises (aucune TVA ajoutée par le code) ; le relevé n'est pas une

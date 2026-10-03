@@ -11,7 +11,7 @@ import type {
 import { NETWORK_FORBIDDEN_WORDS, NETWORK_TERMS_VERSION } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
-  blockerText, clientWindowNote, creditorView, driverNetworkStatus, earningsPartner, earningsPartnerText, forbiddenWordsIn, giverPhone,
+  blockerText, clientWindowNote, creditorView, driverNetworkStatus, earningsPartner, earningsPartnerPeriod, earningsPartnerText, forbiddenWordsIn, giverPhone,
   legacyOffer, legacyRide, maskIban, networkHomeBanner, networkTermsContent, networkVisible, offerBlockView, ownTabBadge, partnerAccess,
   partnerDoneView, partnerItemKind, partnerItemView, partnerOfferView, partnerTabBadge, payoutFormErrors, payoutNoteView, payoutRowDetail,
   rideMoneyView, rideReadAction, rideRemovedText, settleHref, shouldProposeNetworkTerms, showVoucher, voucherView, type AppRide,
@@ -627,6 +627,25 @@ describe("gains : net par course partenaire", () => {
     for (const status of ["due", "declared", "paid", "waived", "disputed", null]) {
       for (const dir of ["driver_owes", "centrale_owes"]) expect(text({ settlement_status: status, settlement_direction: dir })).not.toMatch(/commission|frais/i);
     }
+  });
+});
+
+describe("gains : part des organisations partenaires de la période (jamais une commission)", () => {
+  it("ligne à part, UN montant ; absente sans course partenaire (ou serveur antérieur : clés absentes)", () => {
+    const line = earningsPartnerPeriod({ partner_rides: 2, partner_part_cents: 3_250 }, "EUR")!;
+    expect(line).toMatchObject({ label: "Part des organisations partenaires", cents: 3_250 });
+    expect(plain(line.hint)).toBe("2 courses partenaires");
+    expect(plain(line.amount)).toBe("−32,50 €");
+    expect(plain(earningsPartnerPeriod({ partner_rides: 1, partner_part_cents: 500 }, "EUR")!.hint)).toBe("1 course partenaire");
+    expect(earningsPartnerPeriod({}, "EUR")).toBeNull();
+    expect(earningsPartnerPeriod({ partner_rides: 1, partner_part_cents: 0 }, "EUR")).toBeNull();
+    for (const text of [line.label, line.hint]) expect(text).not.toMatch(/commission|frais/i);
+  });
+
+  it("écran des gains : commission de la centrale et « Après commission de X % » sur ses seules courses, part partenaire à part", () => {
+    const screen = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../app/(app)/earnings.tsx"), "utf8");
+    expect(screen).toContain("earningsPartnerPeriod(p, currency)");
+    expect(screen).toContain('{partnerPart ? " sur vos courses" : ""}');
   });
 });
 

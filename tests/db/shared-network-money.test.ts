@@ -675,6 +675,10 @@ describe("Accueil et gains du chauffeur partenaire (§11.2)", () => {
     expect(own).toMatchObject({ net_cents: 800, pickup: "Place de l'Opéra", dropoff: "Gare de Lyon" });
     // Période : part du chauffeur (termes figés) + course propre (20 %)
     expect(e.today).toMatchObject({ rides: 3, revenue_cents: 14000, net_cents: 3750 + 6000 + 800 });
+    // Commission et frais de SON organisation sur sa seule course propre (20 % de 10 €) ; part des organisations
+    // partenaires à part, jamais comptée comme « commission » (U4)
+    expect(e.today).toMatchObject({ commission_cents: 200, partner_rides: 2, partner_part_cents: 1250 + 2000 });
+    expect(e.today.revenue_cents - e.today.commission_cents - e.today.partner_part_cents).toBe(e.today.net_cents);
     const home = await rpc(p.partner.userId, "driver_home");
     expect(home.today).toMatchObject({ rides: 3, revenue_cents: 14000 });
 
@@ -712,6 +716,12 @@ describe("Accueil et gains du chauffeur partenaire (§11.2)", () => {
     expect(plain).not.toHaveProperty("network");
     const earnings = await rpc(lone.userId, "driver_earnings", [7]);
     expect(earnings.recent).toEqual([]);
+    // Sans course partenaire : périodes sans les clés du réseau (réponse d'avant)
+    for (const period of ["today", "week", "month"]) {
+      expect(Object.keys(earnings[period]).sort(), period).toEqual([
+        "cash_cents", "commission_cents", "distance_m", "duration_s", "from", "net_cents", "revenue_cents", "rides", "unpriced_rides",
+      ]);
+    }
     expect(await rpc(lone.userId, "driver_network_settlements")).toEqual({
       currency: "EUR", summary: { owed_cents: 0, overdue_cents: 0, declared_cents: 0, payout_due_cents: 0, on_hold_cents: 0 }, organizations: [],
     });
@@ -1018,6 +1028,37 @@ describe("Versements prépayés côté A (§10.5, §14.1 n° 19)", () => {
     expect((await expectPgError(info(p.A.ownerId))).code).toBe("42501");
   });
 
+  it("RIB consulté en boucle : chaque consultation auditée ; chauffeur prévenu une fois par 24 h, et de nouveau après un changement de son RIB", async () => {
+    const p = await networkPair();
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_FR, null]);
+    await rawUpdate(`update public.driver_payout_details set updated_at = now() - interval '5 days' where driver_id = $1`, [p.partner.id]);
+    const { settlement } = await sharedRide(p, { payment_method: "online" });
+    const info = () => rpc(p.A.ownerId, "org_network_payout_info", [settlement.id]);
+    const audits = async () =>
+      (await sql(`select count(*)::int as n from public.audit_logs where action = 'network.payout_info_viewed' and entity_id = $1`, [settlement.id]))[0].n;
+    const notes = async () => (await notesOf(p.partner.id, "settlement_payout_info")).length;
+
+    // Cinq consultations simultanées, puis cinq autres : dix audits, une seule notification
+    await Promise.all([info(), info(), info(), info(), info()]);
+    for (let i = 0; i < 5; i++) await info();
+    expect(await audits()).toBe(10);
+    expect(await notes()).toBe(1);
+    // 24 h plus tard : de nouveau prévenu, une fois
+    await rawUpdate(
+      `update public.notifications set created_at = now() - interval '25 hours' where driver_id = $1 and type = 'settlement_payout_info'`,
+      [p.partner.id],
+    );
+    await info();
+    await info();
+    expect(await notes()).toBe(2);
+    // RIB changé par le chauffeur : prévenu dès la consultation suivante (avertissements), une fois
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_DE, null]);
+    expect(await info()).toMatchObject({ iban: IBAN_DE, warnings: ["iban_changed", "recent_change"] });
+    await info();
+    expect(await notes()).toBe(3);
+    expect(await audits()).toBe(14);
+  });
+
   it("RIB non renseigné : PAYOUT_DETAILS_MISSING ; course à vérifier : ni RIB ni « Versé » (NETWORK_PAYOUT_ON_HOLD) ; reversement : pas de RIB", async () => {
     const p = await networkPair();
     const { settlement } = await sharedRide(p, { payment_method: "online" });
@@ -1206,7 +1247,8 @@ describe("Course « à vérifier » (§10.9, §14.1 n° 20)", () => {
     const [fee] = await sql(`select * from public.platform_fee_entries where id = $1`, [res.fee_reduction.entry_id]);
     expect(fee).toMatchObject({
       organization_id: p.A.id, ride_id: ride.id, kind: "correction", amount_cents: -500, status: "pending", created_by: p.A.ownerId,
-      label: `Contestation course ${ride.number} · réseau partagé : frais 5 € → 0 €`, reason: "Course contestée : Client jamais pris en charge",
+      label: `Contestation course ${ride.number} · réseau partagé : frais 5 € → 0 €`,
+      reason: "Course contestée : Client jamais pris en charge — versement de 37,50 € au chauffeur partenaire annulé",
     });
     // Une écriture de la course qui réveille le déclencheur des frais ne remplace jamais la demande (aucun recalcul)
     await sql(`update public.rides set payment_method = payment_method, commission_cents = commission_cents where id = $1`, [ride.id]);
@@ -1269,13 +1311,67 @@ describe("Course « à vérifier » (§10.9, §14.1 n° 20)", () => {
       title: `COURSE CONTESTÉE — ${p.aName}`, body: `Course #${ride.number} · ${p.aName} conteste la course : Trajet jamais effectué`,
       data: { type: "settlement_contested", network: true, ride_id: ride.id, settlement_id: settlement.id, amount_cents: 500 },
     });
-    // Les frais restent dus tant que Rydar n'a pas décidé
+    // Les frais restent dus tant que Rydar n'a pas décidé ; l'état du règlement éclaire sa décision
     expect((await sql(`select sum(amount_cents)::int as s from public.platform_fee_entries where ride_id = $1 and status = 'posted'`, [ride.id]))[0].s).toBe(500);
+    const [fee] = await sql(`select reason from public.platform_fee_entries where id = $1`, [res.fee_reduction.entry_id]);
+    expect(fee.reason).toBe("Course contestée : Trajet jamais effectué — reversement de 5 € du chauffeur partenaire encore dû");
 
     const own = await createRideAsOwner(p.A, { pickup_lat: p.site[0], pickup_lng: p.site[1] });
     err = await expectPgError(rpc(p.A.ownerId, "contest_network_ride", [own.id, "Trajet jamais effectué"]));
     expect([err.code, err.message]).toEqual(["P0002", expect.stringContaining("RIDE_NOT_FOUND")]);
   });
+
+  // A conteste ou valide la course pendant que le chauffeur répond « Je conteste » à un « Pas reçu » : les trois fonctions
+  // prennent leurs verrous dans le même ordre (exécution, puis règlement). A est arrêtée juste après son premier verrou
+  // (exécution) ; le chauffeur doit alors attendre SANS tenir le règlement, sinon interblocage (40P01).
+  for (const fn of ["contest_network_ride", "validate_network_ride"] as const) {
+    it(`« Je conteste » du chauffeur pendant « ${fn === "contest_network_ride" ? "Contester" : "Valider"} » : verrous dans le même ordre, jamais d'interblocage`, async () => {
+      const p = await networkPair();
+      const { ride, settlement, execution } = await sharedRide(p, { payment_method: "cash" }, { gps: false });
+      await rpc(p.partner.userId, "driver_declare_network_payment", [p.A.id, [settlement.id], "cash", null]);
+      expect(await rpc(p.A.ownerId, "dispute_settlement", [settlement.id, "Rien reçu"])).toMatchObject({ ok: true });
+
+      const cA = await pool.connect();
+      const cD = await pool.connect();
+      const claims = (sub: string) => JSON.stringify({ sub, role: "authenticated" });
+      try {
+        await cA.query("begin");
+        await cA.query("select 1 from public.ride_network_executions where id = $1 for update", [execution.id]);
+        await cA.query("select set_config('request.jwt.claims', $1, true)", [claims(p.A.ownerId)]);
+        await cA.query("set local role authenticated");
+        await cD.query("begin");
+        await cD.query("select set_config('request.jwt.claims', $1, true)", [claims(p.partner.userId)]);
+        await cD.query("set local role authenticated");
+        const pid = (await cD.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+        const dispute = cD.query("select public.driver_dispute_network_settlement($1, $2) as r", [settlement.id, "J'ai bien payé en espèces"]);
+        dispute.catch(() => undefined);
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting; i++) {
+          const [a] = await sql("select wait_event_type from pg_stat_activity where pid = $1", [pid]);
+          waiting = a?.wait_event_type === "Lock";
+          if (!waiting) await new Promise((r) => setTimeout(r, 50));
+        }
+        expect(waiting).toBe(true);
+        const args = fn === "contest_network_ride" ? [ride.id, "Trajet jamais effectué"] : [ride.id];
+        const done = (await cA.query(`select public.${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0].r;
+        expect(done).toMatchObject({ ok: true, ride_id: ride.id });
+        await cA.query("commit");
+        const disputed = (await dispute).rows[0].r;
+        await cD.query("commit");
+        expect(disputed).toMatchObject({ ok: true, item: { id: settlement.id, status: "disputed", driver_dispute_reason: "J'ai bien payé en espèces" } });
+      } finally {
+        await cA.query("rollback").catch(() => undefined);
+        await cD.query("rollback").catch(() => undefined);
+        cA.release();
+        cD.release();
+      }
+      const [e] = await sql(`select driver_dispute_reason, contested_at is not null as contested, validated_at is not null as validated
+                               from public.ride_network_executions where id = $1`, [execution.id]);
+      expect(e).toEqual({
+        driver_dispute_reason: "J'ai bien payé en espèces", contested: fn === "contest_network_ride", validated: fn === "validate_network_ride",
+      });
+    });
+  }
 });
 
 // =============================================================================
@@ -1493,6 +1589,52 @@ describe("Frais Rydar d'une course partagée (§10.9, §14.1 n° 23)", () => {
     expect(await sql(`select amount_cents, platform_fee_cents from public.ride_settlements where ride_id = $1`, [ride.id])).toEqual([
       { amount_cents: 4500, platform_fee_cents: 500 },
     ]);
+  });
+
+  it("contestation : la baisse demandée n'est jamais acceptée d'office (ménage après 30 jours), Rydar décide ; état du règlement dans le motif", async () => {
+    const p = await networkPair({ giver: "centrale" });
+    const { ride, settlement } = await sharedRide(p, { payment_method: "cash" });
+    // Le chauffeur reverse la part de A (12,50 €, dont 5 € de frais Rydar) ; A confirme « Reçu », puis conteste
+    expect(await rpc(p.partner.userId, "driver_declare_network_payment", [p.A.id, [settlement.id], "cash", null])).toMatchObject({ ok: true });
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "cash", null])).toMatchObject({ ok: true, received_cents: 1250 });
+    const res = await rpc(p.A.ownerId, "contest_network_ride", [ride.id, "Client mécontent du trajet"]);
+    expect(res).toMatchObject({ ok: true, settlement: { status: "paid" }, fee_reduction: { amount_cents: 500 } });
+    const entryId: string = res.fee_reduction.entry_id;
+    const [fee] = await sql(`select status, reason from public.platform_fee_entries where id = $1`, [entryId]);
+    expect(fee).toEqual({ status: "pending", reason: "Course contestée : Client mécontent du trajet — reversement de 12,50 € du chauffeur partenaire reçu" });
+
+    // Baisse ordinaire de A (prix corrigé après une course propre), elle aussi en attente depuis 31 jours
+    const own = await insertRideBypass(p.A, { completed_at: new Date(Date.now() - 40 * 86_400_000) });
+    const [ordinary] = await sql(
+      `insert into public.platform_fee_entries (organization_id, ride_id, kind, amount_cents, status, label, reason, occurred_at, due_at, created_at)
+       values ($1, $2, 'correction', -100, 'pending', 'Correction course test', 'Prix modifié après la course', now() - interval '31 days', now(),
+               now() - interval '31 days')
+       returning id`,
+      [p.A.id, own],
+    );
+    await rawUpdate(`update public.platform_fee_entries set created_at = now() - interval '31 days' where id = $1`, [entryId]);
+    const [{ r }] = await sql(`select private.housekeeping() as r`);
+    expect(r.errors?.platform_reductions).toBeUndefined();
+    const entry = async (id: string) => (await sql(`select status, reviewed_at from public.platform_fee_entries where id = $1`, [id]))[0];
+    // La baisse ordinaire est acceptée d'office (CGV art. 5) ; celle de la contestation attend la décision de Rydar
+    expect(await entry(ordinary.id)).toMatchObject({ status: "posted" });
+    expect(await entry(entryId)).toEqual({ status: "pending", reviewed_at: null });
+    const posted = async () =>
+      (await sql(`select sum(amount_cents)::int as s from public.platform_fee_entries where ride_id = $1 and status = 'posted'`, [ride.id]))[0].s;
+    expect(await posted()).toBe(500);
+
+    // Montrée à part au super admin (/admin/frais) : contestation d'une course partagée, jamais acceptée d'office
+    const json = async (id: string) =>
+      (await sql(`select private.platform_entry_json(e) as j from public.platform_fee_entries e where id = $1`, [id]))[0].j;
+    expect((await json(entryId)).network_contest).toEqual({ contested_at: expect.any(String) });
+    expect(await json(ordinary.id)).not.toHaveProperty("network_contest");
+    const sa = await superAdmin();
+    const overview = await rpc(sa, "admin_platform_overview");
+    expect(overview.pending_reductions.find((e: any) => e.id === entryId)).toMatchObject({ network_contest: { contested_at: expect.any(String) } });
+
+    // Décision explicite : refus motivé → frais dus
+    expect(await svc("svc_platform_review_entry", [entryId, sa, false, "Reversement reçu par la centrale"])).toMatchObject({ ok: true, code: "REJECTED" });
+    expect(await posted()).toBe(500);
   });
 });
 

@@ -126,6 +126,11 @@ export interface PlatformEntry {
     /** Course terminée en mode flotte : taux figés à la fin de la course (null : règle centrale) */
     fleet_fee?: { percent: number; fixed_cents: number } | null;
   } | null;
+  /**
+   * Réseau partagé (20260924006900) : baisse demandée par la contestation d'une course partagée (« Contester la
+   * course ») — jamais acceptée d'office, contrairement à une correction du prix (30 jours) ; clé absente sinon.
+   */
+  network_contest?: { contested_at: Iso } | null;
   /** Vue super admin uniquement */
   organization_name?: string;
 }

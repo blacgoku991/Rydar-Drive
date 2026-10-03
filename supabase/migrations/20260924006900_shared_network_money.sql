@@ -9,7 +9,8 @@
 -- Partie 4b (§10.5, §10.7 à §10.11, section 8) : côté A — « Reçu » / « Versé », « Pas reçu », « Annuler », « Rouvrir »
 -- (owner / admin de A, même suspendue : private.assert_network_creditor), RIB du chauffeur pour un versement
 -- (org_network_payout_info, consultation journalisée et notifiée), « Valider » / « Contester la course » (retenue levée ;
--- versement annulé + demande de baisse des frais Rydar), « Relancer » ; blocage d'un débiteur de A revenu par une autre
+-- versement annulé + demande de baisse des frais Rydar, jamais acceptée d'office : private.accept_stale_platform_reductions,
+-- montrée à part au super admin : private.platform_entry_json), « Relancer » ; blocage d'un débiteur de A revenu par une autre
 -- fiche ; relances automatiques (application seulement) ; frais Rydar d'une course partagée aux termes figés chez A ;
 -- dette rappelée avant la suppression du compte et empreintes gardées pour chaque créancière ; Encaissements et garde
 -- de changement de modèle (déclencheur et svc_platform_set_fees) sans les lignes réseau ; mois des relevés (identique
@@ -1043,6 +1044,9 @@ $$;
 -- caractères ; pose driver_disputed_at / driver_dispute_reason (règlement et exécution) — visible chez A (settlement_json,
 -- journal) et du super admin ; ne change ni le statut ni les blocages. Refus : NETWORK_DISPUTE_NOT_ALLOWED (ligne
 -- introuvable, pas à moi, déjà contestée ou rien à contester) ; NETWORK_DISPUTE_REASON_INVALID.
+-- Verrous dans le MÊME ORDRE que validate_network_ride et contest_network_ride (exécution, puis règlement) : « Je
+-- conteste » pendant que A valide ou conteste la course attend son tour, jamais d'interblocage (40P01). L'exécution d'une
+-- ligne réseau est figée (ride_settlements_network_frozen) : lue sans verrou, puis verrouillée avant le règlement.
 create or replace function public.driver_dispute_network_settlement(p_id uuid, p_reason text)
 returns jsonb
 language plpgsql
@@ -1052,12 +1056,19 @@ as $$
 declare
   d public.drivers;
   x public.ride_settlements;
+  v_exec uuid;
   v_reason text := nullif(btrim(regexp_replace(coalesce(p_reason, ''), '\s+', ' ', 'g')), '');
 begin
   select * into d from public.drivers where id = private.current_driver_id();
   if not found then
     raise exception 'FORBIDDEN: compte chauffeur inactif ou inconnu' using errcode = '42501';
   end if;
+  select y.network_execution_id into v_exec from public.ride_settlements y
+   where y.id = p_id and y.network_driver_id = d.id and y.network_driver_org_id is not null;
+  if not found then
+    raise exception 'NETWORK_DISPUTE_NOT_ALLOWED: règlement introuvable' using errcode = 'P0002';
+  end if;
+  perform 1 from public.ride_network_executions e where e.id = v_exec for update;
   select * into x from public.ride_settlements y
    where y.id = p_id and y.network_driver_id = d.id and y.network_driver_org_id is not null
    for update;
@@ -1190,7 +1201,10 @@ $$;
 -- (partenaire) → net = sa part aux termes figés (private.network_driver_part), quel que soit le modèle de B ; dans
 -- « recent » : communes seulement (comme ses règlements partenaires), commission et frais Rydar de A jamais renvoyés
 -- (NULL), nom de l'organisation qui l'a confiée (« network_giver », clé ajoutée seulement pour une course partenaire),
--- statut et sens de SA ligne réseau. Sans course partenaire : réponse identique.
+-- statut et sens de SA ligne réseau. Périodes : « commission_cents » = commission et frais de SON organisation sur ses
+-- seules courses propres ; courses partenaires comptées à part (« partner_rides », « partner_part_cents » = prix − sa
+-- part figée, la part des organisations qui les ont confiées), clés ajoutées seulement s'il y en a dans la période —
+-- jamais présentées comme une commission (U4). Sans course partenaire : réponse identique.
 create or replace function public.driver_earnings(p_days integer default 7)
 returns jsonb
 language plpgsql
@@ -1243,6 +1257,7 @@ begin
            r.estimated_distance_m,
            r.estimated_duration_s,
            -- Réseau partagé : course partenaire → sa part aux termes figés
+           r.organization_id <> d.organization_id as partner,
            case when r.organization_id <> d.organization_id then private.network_driver_part(r.id)
                 else private.ride_net_cents(r.price_cents, r.driver_payout_cents, v_rate) end as net_cents
     from public.rides r
@@ -1259,7 +1274,12 @@ begin
            count(x.done_at) as rides,
            coalesce(sum(x.price_cents), 0) as revenue_cents,
            coalesce(sum(x.net_cents), 0) as net_cents,
-           coalesce(sum(x.price_cents) filter (where x.net_cents is not null), 0) as netted_revenue_cents,
+           -- Réseau partagé : « commission » = celle de SON organisation, sur ses seules courses propres ; la part des
+           -- organisations partenaires (prix − sa part figée) est comptée à part, jamais comme une commission (U4)
+           coalesce(sum(x.price_cents) filter (where x.net_cents is not null and not x.partner), 0) as netted_revenue_cents,
+           coalesce(sum(x.net_cents) filter (where not x.partner), 0) as own_net_cents,
+           count(x.done_at) filter (where x.partner) as partner_rides,
+           coalesce(sum(x.price_cents - x.net_cents) filter (where x.partner), 0) as partner_part_cents,
            coalesce(sum(x.price_cents) filter (where x.payment_method = 'cash'), 0) as cash_cents,
            coalesce(sum(x.estimated_distance_m), 0) as distance_m,
            coalesce(sum(x.estimated_duration_s), 0) as duration_s,
@@ -1284,11 +1304,15 @@ begin
         'rides', a.rides,
         'revenue_cents', a.revenue_cents,
         'net_cents', case when v_has_net then a.net_cents end,
-        'commission_cents', case when v_has_net then a.netted_revenue_cents - a.net_cents end,
+        'commission_cents', case when v_has_net then a.netted_revenue_cents - a.own_net_cents end,
         'cash_cents', a.cash_cents,
         'distance_m', a.distance_m,
         'duration_s', a.duration_s,
-        'unpriced_rides', a.unpriced))
+        'unpriced_rides', a.unpriced)
+        -- Réseau partagé : courses partenaires de la période (clés ajoutées seulement s'il y en a)
+        || case when a.partner_rides > 0
+                then jsonb_build_object('partner_rides', a.partner_rides, 'partner_part_cents', a.partner_part_cents)
+                else '{}'::jsonb end)
      from agg a),
     (select jsonb_agg(jsonb_build_object(
         'date', to_char(g.day, 'YYYY-MM-DD'),
@@ -1503,8 +1527,10 @@ $$;
 -- vérifier » : validée ou retenue passée, sinon NETWORK_PAYOUT_ON_HOLD). Chauffeur sans RIB (facultatif) :
 -- PAYOUT_DETAILS_MISSING, jamais une réponse NULL. Avertissements : « iban_changed » (empreinte du RIB ≠ celle figée à la
 -- fin de la course), « recent_change » (RIB modifié il y a moins de 72 h). Chaque consultation : audit
--- « network.payout_info_viewed » chez A avec l'identifiant du règlement SEULEMENT (jamais l'IBAN) et notification au
--- chauffeur « {A} a consulté votre RIB pour vous verser {montant} ».
+-- « network.payout_info_viewed » chez A avec l'identifiant du règlement SEULEMENT (jamais l'IBAN). Notification au
+-- chauffeur « {A} a consulté votre RIB pour vous verser {montant} » une fois par règlement et par 24 h, et de nouveau dès
+-- que son RIB a changé depuis la dernière : des consultations répétées (ou simultanées : règlement verrouillé) ne
+-- deviennent jamais une rafale de notifications.
 create or replace function public.org_network_payout_info(p_settlement uuid)
 returns jsonb
 language plpgsql
@@ -1523,6 +1549,9 @@ begin
     raise exception 'FORBIDDEN_TENANT: règlement réseau introuvable' using errcode = '42501';
   end if;
   perform private.assert_network_creditor(x.organization_id);
+  -- Règlement verrouillé (seul verrou de la fonction) puis relu : deux consultations simultanées passent l'une après
+  -- l'autre, la seconde voit la notification de la première
+  select * into x from public.ride_settlements y where y.id = x.id for update;
   if x.direction <> 'centrale_owes' or x.status <> 'due' then
     raise exception 'FORBIDDEN_TENANT: coordonnées bancaires réservées à un versement en attente' using errcode = '42501';
   end if;
@@ -1546,10 +1575,18 @@ begin
   values (x.organization_id, 'user', auth.uid(), 'network.payout_info_viewed', 'ride_settlements', x.id::text,
           case when cardinality(v_warnings) > 0 then 'warning' else 'info' end,
           jsonb_build_object('settlement_id', x.id));
-  perform private.network_notify(x.organization_id, x.network_driver_id, x.ride_id, 'settlement_payout_info',
-    'RIB CONSULTÉ PAR ' || g.name,
-    format('%s a consulté votre RIB pour vous verser %s', g.name, private.fmt_eur(x.amount_cents)),
-    jsonb_build_object('settlement_id', x.id, 'ride_id', x.ride_id, 'amount_cents', x.amount_cents));
+  -- Chauffeur prévenu une fois par règlement et par 24 h, et de nouveau dès que son RIB a changé depuis la dernière
+  -- notification (l'audit ci-dessus garde CHAQUE consultation)
+  if not exists (
+    select 1 from public.notifications n
+     where n.ride_id = x.ride_id and n.driver_id = x.network_driver_id and n.type = 'settlement_payout_info'
+       and n.data ->> 'settlement_id' = x.id::text
+       and n.created_at > greatest(now() - interval '24 hours', p.updated_at)) then
+    perform private.network_notify(x.organization_id, x.network_driver_id, x.ride_id, 'settlement_payout_info',
+      'RIB CONSULTÉ PAR ' || g.name,
+      format('%s a consulté votre RIB pour vous verser %s', g.name, private.fmt_eur(x.amount_cents)),
+      jsonb_build_object('settlement_id', x.id, 'ride_id', x.ride_id, 'amount_cents', x.amount_cents));
+  end if;
 
   return jsonb_build_object(
     'settlement_id', x.id,
@@ -1589,6 +1626,7 @@ begin
     raise exception 'RIDE_NOT_FOUND: course introuvable' using errcode = 'P0002';
   end if;
   perform private.assert_network_creditor(r.organization_id);
+  -- Verrous : exécution, puis règlement (même ordre que contest_network_ride et driver_dispute_network_settlement)
   select * into e from public.ride_network_executions y
    where y.ride_id = r.id and y.end_reason = 'completed'
    order by y.ended_at desc
@@ -1649,8 +1687,10 @@ $$;
 --  * versement prépayé encore dû (centrale_owes) → annulé, motif « Course contestée : … » (le chauffeur peut répondre
 --    « Je conteste ») ; un reversement (payé à bord, driver_owes) reste dû : A seule juge de ses encaissements ;
 --  * frais Rydar de la course : demande de baisse = correction de −frais EN ATTENTE du super admin (mécanisme des
---    baisses du registre, /admin/frais ; acceptée d'office après 30 jours sans décision) — Rydar ne décide que de ses
---    propres frais, jamais de l'argent entre organisations ;
+--    baisses du registre, /admin/frais), JAMAIS acceptée d'office (private.accept_stale_platform_reductions l'exclut :
+--    les frais restent dus par A tant que Rydar ne l'a pas acceptée) ; son motif recopie l'état du règlement à la
+--    contestation (part de A reçue, versement annulé…) pour éclairer la décision — Rydar ne décide que de ses propres
+--    frais, jamais de l'argent entre organisations ;
 --  * journal « ride.network_contested », audit « network.ride_contested », chauffeur prévenu, diffusions.
 -- Déjà contestée : même réponse, rien ne change (double envoi). fee_reduction.amount_cents : montant de la baisse
 -- demandée (positif).
@@ -1669,12 +1709,14 @@ declare
   v_reason text := nullif(btrim(regexp_replace(coalesce(p_reason, ''), '\s+', ' ', 'g')), '');
   v_posted integer;
   v_waived integer;
+  v_state text;
 begin
   select * into r from public.rides y where y.id = p_ride;
   if not found then
     raise exception 'RIDE_NOT_FOUND: course introuvable' using errcode = 'P0002';
   end if;
   perform private.assert_network_creditor(r.organization_id);
+  -- Verrous : exécution, puis règlement (même ordre que validate_network_ride et driver_dispute_network_settlement)
   select * into e from public.ride_network_executions y
    where y.ride_id = r.id and y.end_reason = 'completed'
    order by y.ended_at desc
@@ -1719,6 +1761,17 @@ begin
     returning * into x;
     v_waived := x.amount_cents;
   end if;
+  -- État du règlement à la contestation, recopié dans le motif de la demande de baisse (décision du super admin)
+  v_state := case
+    when x.id is null then null
+    when x.direction = 'centrale_owes'
+      then format('versement de %s au chauffeur partenaire %s', private.fmt_eur(x.amount_cents),
+             case when v_waived is not null then 'annulé' when x.status = 'paid' then 'déjà fait'
+                  when x.status = 'waived' then 'déjà annulé' else 'en attente' end)
+    else format('reversement de %s du chauffeur partenaire %s', private.fmt_eur(x.amount_cents),
+           case x.status when 'paid' then 'reçu' when 'declared' then 'signalé payé, non confirmé'
+                         when 'disputed' then 'marqué « Pas reçu »' when 'waived' then 'annulé' else 'encore dû' end)
+  end;
 
   -- Frais Rydar de la course : demande de baisse au super admin (jamais une baisse directe ; une demande en attente
   -- n'est pas doublée)
@@ -1736,7 +1789,8 @@ begin
       values (r.organization_id, r.id, 'correction', -v_posted, 'pending',
         format('Contestation course %s · réseau partagé : frais %s → %s', r.number, private.fmt_eur(v_posted),
           private.fmt_eur(0)),
-        left('Course contestée : ' || v_reason, 500), now(), private.platform_due_at(r.organization_id, now()), auth.uid())
+        left('Course contestée : ' || v_reason || coalesce(' — ' || v_state, ''), 500), now(),
+        private.platform_due_at(r.organization_id, now()), auth.uid())
       returning * into f;
       perform private.broadcast_platform(r.organization_id, 'reduction_pending',
         jsonb_build_object('entry', private.platform_entry_json(f)));
@@ -3209,6 +3263,100 @@ begin
     jsonb_build_object('entry', private.platform_entry_json(e)));
   return null;
 end;
+$$;
+
+-- Dernière définition : 20260924006600_platform_fee_schedule.sql. Corps 006600 gardé À L'IDENTIQUE ; seul ajout
+-- (« Réseau partagé ») : la baisse demandée par la contestation d'une course partagée (contest_network_ride) n'est
+-- JAMAIS acceptée d'office. Ce n'est pas une correction du prix (article 5 des CGV : acceptée sans décision sous
+-- 30 jours) mais une demande à Rydar, qui seul décide de ses frais (svc_platform_review_entry, /admin/frais) : tant
+-- qu'il n'a pas décidé, les frais restent dus par A (décision du propriétaire : frais dus par A même règlement
+-- contesté ; convention du réseau, section 6). Une course partagée n'a jamais d'autre baisse (frais figés, aucun
+-- recalcul : sync_platform_fee).
+create or replace function private.accept_stale_platform_reductions()
+returns integer
+language plpgsql
+set search_path = ''
+as $$
+declare
+  e public.platform_fee_entries;
+  v_count integer := 0;
+begin
+  for e in
+    with stale as (
+      select x.id from public.platform_fee_entries x
+       where x.status = 'pending' and x.created_at < now() - interval '30 days'
+         -- Réseau partagé : jamais la baisse demandée par la contestation d'une course partagée (décision de Rydar)
+         and not exists (select 1 from public.ride_network_executions n
+                          where n.ride_id = x.ride_id and n.contested_at is not null)
+       order by x.created_at
+       limit 500
+       for update skip locked
+    )
+    update public.platform_fee_entries x
+       set status = 'posted', reviewed_at = now(),
+           review_note = 'Acceptée automatiquement : aucune décision de Rydar dans les 30 jours (CGV, article 5)'
+      from stale
+     where x.id = stale.id
+    returning x.*
+  loop
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (e.organization_id, 'system', null, 'platform_fee.reduction_approved', 'platform_fee_entries', e.id::text, 'warning',
+      jsonb_build_object('amount_cents', e.amount_cents, 'automatic', true, 'pending_since', e.created_at));
+    perform private.broadcast_platform(e.organization_id, 'reduction_approved',
+      jsonb_build_object('entry', private.platform_entry_json(e)));
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end;
+$$;
+
+-- Dernière définition : 20260924006400_fleet_platform_fees.sql. Corps identique ; seul ajout (« Réseau partagé ») :
+-- clé « network_contest » {contested_at} pour une correction d'une course partagée contestée (demande de baisse de
+-- contest_network_ride) — montrée à part dans /admin/frais (décision du super admin, jamais acceptée d'office). Clé
+-- absente pour toute autre écriture : réponses inchangées.
+create or replace function private.platform_entry_json(e public.platform_fee_entries)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'id', e.id,
+    'organization_id', e.organization_id,
+    'kind', e.kind,
+    'amount_cents', e.amount_cents,
+    'status', e.status,
+    'label', e.label,
+    'reason', e.reason,
+    'occurred_at', e.occurred_at,
+    'due_at', e.due_at,
+    'created_at', e.created_at,
+    'created_by_name', (select u.full_name from public.users u where u.id = e.created_by),
+    'reviewed_at', e.reviewed_at,
+    'review_note', e.review_note,
+    -- Baisse remplacée par une correction plus récente (pas refusée par Rydar)
+    'superseded', e.status = 'rejected' and e.reviewed_by is null and e.reviewed_at is not null,
+    'ride', (select jsonb_build_object(
+               'id', r.id,
+               'number', r.number,
+               'price_cents', r.price_cents,
+               'payment_method', r.payment_method,
+               'completed_at', r.completed_at,
+               'pickup', coalesce(private.short_address(r.pickup_address), r.pickup_address),
+               'dropoff', coalesce(private.short_address(r.dropoff_address), r.dropoff_address),
+               'settlement_status', (select x.status from public.ride_settlements x where x.ride_id = r.id),
+               'fleet_fee', (select jsonb_build_object('percent', b.fee_percent, 'fixed_cents', b.fee_fixed_cents)
+                             from private.fleet_fee_basis b
+                             where b.ride_id = r.id
+                               and not exists (select 1 from public.ride_settlements x where x.ride_id = r.id)))
+             from public.rides r where r.id = e.ride_id))
+    -- Réseau partagé : demande de baisse d'une course partagée contestée
+    || coalesce((select jsonb_build_object('network_contest', jsonb_build_object('contested_at', n.contested_at))
+                   from public.ride_network_executions n
+                  where e.kind = 'correction' and n.ride_id = e.ride_id and n.contested_at is not null
+                  order by n.contested_at desc
+                  limit 1), '{}'::jsonb);
 $$;
 
 -- -----------------------------------------------------------------------------------------------------------------

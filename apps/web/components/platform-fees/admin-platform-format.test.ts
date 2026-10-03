@@ -1,6 +1,9 @@
-import type { PlatformAccount } from "@rydar/shared";
+import type { PlatformAccount, PlatformEntry } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
-import { ISO_DAY_RE, csvText, invoiceCycles, monthSignals, originParts, rideSettlementLabel, zeroPriceText } from "./admin-platform-format";
+import {
+  ISO_DAY_RE, NETWORK_CONTEST_NOTE, csvText, invoiceCycles, isNetworkContest, monthSignals, originParts, pendingReductionsDescription,
+  rideSettlementLabel, zeroPriceText,
+} from "./admin-platform-format";
 
 describe("invoiceCycles : cycles de la facture récapitulative (frais à facturer)", () => {
   it("mensuel : mois civils du fuseau, le mois en cours d'abord, fin exclue", () => {
@@ -88,5 +91,36 @@ describe("frais Rydar des flottes (super admin)", () => {
     expect(originParts({ ...a, dispatch_model: "centrale" })[0].label).toBe("Encaissé par la centrale");
     expect(originParts(a)[0].label).toBe("Encaissé par la centrale");
     expect(originParts({ ...a, dispatch_model: "fleet" }).find((p) => p.key === "other")?.cents).toBe(0);
+  });
+});
+
+describe("baisses de frais à valider : contestation d'une course partagée (réseau partagé)", () => {
+  const nb = (t: string) => t.replace(/\u00a0/g, " ");
+  type Reduction = Pick<PlatformEntry, "amount_cents" | "network_contest">;
+  const price: Reduction = { amount_cents: -100 };
+  const contest: Reduction = { amount_cents: -500, network_contest: { contested_at: "2026-10-01T10:00:00Z" } };
+
+  it("sans contestation : texte d'avant (corrections de prix, acceptées au bout de 30 jours)", () => {
+    expect(nb(pendingReductionsDescription([price]))).toBe(
+      "Prix corrigé à la baisse après la course : 1 € de frais en moins si vous acceptez tout. Refus seulement si la correction ne correspond pas à la course réellement effectuée et payée, avec un motif (affiché à l'organisation) ; sans décision dans les 30 jours, la baisse est acceptée automatiquement (CGV, article 5).",
+    );
+    expect(pendingReductionsDescription([])).toMatch(/^Quand une centrale ou une flotte baisse le prix/);
+    expect(isNetworkContest(price)).toBe(false);
+    expect(isNetworkContest({ network_contest: null })).toBe(false);
+  });
+
+  it("contestation : jamais « acceptée automatiquement » pour elle, frais dus tant que Rydar n'a pas décidé", () => {
+    expect(isNetworkContest(contest)).toBe(true);
+    const only = nb(pendingReductionsDescription([contest]));
+    expect(only).toBe(
+      "5 € de frais en moins si vous acceptez tout. Course partagée contestée : à vous de décider, jamais acceptée automatiquement ; les frais restent dus tant que vous ne l'avez pas acceptée.",
+    );
+    expect(only).not.toContain("30 jours");
+    const mixed = nb(pendingReductionsDescription([price, contest]));
+    expect(mixed).toContain("6 € de frais en moins si vous acceptez tout.");
+    expect(mixed).toContain("Prix corrigé à la baisse après la course : refus seulement si la correction ne correspond pas");
+    expect(mixed).toContain("sans décision dans les 30 jours, la baisse est acceptée automatiquement (CGV, article 5).");
+    expect(mixed).toMatch(/Course partagée contestée : à vous de décider, jamais acceptée automatiquement/);
+    expect(nb(NETWORK_CONTEST_NOTE)).toBe("Course partagée contestée : jamais acceptée automatiquement, décision requise");
   });
 });

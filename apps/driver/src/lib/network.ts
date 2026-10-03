@@ -18,7 +18,8 @@ import {
   networkMoneyLine, networkText,
   type BookingVoucher, type DispatchModel, type DriverHomeNetwork, type DriverNetworkCreditor, type DriverNetworkReadinessCode,
   type DriverNetworkSettlementItem, type DriverNetworkSettlements, type DriverNetworkState, type DriverOffer, type DriverOfferV2,
-  type DriverPayoutInfo, type DriverRide, type DriverRideMoney, type EarningsRide, type NetworkGiverInfo, type NetworkReadinessAction,
+  type DriverPayoutInfo, type DriverRide, type DriverRideMoney, type EarningsPeriod, type EarningsRide, type NetworkGiverInfo,
+  type NetworkReadinessAction,
   type PaymentMethod, type Ride, type SettlementMethod,
 } from "@rydar/shared";
 import { blockerInfo, deductionCents, driverSettlementLabel, dueText, formatWhen, frTypo, NBSP, pastWhen } from "./settlement-text";
@@ -844,6 +845,27 @@ export function earningsPartner(r: EarningsRide): { giver: string; gainCents: nu
     gainCents: gain,
     giverPartCents: gain != null && r.price_cents != null ? Math.max(0, r.price_cents - gain) : null,
     collects: (r.settlement_direction ?? (driverCollects(r.payment_method) ? "driver_owes" : "centrale_owes")) === "driver_owes",
+  };
+}
+
+/**
+ * Gains d'une période (carte « Jour / Semaine / Mois ») : part des organisations qui ont confié les courses partenaires
+ * de la période (prix − part figée du chauffeur, driver_earnings().partner_part_cents). Une ligne à part, jamais
+ * « commission » ni « frais » (U4) : la commission de la période ne porte que sur ses courses propres. null : aucune
+ * course partenaire dans la période (serveur antérieur compris : clés absentes).
+ */
+export function earningsPartnerPeriod(
+  p: Pick<EarningsPeriod, "partner_rides" | "partner_part_cents">,
+  currency: string,
+): { label: string; hint: string; amount: string; cents: number } | null {
+  const rides = p.partner_rides ?? 0;
+  const cents = p.partner_part_cents ?? 0;
+  if (rides <= 0 || cents <= 0) return null;
+  return {
+    label: "Part des organisations partenaires",
+    hint: `${rides}${NBSP}${rides > 1 ? "courses partenaires" : "course partenaire"}`,
+    amount: `−${formatPrice(cents, currency)}`,
+    cents,
   };
 }
 

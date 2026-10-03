@@ -254,7 +254,7 @@ function ReasonDialog({ kind, item, open, onClose }: { kind: keyof typeof REASON
     waive: `Le règlement est clos sans paiement : ${driver} ne vous doit plus rien pour cette course. Vous pourrez le rouvrir en cas d'erreur.`,
     contest: `À utiliser si la course n'a pas été faite comme prévu. ${
       owes ? "Le reversement reste dû." : "Le versement au chauffeur est annulé."
-    } Rydar examine la baisse de ses frais pour cette course. ${driver} est prévenu et peut répondre.`,
+    } Rydar examine la baisse de ses frais pour cette course (ils restent dus tant qu'il ne l'a pas acceptée). ${driver} est prévenu et peut répondre.`,
     excludeDriver: `${driver} ne recevra plus vos courses, quelle que soit son organisation. Les courses en cours vont à leur terme ; vous pourrez lever l'exclusion dans Réglages › Options avancées.`,
   }[kind];
   const submit = () => {

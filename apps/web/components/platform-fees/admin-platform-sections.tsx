@@ -38,6 +38,9 @@ import {
   rideSettlementLabel,
   ridePaymentLabel,
   signedPrice,
+  isNetworkContest,
+  NETWORK_CONTEST_NOTE,
+  pendingReductionsDescription,
 } from "./admin-platform-format";
 import { PaymentActions, ReductionActions } from "./admin-platform-dialogs";
 import { MonthSelect } from "./admin-platform-live";
@@ -132,17 +135,12 @@ export function PaymentsToConfirm({
 
 // ---------------------------------------------------------------------------- baisses à valider
 export function PendingReductions({ entries, orgName, timeZone = "Europe/Paris" }: { entries: PlatformEntry[]; orgName?: string; timeZone?: string }) {
-  const total = entries.reduce((s, e) => s + e.amount_cents, 0);
   return (
     <Card className="overflow-hidden">
       <CardHeader
         title="Baisses de frais à valider"
         icon={<TrendingDown />}
-        description={
-          entries.length
-            ? `Prix corrigé à la baisse après la course : ${formatPrice(-total)} de frais en moins si vous acceptez tout. Refus seulement si la correction ne correspond pas à la course réellement effectuée et payée, avec un motif (affiché à l'organisation) ; sans décision dans les 30 jours, la baisse est acceptée automatiquement (CGV, article 5).`
-            : "Quand une centrale ou une flotte baisse le prix d'une course terminée, la baisse de frais attend votre décision ici (30 jours au plus, puis acceptée automatiquement)."
-        }
+        description={pendingReductionsDescription(entries)}
         action={entries.length ? <Badge tone="amber">{entries.length} en attente</Badge> : undefined}
       />
       {!entries.length ? (
@@ -154,6 +152,8 @@ export function PendingReductions({ entries, orgName, timeZone = "Europe/Paris" 
           {entries.map((e) => {
             const name = orgName ?? e.organization_name ?? "Centrale";
             const settlement = e.ride ? rideSettlementLabel(e.ride) : null;
+            // Réseau partagé : baisse demandée en contestant une course partagée, jamais acceptée automatiquement
+            const contest = isNetworkContest(e);
             return (
               <li key={e.id} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center md:gap-6">
                 <div className="min-w-0 space-y-1">
@@ -168,6 +168,14 @@ export function PendingReductions({ entries, orgName, timeZone = "Europe/Paris" 
                     )}
                     {e.ride ? `Course ${e.ride.number}` : e.label}
                   </p>
+                  {contest && (
+                    <p className="flex flex-wrap items-center gap-2 text-[12px] text-fg-muted">
+                      <Badge tone="violet" dot={false} className="h-[18px]">
+                        Réseau partagé
+                      </Badge>
+                      {NETWORK_CONTEST_NOTE}
+                    </p>
+                  )}
                   <p className="text-[12.5px] text-fg-muted">{e.reason ?? e.label}</p>
                   <p className="text-[11.5px] text-fg-subtle">
                     {e.label}

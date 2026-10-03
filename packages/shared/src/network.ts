@@ -1083,7 +1083,7 @@ export interface DriverNetworkCreditor {
     amount_cents: number;
     count: number;
     settlement_ids: Uuid[];
-    /** « RP-{4 car.}-{JJMM} » */
+    /** Une seule ligne à régler : sa référence « R{n° de course} » ; plusieurs : « RP-{4 car.}-{JJMM} » */
     reference: string;
     link: string | null;
     /** Domaine du lien affiché (S21) */
@@ -1429,7 +1429,9 @@ export interface ContestNetworkRideResult {
   settlement: Settlement | null;
   /**
    * Demande de baisse des frais Rydar (écriture « correction » de −frais en attente du super admin, /admin/frais) ;
-   * amount_cents : montant de la baisse demandée, POSITIF (l'écriture du registre est négative).
+   * amount_cents : montant de la baisse demandée, POSITIF (l'écriture du registre est négative). Jamais acceptée d'office
+   * (pas d'acceptation après 30 jours sans décision, contrairement à une correction du prix) : les frais restent dus tant
+   * que Rydar ne l'a pas acceptée ; son motif recopie l'état du règlement à la contestation.
    */
   fee_reduction: { entry_id: Uuid; amount_cents: number } | null;
 }
@@ -1453,6 +1455,8 @@ export interface RemindNetworkDriverResult {
   /** REMINDED (lot 4b) : tout ce que ce chauffeur doit à l'organisation (reversements à régler ou « Pas reçu ») */
   amount_cents?: number;
   count?: number;
+  /** REMINDED : canaux utilisés — l'application seulement en v1 (aucun WhatsApp pour une ligne réseau) */
+  channels?: "app"[];
 }
 
 /** private.network_driver_exclusions vu par A (org_network_driver_exclusions). */

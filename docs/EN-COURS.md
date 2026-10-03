@@ -353,6 +353,22 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
     `network_debtor_identities` (sans n° de fiche de B), `scrub_network_traces` ; web et app : rien de plus (journal
     `ride.network_validated` / `ride.network_contested` affiché par son message, `NETWORK_RIDE_CONTESTED` libellé dans
     ERROR_MESSAGES, notifications `settlement_*` avec `data.network` déjà ouvertes sur « Courses partenaires »).
+- Règles posées par la revue du lot 4 (corrections dans 006900, non poussée) :
+  - la baisse des frais Rydar demandée par « Contester la course » n'est JAMAIS acceptée d'office : redéfinition de
+    `private.accept_stale_platform_reductions` (corps 006600 à l'identique + exclusion des courses partagées contestées) ;
+    elle attend la décision du super admin (`svc_platform_review_entry`), frais dus jusque-là ; motif = « Course
+    contestée : {motif} — {état du règlement} » ; `private.platform_entry_json` (redéfinie, dernière version : 006900)
+    ajoute `network_contest {contested_at}` à cette seule écriture, montrée à part dans /admin/frais. **Lot 10
+    (juriste)** : la convention (section 6) le dit déjà (« jamais acquise faute de réponse ») ; faire confirmer
+    l'articulation avec l'article 5 des CGV (acceptation au bout de 30 jours réservée aux corrections du prix) ;
+  - verrous d'une course partagée terminée : TOUJOURS l'exécution, puis le règlement (`validate_network_ride`,
+    `contest_network_ride`, `driver_dispute_network_settlement`) ; toute nouvelle fonction qui touche les deux suit cet
+    ordre (sinon interblocage 40P01) ;
+  - `org_network_payout_info` : audit à chaque consultation, notification au chauffeur une fois par règlement et par 24 h
+    (et de nouveau après un changement de son RIB) ; le règlement est verrouillé pendant la consultation ;
+  - `driver_earnings` : `commission_cents` d'une période = commission et frais de SON organisation sur ses seules
+    courses ; courses partenaires à part (`partner_rides`, `partner_part_cents`, clés présentes seulement s'il y en a),
+    affichées dans l'app sous « Part des organisations partenaires », jamais comme une commission.
 - Règles posées par la revue du lot 3 :
   - client à bord d'un partenaire (PASSENGER_ONBOARD, IN_PROGRESS) : `cancel_ride` refusé à tous sauf système / super
     admin (`NETWORK_RIDE_IN_PROGRESS` ; `private.cancel_ride_internal` redéfinie en 006800, le lot suivant qui la touche

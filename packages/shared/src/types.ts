@@ -936,3 +936,12 @@ export interface DriverDeletionDebt {
 export interface EarningsRide {
   network_giver?: string | null;
 }
+/**
+ * driver_earnings() par période : courses partenaires de la période (clés présentes seulement s'il y en a). Leur part
+ * des organisations qui les ont confiées (prix − part figée du chauffeur) n'est jamais une « commission » (U4) :
+ * commission_cents ne porte que sur les courses propres. revenue − commission − partner_part = net (courses avec prix).
+ */
+export interface EarningsPeriod {
+  partner_rides?: number;
+  partner_part_cents?: number;
+}

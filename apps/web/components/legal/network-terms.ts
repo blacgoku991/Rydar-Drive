@@ -88,7 +88,7 @@ export const NETWORK_CONVENTION: NetworkLegalDoc = {
       title: "6. Courses à vérifier et contestations",
       items: [
         `Une fin de course inhabituelle (position absente, arrivée loin du départ ou de la destination, durée très courte) n'est jamais refusée au chauffeur : la course est signalée « à vérifier » et le versement d'une course déjà payée est retenu ${P.payoutHoldHours} heures, sauf validation plus tôt par l'organisation qui confie.`,
-        `L'organisation qui confie peut contester une course dans les ${P.contestDays} jours qui suivent sa fin : le versement au chauffeur est annulé et une baisse de ses frais Rydar pour cette course est soumise à l'éditeur, qui ne décide que de ses propres frais.`,
+        `L'organisation qui confie peut contester une course dans les ${P.contestDays} jours qui suivent sa fin : le versement prévu au chauffeur (client qui a déjà payé) est annulé, ce que le chauffeur doit reverser (client payé à bord) reste dû, et une baisse de ses frais Rydar pour cette course est soumise à l'éditeur, qui ne décide que de ses propres frais. Cette baisse n'est jamais acquise faute de réponse : les frais restent dus tant que l'éditeur ne l'a pas acceptée (l'acceptation au bout de 30 jours prévue par les CGV pour une correction du prix ne s'y applique pas).`,
         "Une course que le chauffeur partenaire ne peut plus terminer dans l'application (organisation ou chauffeur inactif, aucune position depuis 30 minutes) peut être clôturée par l'organisation qui confie ; elle est alors signalée « à vérifier ».",
       ],
     },

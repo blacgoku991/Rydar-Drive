@@ -63,6 +63,11 @@ describe("convention entre organisations (§7.2)", () => {
     expect(text).not.toMatch(/\(ou [^)]*elle-même\)/);
   });
 
+  it("contestation d'une course : versement annulé, reversement dû ; baisse des frais Rydar jamais acquise faute de réponse", () => {
+    expect(text).toContain("le versement prévu au chauffeur (client qui a déjà payé) est annulé, ce que le chauffeur doit reverser (client payé à bord) reste dû");
+    expect(text).toContain("Cette baisse n'est jamais acquise faute de réponse : les frais restent dus tant que l'éditeur ne l'a pas acceptée");
+  });
+
   it("Q5 : l'organisation exécutante ne voit ni le client ni la position de son chauffeur pendant la course", () => {
     expect(text).toContain("ne voit jamais le client ni l'adresse exacte");
     expect(text).toContain("elle ne voit pas la position de son chauffeur pendant la course partagée");

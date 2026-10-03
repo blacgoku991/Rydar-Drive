@@ -13,6 +13,7 @@ import {
   NETWORK_RPC_ACCESS, type DriverNetworkSettlementItem, type NetworkOfferNotificationData, type NetworkPayoutWarning,
   type NetworkRpcs, type RemindNetworkDriverResult,
 } from "./network";
+import type { EarningsPeriod } from "./types";
 
 const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import.meta.url));
 
@@ -251,6 +252,39 @@ describe("Réseau partagé, argent (partie 4b) : SQL = contrats de @rydar/shared
     for (const fn of ["confirm_settlements", "dispute_settlement", "waive_settlement", "reopen_settlement"]) {
       expect(lastSqlDefinition(`public.${fn}`), fn).toContain("perform private.assert_network_creditor(");
     }
+  });
+
+  it("relance manuelle : codes et clés des réponses = RemindNetworkDriverResult (channels compris)", () => {
+    const remind = lastSqlDefinition("public.remind_network_driver");
+    const sample = {
+      ok: true, code: "REMINDED", amount_cents: 1250, count: 1, channels: ["app"], message: "Rappel envoyé au chauffeur (application).",
+      next_allowed_at: null,
+    } satisfies Required<RemindNetworkDriverResult>;
+    const responses = remind.split("return jsonb_build_object(").slice(1).map((r) => r.slice(0, r.indexOf(";")));
+    expect(responses).toHaveLength(4);
+    for (const r of responses) {
+      for (const m of r.matchAll(/'([a-z_]+)', /g)) expect(Object.keys(sample), m[1]).toContain(m[1]);
+    }
+    const reminded = responses.find((r) => r.includes("'REMINDED'"))!;
+    expect([...reminded.matchAll(/'([a-z_]+)', /g)].map((m) => m[1]!).sort()).toEqual(
+      Object.keys(sample).filter((k) => k !== "next_allowed_at").sort(),
+    );
+    expect(reminded).toContain("'channels', jsonb_build_array('app')");
+  });
+
+  it("baisse demandée par « Contester la course » : jamais acceptée d'office, montrée à part au super admin (PlatformEntry.network_contest)", () => {
+    const stale = lastSqlDefinition("private.accept_stale_platform_reductions");
+    expect(stale).toMatch(/and not exists \(select 1 from public\.ride_network_executions n\s+where n\.ride_id = x\.ride_id and n\.contested_at is not null\)/);
+    expect(lastSqlDefinition("private.platform_entry_json")).toContain(
+      "jsonb_build_object('network_contest', jsonb_build_object('contested_at', n.contested_at))",
+    );
+  });
+
+  it("gains par période : clés du réseau = EarningsPeriod (partner_rides, partner_part_cents) ; commission sur les seules courses propres", () => {
+    const body = lastSqlDefinition("public.driver_earnings");
+    const period = { partner_rides: 2, partner_part_cents: 3250 } satisfies Required<Pick<EarningsPeriod, "partner_rides" | "partner_part_cents">>;
+    for (const k of Object.keys(period)) expect(body, k).toContain(`'${k}', a.${k}`);
+    expect(body).toContain("'commission_cents', case when v_has_net then a.netted_revenue_cents - a.own_net_cents end");
   });
 
   it("relance manuelle : codes = RemindNetworkDriverResult, 1 par 30 min ; relances automatiques : 3 au plus, 23 h d'écart", () => {

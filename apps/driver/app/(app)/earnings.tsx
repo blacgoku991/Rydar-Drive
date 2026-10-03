@@ -1,7 +1,8 @@
 // Gains du chauffeur : jour / semaine / mois, histogramme 7 jours, dernières courses (driver_earnings).
 // Mode centrale : « Votre part » (part chauffeur réelle), commission et statut du règlement par course.
 // Réseau partagé : course partenaire marquée « Partenaire · {organisation} », net par course (termes figés), UN montant
-// avec l'organisation qui l'a confiée (jamais commission ni frais).
+// avec l'organisation qui l'a confiée (jamais commission ni frais) ; carte de la période : « Part des organisations
+// partenaires » sur une ligne à part, la commission (et le « Après commission de X % ») ne portant que sur ses courses.
 import { Ionicons } from "@expo/vector-icons";
 import {
   PAYMENT_METHOD_LABELS, SETTLEMENT_STATUS_META, formatDistance, formatDuration, formatPrice, formatRideDate,
@@ -17,7 +18,7 @@ import { BigButton, Card, Label, Pill, Screen, ScreenHeader, Segmented } from "@
 import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
-import { earningsPartner, earningsPartnerText, PARTNER_SETTLEMENTS_TITLE, partnerAccess, settleHref } from "@/lib/network";
+import { earningsPartner, earningsPartnerPeriod, earningsPartnerText, PARTNER_SETTLEMENTS_TITLE, partnerAccess, settleHref } from "@/lib/network";
 import { alpha, colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
 
 type Period = "today" | "week" | "month";
@@ -68,6 +69,8 @@ export default function Earnings() {
 
   const p: EarningsPeriod | null = data ? data[period] : null;
   const currency = data?.currency ?? "EUR";
+  // Réseau partagé : part des organisations partenaires de la période (jamais comptée comme une commission)
+  const partnerPart = p ? earningsPartnerPeriod(p, currency) : null;
   const commission = data?.commission_percent ?? null;
   // Mode centrale : la part chauffeur (driver_payout_cents) est le montant qui compte
   const centrale = data?.model === "centrale";
@@ -185,9 +188,21 @@ export default function Earnings() {
                   <View style={styles.net}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.netLabel}>Net estimé</Text>
-                      <Text style={styles.netHint}>Après commission de {String(commission).replace(".", ",")}{NBSP}%</Text>
+                      <Text style={styles.netHint}>
+                        Après commission de {String(commission).replace(".", ",")}{NBSP}%{partnerPart ? " sur vos courses" : ""}
+                      </Text>
                     </View>
                     <Text style={styles.netValue}>{formatPrice(p.net_cents, currency)}</Text>
+                  </View>
+                )}
+                {/* Réseau partagé : part des organisations qui ont confié les courses partenaires (jamais une commission) */}
+                {partnerPart && (
+                  <View style={styles.net} accessible accessibilityLabel={`${partnerPart.label}, ${partnerPart.hint}${NBSP}: moins ${formatPrice(partnerPart.cents, currency)}`}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.netLabel}>{partnerPart.label}</Text>
+                      <Text style={styles.netHint}>{partnerPart.hint}</Text>
+                    </View>
+                    <Text style={styles.netValue}>{partnerPart.amount}</Text>
                   </View>
                 )}
                 {(p.cash_cents > 0 || p.unpriced_rides > 0) && (

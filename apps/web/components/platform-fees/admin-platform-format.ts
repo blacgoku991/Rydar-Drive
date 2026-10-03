@@ -237,6 +237,38 @@ export function rideSettlementLabel(ride: NonNullable<PlatformEntry["ride"]>) {
 
 export const ridePaymentLabel = (m: PaymentMethod | null | undefined) => (m ? (PAYMENT_METHOD_LABELS[m] ?? m) : "—");
 
+// ---------------------------------------------------------------------------- baisses à valider
+/**
+ * Réseau partagé : baisse demandée en contestant une course partagée (contest_network_ride). Ce n'est pas une
+ * correction du prix : jamais acceptée automatiquement au bout de 30 jours, les frais restent dus tant que Rydar ne
+ * l'a pas acceptée (private.accept_stale_platform_reductions, 20260924006900).
+ */
+export const isNetworkContest = (e: Pick<PlatformEntry, "network_contest">) => e.network_contest != null;
+
+/** Mention d'une baisse de contestation dans la liste (/admin/frais). */
+export const NETWORK_CONTEST_NOTE = "Course partagée contestée\u00a0: jamais acceptée automatiquement, décision requise";
+
+/**
+ * En-tête de « Baisses de frais à valider » : règle des 30 jours (CGV art. 5) pour les corrections de prix seulement ;
+ * une baisse de contestation d'une course partagée attend toujours la décision. Sans contestation : texte d'avant.
+ */
+export function pendingReductionsDescription(entries: Pick<PlatformEntry, "amount_cents" | "network_contest">[]): string {
+  if (!entries.length) {
+    return "Quand une centrale ou une flotte baisse le prix d'une course terminée, la baisse de frais attend votre décision ici (30 jours au plus, puis acceptée automatiquement).";
+  }
+  const total = formatPrice(-entries.reduce((s, e) => s + e.amount_cents, 0));
+  const contests = entries.filter(isNetworkContest).length;
+  const priceRule =
+    "ne correspond pas à la course réellement effectuée et payée, avec un motif (affiché à l'organisation)\u00a0; sans décision dans les 30 jours, la baisse est acceptée automatiquement (CGV, article 5).";
+  if (!contests) {
+    return `Prix corrigé à la baisse après la course\u00a0: ${total} de frais en moins si vous acceptez tout. Refus seulement si la correction ${priceRule}`;
+  }
+  const contestRule =
+    "Course partagée contestée\u00a0: à vous de décider, jamais acceptée automatiquement\u00a0; les frais restent dus tant que vous ne l'avez pas acceptée.";
+  if (contests === entries.length) return `${total} de frais en moins si vous acceptez tout. ${contestRule}`;
+  return `${total} de frais en moins si vous acceptez tout. Prix corrigé à la baisse après la course\u00a0: refus seulement si la correction ${priceRule} ${contestRule}`;
+}
+
 export function paymentStatusLabel(p: Pick<PlatformPayment, "status" | "received_cents" | "amount_cents">) {
   if (p.status === "confirmed" && p.received_cents != null && p.received_cents !== p.amount_cents) return "Reçu en partie";
   return PLATFORM_PAYMENT_STATUS_META[p.status].adminLabel;
