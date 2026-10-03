@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: { absolute: "Déclaration d'accessibilité — Rydar Drive" },
   description:
-    "État de conformité de Rydar Drive au RGAA (non conforme : aucun audit réalisé), contrôles effectués, limites connues, contact et voies de recours.",
+    "État de conformité de Rydar Drive au RGAA (non conforme : aucun audit réalisé), contrôles effectués, limites connues, contact et voies de recours.",
 };
 
 /**

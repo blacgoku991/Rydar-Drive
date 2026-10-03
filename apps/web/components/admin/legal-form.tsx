@@ -34,7 +34,7 @@ const HOST: typeof EDITOR = [
     key: "data_host",
     label: "Hébergement des données",
     placeholder: "Même serveur que le site, datacenter de … (pays)",
-    hint: "Où sont la base, les fichiers et les sauvegardes (pays du datacenter) : repris par les mentions légales, la politique de confidentialité et l'accord de traitement.",
+    hint: "Où sont la base, les fichiers et les sauvegardes (pays du datacenter) : repris par les mentions légales et l'accord de traitement.",
     wide: true,
   },
 ];

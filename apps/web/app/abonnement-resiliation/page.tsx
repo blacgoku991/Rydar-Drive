@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: { absolute: "Abonnement, résiliation et remboursement — Rydar Drive" },
   description:
-    "Arrêt du renouvellement, résiliation, remboursement au prorata, frais par course, fin du contrat et export des données : les règles des CGV de Rydar Drive, en clair.",
+    "Arrêt du renouvellement, résiliation, remboursement au prorata, frais par course, fin du contrat et export des données : les règles des CGV de Rydar Drive, en clair.",
 };
 
 // Résumé des CGV (articles 4 à 8, 16), SANS rien y ajouter : chaque phrase reprend une règle des CGV en vigueur

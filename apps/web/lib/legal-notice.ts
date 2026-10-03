@@ -64,6 +64,6 @@ export function legalNoticeGaps(f: LegalNoticeFields): LegalNoticeGap[] {
   need(blank(f.hostName), "host_name", "Hébergeur du site : nom ou raison sociale");
   need(blank(f.hostAddress), "host_address", "Hébergeur du site : adresse");
   need(blank(f.hostPhone), "host_phone", "Hébergeur du site : téléphone");
-  need(blank(f.dataHost), "data_host", "Hébergement des données : lieu (pays du datacenter), cité par la politique de confidentialité", false);
+  need(blank(f.dataHost), "data_host", "Hébergement des données : lieu (pays du datacenter), précisé dans les mentions légales et l'accord de traitement", false);
   return gaps;
 }

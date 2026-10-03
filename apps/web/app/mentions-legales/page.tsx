@@ -90,8 +90,15 @@ export default async function LegalNoticePage() {
 
       <LegalSection title="Hébergement des données">
         <p>
-          Base de données, comptes de connexion, fichiers et sauvegardes : <Value>{legal.dataHost}</Value>. La liste
-          complète des prestataires techniques figure dans l&apos;
+          Base de données, comptes de connexion, fichiers et sauvegardes : sur le serveur de l&apos;hébergeur du site,
+          administré par l&apos;éditeur
+          {legal.dataHost ? (
+            <>
+              {" "}
+              (<span className="text-fg">{legal.dataHost}</span>)
+            </>
+          ) : null}
+          . La liste complète des prestataires techniques figure dans l&apos;
           <Link href="/dpa" className="text-fg underline underline-offset-2">accord de traitement des données</Link>.
         </p>
       </LegalSection>

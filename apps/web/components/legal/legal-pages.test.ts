@@ -113,7 +113,8 @@ describe("/mentions-legales", () => {
     expect(t).toContain("règlement (UE) 2022/2065 sur les services numériques, articles 11 et 12");
     expect(t).toContain("Langue acceptée : français");
     expect(t).toContain("Hébergeur : Hébergeur SAS");
-    expect(t).toContain("Base de données, comptes de connexion, fichiers et sauvegardes : Même serveur que le site, datacenter en France");
+    expect(t).toContain("Base de données, comptes de connexion, fichiers et sauvegardes : sur le serveur de l'hébergeur du site, administré par l'éditeur");
+    expect(t).toContain("Même serveur que le site, datacenter en France");
     expect(html).toContain('href="mailto:contact@rydar.example"');
     expect(html).toContain('href="/accessibilite"');
   });
