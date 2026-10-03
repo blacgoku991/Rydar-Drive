@@ -43,6 +43,10 @@ la centrale doit les frais plateforme à Rydar.
   Fichier `"use server"` : n'exporter que des fonctions async.
 - Tailwind v4 : classes custom = `@utility`. PG regex : répétition ≤ 255 (`{1,512}` interdit).
 - Web : relectures temps réel par `useLiveSync` (rien onglet caché) ; Intl via `dateTimeFormat`/`numberFormat` (shared), jamais `new Intl.*` en rendu.
+- Conformité (`docs/SECURITY.md`, « Documents légaux ») : aucun traceur non nécessaire ni script/police/vidéo tiers sans
+  gestionnaire de consentement CNIL ; nouveau cookie ou clé de stockage → tableau de `/cookies` ; changement
+  d'hébergement ou de sous-traitant → `/dpa`, `/confidentialite`, `/mentions-legales` d'abord. Champ de formulaire :
+  `Field` (libellé, aide et erreur reliés) ; texte jamais sous 4,5:1 ; lien `target="_blank"` → `NewTabHint`.
 - IP client : toujours `ipFromHeaders` (`lib/request.ts`) + `rateLimitAll` ; jamais lire CF-Connecting-IP / X-Real-IP soi-même.
 - Perf : `<Link>` du tableau de bord en `prefetch={false}` ; proxy sans appel à Auth sauf jeton HS256 face à un JWKS asymétrique (getUser : /login et rendu).
 - Export CSV : BOM UTF-8, « ; », cellule commençant par = + - @ tab CR préfixée d'une apostrophe (modèle

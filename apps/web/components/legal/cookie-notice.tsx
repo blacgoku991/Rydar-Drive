@@ -6,7 +6,9 @@
 //  - espaces connectés (tableau de bord, super admin) : dans la barre latérale, au-dessus du menu du compte
 //    (placement « sidebar », rendu par les shells ; aussi dans le menu mobile) ;
 //  - pages publiques (accueil, connexion, mini-site…) : flottant en bas, SOUS les dialogues et menus (z-40), avec une
-//    réserve de même hauteur en fin de page pour que le bas de page puisse toujours défiler au-dessus du bandeau.
+//    réserve de même hauteur en fin de page pour que le bas de page puisse toujours défiler au-dessus du bandeau, et
+//    une marge de défilement (scroll-padding-bottom) de même hauteur : un élément qui reçoit le focus au clavier
+//    n'est jamais caché dessous (WCAG 2.2, 2.4.11).
 import { Cookie, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -90,7 +92,7 @@ export function SidebarNotice({ href, onClose }: { href: string; onClose: () => 
         <p className="min-w-0 flex-1 py-0.5">
           Cookies nécessaires uniquement (connexion, préférences) : aucune publicité ni mesure d&apos;audience.{" "}
           <a href={href} className="text-fg underline underline-offset-2">
-            En savoir plus
+            En savoir plus<span className="sr-only"> sur les cookies</span>
           </a>
         </p>
         <CloseButton onClose={onClose} className="-mt-0.5" />
@@ -116,6 +118,16 @@ export function FloatingNotice({ href, onClose }: { href: string; onClose: () =>
       window.removeEventListener("resize", measure);
     };
   }, []);
+  // Focus au clavier jamais caché sous le bandeau : la page réserve sa hauteur quand elle fait défiler un élément
+  useEffect(() => {
+    if (!height) return;
+    const root = document.documentElement;
+    const previous = root.style.scrollPaddingBottom;
+    root.style.scrollPaddingBottom = `${height + 24}px`;
+    return () => {
+      root.style.scrollPaddingBottom = previous;
+    };
+  }, [height]);
   return (
     <>
       {/* Réserve en fin de page (bandeau + marges) : le dernier contrôle de la page défile au-dessus du bandeau */}
@@ -131,7 +143,7 @@ export function FloatingNotice({ href, onClose }: { href: string; onClose: () =>
           Ce site n&apos;utilise que des cookies nécessaires à son fonctionnement (connexion, préférences). Aucun cookie publicitaire ni de mesure
           d&apos;audience.{" "}
           <a href={href} className="text-fg underline underline-offset-2">
-            En savoir plus
+            En savoir plus<span className="sr-only"> sur les cookies</span>
           </a>
         </p>
         <CloseButton onClose={onClose} className="-m-1.5" />

@@ -102,6 +102,18 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 
 - `platform_legal` (éditeur, hébergeurs) : lecture publique par `public_legal_info()`, écriture par le super admin (`svc_platform_legal_update`, audit).
 - `legal_acceptances` : preuve en ajout seul (déclencheur `LEGAL_PROOF_IMMUTABLE` ; le service role ne peut que lire et ajouter). Écriture par `accept_legal_documents` (CGV et accord de traitement : owner / admin de la centrale) ; l'e-mail du signataire est copié par un déclencheur, jamais fourni par l'appelant. Compte supprimé : la preuve reste, détachée du compte ; une centrale qui a accepté ne peut plus être supprimée (`on delete restrict`).
+- **Traceurs** : seulement des cookies et stockages strictement nécessaires (art. 82 loi Informatique et Libertés,
+  CNIL 2020), donc aucun consentement à demander et un simple bandeau d'information. Aucune mesure d'audience, aucun
+  pixel, aucune vidéo, police ou script chargé chez un tiers sur les pages publiques (mesuré le 3 octobre 2026 : zéro
+  requête tierce, zéro cookie avant connexion). En ajouter un exige AVANT un gestionnaire de consentement conforme
+  (rien déposé avant le choix, « Tout refuser » aussi simple que « Tout accepter », choix gardé 6 mois au plus,
+  modifiable par le lien « Cookies ») et la mise à jour de `/cookies`. Tout nouveau cookie ou clé de stockage
+  nécessaire est ajouté au tableau de `/cookies` (test `components/legal/legal-pages.test.ts`).
+- **Hébergement décrit par les textes** : `/confidentialite` (§ 7 à 9), `/dpa` (art. 5, 6, 7, 11) et
+  `/mentions-legales` décrivent la production : serveur de l'éditeur (VPS) avec Supabase auto-hébergé, sauvegardes
+  nocturnes gardées 14 jours, e-mails envoyés par le Postfix du serveur, aucun relais tiers. Tout changement (base chez
+  Supabase cloud, copie des sauvegardes hors du serveur, relais SMTP, nouveau prestataire) se reporte d'abord dans ces
+  pages ; un nouveau sous-traitant est annoncé aux centrales 30 jours avant (accord de traitement, art. 6).
 
 ## Limites des offres
 

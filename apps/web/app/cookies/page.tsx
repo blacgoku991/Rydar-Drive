@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
-import { LEGAL_UPDATED_AT, getLegalInfo } from "@/lib/legal";
+import { COOKIES_UPDATED_AT, getLegalInfo } from "@/lib/legal";
 
 export const dynamic = "force-dynamic";
 
@@ -12,16 +12,20 @@ export const metadata: Metadata = {
 
 type Line = { name: string; role: string; duration: string };
 
-/** Tableau « nom / rôle / durée » (défile horizontalement sur petit écran). */
-function StorageTable({ lines }: { lines: Line[] }) {
+/**
+ * Tableau « nom / rôle / durée » (défile horizontalement sur petit écran ; zone défilante atteignable au clavier et
+ * nommée).
+ */
+function StorageTable({ lines, label }: { lines: Line[]; label: string }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-md" tabIndex={0} role="region" aria-label={label}>
       <table className="w-full min-w-[560px] border-collapse text-left text-[13px]">
+        <caption className="sr-only">{label}</caption>
         <thead>
           <tr className="border-b border-line-strong text-fg">
-            <th className="py-2 pr-4 font-medium">Nom</th>
-            <th className="py-2 pr-4 font-medium">Rôle</th>
-            <th className="py-2 font-medium">Durée</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Nom</th>
+            <th scope="col" className="py-2 pr-4 font-medium">Rôle</th>
+            <th scope="col" className="py-2 font-medium">Durée</th>
           </tr>
         </thead>
         <tbody>
@@ -61,6 +65,11 @@ const STORAGE: Line[] = [
   { name: "rydar.mapTheme, rydar.mapReports", role: "Préférences du centre de commande : carte jour ou nuit, affichage des signalements (stockage local).", duration: "Jusqu'à effacement" },
   { name: "rydar.alerts:…", role: "Alertes récentes du centre de commande, pour les retrouver après un rechargement (stockage de session).", duration: "Jusqu'à la fermeture de l'onglet" },
   { name: "rydar.platform-banner:…", role: "Bandeau des frais plateforme masqué (stockage de session).", duration: "Jusqu'à la fermeture de l'onglet" },
+  {
+    name: "rd_org_switch",
+    role: "Changement de centrale annoncé aux autres onglets ouverts du tableau de bord, quand le navigateur n'offre pas de canal entre onglets (stockage local, identifiant de la centrale et heure du changement).",
+    duration: "Jusqu'à effacement (remplacé au changement suivant)",
+  },
   { name: "rd_cookie_notice", role: "Bandeau d'information sur les cookies fermé (stockage local).", duration: "Jusqu'à effacement" },
 ];
 
@@ -72,7 +81,7 @@ export default async function CookiesPage() {
     "l'adresse indiquée dans les mentions légales"
   );
   return (
-    <LegalPage title="Cookies et stockage local" updatedAt={LEGAL_UPDATED_AT}>
+    <LegalPage title="Cookies et stockage local" updatedAt={COOKIES_UPDATED_AT}>
       <p>
         Rydar Drive n&apos;utilise <span className="text-fg">aucun cookie de mesure d&apos;audience, de publicité ou de
         réseau social</span>, et aucun traceur d&apos;un tiers. Les seuls cookies et données stockés dans votre
@@ -83,7 +92,7 @@ export default async function CookiesPage() {
 
       <LegalSection title="Cookies">
         <p>Déposés uniquement si vous vous connectez au tableau de bord ou demandez un nouveau mot de passe :</p>
-        <StorageTable lines={COOKIES} />
+        <StorageTable lines={COOKIES} label="Cookies déposés" />
         <p>
           Réserver une course sur un mini-site, consulter l&apos;accueil ou les pages légales ne dépose aucun cookie.
         </p>
@@ -94,7 +103,7 @@ export default async function CookiesPage() {
           Quelques préférences restent dans votre navigateur. Elles ne sont jamais envoyées à nos serveurs et ne servent
           pas à vous suivre :
         </p>
-        <StorageTable lines={STORAGE} />
+        <StorageTable lines={STORAGE} label="Données stockées dans le navigateur" />
       </LegalSection>
 
       <LegalSection title="Services tiers">
@@ -105,6 +114,21 @@ export default async function CookiesPage() {
             <>Application chauffeur : elle n&apos;utilise pas de cookie. Sa session est chiffrée sur le téléphone, avec une clé gardée dans le trousseau sécurisé du système.</>,
           ]}
         />
+      </LegalSection>
+
+      <LegalSection title="Pourquoi aucun bouton « Tout accepter » ou « Tout refuser »">
+        <p>
+          Tous les cookies et données ci-dessus sont strictement nécessaires : aucun ne demande votre consentement, il
+          n&apos;y a donc rien à accepter ni à refuser. Le bandeau d&apos;information se ferme d&apos;un clic ; il revient
+          si vous effacez les données du site. Cette page reste accessible à tout moment par le lien « Cookies » en bas
+          de chaque page.
+        </p>
+        <p>
+          Si l&apos;éditeur ajoutait un jour un traceur soumis à consentement (mesure d&apos;audience non exemptée,
+          publicité, réseau social, vidéo intégrée), aucun ne serait déposé avant votre choix : une fenêtre vous
+          proposerait « Tout refuser » aussi simplement que « Tout accepter », votre choix serait gardé 6 mois au plus et
+          modifiable à tout moment depuis le lien « Cookies », et cette page serait mise à jour avant.
+        </p>
       </LegalSection>
 
       <LegalSection title="Les supprimer">
