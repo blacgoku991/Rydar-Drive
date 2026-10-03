@@ -136,6 +136,8 @@ function ShellBody({
   );
   useRealtimeEvent("platform.updated", (e: PlatformEvent) => {
     if (!e?.action || !LAYOUT_PLATFORM_ACTIONS.has(e.action) || (e.organization_id && e.organization_id !== org.id)) return;
+    // Frais Rydar (entrée de menu, bandeau) : owner / admin seulement ; le modèle change aussi les menus d'un dispatcher
+    if (!isAdmin && e.action !== "model") return;
     layoutPending.current = true;
     scheduleLayout();
   });

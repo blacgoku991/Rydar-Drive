@@ -98,7 +98,8 @@ la centrale doit les frais plateforme à Rydar.
   Flottes aussi (006400) : % prix (0 sans prix) + fixe, taux figés fin de course (`private.fleet_fee_basis`), menu « Frais Rydar »
   (couverts par les CGV 2026-10-02, art. 5). Taux réglés par `svc_platform_set_fees` (006600) : HAUSSE annoncée par e-mail
   et appliquée par le ménage au plus tôt 30 j après (et pas avant `ORG_LEGAL_EFFECTIVE_AT` sans CGV acceptées), ou tout de
-  suite sur accord écrit noté ; une hausse en UPDATE direct (service role) est refusée en base.
+  suite sur accord écrit noté ; une hausse en UPDATE direct (service role) est refusée en base. Web : `updateDispatchModel`
+  sans taux = modèle seul (renvoyer les taux actuels annule la hausse annoncée) ; arrondi des frais = `percentOfCents`.
 - Temps réel : `realtime.send` topics `org:{id}` (lu par TOUT membre, dispatcher compris : rien qu'un dispatcher ne lirait pas via
   RLS ; `platform.updated` = ids seulement), `driver:{id}`, `fleet:{org}`.
 - Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` idempotente ; DEUX versions (`@rydar/shared`) :

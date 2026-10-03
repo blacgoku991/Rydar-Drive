@@ -376,12 +376,12 @@ export function DispatchModelForm({
 
       <Dialog open={confirm} onOpenChange={(o) => !pending && setConfirm(o)}>
         <DialogContent
-          title={toFleet ? "Repasser en mode flotte ?" : mode === "consent" ? "Appliquer la hausse maintenant ?" : "Programmer la hausse ?"}
-          description={
+          title={frSpaces(toFleet ? "Repasser en mode flotte ?" : mode === "consent" ? "Appliquer la hausse maintenant ?" : "Programmer la hausse ?")}
+          description={frSpaces(
             toFleet
               ? "Le compte redevient une flotte classique : plus de répartition part chauffeur / commission sur les nouvelles courses."
-              : frSpaces(`Frais par course : ${currentText} → ${nextText}.`)
-          }
+              : `Frais par course : ${currentText} → ${nextText}.`,
+          )}
         >
           <ul className="space-y-2 text-[13px] text-fg-muted">
             {toFleet && (

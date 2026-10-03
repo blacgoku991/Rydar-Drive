@@ -92,7 +92,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
               <p className="mt-1 flex items-center gap-1.5 text-[12.5px] text-amber">
                 <CalendarClock className="size-3.5" /> Hausse programmée le {isoDayLabel(a.scheduled_change.effective_on)}{"\u00a0"}:{" "}
                 {formatPlatformFee(a.scheduled_change.percent, a.scheduled_change.fixed_cents)} par course ·{" "}
-                <Link href={`/admin/organizations/${orgId}`} className="underline-offset-2 hover:underline">
+                <Link href={`/admin/organizations/${orgId}`} prefetch={false} className="underline-offset-2 hover:underline">
                   gérer sur la fiche
                 </Link>
               </p>
