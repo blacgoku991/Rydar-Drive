@@ -5,7 +5,7 @@
 // Centrale : frais calculés sur le prix et déduits dans la répartition (plafonnés au prix, rien sans prix). Flotte : % du
 // prix (0 sans prix) + fixe, facturés à la flotte, taux figés à la fin de chaque course (fleetPlatformFee).
 import { z } from "zod";
-import { isValidIban } from "./format";
+import { formatPrice, isValidIban } from "./format";
 import type { Iso, Uuid } from "./types";
 import type { OrgStatus, PaymentMethod } from "./domain";
 
@@ -576,14 +576,25 @@ export function platformEntryStatusMeta(e: Pick<PlatformEntry, "status" | "super
 }
 
 /** « Échéance : 5 octobre » / « En retard depuis 12 jours » / « Rien à régler ». */
-export function platformDueSummary(a: Pick<PlatformAccount, "balance_cents" | "due_cents" | "days_overdue" | "overdue_since" | "next_due_at">,
+export function platformDueSummary(
+  a: Pick<PlatformAccount, "balance_cents" | "due_cents" | "days_overdue" | "overdue_since" | "next_due_at"> & { next_due_cents?: number; currency?: string },
   timeZone = "Europe/Paris"): { text: string; tone: Tone } {
   const day = (iso: string) => new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone }).format(new Date(iso));
   if (a.due_cents > 0 && a.overdue_since) {
     const n = a.days_overdue;
     return { text: n <= 0 ? "Échéance dépassée aujourd'hui" : `En retard depuis ${n} jour${n > 1 ? "s" : ""}`, tone: "red" };
   }
-  if (a.balance_cents > 0 && a.next_due_at) return { text: `À régler au plus tard le ${day(a.next_due_at)}`, tone: "amber" };
+  if (a.balance_cents > 0 && a.next_due_at) {
+    // Montant de l'échéance = next_due_cents (cumul dû à cette date, private.platform_position) : les frais du cycle en
+    // cours, déjà dans le solde, ne sont dus qu'à l'échéance suivante (CGV art. 5)
+    const at = Math.min(a.balance_cents, Math.max(0, a.next_due_cents ?? a.balance_cents));
+    if (at <= 0 || at >= a.balance_cents) return { text: `À régler au plus tard le ${day(a.next_due_at)}`, tone: "amber" };
+    const cur = a.currency || "EUR";
+    return {
+      text: `${formatPrice(at, cur)} à régler au plus tard le ${day(a.next_due_at)} · le reste (${formatPrice(a.balance_cents - at, cur)}) à l'échéance suivante`,
+      tone: "amber",
+    };
+  }
   if (a.balance_cents < 0) return { text: "Avance en votre faveur", tone: "green" };
   return { text: "Rien à régler", tone: "green" };
 }

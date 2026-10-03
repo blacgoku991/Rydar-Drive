@@ -532,7 +532,8 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
         title: `Nouvelle course #${p.number}${p.type === "scheduled" ? " · planifiée" : ""}`,
         body: [
           `${shortAddress(p.pickup_address)} → ${shortAddress(p.dropoff_address)}`,
-          p.type === "scheduled" ? formatRideDate(p.pickup_at) : null,
+          // Fuseau de la centrale (Réglages), comme la liste Courses
+          p.type === "scheduled" ? formatRideDate(p.pickup_at, centraleRef.current?.timeZone || undefined) : null,
           p.price_cents != null ? formatPrice(p.price_cents) : null,
           via,
         ].filter(Boolean).join(" · "),
@@ -629,7 +630,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
         emoji: meta.emoji,
         color: meta.color,
         title: `${meta.emoji} ${fleetReportTitle(m.report_type, who)}`,
-        body: [custom, m.expires_at ? `Visible par la flotte jusqu'à ${formatTime(m.expires_at)}` : null].filter(Boolean).join(" · "),
+        body: [custom, m.expires_at ? `Visible par la flotte jusqu'à ${formatTime(m.expires_at, centraleRef.current?.timeZone || undefined)}` : null].filter(Boolean).join(" · "),
         href: `/dashboard?report=${m.id}`,
         cta: "Voir sur la carte",
       });

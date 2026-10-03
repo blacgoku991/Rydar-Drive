@@ -320,6 +320,24 @@ export async function grantOrganizationAccess(
   if (current?.status === "active" && current.role === v.role) {
     return { ok: false, error: "Cette personne a déjà cet accès.", fieldErrors: { email: "Déjà membre avec ce rôle" } };
   }
+  // Jamais rétrograder le DERNIER propriétaire actif : plus personne ne gérerait l'équipe (réservé au propriétaire)
+  if (current?.status === "active" && current.role === "owner" && v.role !== "owner") {
+    const { data: owners, error: ownersError } = await admin
+      .from("organization_users")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("role", "owner")
+      .eq("status", "active")
+      .neq("id", current.id);
+    if (ownersError) return { ok: false, error: "Vérification des propriétaires impossible pour le moment. Réessayez." };
+    if (!((owners ?? []) as unknown[]).length) {
+      return {
+        ok: false,
+        error: "Seul propriétaire actif de l'organisation : donnez d'abord le rôle de propriétaire à une autre personne.",
+        fieldErrors: { role: "Dernier propriétaire actif" },
+      };
+    }
+  }
   // Compte existant jamais membre (sauf le super admin lui-même) ou invitation en attente : preuve par l'adresse exigée
   const pending = !created && (current ? current.status === "invited" : userId !== session.user.id);
   const { error } = current

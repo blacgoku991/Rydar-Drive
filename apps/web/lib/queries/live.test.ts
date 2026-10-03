@@ -122,6 +122,23 @@ describe("getLiveSnapshot", () => {
     expect(selects.filter((s) => s !== "id, route_polyline").every((s) => !s.includes("route_polyline"))).toBe(true);
   });
 
+  it("course « Sans chauffeur » non servie : gardée après 30 min sans changement (lecture dédiée), jamais en double", async () => {
+    const stranded = ride("r9", "NO_DRIVER_FOUND");
+    const client = (recentlyChanged: boolean) =>
+      fakeClient({
+        rides: (calls) => {
+          if (arg(calls, "not")) return { data: [], error: null };
+          if (calls.some((c) => c[0] === "eq" && c[2] === "NO_DRIVER_FOUND")) return { data: [stranded], error: null };
+          // « terminées il y a peu » (30 min) : la course n'y figure que si elle a changé récemment
+          return { data: recentlyChanged ? [stranded] : [], error: null };
+        },
+      });
+    for (const recentlyChanged of [false, true]) {
+      const snap = await getLiveSnapshot(client(recentlyChanged), "org");
+      expect(snap.rides.filter((r) => r.id === "r9")).toHaveLength(1);
+    }
+  });
+
   it("erreur sur les offres : lève aussi", async () => {
     const client = fakeClient({
       rides: (calls) => (arg(calls, "not") ? { data: [ride("r1")], error: null } : { data: [], error: null }),

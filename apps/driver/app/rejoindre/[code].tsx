@@ -8,7 +8,7 @@ import { VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, type VehicleCategory } from 
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
   type StyleProp, type TextInputProps, type TextStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -221,7 +221,17 @@ export default function JoinScreen() {
                         `Vous êtes déjà connecté à un compte chauffeur. Pour vous inscrire ${centrale.model === "fleet" ? `chez ${org.name}` : "dans cette centrale"}, déconnectez-vous d'abord.`,
                       )}
                     </Text>
-                    <BigButton title="Se déconnecter" variant="secondary" height={control.md} onPress={() => void signOut()} />
+                    <BigButton
+                      title="Se déconnecter"
+                      variant="secondary"
+                      height={control.md}
+                      onPress={() =>
+                        Alert.alert("Se déconnecter ?", frTypo("Vous passerez hors ligne et ne recevrez plus de courses sur ce téléphone."), [
+                          { text: "Annuler", style: "cancel" },
+                          { text: "Se déconnecter", style: "destructive", onPress: () => void signOut() },
+                        ])
+                      }
+                    />
                   </View>
                 ) : (
                   <>

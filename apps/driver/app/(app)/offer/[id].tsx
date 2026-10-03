@@ -254,19 +254,38 @@ export default function OfferScreen() {
     else router.dismissTo("/home");
   }
 
+  /**
+   * Acceptation dont la réponse s'est perdue (réseau) ou rejouée (notification + écran) : le serveur répond « déjà
+   * attribuée » alors que la course est à CE chauffeur. Ses courses sont relues avant d'annoncer un refus.
+   */
+  async function alreadyMine(): Promise<boolean> {
+    const driverId = home?.driver.id;
+    if (!offer || !driverId) return false;
+    const rides = await api.upcoming(driverId).catch(() => null);
+    return !!rides?.some((r) => r.id === offer.ride_id);
+  }
+
+  async function accepted(rideId: string | null | undefined) {
+    if (!offer) return;
+    offerSession.accepted.add(offer.offer_id);
+    if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await refresh();
+    if (offer.ride_type === "instant" && rideId) router.replace({ pathname: "/ride/[id]", params: { id: String(rideId) } });
+    else {
+      setMessage("Course planifiée ajoutée à votre planning.");
+      setState("declined");
+    }
+  }
+
   async function accept() {
     if (!offer) return;
     setState("accepting");
     try {
       const res = await api.accept(offer.offer_id);
       if (res.ok) {
-        if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        await refresh();
-        if (offer.ride_type === "instant" && res.ride_id) router.replace({ pathname: "/ride/[id]", params: { id: String(res.ride_id) } });
-        else {
-          setMessage("Course planifiée ajoutée à votre planning.");
-          setState("declined");
-        }
+        await accepted(res.ride_id);
+      } else if (res.code === "RIDE_ALREADY_ASSIGNED" && (await alreadyMine())) {
+        await accepted(offer.ride_id);
       } else if (res.code === "DRIVER_BLOCKED") {
         // Mode centrale : commission en retard / contestée, plafond… L'offre reste ouverte : le chauffeur
         // peut régler (ou signaler son paiement) puis accepter.
@@ -283,6 +302,8 @@ export default function OfferScreen() {
         void refresh();
       }
     } catch (e) {
+      // Réponse perdue : l'acceptation a peut-être abouti
+      if (await alreadyMine()) return void (await accepted(offer.ride_id));
       setMessage((e as Error).message);
       setState("open");
     }

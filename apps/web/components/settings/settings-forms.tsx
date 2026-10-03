@@ -492,7 +492,8 @@ export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boo
                     per_km_cents: n("km"),
                     per_minute_cents: n("min"),
                     minimum_fare_cents: n("minimum"),
-                    night_surcharge_percent: Number(f.get("night") ?? 0),
+                    // Virgule décimale acceptée (« 15,5 »), comme les montants
+                    night_surcharge_percent: Number(String(f.get("night") ?? "0").replace(",", ".")),
                     fixed_fares: r.fixed_fares ?? [],
                   }),
                   `Tarif ${VEHICLE_CATEGORY_META[cat].label} enregistré`,

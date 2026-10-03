@@ -233,8 +233,7 @@ export function TermsGate({ children }: { children: React.ReactNode }) {
   }, [visible]);
 
   const leave = useCallback(async () => {
-    await signOut();
-    router.replace("/login");
+    if (await signOut()) router.replace("/login");
   }, [signOut]);
 
   return (

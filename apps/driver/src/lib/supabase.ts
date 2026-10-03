@@ -78,11 +78,16 @@ class LargeSecureStore {
  * erreur réseau, réessayée ; la session est conservée.
  */
 const REQUEST_TIMEOUT_MS = 20_000;
+/**
+ * Envoi de fichiers (justificatifs, 5 Mo au plus) : délai long mais borné — sans délai, une connexion figée laissait
+ * la feuille d'envoi verrouillée (bouton Fermer désactivé) jusqu'à la fermeture forcée de l'app (Android : aucun délai
+ * par défaut).
+ */
+const UPLOAD_TIMEOUT_MS = 180_000;
 const fetchWithTimeout: typeof fetch = (input, init) => {
   const url = typeof input === "string" ? input : String((input as { url?: string }).url ?? input);
-  if (url.includes("/storage/v1/")) return fetch(input, init);
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), url.includes("/storage/v1/") ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
   const outer = init?.signal;
   if (outer) {
     if (outer.aborted) ctrl.abort();

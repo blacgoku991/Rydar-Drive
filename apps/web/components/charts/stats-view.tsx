@@ -31,7 +31,7 @@ function Upsell() {
       <Lock className="mb-3 size-5 text-fg-subtle" />
       <p className="text-[13px] font-medium">Statistiques avancées</p>
       <p className="mt-1 max-w-xs text-[12.5px] text-fg-subtle">Heures et jours les plus actifs, performance par chauffeur : disponibles avec l&apos;offre Pro.</p>
-      <Link href="/dashboard/settings?tab=billing" className="mt-4 text-[12.5px] font-medium text-brand hover:underline">Voir les offres</Link>
+      <Link href="/dashboard/settings?tab=billing" prefetch={false} className="mt-4 text-[12.5px] font-medium text-brand hover:underline">Voir les offres</Link>
     </div>
   );
 }
@@ -133,7 +133,7 @@ export function StatsView({ stats }: { stats: any }) {
                   {perDriver.map((d) => (
                     <tr key={d.driver_id} className="border-b border-line/60 last:border-0">
                       <td className="px-5 py-2.5">
-                        <Link href={`/dashboard/drivers/${d.driver_id}`} className="flex items-center gap-2.5 hover:text-brand">
+                        <Link href={`/dashboard/drivers/${d.driver_id}`} prefetch={false} className="flex items-center gap-2.5 hover:text-brand">
                           <Avatar name={d.name} size={26} />
                           {d.name} <span className="num text-[11px] text-fg-subtle">#{d.number}</span>
                         </Link>

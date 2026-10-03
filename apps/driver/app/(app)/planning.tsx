@@ -151,7 +151,10 @@ export default function Planning() {
             const after = waitsForCurrentRide(r, currentRideId);
             const late = overdue(r, now);
             const lateHint = late ? overdueHint(late, tz, new Date(now)) : null;
-            const amount = formatPrice(r.driver_payout_cents ?? r.price_cents);
+            // Même règle que l'accueil et l'écran de course : part chauffeur en mode centrale seulement (une course créée
+            // avant un retour au mode flotte garde sa répartition, jamais affichée à la place du prix)
+            const centraleModel = (home?.model ?? home?.organization.dispatch_model) === "centrale";
+            const amount = formatPrice(centraleModel && r.driver_payout_cents != null ? r.driver_payout_cents : r.price_cents);
             return (
               <Pressable
                 key={r.id}

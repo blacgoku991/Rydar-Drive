@@ -31,6 +31,59 @@ let appliedRideMode = false;
 
 /** Jamais de position ancienne : un point de plus de 2 min n'est pas envoyé (le serveur le croirait frais). */
 const MAX_POINT_AGE_MS = 120_000;
+
+/** Dernière réponse du serveur à une position ou à un signe de vie (0 : aucune dans ce processus). */
+let lastAck = 0;
+/**
+ * Silence (aucune réponse du serveur) au-delà duquel le serveur a pu mettre le chauffeur hors ligne en croyant l'app
+ * fermée (private.watch_driver_gps : 3 min sans position ni signe de vie) : coupure réseau (parking souterrain, tunnel).
+ */
+const SERVER_OFFLINE_SILENCE_MS = 150_000;
+
+const offlineListeners = new Set<(revived: boolean) => void>();
+/**
+ * Serveur « hors ligne » alors que le suivi tourne ici : `revived` = remis en ligne tout seul (après une coupure
+ * réseau), sinon le suivi s'est arrêté (passé hors ligne ailleurs, remise en ligne refusée) et l'interface prévient.
+ */
+export function onServerOffline(listener: (revived: boolean) => void) {
+  offlineListeners.add(listener);
+  return () => void offlineListeners.delete(listener);
+}
+
+let reviving = false;
+/** Présence « offline » reçue : `silentMs` = durée sans réponse du serveur avant celle-ci. */
+async function serverSaysOffline(session: number, silentMs: number) {
+  if (session !== trackingSession || reviving) return;
+  // Coupure réseau assez longue pour la mise hors ligne automatique : l'app est ouverte et le chauffeur n'a rien
+  // demandé → remise en ligne UNE fois (autorisation déjà accordée, rien n'est demandé). Sinon, comme avant :
+  // hors ligne décidé ailleurs (autre appareil) → suivi arrêté.
+  let revived = false;
+  if (silentMs >= SERVER_OFFLINE_SILENCE_MS) {
+    reviving = true;
+    try {
+      revived = !!(await api.setOnline(true).catch(() => null))?.ok;
+    } finally {
+      reviving = false;
+    }
+  }
+  if (session !== trackingSession) return;
+  if (!revived) void stopTracking();
+  for (const listener of offlineListeners) {
+    try {
+      listener(revived);
+    } catch {
+      /* un écran ne doit pas bloquer les autres */
+    }
+  }
+}
+
+/** Réponse du serveur reçue : silence écoulé avant elle (0 au premier contact du processus). */
+function ack() {
+  const now = Date.now();
+  const silent = lastAck ? now - lastAck : 0;
+  lastAck = now;
+  return silent;
+}
 /** Battement : une position fraîche dès 45 s sans envoi (≈ une par minute au pire), même téléphone immobile. */
 const HEARTBEAT_MS = 45_000;
 /** Contrôle du battement par minuterie (plus fréquent que HEARTBEAT_MS, sinon l'écart réel doublerait). */
@@ -73,8 +126,9 @@ export async function pushLocation(loc: Location.LocationObject, force = false) 
       recordedAt: new Date(loc.timestamp).toISOString(),
     });
     intervalS = Math.max(4, Math.min(120, res.next_interval_s ?? 10));
-    // Passé hors ligne ailleurs (autre appareil, centrale) : le suivi s'arrête ici aussi
-    if (res.presence === "offline" && session === trackingSession) void stopTracking();
+    const silent = ack();
+    // Hors ligne côté serveur : après une coupure réseau, remise en ligne ; passé hors ligne ailleurs, suivi arrêté
+    if (res.presence === "offline") void serverSaysOffline(session, silent);
   } catch (e) {
     // Compte suspendu / banni, centrale suspendue : le serveur refuse toute position, le suivi s'arrête
     if (e instanceof ApiError && e.code === "FORBIDDEN") {
@@ -114,8 +168,17 @@ async function beat() {
     const fresh = await freshFix(Location.Accuracy.High, 12_000);
     if (fresh) return await pushLocation(fresh, true);
     // Pas de point GPS (sous-sol, parking) : l'app est ouverte, signe de vie pour rester en ligne (sans position)
-    const res = await api.heartbeat().catch((e: unknown) => (e instanceof ApiError && e.code === "FORBIDDEN" ? { presence: "offline" } : null));
-    if (res?.presence === "offline") void stopTracking();
+    const session = trackingSession;
+    let forbidden = false;
+    const res = await api.heartbeat().catch((e: unknown) => {
+      forbidden = e instanceof ApiError && e.code === "FORBIDDEN";
+      return null;
+    });
+    // Compte refusé (suspendu, banni) : suivi arrêté
+    if (forbidden) return void stopTracking();
+    if (!res) return;
+    const silent = ack();
+    if (res.presence === "offline") void serverSaysOffline(session, silent);
   } finally {
     beating = false;
   }

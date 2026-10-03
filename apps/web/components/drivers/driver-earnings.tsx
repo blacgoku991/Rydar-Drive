@@ -91,7 +91,7 @@ export function DriverEarningsCard({ data, firstName }: { data: DriverEarningsVi
         {data.commission == null && (
           <p className="text-[12px] text-fg-subtle">
             Réglez la commission de la centrale dans{" "}
-            <Link href="/dashboard/settings" className="text-fg-muted underline underline-offset-2 hover:text-fg">
+            <Link href="/dashboard/settings" prefetch={false} className="text-fg-muted underline underline-offset-2 hover:text-fg">
               Réglages
             </Link>{" "}
             pour estimer le net du chauffeur.

@@ -35,8 +35,10 @@ const DEFAULT_BODY: Record<FleetReportType, string> = {
 /** Position assez précise et récente pour être envoyée telle quelle. */
 const GOOD_ACCURACY_M = 50;
 const FRESH_MS = 10_000;
-/** Attente maximale d'un point GPS précis avant l'envoi (sinon : dernière position connue). */
+/** Attente maximale d'un point GPS précis avant l'envoi (sinon : dernière position connue, si assez récente). */
 const FIX_TIMEOUT_MS = 5_000;
+/** Âge maximal de la position connue envoyée faute de point GPS (comme les positions du suivi, lib/location). */
+const KNOWN_MAX_AGE_MS = 120_000;
 
 type Fix = { lat: number; lng: number; accuracy: number | null; at: number };
 
@@ -61,7 +63,10 @@ async function reportPosition(known: Fix | null, onLocating: (v: boolean) => voi
         timer = setTimeout(() => resolve(null), FIX_TIMEOUT_MS);
       }),
     ]);
-    if (!fix) return known;
+    // Pas de point GPS à l'instant : la position connue seulement si elle date de moins de 2 min. Plus ancienne (celle
+    // du matin…), le signalement partirait au mauvais endroit : rien n'est envoyé, le serveur applique sa règle
+    // (dernière position enregistrée de moins de 15 min, sinon LOCATION_REQUIRED, message déjà prévu)
+    if (!fix) return known && Date.now() - known.at <= KNOWN_MAX_AGE_MS ? known : null;
     const next: Fix = {
       lat: fix.coords.latitude,
       lng: fix.coords.longitude,

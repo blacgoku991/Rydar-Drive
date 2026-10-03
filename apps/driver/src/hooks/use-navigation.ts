@@ -3,6 +3,7 @@ import {
   type Coord, type LatLng, type ManeuverGlyph, type NavTrack,
 } from "@rydar/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { fetchDriverRoute } from "@/lib/api";
 import type { MyPosition } from "./use-my-position";
 
@@ -68,6 +69,9 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
   const request = useRef(async () => {
     const { me: from, target: to } = latest.current;
     if (!from || !to) return;
+    // Application en arrière-plan (conduite avec Waze / Plans) : aucun calcul d'itinéraire (réseau, fournisseur
+    // éventuellement payant) ; recalcul au retour, au premier point du flux relancé
+    if (AppState.currentState !== "active") return;
     inflight.current?.abort();
     const ctrl = new AbortController();
     inflight.current = ctrl;
@@ -94,6 +98,15 @@ export function useNavigation(me: MyPosition | null, target: LatLng | null, enab
       inflight.current = null;
     };
   }, [enabled, targetKey, hasMe, request]);
+
+  // Retour dans l'application : itinéraire recalculé (aucun calcul n'a eu lieu en arrière-plan)
+  useEffect(() => {
+    if (!enabled || !targetKey) return;
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") void request();
+    });
+    return () => sub.remove();
+  }, [enabled, targetKey, request]);
 
   const current = loaded && loaded.target === targetKey ? loaded : null;
   const pos = useMemo(() => {

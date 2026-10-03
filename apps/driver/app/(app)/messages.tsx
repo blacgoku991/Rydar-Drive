@@ -11,7 +11,7 @@ import * as Haptics from "expo-haptics";
 import { useFocusEffect, useIsFocused, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { frTypo } from "@/components/centrale";
@@ -115,10 +115,16 @@ export default function Messages() {
 
   const thread = tab === "dispatch" ? chat?.dispatch : chat?.fleet;
 
-  // Lu à l'ouverture et à chaque message reçu dans le fil ouvert
+  // Lu à l'ouverture et à chaque message reçu dans le fil ouvert — application au PREMIER PLAN seulement : écran
+  // Messages resté affiché sous Waze (iPhone en ligne : app vivante), un message reçu n'est pas « Lu par le chauffeur »
+  const [appActive, setAppActive] = useState(AppState.currentState === "active");
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => setAppActive(s === "active"));
+    return () => sub.remove();
+  }, []);
   const marking = useRef(false);
   useEffect(() => {
-    if (!focused || !chat || !thread || thread.unread <= 0 || marking.current) return;
+    if (!focused || !appActive || !chat || !thread || thread.unread <= 0 || marking.current) return;
     marking.current = true;
     api
       .markRead(thread.thread)
@@ -127,7 +133,7 @@ export default function Messages() {
       .finally(() => {
         marking.current = false;
       });
-  }, [focused, chat, thread, refreshChat]);
+  }, [focused, appActive, chat, thread, refreshChat]);
 
   const rows = useMemo<Row[]>(() => {
     const list: Row[] = [];

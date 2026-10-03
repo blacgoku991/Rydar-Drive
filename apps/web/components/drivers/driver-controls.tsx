@@ -176,7 +176,13 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
             <Field label="Prénom" error={errors.firstName}><Input name="firstName" defaultValue={driver.first_name} /></Field>
             <Field label="Nom" error={errors.lastName}><Input name="lastName" defaultValue={driver.last_name} /></Field>
             <Field label="Téléphone" error={errors.phone}><Input name="phone" defaultValue={driver.phone} /></Field>
-            <Field label="E-mail" error={errors.email}><Input name="email" defaultValue={driver.email ?? ""} /></Field>
+            <Field
+              label="E-mail de contact"
+              hint="L'identifiant de connexion du chauffeur reste l'adresse utilisée à la création du compte."
+              error={errors.email}
+            >
+              <Input name="email" defaultValue={driver.email ?? ""} />
+            </Field>
             <Field label="N° carte VTC" optional className="col-span-2"><Input name="vtc" defaultValue={driver.vtc_card_number ?? ""} /></Field>
             <Field label="Marque" optional><Input name="brand" defaultValue={driver.vehicle?.brand ?? ""} /></Field>
             <Field label="Modèle" error={errors["vehicle.model"]}><Input name="model" defaultValue={driver.vehicle?.model ?? ""} /></Field>

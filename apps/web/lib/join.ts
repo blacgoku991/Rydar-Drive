@@ -9,7 +9,7 @@ import { JOIN_ALREADY_REGISTERED, JOIN_LINK_INACTIVE, joinErrorCopy, joinInfoMod
 import { audit } from "@/lib/audit";
 import { LEGAL_VERSION } from "@/lib/legal";
 import { rateLimitAll } from "@/lib/rate-limit";
-import { clientIp } from "@/lib/request";
+import { clientIp, ipBucket } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type JoinResult =
@@ -35,8 +35,8 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
   if (!parsed.success) return { ok: false, error: "Vérifiez les champs signalés.", fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
 
-  // Limitation de débit : par adresse IP et par e-mail
-  const ip = await clientIp();
+  // Limitation de débit : par adresse IP (IPv6 regroupée par /64 : un client en dispose de 2^64) et par e-mail
+  const ip = ipBucket(await clientIp());
   const limit = await rateLimitAll([
     { key: `join:ip:${ip}`, limit: 8, windowSec: 900 },
     { key: `join:email:${v.email}`, limit: 4, windowSec: 3600 },
@@ -48,6 +48,9 @@ export async function applyWithJoinLink(code: string, input: z.input<typeof join
   const info = infoData as JoinInfo | null;
   if (!info?.ok || !info.organization) return { ok: false, error: LINK_INACTIVE };
   const org = info.organization;
+  // Plafond par organisation (adresses et e-mails changeants) : chaque essai crée un compte et une candidature
+  const orgLimit = await rateLimitAll([{ key: `join:org:${org.id}`, limit: 30, windowSec: 3600 }]);
+  if (!orgLimit.ok) return { ok: false, error: "Trop de tentatives. Réessayez dans quelques minutes." };
   // Textes selon le modèle (flotte : jamais « la centrale ») ; refus volontairement neutre (identité bannie) : on ne dit
   // pas pourquoi
   const copy = joinErrorCopy(org.name, joinInfoModel(info.dispatch_model));
