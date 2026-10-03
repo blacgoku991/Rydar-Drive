@@ -13,8 +13,9 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { runAction } from "@/lib/run-action";
 
 /**
- * `shortNotice` : moins de 30 jours avant ORG_LEGAL_EFFECTIVE_AT (CGV art. 16) — l'envoi reste possible, avec un
- * avertissement dans la confirmation (la date se repousse dans @rydar/shared, puis redéploiement).
+ * `shortNotice` : annoncée aujourd'hui, la version laisserait moins de 30 jours avant ORG_LEGAL_EFFECTIVE_AT (CGV
+ * art. 16 ; même règle que svc_org_terms_notify, qui refuse l'envoi : TERMS_NOTICE_TOO_SHORT) — bouton désactivé : la
+ * date se repousse dans @rydar/shared, puis redéploiement.
  */
 export function OrgTermsNotifyButton({
   toNotify,
@@ -51,13 +52,15 @@ export function OrgTermsNotifyButton({
         variant="outline"
         size="sm"
         onClick={() => setOpen(true)}
-        disabled={effectivePassed || n === 0}
+        disabled={effectivePassed || shortNotice || n === 0}
         title={
           effectivePassed
             ? `Entrée en vigueur atteinte (${limit})\u00a0: l'annonce n'est plus envoyée`
-            : n === 0
-              ? "Toutes les organisations en attente ont déjà été prévenues"
-              : undefined
+            : shortNotice
+              ? `Moins de 30 jours avant le ${limit}\u00a0: repoussez d'abord la date (ORG_LEGAL_EFFECTIVE_AT)`
+              : n === 0
+                ? "Toutes les organisations en attente ont déjà été prévenues"
+                : undefined
         }
       >
         <Mail /> Prévenir par e-mail
@@ -68,27 +71,21 @@ export function OrgTermsNotifyButton({
           description={`Annonce des CGV et de l'accord de traitement du ${version} aux propriétaires de ${n} organisation${n > 1 ? "s" : ""} qui ne les ont pas acceptés et n'ont pas encore été prévenue${n > 1 ? "s" : ""}.`}
         >
           <ul className="space-y-2 text-[13px] text-fg-muted">
-            {shortNotice && (
-              <li className="flex gap-2 text-amber">
-                <span>•</span>
-                <span>
-                  Moins de 30 jours avant le {limit}{" "}: l&apos;article 16 des CGV demande d&apos;annoncer une modification
-                  défavorable au moins 30 jours avant son entrée en vigueur. Repoussez d&apos;abord la date (ORG_LEGAL_EFFECTIVE_AT).
-                </span>
-              </li>
-            )}
             <li className="flex gap-2">
               <span className="text-brand">•</span>
               <span>
-                Contenu fixe{" "}: ce qui change (frais par course possibles pour les flottes comme pour les centrales, en plus de l&apos;abonnement{" "};
-                toute hausse annoncée au moins 30{" "}jours à l&apos;avance), la date d&apos;application (au plus tard le {limit} pour une organisation
-                déjà cliente, c&apos;est-à-dire créée avant la version ou qui avait accepté une version antérieure, avec résiliation
-                sans frais avant), et les liens vers le tableau de bord et les CGV.
+                Contenu fixe{" "}: les principaux changements (ceux en défaveur de l&apos;organisation compris), la date d&apos;application (au plus
+                tard le {limit} pour une organisation déjà cliente, c&apos;est-à-dire créée avant la première annonce de cette version ou qui
+                avait accepté une version antérieure, avec résiliation sans frais avant et remboursement au prorata), et les liens vers le
+                tableau de bord et les CGV.
               </span>
             </li>
             <li className="flex gap-2">
               <span className="text-brand">•</span>
-              <span>Une seule annonce par organisation et par version{" "}: un nouveau clic ne prévient que les organisations pas encore prévenues.</span>
+              <span>
+                Une seule annonce par organisation et par version{" "}: un nouveau clic ne prévient que les organisations pas encore prévenues. Sans
+                annonce ni acceptation, aucune hausse de leurs frais par course ne peut être annoncée (seulement sur accord écrit).
+              </span>
             </li>
             <li className="flex gap-2">
               <span className="text-brand">•</span>

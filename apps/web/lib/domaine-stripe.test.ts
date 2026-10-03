@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
   fail: null as null | { table: string; op: string },
   audits: [] as Row[],
   sessions: [] as Row[],
+  /** Erreur renvoyée par Stripe à la création de la session Checkout */
+  checkoutError: null as null | Error,
   ctx: null as unknown,
 }));
 
@@ -55,6 +57,7 @@ vi.mock("@/lib/stripe", () => {
     checkout: {
       sessions: {
         create: async (params: Row) => {
+          if (h.checkoutError) throw h.checkoutError;
           h.sessions.push(params);
           return { url: "https://checkout.stripe.test/session" };
         },
@@ -283,6 +286,31 @@ describe("Checkout Stripe", () => {
     const res = await call("starter");
     expect(res.status).toBe(200);
     expect(h.sessions[0]!.subscription_data.metadata).toEqual({ organization_id: ORG, plan_code: "starter", previous_plan_id: BUSINESS });
+  });
+
+  it("prix hors taxes : TVA ajoutée par Stripe Tax, adresse de facturation et numéro de TVA demandés", async () => {
+    const res = await call("starter");
+    expect(res.status).toBe(200);
+    expect(h.sessions[0]).toMatchObject({
+      automatic_tax: { enabled: true },
+      billing_address_collection: "required",
+      tax_id_collection: { enabled: true },
+      customer_update: { address: "auto", name: "auto" },
+    });
+  });
+
+  it("Stripe Tax pas activé : aucun abonnement sans TVA, message clair (503)", async () => {
+    h.checkoutError = Object.assign(new Error("Stripe Tax has not been activated on your account."), { type: "StripeInvalidRequestError" });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const res = await call("starter");
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toMatch(/TVA/);
+      expect(h.sessions).toHaveLength(0);
+    } finally {
+      h.checkoutError = null;
+      spy.mockRestore();
+    }
   });
 
   it("offre non publique : refusée, sauf celle attribuée à la centrale", async () => {

@@ -117,12 +117,12 @@ const FACTS: { icon: LucideIcon; title: string; text: string }[] = [
   {
     icon: RefreshCw,
     title: "Vous gardez la main",
-    text: "Changer d'offre ou arrêter le renouvellement se fait à tout moment depuis le tableau de bord ; l'arrêt prend effet à la fin de la période payée.",
+    text: "Changer d'offre ou arrêter le renouvellement se fait à tout moment depuis le tableau de bord ; l'arrêt prend effet à la fin de la période payée (remboursement au prorata si vous résiliez parce que vous refusez une hausse de vos frais ou une modification défavorable des CGV).",
   },
   {
     icon: Receipt,
     title: "Changements de prix annoncés",
-    text: "Abonnement hors taxes : un changement de son prix est annoncé au moins 30 jours à l'avance et ne s'applique qu'au renouvellement suivant. Frais par course : toute hausse est annoncée au moins 30 jours avant de s'appliquer, sauf accord écrit de votre part ; vous pouvez résilier sans frais avant.",
+    text: "Abonnement hors taxes, TVA en sus : un changement de son prix est annoncé au moins 30 jours à l'avance et ne s'applique qu'au renouvellement suivant. Frais par course : toute hausse est annoncée par e-mail au moins 30 jours avant de s'appliquer, sauf accord écrit de votre part ; vous pouvez résilier sans frais avant, avec remboursement au prorata de l'abonnement payé d'avance.",
   },
   {
     icon: FileText,

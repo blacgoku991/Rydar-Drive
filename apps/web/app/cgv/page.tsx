@@ -1,7 +1,8 @@
-import { legalDateLabel } from "@rydar/shared";
+import { ORG_LEGAL_CHANGES, legalDateLabel } from "@rydar/shared";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
+import { fr } from "@/components/marketing/typo";
 import { CGV_UPDATED_AT, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,9 @@ const PREVIOUS_VERSION = { href: "/cgv/2026-09-27", label: "27 septembre 2026" }
 
 // L'article 5 décrit exactement le code (le modifier avec lui) : registre, paiements et blocage (migrations
 // 20260924003000, 20260924004400 private.platform_position), frais des flottes et taux figés à la fin de course
-// (20260924006400), hausse annoncée 30 jours à l'avance ou sur accord écrit et e-mails (20260924006600).
+// (20260924006400), hausse annoncée 30 jours à l'avance par un e-mail parti à temps ou sur accord écrit, e-mails, délai
+// de 45 jours au plus, baisse acceptée sans décision sous 30 jours (20260924006600). « Principaux changements » :
+// ORG_LEGAL_CHANGES (@rydar/shared), même liste que le bandeau et l'e-mail d'annonce.
 export default async function TermsOfSalePage() {
   const legal = await getLegalInfo();
   const contact = legal.email ? (
@@ -35,18 +38,20 @@ export default async function TermsOfSalePage() {
         réservation, exploitant de VTC ou flotte (la « centrale »), quel que soit son modèle d&apos;exploitation (article 3).
         Elles sont réservées aux professionnels. Version {ORG_LEGAL_VERSION}.
       </p>
-      <p>
-        <span className="text-fg">Ce qui change par rapport à la version du {PREVIOUS_VERSION.label} :</span> des frais
-        plateforme par course peuvent s&apos;appliquer aux flottes comme aux centrales à commission, en plus de
-        l&apos;abonnement (articles 3 à 5) ; ces frais s&apos;entendent toutes taxes comprises, et toute hausse est annoncée
-        au moins 30 jours à l&apos;avance, sauf accord écrit de la centrale (article 5). Pour une centrale déjà cliente avant
-        la mise en ligne de la présente version, celle-ci s&apos;applique dès son acceptation dans le tableau de bord, et au
-        plus tard le {effectiveAt} ; tant qu&apos;elle ne l&apos;a pas acceptée, aucune hausse de frais par course ne lui est
-        appliquée avant cette date sans son accord écrit, et elle peut résilier le contrat sans frais avant cette date.{" "}
-        <Link href={PREVIOUS_VERSION.href} className={link}>
-          Version précédente ({PREVIOUS_VERSION.label})
-        </Link>
-      </p>
+      <div id="changements" className="space-y-2">
+        <p className="text-fg">Principaux changements par rapport à la version du {PREVIOUS_VERSION.label} :</p>
+        <LegalList items={ORG_LEGAL_CHANGES.map((c) => fr(c))} />
+        <p>
+          Pour une centrale déjà cliente avant la mise en ligne de la présente version, celle-ci s&apos;applique dès son
+          acceptation dans le tableau de bord, et au plus tard le {effectiveAt} ; tant qu&apos;elle ne l&apos;a pas acceptée,
+          aucune hausse de frais par course ne lui est appliquée avant cette date sans son accord écrit, et elle peut résilier
+          le contrat sans frais ni préavis avant cette date, avec remboursement au prorata de l&apos;abonnement payé
+          d&apos;avance (article 7).{" "}
+          <Link href={PREVIOUS_VERSION.href} className={link}>
+            Version précédente ({PREVIOUS_VERSION.label})
+          </Link>
+        </p>
+      </div>
 
       <LegalSection title="1. Rôle de Rydar Drive">
         <p className="text-fg">
@@ -91,9 +96,9 @@ export default async function TermsOfSalePage() {
         <LegalList
           items={[
             <>Le prix de l&apos;abonnement est exprimé hors taxes ; la TVA au taux en vigueur s&apos;y ajoute.</>,
-            <>L&apos;abonnement est mensuel ou annuel, payable d&apos;avance par les moyens proposés par Stripe, le prestataire de paiement de l&apos;éditeur. Son montant est celui affiché dans l&apos;offre au moment de la souscription. Il se renouvelle automatiquement pour la même durée. Les factures sont émises par Stripe et accessibles depuis le tableau de bord.</>,
+            <>L&apos;abonnement est mensuel ou annuel, payable d&apos;avance par les moyens proposés par Stripe, le prestataire de paiement de l&apos;éditeur. Son montant hors taxes est celui affiché dans l&apos;offre au moment de la souscription ; la TVA y est ajoutée au paiement. Il se renouvelle automatiquement pour la même durée. Les factures sont émises par Stripe et accessibles depuis le tableau de bord.</>,
             <>L&apos;abonnement peut se cumuler avec des frais plateforme par course terminée, qui se règlent à part, selon l&apos;article 5.</>,
-            <>La centrale peut changer d&apos;offre ou arrêter le renouvellement à tout moment depuis le tableau de bord ; l&apos;arrêt prend effet à la fin de la période payée, sans remboursement de la période en cours.</>,
+            <>La centrale peut changer d&apos;offre ou arrêter le renouvellement à tout moment depuis le tableau de bord ; l&apos;arrêt prend effet à la fin de la période payée, sans remboursement de la période en cours, sauf résiliation pour refus d&apos;une hausse des frais ou d&apos;une modification défavorable des CGV (article 7).</>,
             <>Un changement du prix de l&apos;abonnement est annoncé au moins 30 jours à l&apos;avance et ne s&apos;applique qu&apos;au renouvellement suivant ; la centrale peut arrêter le renouvellement ou résilier avant.</>,
           ]}
         />
@@ -103,17 +108,17 @@ export default async function TermsOfSalePage() {
         <LegalList
           items={[
             <>Dans les deux modèles d&apos;exploitation, chaque course <span className="text-fg">terminée</span> peut porter des frais plateforme dus à l&apos;éditeur : un pourcentage du prix de la course, un montant fixe par course, ou les deux. Les taux de chaque centrale sont ceux convenus avec elle et affichés dans son tableau de bord ; ils ne changent ensuite que selon le présent article. Une course annulée ne porte aucuns frais.</>,
-            <>Les frais sont exprimés toutes taxes comprises : les montants calculés et affichés (frais de chaque course, solde, échéances) sont ceux à payer, TVA éventuelle incluse ; rien ne s&apos;y ajoute.</>,
+            <>Les frais sont exprimés toutes taxes comprises : les montants calculés et affichés (frais de chaque course, solde, échéances) sont ceux à payer, TVA éventuelle incluse ; aucune taxe ne s&apos;y ajoute (en cas de retard, les pénalités et l&apos;indemnité de l&apos;article 6 restent dues).</>,
             <>Modèle flotte : les frais sont le pourcentage du prix de la course plus le montant fixe, sans plafond. Une course sans prix porte le seul montant fixe ; la part en pourcentage s&apos;y ajoute si un prix est saisi ensuite.</>,
             <>Modèle centrale à commission : les frais sont calculés sur le prix de la course et déduits, dans la répartition faite par le logiciel, avant la part du chauffeur et la commission ; ils ne dépassent jamais ce prix. Une course sans prix ne porte aucuns frais tant que son prix n&apos;est pas saisi. L&apos;éditeur ne retient rien sur le prix payé par le client : la centrale lui règle les frais selon le présent article.</>,
             <>Taux appliqués à une course : en modèle flotte, ceux en vigueur à la fin de la course, qui restent les siens même si son prix est corrigé ensuite ; en modèle centrale à commission, ceux en vigueur au moment où la répartition du prix est calculée, c&apos;est-à-dire à la création de la course si son prix est connu, puis à chaque saisie ou modification de son prix, de la commission ou du mode de paiement, y compris après la course (la différence est alors inscrite en correction), et, pour les courses en cours, au passage au modèle centrale à commission.</>,
             <>Le modèle retenu pour une course est celui de la centrale à la fin de la course. Si le modèle change ensuite : une course terminée en modèle flotte suit encore la règle de ce modèle, sauf si, corrigée après le passage au modèle centrale à commission, elle reçoit un règlement chauffeur (elle suit alors la règle de ce modèle, par correction) ; une course terminée en modèle centrale à commission garde ses frais, même si elle est corrigée après le retour au modèle flotte.</>,
-            <>Changement des taux : les taux fixés à l&apos;ouverture du compte s&apos;appliquent dès l&apos;ouverture ; ensuite, une baisse s&apos;applique dès son enregistrement. Une hausse (augmentation du pourcentage ou du montant fixe, même si l&apos;autre baisse, ou mise en place de frais pour une centrale qui n&apos;en avait pas) est annoncée au propriétaire par e-mail (à défaut, à l&apos;adresse de la centrale) et dans le tableau de bord au moins 30 jours avant sa date d&apos;effet, ou s&apos;applique dès son enregistrement si la centrale en a donné son accord écrit. Une hausse annoncée peut être annulée, réduite ou reportée sans nouveau délai ; toute autre modification est une nouvelle hausse.</>,
-            <>La centrale qui refuse une hausse annoncée peut résilier le contrat par écrit avant sa date d&apos;effet, sans frais et sans le préavis de l&apos;article 7 ; les frais des courses terminées avant la résiliation restent dus.</>,
+            <>Changement des taux : les taux fixés à l&apos;ouverture du compte s&apos;appliquent dès l&apos;ouverture et sont communiqués par e-mail au propriétaire ; ensuite, une baisse s&apos;applique dès son enregistrement. Une hausse (augmentation du pourcentage ou du montant fixe, même si l&apos;autre baisse, ou mise en place de frais pour une centrale qui n&apos;en avait pas) est annoncée au propriétaire par e-mail (à défaut, à l&apos;adresse de la centrale) et dans le tableau de bord au moins 30 jours avant sa date d&apos;effet, ou s&apos;applique dès son enregistrement si la centrale en a donné son accord écrit. Une hausse dont l&apos;e-mail d&apos;annonce n&apos;est pas parti au moins 30 jours avant sa date d&apos;effet ne s&apos;applique pas. Une hausse annoncée peut être annulée, réduite ou reportée sans nouveau délai ; toute autre modification est une nouvelle hausse.</>,
+            <>La centrale qui refuse une hausse annoncée peut résilier le contrat par écrit avant sa date d&apos;effet, sans frais et sans préavis, dans les conditions de l&apos;article 7 (remboursement au prorata de l&apos;abonnement payé d&apos;avance) ; les frais des courses terminées avant la résiliation restent dus.</>,
             <>Les frais sont dus par la centrale à qui appartient la course, y compris lorsque l&apos;option réseau partagé est activée, dès la fin de la course : qu&apos;elle ait encaissé ou non le client ou le chauffeur, et même si elle annule ou conteste la commission due par le chauffeur.</>,
-            <>Les frais sont inscrits dans un relevé qui ne se modifie pas et ne se supprime pas : tout changement ultérieur fait l&apos;objet d&apos;une écriture de correction. Une correction à la hausse (prix corrigé à la hausse après la course, par exemple) compte immédiatement ; une correction à la baisse reste en attente et ne compte qu&apos;après accord de l&apos;éditeur. L&apos;éditeur peut aussi y inscrire, avec son motif, un avoir ou la correction d&apos;une erreur de calcul des frais ; aucun autre montant n&apos;y est ajouté sans l&apos;accord écrit de la centrale.</>,
-            <>Les frais sont regroupés par cycle, mensuel (par défaut) ou hebdomadaire, dans le fuseau horaire de la centrale. L&apos;échéance est la fin du cycle augmentée du délai de paiement, de 5 jours par défaut. Une écriture enregistrée après la fin de la course (prix saisi ou corrigé ensuite) suit l&apos;échéance du cycle de son enregistrement. Le cycle, le délai de paiement et, le cas échéant, le seuil de blocage sont affichés dans le tableau de bord ; l&apos;éditeur ne les modifie en défaveur de la centrale qu&apos;avec son accord écrit, et un changement ne modifie pas l&apos;échéance des frais déjà inscrits.</>,
-            <>À la fin de chaque cycle, l&apos;éditeur adresse à la centrale une facture récapitulative des frais du cycle. Le relevé du tableau de bord sert au suivi : ce n&apos;est pas une facture.</>,
+            <>Les frais sont inscrits dans un relevé qui ne se modifie pas et ne se supprime pas : tout changement ultérieur fait l&apos;objet d&apos;une écriture de correction. Une correction à la hausse (prix corrigé à la hausse après la course, par exemple) compte immédiatement ; une correction à la baisse reste en attente de la décision de l&apos;éditeur, qui ne peut la refuser que si elle ne correspond pas à la course réellement effectuée et payée (prix, commission ou mode de paiement), par une décision motivée affichée dans le tableau de bord ; sans décision dans les 30 jours, elle est acceptée. L&apos;éditeur peut aussi y inscrire, avec son motif, un avoir ou la correction d&apos;une erreur de calcul des frais ; aucun autre montant n&apos;y est ajouté sans l&apos;accord écrit de la centrale.</>,
+            <>Les frais sont regroupés par cycle, mensuel (par défaut) ou hebdomadaire, dans le fuseau horaire de la centrale. L&apos;échéance est la fin du cycle augmentée du délai de paiement, de 5 jours par défaut et de 45 jours au plus. Une écriture enregistrée après la fin de la course (prix saisi ou corrigé ensuite) suit l&apos;échéance du cycle de son enregistrement. Le cycle, le délai de paiement et, le cas échéant, le seuil de blocage sont affichés dans le tableau de bord ; l&apos;éditeur ne les modifie en défaveur de la centrale qu&apos;avec son accord écrit, et un changement ne modifie pas l&apos;échéance des frais déjà inscrits.</>,
+            <>À la fin de chaque cycle, l&apos;éditeur adresse à la centrale une facture récapitulative des frais du cycle, c&apos;est-à-dire des frais pris en compte pendant celui-ci (écritures enregistrées pendant le cycle, baisses acceptées pendant le cycle), qui en indique l&apos;échéance. Le relevé du tableau de bord sert au suivi : ce n&apos;est pas une facture.</>,
             <>La centrale paie par les moyens affichés par l&apos;éditeur (virement sur l&apos;IBAN de l&apos;éditeur, lien de paiement), avec la référence indiquée. Elle déclare son paiement avec « J&apos;ai payé » ; il n&apos;est pris en compte qu&apos;une fois confirmé par l&apos;éditeur, pour le montant réellement reçu. Les paiements soldent d&apos;abord les échéances les plus anciennes.</>,
             <>Le tableau de bord (menu « Encaissements » en modèle centrale à commission, « Frais Rydar » en modèle flotte) affiche les taux, une hausse annoncée et sa date d&apos;effet, le solde, les échéances et le relevé détaillé, exportable en CSV.</>,
             <>En cas de retard, l&apos;éditeur peut relancer la centrale dans son tableau de bord et, en modèle centrale à commission, si ce canal est activé, par WhatsApp au téléphone du propriétaire ou, à défaut, de la centrale.</>,
@@ -136,7 +141,8 @@ export default async function TermsOfSalePage() {
         <LegalList
           items={[
             <>Le contrat court à compter de l&apos;ouverture du compte, pour une durée indéterminée ou pour la durée de l&apos;abonnement renouvelé.</>,
-            <>Chaque partie peut y mettre fin par écrit ; sans abonnement en cours, avec un préavis de 30 jours. La résiliation par la centrale avant la date d&apos;effet d&apos;une hausse des frais (article 5) ou avant l&apos;entrée en vigueur d&apos;une modification défavorable des CGV (article 16) se fait sans frais et sans préavis.</>,
+            <>Chaque partie peut y mettre fin par écrit ; sans abonnement en cours, avec un préavis de 30 jours.</>,
+            <>La centrale qui refuse une hausse des frais (article 5) ou une modification défavorable des CGV (article 16) peut résilier le contrat sans frais et sans préavis avant sa date d&apos;effet ou son entrée en vigueur : la résiliation prend effet à la date qu&apos;elle choisit, au plus tard la veille de cette date, et la part de l&apos;abonnement payée d&apos;avance pour la période restant à courir lui est remboursée au prorata.</>,
             <>En cas de manquement grave (impayé persistant, fraude, usage illicite, atteinte à la sécurité du service), l&apos;éditeur peut suspendre le compte après une mise en demeure restée sans effet pendant 8 jours, ou immédiatement en cas d&apos;urgence, puis résilier le contrat.</>,
             <>Une centrale suspendue garde l&apos;accès à ses informations de paiement et peut déclarer un paiement.</>,
           ]}
@@ -226,8 +232,8 @@ export default async function TermsOfSalePage() {
         <p>
           L&apos;éditeur peut modifier les CGV. La nouvelle version est présentée dans le tableau de bord au
           propriétaire et aux administrateurs, qui l&apos;acceptent ; une modification défavorable est annoncée au moins
-          30 jours à l&apos;avance et la centrale peut résilier sans frais avant son entrée en vigueur. La version
-          précédente reste consultable sur le site (lien en tête des présentes).
+          30 jours à l&apos;avance et la centrale peut résilier sans frais avant son entrée en vigueur (article 7). La
+          version précédente reste consultable sur le site (lien en tête des présentes).
         </p>
       </LegalSection>
 

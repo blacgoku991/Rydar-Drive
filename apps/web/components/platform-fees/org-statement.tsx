@@ -97,7 +97,7 @@ export function StatementSummary({ s }: { s: PlatformStatement }) {
     {
       label: "Solde de clôture",
       value: price(Math.abs(s.closing_cents), cur),
-      sub: s.closing_cents > 0 ? "restant à reverser" : s.closing_cents < 0 ? "d'avance en votre faveur" : "rien à régler",
+      sub: s.closing_cents > 0 ? "restant à régler" : s.closing_cents < 0 ? "d'avance en votre faveur" : "rien à régler",
       op: "=",
       cls: s.closing_cents > 0 ? "text-amber" : "text-green",
     },

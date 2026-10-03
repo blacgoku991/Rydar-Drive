@@ -93,7 +93,7 @@ const FAQ_GROUPS: { id: string; title: string; items: Question[] }[] = [
       {
         q: "Puis-je arrêter mon abonnement ?",
         a: fr(
-          "Oui, à tout moment depuis le tableau de bord : l'arrêt du renouvellement prend effet à la fin de la période payée, sans remboursement de la période en cours. Vous pouvez aussi changer d'offre.",
+          "Oui, à tout moment depuis le tableau de bord : l'arrêt du renouvellement prend effet à la fin de la période payée, sans remboursement de la période en cours. Exception : si vous résiliez parce que vous refusez une hausse de vos frais par course ou une modification défavorable des CGV, la résiliation se fait sans frais ni préavis avant sa date d'effet, et la part de l'abonnement payée d'avance pour la période restant à courir vous est remboursée au prorata. Vous pouvez aussi changer d'offre.",
         ),
       },
       {

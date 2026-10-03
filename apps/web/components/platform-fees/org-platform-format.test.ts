@@ -1,6 +1,6 @@
 import type { PlatformEntry, PlatformStatement } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
-import { feeTermsText, frSpaces, rideSettlementText, scheduledFeeChangeText, showSettlementColumn } from "./org-platform-format";
+import { cycleText, feeTermsText, frSpaces, rideSettlementText, scheduledFeeChangeText, showSettlementColumn } from "./org-platform-format";
 
 type Ride = NonNullable<PlatformEntry["ride"]>;
 const ride = (over: Partial<Ride> = {}): Ride => ({
@@ -11,6 +11,19 @@ const statement = (model: "fleet" | "centrale" | undefined, rides: Ride[]) =>
     organization: { id: "o", name: "O", currency: "EUR", timezone: "Europe/Paris", reference: "RYD-O", dispatch_model: model },
     entries: rides.map((r, i) => ({ id: `e${i}`, ride: r }) as PlatformEntry),
   }) as Pick<PlatformStatement, "organization" | "entries">;
+
+describe("cycle et délai de paiement affichés", () => {
+  it("mensuel : « au plus tard le N du mois suivant » jusqu'à 28 jours, puis « sous N jours après la fin du mois »", () => {
+    expect(cycleText({ cycle: "monthly", payment_days: 5 })).toBe("Facturation mensuelle · à régler au plus tard le 5 du mois suivant");
+    expect(cycleText({ cycle: "monthly", payment_days: 1 })).toBe("Facturation mensuelle · à régler au plus tard le 1er du mois suivant");
+    expect(cycleText({ cycle: "monthly", payment_days: 28 })).toBe("Facturation mensuelle · à régler au plus tard le 28 du mois suivant");
+    // Jamais « le 45 du mois suivant » (délai de 45 jours au plus : facture périodique)
+    expect(cycleText({ cycle: "monthly", payment_days: 29 })).toBe("Facturation mensuelle · à régler sous 29 jours après la fin du mois");
+    expect(cycleText({ cycle: "monthly", payment_days: 45 })).toBe("Facturation mensuelle · à régler sous 45 jours après la fin du mois");
+    expect(cycleText({ cycle: "monthly", payment_days: 0 })).toBe("Facturation mensuelle · à régler avant la fin du mois");
+    expect(cycleText({ cycle: "weekly", payment_days: 3 })).toBe("Facturation hebdomadaire · à régler sous 3 jours après la fin de la semaine");
+  });
+});
 
 describe("frais Rydar d'une flotte : relevé et libellés", () => {
   it("course de flotte : « Course de la flotte », jamais « commission »", () => {

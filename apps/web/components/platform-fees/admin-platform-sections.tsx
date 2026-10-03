@@ -140,8 +140,8 @@ export function PendingReductions({ entries, orgName, timeZone = "Europe/Paris" 
         icon={<TrendingDown />}
         description={
           entries.length
-            ? `Prix corrigé à la baisse après la course : ${formatPrice(-total)} de frais en moins si vous acceptez tout. Tant que vous n'avez pas décidé, les frais initiaux restent dus.`
-            : "Quand une centrale ou une flotte baisse le prix d'une course terminée, la baisse de frais attend votre accord ici."
+            ? `Prix corrigé à la baisse après la course : ${formatPrice(-total)} de frais en moins si vous acceptez tout. Refus seulement si la correction ne correspond pas à la course réellement effectuée et payée, avec un motif (affiché à l'organisation) ; sans décision dans les 30 jours, la baisse est acceptée automatiquement (CGV, article 5).`
+            : "Quand une centrale ou une flotte baisse le prix d'une course terminée, la baisse de frais attend votre décision ici (30 jours au plus, puis acceptée automatiquement)."
         }
         action={entries.length ? <Badge tone="amber">{entries.length} en attente</Badge> : undefined}
       />

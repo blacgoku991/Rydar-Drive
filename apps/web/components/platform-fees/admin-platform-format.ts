@@ -6,10 +6,13 @@ import {
   platformEntryStatusMeta,
   PLATFORM_PAYMENT_METHOD_META,
   PLATFORM_PAYMENT_STATUS_META,
+  addIsoDays,
   formatPrice,
+  localIsoDay,
   settlementStatusLabel,
   type PaymentMethod,
   type PlatformAccount,
+  type PlatformBillingCycle,
   type PlatformEntry,
   type PlatformPayment,
   type PlatformPaymentMethod,
@@ -87,6 +90,34 @@ export function lastMonths(current: string, n: number) {
 }
 
 export const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** Jour « AAAA-MM-JJ » réel (export des frais à facturer). */
+export const ISO_DAY_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+export type InvoiceCycle = { from: string; to: string; label: string; current: boolean };
+
+/**
+ * Cycles de facturation d'une organisation, le plus récent (en cours) d'abord : mois civils ou semaines du lundi au
+ * dimanche, dans son fuseau ; `from` inclus, `to` exclu (admin_platform_invoice_lines). Facture récapitulative de chaque
+ * cycle : frais pris en compte pendant le cycle (CGV art. 5).
+ */
+export function invoiceCycles(cycle: PlatformBillingCycle, now: Date, timeZone: string, n: number): InvoiceCycle[] {
+  if (cycle === "weekly") {
+    const today = localIsoDay(now, timeZone);
+    const monday = addIsoDays(today, -((new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7));
+    return Array.from({ length: n }, (_, i) => {
+      const from = addIsoDays(monday, -7 * i);
+      const to = addIsoDays(from, 7);
+      return { from, to, label: `Semaine du ${formatDay(from, timeZone)} au ${formatDay(addIsoDays(to, -1), timeZone)}`, current: i === 0 };
+    });
+  }
+  return lastMonths(monthKey(now, timeZone), n).map((m, i) => {
+    const [y, mo] = m.split("-").map(Number);
+    const next = new Date(Date.UTC(y!, mo!, 1));
+    const to = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    return { from: `${m}-01`, to, label: capitalize(monthLabel(m)), current: i === 0 };
+  });
+}
 
 // ---------------------------------------------------------------------------- compte
 /** Retard lisible : { text: « 12 j de retard », since: « depuis le 5 oct. » } ou null. */

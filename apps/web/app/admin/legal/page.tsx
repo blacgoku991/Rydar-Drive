@@ -1,4 +1,4 @@
-import { formatDate, legalAcceptanceState, legalDateLabel, localIsoDay, type LegalAcceptanceState } from "@rydar/shared";
+import { formatDate, legalAcceptanceState, legalDateLabel, localIsoDay, noticeMinDay, type LegalAcceptanceState } from "@rydar/shared";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalInfoForm } from "@/components/admin/legal-form";
@@ -43,8 +43,10 @@ export default async function AdminLegalPage() {
   // L'annonce dit « au plus tard le … » : plus envoyée une fois cette date atteinte (heure de Paris, comme la base)
   const effectivePassed = localIsoDay(new Date(), "Europe/Paris") >= ORG_LEGAL_EFFECTIVE_AT;
   // CGV art. 16 : une modification défavorable est annoncée au moins 30 jours avant son entrée en vigueur. Annoncée
-  // aujourd'hui, elle laisserait moins de 30 jours (ORG_LEGAL_EFFECTIVE_AT à repousser avant d'envoyer).
-  const shortNotice = !effectivePassed && localIsoDay(new Date(Date.now() + 30 * 86_400_000), "Europe/Paris") >= ORG_LEGAL_EFFECTIVE_AT;
+  // aujourd'hui, la version ne pourrait entrer en vigueur avant `minDay` (premier minuit, heure de Paris, après
+  // maintenant + 30 jours : même règle que svc_org_terms_notify, qui refuse l'envoi) ; ORG_LEGAL_EFFECTIVE_AT à repousser.
+  const minDay = noticeMinDay(new Date(), "Europe/Paris");
+  const shortNotice = !effectivePassed && minDay > ORG_LEGAL_EFFECTIVE_AT;
 
   return (
     <>
@@ -88,9 +90,10 @@ export default async function AdminLegalPage() {
                     </p>
                     {shortNotice && (
                       <p className="text-amber">
-                        Moins de 30 jours avant le {legalDateLabel(ORG_LEGAL_EFFECTIVE_AT)}{"\u00a0"}: l&apos;article 16 des CGV
-                        demande d&apos;annoncer une modification défavorable au moins 30 jours avant son entrée en vigueur.
-                        Repoussez d&apos;abord la date (ORG_LEGAL_EFFECTIVE_AT, @rydar/shared) puis redéployez.
+                        Envoi bloqué{"\u00a0"}: annoncée aujourd&apos;hui, la version ne pourrait entrer en vigueur avant le{" "}
+                        {legalDateLabel(minDay)}, et l&apos;annonce dit «{"\u00a0"}au plus tard le {legalDateLabel(ORG_LEGAL_EFFECTIVE_AT)}{"\u00a0"}»
+                        (article 16 des CGV{"\u00a0"}: au moins 30 jours avant). Repoussez d&apos;abord la date (ORG_LEGAL_EFFECTIVE_AT,
+                        @rydar/shared, au {legalDateLabel(minDay)} au plus tôt) puis redéployez.
                       </p>
                     )}
                     <OrgTermsNotifyButton toNotify={toNotify} effectivePassed={effectivePassed} shortNotice={shortNotice} />
