@@ -40,6 +40,7 @@ const NBSP = " ";
 
 /** Refus levés en erreur à l'acceptation : l'offre se ferme avec leur motif (réessayer n'y changerait rien). */
 const CLOSING_CODES = new Set(["OFFER_CHANGED", "DRIVER_BUSY_AT_TIME", "OFFER_CLOSED", "OFFER_EXPIRED", "NETWORK_CONSENT_REQUIRED", "NETWORK_DISABLED"]);
+
 const passengersText = (n: number) => `${n}${NBSP}passager${n > 1 ? "s" : ""}`;
 const luggageText = (n: number) => (n > 0 ? `${n}${NBSP}bagage${n > 1 ? "s" : ""}` : "Sans bagage");
 

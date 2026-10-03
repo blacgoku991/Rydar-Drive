@@ -299,7 +299,7 @@ function OrganizationBlock({
                 accessibilityHint={pay.linkDomain ? `Ouvre ${pay.linkDomain}` : undefined}
               />
             ) : null}
-            {pay.link && pay.linkDomain ? <Text style={styles.domain}>Lien de paiement de {org.name} : {pay.linkDomain}</Text> : null}
+            {pay.link && pay.linkDomain ? <Text style={styles.domain}>{frTypo(`Lien de paiement de ${org.name} : ${pay.linkDomain}`)}</Text> : null}
             {pay.manual.map((m, i) => (
               <BigButton
                 key={m}

@@ -665,7 +665,7 @@ export function partnerItemView(i: DriverNetworkSettlementItem, giver: string, t
     status: held ? "Retenu" : driverSettlementLabel(i.status, i.direction, overdue && owes),
     statusTone: overdue && owes ? "red" : held ? "amber" : STATUS_TONE[i.status] ?? "muted",
     detail: detail && frTypo(detail),
-    dispute: dispute && { label: dispute.label, prompt: frTypo(dispute.prompt) },
+    dispute: dispute && { label: frTypo(dispute.label), prompt: frTypo(dispute.prompt) },
     disputed: i.driver_disputed_at
       ? frTypo(`Contestation envoyée ${pastWhen(i.driver_disputed_at, tz, today)}${i.driver_dispute_reason ? ` : « ${i.driver_dispute_reason} »` : ""}`)
       : null,

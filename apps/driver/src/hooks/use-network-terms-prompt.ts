@@ -46,6 +46,6 @@ export function useNetworkTermsPrompt(focused: boolean, now: number) {
     const version = network.terms.version;
     setProposed({ userId, version });
     void AsyncStorage.setItem(key(userId), version).catch(() => null);
-    router.push({ pathname: "/network-terms", params: { from: "home" } });
+    router.push("/network-terms");
   }, [focused, userId, network, proposed, home, now]);
 }

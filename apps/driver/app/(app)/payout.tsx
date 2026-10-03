@@ -87,7 +87,7 @@ export default function Payout() {
 
   function remove() {
     if (busy || !info?.configured) return;
-    Alert.alert("Supprimer vos coordonnées bancaires ?", frTypo("Les organisations partenaires ne pourront plus vous verser votre part par virement."), [
+    Alert.alert(frTypo("Supprimer vos coordonnées bancaires ?"), frTypo("Les organisations partenaires ne pourront plus vous verser votre part par virement."), [
       { text: "Annuler", style: "cancel" },
       {
         text: "Supprimer",

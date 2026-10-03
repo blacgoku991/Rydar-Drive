@@ -8,7 +8,7 @@ import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Linking, Platform, Vibration } from "react-native";
 import { frTypo } from "@/components/centrale";
-import { api, ApiError, isMissingRpc, refusalText } from "@/lib/api";
+import { api, ApiError, isMissingRpc, refusalText, type AcceptResult } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
 import { appEvents } from "@/lib/events";
 import { ensureTracking, locationPermissionState, MAX_ACCURACY_M, requestLocationPermissions, startTracking, stopTracking } from "@/lib/location";
@@ -754,7 +754,10 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       }
     }
     if (r.actionIdentifier === "ACCEPT" && offerId) {
-      const res = await api.accept(offerId).catch(() => null);
+      // Refus levé en erreur (course partenaire modifiée, créneau déjà pris…) : motif affiché ; réseau : null
+      const res = await api
+        .accept(offerId)
+        .catch((e: unknown): AcceptResult | null => (e instanceof ApiError && e.code ? { ok: false, code: e.code, message: e.message } : null));
       if (res?.ok) offerSession.accepted.add(offerId);
       await refresh();
       if (!res) router.push({ pathname: "/offer/[id]", params: { id: offerId } }); // réseau : réessai depuis l'offre

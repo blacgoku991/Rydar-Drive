@@ -438,12 +438,12 @@ describe("« Courses partenaires » : un bloc par organisation, avec SES moyens"
     expect(plain(due.meta)).toContain("50 € · Espèces");
     const notReceived = partnerItemView(item({ status: "disputed", disputed_at: iso(-60), can_dispute: true }), "Taxi Alpha", TZ, NOW);
     expect(notReceived.notReceived).toBe("Taxi Alpha n'a pas reçu ce paiement.");
-    expect(notReceived.dispute?.label).toBe("Je conteste : j'ai payé");
+    expect(plain(notReceived.dispute?.label)).toBe("Je conteste : j'ai payé");
     const held = partnerItemView(item({ direction: "centrale_owes", amount_cents: 3_750, on_hold: true, hold_until: iso(72 * 60) }), "Taxi Alpha", TZ, NOW);
     expect(held).toMatchObject({ owes: false, kind: "votre part", status: "Retenu", statusTone: "amber" });
     expect(plain(held.amount)).toBe("+37,50 €");
     const paid = partnerItemView(item({ direction: "centrale_owes", status: "paid", settled_at: iso(-120), can_dispute: true }), "Taxi Alpha", TZ, NOW);
-    expect(paid.dispute?.label).toBe("Je conteste : pas reçu");
+    expect(plain(paid.dispute?.label)).toBe("Je conteste : pas reçu");
     const sent = partnerItemView(item({ direction: "centrale_owes", status: "paid", settled_at: iso(-120), can_dispute: false, driver_disputed_at: iso(-30), driver_dispute_reason: "Rien reçu" }), "Taxi Alpha", TZ, NOW);
     expect(sent.dispute).toBeNull();
     expect(plain(sent.disputed)).toBe("Contestation envoyée aujourd'hui 09:30 : « Rien reçu »");

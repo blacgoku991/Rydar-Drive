@@ -32,7 +32,7 @@ export function BookingVoucherCard({ voucher, tz }: { voucher: BookingVoucher; t
       {open && (
         <View style={styles.body}>
           {view.lines.map((line) => (
-            <View key={line.key} style={styles.line} accessible accessibilityLabel={`${line.label} : ${line.value}`}>
+            <View key={line.key} style={styles.line} accessible accessibilityLabel={`${line.label}\u00A0: ${line.value}`}>
               <Text style={styles.label}>{line.label}</Text>
               <Text style={styles.value} selectable>{line.value}</Text>
             </View>
