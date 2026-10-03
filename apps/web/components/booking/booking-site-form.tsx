@@ -148,7 +148,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
               label="Conditions pour vos clients"
               className="sm:col-span-2"
               error={errors.legal_mentions}
-              hint="Obligatoires pour mettre le mini-site en ligne (40 caractères au moins), affichées en tête du formulaire de réservation. Pour des clients particuliers : votre identité (raison sociale, adresse, immatriculation), conditions de réservation et d'annulation, moyens de paiement acceptés, et nom et site web de votre médiateur de la consommation (Code de la consommation, articles L111-1, L221-5, L221-14 et L612-1). Rydar ne les rédige pas pour vous."
+              hint="Obligatoires pour mettre le mini-site en ligne (40 caractères au moins), affichées en tête du formulaire de réservation. Pour des clients particuliers : votre identité (raison sociale, adresse, immatriculation, directeur de la publication du mini-site), conditions de réservation et d'annulation, moyens de paiement acceptés, et nom et site web de votre médiateur de la consommation (Code de la consommation, articles L111-1, L221-5, L221-14 et L612-1). Rydar ne les rédige pas pour vous."
             >
               <Textarea value={s.legal_mentions ?? ""} onChange={(e) => set("legal_mentions", e.target.value)} disabled={!canEdit} maxLength={2000} />
             </Field>
