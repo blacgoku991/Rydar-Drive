@@ -377,7 +377,8 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
     qu'en libellé court (« Prénom I. · B ») — `private.log_event` (devenue plpgsql) passe par
     `private.network_event_scrub` (clés driver_id / previous_driver_id / assigned_driver_id / driver_ids d'un chauffeur
     d'une autre organisation retirées, compteur network_count, driver_number / driver_name / lat / lng retirés, message
-    nettoyé) et `private.event_actor` (acteur d'une autre organisation sans identifiant), comme
+    nettoyé) et `private.event_actor` (acteur d'une autre organisation sans identifiant, seulement sur une course passée
+    par le réseau : offre réseau, exécution ou chauffeur d'une autre organisation), comme
     `private.track_ride_status` ; tout nouveau message qui cite un chauffeur passe quand même par
     `private.driver_label_for` (le filet ne reconnaît que « Prénom NOM (#n) », « Prénom (#n) » et le nom de famille) ;
   - alertes (`private.apply_ride_alert`, `private.watch_rides`) : chauffeur partenaire → libellé court, ni driver_id ni

@@ -477,6 +477,7 @@ describe("Réseau partagé, partie 5b (20260924007000) : journaux, temps réel, 
       expect(scrub, k).toContain(`'${k}'`);
     }
     expect(lastSqlDefinition("private.log_event")).toContain("private.network_event_scrub(p_org, v_message, v_data)");
-    expect(lastSqlDefinition("private.track_ride_status")).toContain("private.event_actor(new.organization_id,");
+    expect(lastSqlDefinition("private.log_event")).toContain("private.event_actor(p_org, p_ride, v_type, v_actor)");
+    expect(lastSqlDefinition("private.track_ride_status")).toContain("private.event_actor(new.organization_id, new.id,");
   });
 });

@@ -1047,6 +1047,27 @@ describe("Journaux et alertes (§11.5, partie 5b)", () => {
       await log(type, "Action", {}, "user", actor);
       expect(await event(type), type).toMatchObject(expected);
     }
+
+    // Course jamais passée par le réseau, ou ligne sans course : acteur d'une autre organisation gardé, comme avant le
+    // réseau (interrupteur coupé : rien ne change)
+    const site = nextSite();
+    const plain = await createRideAsOwner(p.A, { pickup_lat: site[0], pickup_lng: site[1] });
+    for (const rideId of [plain.id, null]) {
+      for (const [type, actorType, actor] of [
+        ["test.plain.user", "user", p.B.ownerId],
+        ["test.plain.partner", "user", p.partner.userId],
+        ["test.plain.driver", "driver", p.partner.id],
+      ] as const) {
+        await sql(`select private.log_event($1, $2, $3, 'Action', 'timeline', 'info', '{}'::jsonb, $4::public.actor_type, $5)`, [
+          p.A.id, rideId, type, actorType, actor,
+        ]);
+        const [row] = await sql(
+          `select actor_type, actor_id from public.ride_events
+            where organization_id = $1 and ride_id is not distinct from $2::uuid and type = $3 order by id desc limit 1`,
+          [p.A.id, rideId, type]);
+        expect(row, `${type} ${rideId ? "course" : "sans course"}`).toEqual({ actor_type: actorType, actor_id: actor });
+      }
+    }
   });
 
   it("historique des statuts : chauffeur partenaire et membre de B jamais identifiés chez A ; chauffeur de A inchangé", async () => {
@@ -1186,9 +1207,21 @@ describe("Positions (§11.6, Q5, partie 5b)", () => {
       (await sql(`select type from public.notifications where ride_id = $1 and driver_id = $2 order by type`, [ride.id, p.partner.id])).map((x) => x.type);
     const housekeeping = async () => (await sql(`select private.housekeeping() as r`))[0].r;
 
-    // Course en cours : rien n'est supprimé
+    // Course en cours : rien n'est supprimé — même si le même chauffeur a tenu la même course plus tôt (exécution close
+    // depuis 2 h, recréée sans déclencheurs : reprise par un chauffeur de A puis de nouveau proposée au réseau)
+    await rewind([[
+      `insert into public.ride_network_executions (ride_id, organization_id, executor_org_id, executor_driver_id, counterparty,
+         driver_label, operator, vehicle, checks, terms, giver_terms_version, executor_terms_version, driver_terms_version,
+         accepted_at, ended_at, end_reason)
+       select ride_id, organization_id, executor_org_id, executor_driver_id, counterparty, driver_label, operator, vehicle, checks,
+              terms, giver_terms_version, executor_terms_version, driver_terms_version, now() - interval '3 hours',
+              now() - interval '2 hours', 'reassigned_own'
+         from public.ride_network_executions where id = $1`,
+      [execution.id],
+    ]]);
     expect((await housekeeping()).errors).toBeUndefined();
     expect(await partnerPoints()).toBe(1);
+    expect(await types()).toEqual(["flight_update", "ride_offer", "ride_reminder"]);
     for (const s of ["DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS", "COMPLETED"]) {
       await moveTo(p.partner.id, s === "COMPLETED" ? CDG : p.site);
       expect(await stepAs(p.partner, ride.id, s), s).toMatchObject({ ok: true });

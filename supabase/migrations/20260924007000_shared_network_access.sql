@@ -1872,13 +1872,14 @@ to authenticated, service_role;
 --    private.track_ride_status
 -- =============================================================================
 
--- Acteur d'une ligne du journal ou de l'historique des statuts d'une course de p_org : inchangé, sauf un acteur d'une
--- AUTRE organisation, jamais identifié chez p_org — chauffeur d'une autre organisation (partenaire) : « driver » sans
+-- Acteur d'une ligne du journal ou de l'historique des statuts de la course p_ride de p_org : inchangé, sauf un
+-- acteur d'une AUTRE organisation sur une course passée par le réseau (offre réseau, exécution, chauffeur d'une autre
+-- organisation), jamais identifié chez p_org — chauffeur d'une autre organisation (partenaire) : « driver » sans
 -- identifiant ; utilisateur qui n'est ni membre (toute adhésion), ni chauffeur de p_org, ni super admin, mais membre ou
 -- chauffeur d'une autre organisation (membre de B, compte du partenaire appelé sans set_actor) : sans identifiant,
--- « driver » si c'est un compte de chauffeur, sinon « system ». Sans réseau, l'acteur d'une ligne de p_org en relève
--- toujours : rien ne change.
-create or replace function private.event_actor(p_org uuid, p_type public.actor_type, p_actor uuid,
+-- « driver » si c'est un compte de chauffeur, sinon « system ». Ligne sans course, acteur de p_org ou course jamais
+-- passée par le réseau (interrupteur coupé) : rien ne change, sans lecture de plus pour un acteur de p_org.
+create or replace function private.event_actor(p_org uuid, p_ride uuid, p_type public.actor_type, p_actor uuid,
                                                out actor_type public.actor_type, out actor_id uuid)
 language plpgsql
 stable
@@ -1887,25 +1888,30 @@ as $$
 begin
   actor_type := p_type;
   actor_id := p_actor;
-  if p_org is null or p_actor is null then
+  if p_org is null or p_ride is null or p_actor is null or p_type is null or p_type not in ('driver', 'user') then
     return;
   end if;
   if p_type = 'driver' then
-    if exists (select 1 from public.drivers d where d.id = p_actor and d.organization_id <> p_org) then
-      actor_id := null;
+    if not exists (select 1 from public.drivers d where d.id = p_actor and d.organization_id <> p_org) then
+      return;
     end if;
-  elsif p_type = 'user' then
-    if not exists (select 1 from public.organization_users ou where ou.organization_id = p_org and ou.user_id = p_actor)
-       and not exists (select 1 from public.drivers d where d.user_id = p_actor and d.organization_id = p_org)
-       and not exists (select 1 from public.users u where u.id = p_actor and u.is_super_admin) then
-      if exists (select 1 from public.drivers d where d.user_id = p_actor) then
-        actor_type := 'driver';
-        actor_id := null;
-      elsif exists (select 1 from public.organization_users ou where ou.user_id = p_actor) then
-        actor_type := 'system';
-        actor_id := null;
-      end if;
-    end if;
+  elsif exists (select 1 from public.organization_users ou where ou.organization_id = p_org and ou.user_id = p_actor)
+     or exists (select 1 from public.drivers d where d.user_id = p_actor and d.organization_id = p_org)
+     or exists (select 1 from public.users u where u.id = p_actor and u.is_super_admin)
+     or not (exists (select 1 from public.drivers d where d.user_id = p_actor)
+             or exists (select 1 from public.organization_users ou where ou.user_id = p_actor)) then
+    return;
+  end if;
+  -- Course jamais passée par le réseau : acteur inchangé (sans réseau, aucune de ces lignes n'existe)
+  if not exists (select 1 from public.ride_offers o where o.ride_id = p_ride and o.is_network)
+     and not exists (select 1 from public.ride_network_executions e where e.ride_id = p_ride)
+     and not exists (select 1 from public.rides r where r.id = p_ride and r.driver_org_id <> r.organization_id) then
+    return;
+  end if;
+  actor_id := null;
+  if p_type = 'user' then
+    actor_type := case when exists (select 1 from public.drivers d where d.user_id = p_actor)
+                       then 'driver'::public.actor_type else 'system'::public.actor_type end;
   end if;
 end;
 $$;
@@ -1982,8 +1988,8 @@ $$;
 
 -- Dernière définition : 20260924000400_dispatch.sql. Devient plpgsql (§11.5) : filet de sécurité des journaux — un
 -- chauffeur d'une autre organisation cité dans les données ou le message n'y apparaît qu'en libellé court
--- (private.network_event_scrub), un acteur d'une autre organisation jamais par son identifiant (private.event_actor).
--- Sans chauffeur ni acteur d'une autre organisation : même ligne qu'avant.
+-- (private.network_event_scrub), un acteur d'une autre organisation sur une course passée par le réseau jamais par son
+-- identifiant (private.event_actor). Sans chauffeur ni acteur d'une autre organisation : même ligne qu'avant.
 create or replace function private.log_event(
   p_org uuid,
   p_ride uuid,
@@ -2010,15 +2016,15 @@ begin
   -- message (private.network_event_scrub), acteur d'une autre organisation (private.event_actor) ; ligne hors
   -- réseau : valeurs inchangées
   select s.message, s.data into v_message, v_data from private.network_event_scrub(p_org, v_message, v_data) s;
-  select a.actor_type, a.actor_id into v_type, v_actor from private.event_actor(p_org, v_type, v_actor) a;
+  select a.actor_type, a.actor_id into v_type, v_actor from private.event_actor(p_org, p_ride, v_type, v_actor) a;
   insert into public.ride_events (organization_id, ride_id, category, level, type, message, actor_type, actor_id, data)
   values (p_org, p_ride, p_category, p_level, p_type, v_message, v_type, v_actor, v_data);
 end;
 $$;
 
 -- Dernière définition : 20260924000400_dispatch.sql. Réseau partagé, seul ajout : acteur d'une autre organisation
--- (chauffeur partenaire à ses étapes, membre de B qui retire la course à son chauffeur) sans identifiant
--- (private.event_actor) — l'historique des statuts est lu par tout membre de A. Sinon inchangé.
+-- (chauffeur partenaire à ses étapes, membre de B qui retire la course à son chauffeur) sur une course passée par le
+-- réseau, sans identifiant (private.event_actor) — l'historique des statuts est lu par tout membre de A. Sinon inchangé.
 create or replace function private.track_ride_status()
 returns trigger
 language plpgsql
@@ -2037,7 +2043,7 @@ begin
     -- Réseau partagé (§11.5, S3) : acteur d'une autre organisation (chauffeur partenaire, membre de son organisation)
     -- jamais identifié dans l'historique de la course (private.event_actor) ; sinon inchangé
     select a.actor_type, a.actor_id into v_type, v_actor
-      from private.event_actor(new.organization_id,
+      from private.event_actor(new.organization_id, new.id,
              case
                when tg_op = 'INSERT' and new.source = 'api' then 'api'::public.actor_type
                when tg_op = 'INSERT' and new.source = 'booking_site' then 'booking_site'::public.actor_type
@@ -3164,12 +3170,12 @@ $$;
 --     service role seulement (colonne calculée de l'API v1). Fonctions redéfinies : droits conservés (même signature).
 -- =============================================================================
 revoke all on function
-  private.event_actor(uuid, public.actor_type, uuid),
+  private.event_actor(uuid, uuid, public.actor_type, uuid),
   private.network_event_scrub(uuid, text, jsonb),
   private.network_ended_traces()
 from public, anon, authenticated;
 grant execute on function
-  private.event_actor(uuid, public.actor_type, uuid),
+  private.event_actor(uuid, uuid, public.actor_type, uuid),
   private.network_event_scrub(uuid, text, jsonb),
   private.network_ended_traces()
 to service_role;
