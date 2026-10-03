@@ -10,7 +10,8 @@ import {
   ACCEPT_OFFER_CODES, DRIVER_NETWORK_READINESS_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES,
   NETWORK_EXECUTION_END_REASONS, NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS, NETWORK_SHARE_CLOSED_REASONS,
   NETWORK_SKIP_REASON_LABELS, NETWORK_SUSPECT_REASONS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
-  type DriverNetworkSettlementItem, type NetworkOfferNotificationData, type NetworkRpcs,
+  NETWORK_RPC_ACCESS, type DriverNetworkSettlementItem, type NetworkOfferNotificationData, type NetworkPayoutWarning,
+  type NetworkRpcs, type RemindNetworkDriverResult,
 } from "./network";
 
 const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import.meta.url));
@@ -96,7 +97,9 @@ describe("Réseau partagé : index partiel des lignes réseau (ride_settlements_
     expect(blocker.split("x.network_driver_org_id is not null").length - 1).toBe(3);
     const identity = lastSqlDefinition("private.network_identity_block");
     expect(identity.split("x.network_driver_id = n.driver_id").length - 1).toBe(1);
-    expect(identity.split("x.network_driver_org_id is not null").length - 1).toBe(1);
+    // Lot argent (4b) : autre fiche du même chauffeur (mêmes empreintes) débitrice de A
+    expect(identity.split("x.network_driver_id = o.driver_id").length - 1).toBe(1);
+    expect(identity.split("x.network_driver_org_id is not null").length - 1).toBe(2);
   });
 });
 
@@ -223,5 +226,67 @@ describe("Réseau partagé, argent (partie 4a) : SQL = contrats de @rydar/shared
     expect(codes).toEqual([...expected]);
     expect(body).toContain("v_warnings := v_warnings || 'terms_grace'::text");
     expect(body).toContain(`interval '${NETWORK_PARAMS.appCapableDays} days'`);
+  });
+});
+
+describe("Réseau partagé, argent (partie 4b) : SQL = contrats de @rydar/shared", () => {
+  it("RPC de A (argent) : noms des paramètres = NetworkRpcs (appel du web : app/dashboard/reseau-partage/actions.ts) ; droits", () => {
+    type Args<K extends keyof NetworkRpcs> = Record<keyof NetworkRpcs[K]["args"], true>;
+    const contract = {
+      org_network_payout_info: { p_settlement: true } satisfies Args<"org_network_payout_info">,
+      validate_network_ride: { p_ride: true } satisfies Args<"validate_network_ride">,
+      contest_network_ride: { p_ride: true, p_reason: true } satisfies Args<"contest_network_ride">,
+      remind_network_driver: { p_org: true, p_settlement: true } satisfies Args<"remind_network_driver">,
+    };
+    for (const [fn, args] of Object.entries(contract)) {
+      const body = lastSqlDefinition(`public.${fn}`);
+      const signature = body.slice(body.indexOf("(") + 1, body.indexOf("\nreturns")).replace(/\)\s*$/, "");
+      const params = signature.trim() === "" ? [] : signature.split(",").map((x) => x.trim().split(/\s+/)[0]!);
+      expect(params, fn).toEqual(Object.keys(args));
+      // Argent : owner / admin de A (assert_network_creditor) ; « Relancer » : tout membre (dispatcher compris)
+      expect(body, fn).toContain(fn === "remind_network_driver" ? "private.assert_org_member(p_org)" : "private.assert_network_creditor(");
+      expect(NETWORK_RPC_ACCESS[fn as keyof NetworkRpcs], fn).toBe(fn === "remind_network_driver" ? "member" : "owner_admin");
+    }
+    // Les actions existantes sur un règlement contrôlent owner / admin de A pour une ligne réseau
+    for (const fn of ["confirm_settlements", "dispute_settlement", "waive_settlement", "reopen_settlement"]) {
+      expect(lastSqlDefinition(`public.${fn}`), fn).toContain("perform private.assert_network_creditor(");
+    }
+  });
+
+  it("relance manuelle : codes = RemindNetworkDriverResult, 1 par 30 min ; relances automatiques : 3 au plus, 23 h d'écart", () => {
+    const remind = lastSqlDefinition("public.remind_network_driver");
+    const codes = new Set([...remind.matchAll(/'code', '([A-Z_]+)'/g)].map((m) => m[1]!));
+    expect([...codes].sort()).toEqual(["NOTHING_DUE", "REMINDED", "TOO_SOON"] satisfies RemindNetworkDriverResult["code"][]);
+    expect(remind).toContain(`interval '${NETWORK_PARAMS.remindIntervalMinutes} minutes'`);
+    const auto = lastSqlDefinition("private.settlement_reminders");
+    const network = auto.slice(auto.indexOf("x.network_driver_id as driver_id"));
+    expect(network).toContain(`having min(x.reminders_sent) < ${NETWORK_PARAMS.autoRemindersMax}`);
+    expect(network).toContain(`< now() - interval '${NETWORK_PARAMS.autoRemindIntervalHours} hours'`);
+    // Application seulement : jamais private.remind_driver (WhatsApp) pour une ligne réseau
+    expect(network).not.toContain("private.remind_driver(");
+    expect(network).toContain("private.network_notify(");
+  });
+
+  it("RIB : avertissement « recent_change » à 72 h ; contestation dans les 7 jours (NETWORK_PARAMS)", () => {
+    const payout = lastSqlDefinition("public.org_network_payout_info");
+    expect(payout).toContain(`interval '${NETWORK_PARAMS.payoutRecentChangeHours} hours'`);
+    for (const w of ["iban_changed", "recent_change"] satisfies NetworkPayoutWarning[]) expect(payout).toContain(`'${w}'::text`);
+    // Audit sans aucune coordonnée bancaire
+    const audit = payout.slice(payout.indexOf("insert into public.audit_logs"), payout.indexOf("perform private.network_notify("));
+    expect(audit).not.toMatch(/iban|payee|bic/);
+    expect(lastSqlDefinition("public.contest_network_ride")).toContain(`interval '${NETWORK_PARAMS.contestDays} days'`);
+  });
+
+  it("notifications du chauffeur partenaire (private.network_notify) : data.network, jamais de montant interne", () => {
+    const notify = lastSqlDefinition("private.network_notify");
+    expect(notify).toContain("jsonb_build_object('type', p_type, 'network', true)");
+    for (const fn of ["public.confirm_settlements", "public.dispute_settlement", "public.waive_settlement", "public.reopen_settlement",
+      "public.org_network_payout_info", "public.validate_network_ride", "public.contest_network_ride", "public.remind_network_driver"]) {
+      const body = lastSqlDefinition(fn);
+      for (const call of body.split("private.network_notify(").slice(1)) {
+        const args = call.slice(0, call.indexOf(";"));
+        expect(args, fn).not.toMatch(/'(commission_cents|platform_fee_cents|driver_payout_cents|giver_cut_cents)'/);
+      }
+    }
   });
 });

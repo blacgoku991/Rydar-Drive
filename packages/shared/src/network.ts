@@ -103,6 +103,11 @@ export const NETWORK_PARAMS = {
   maxErrors: 3,
   /** Relance manuelle d'un chauffeur partenaire : 1 par 30 min */
   remindIntervalMinutes: 30,
+  /** Relances automatiques d'un reversement échu (application seulement) : 3 au plus, 23 h d'écart */
+  autoRemindersMax: 3,
+  autoRemindIntervalHours: 23,
+  /** RIB du chauffeur modifié depuis moins de N heures : avertissement « recent_change » (org_network_payout_info) */
+  payoutRecentChangeHours: 72,
 } as const;
 
 /**
@@ -700,7 +705,9 @@ export type NetworkCloseCause = (typeof NETWORK_CLOSE_CAUSES)[number];
 /** Événements du journal de A (ride_events.type) propres au réseau. Jamais l'identifiant d'un chauffeur partenaire. */
 export type NetworkRideEventType =
   | "dispatch.network" | "dispatch.network_skipped" | "dispatch.network_error"
-  | "ride.network_unassigned" | "ride.network_closed" | "network.executor_unavailable";
+  | "ride.network_unassigned" | "ride.network_closed" | "network.executor_unavailable"
+  // Lot argent (4b, 20260924006900)
+  | "ride.network_validated" | "ride.network_contested";
 export interface NetworkRideEventData {
   "dispatch.network": { partners_nearby: number; stage?: NetworkShareStage; cycle?: number };
   "dispatch.network_skipped": { reason: NetworkSkipReason };
@@ -717,6 +724,15 @@ export interface NetworkRideEventData {
   "ride.network_closed": { network: true; execution_id: Uuid | null; cause: NetworkCloseCause; previous_status: RideStatus };
   /** Alerte (niveau warning, une fois par exécution) : partenaire indisponible, client à bord — il peut terminer, sinon A clôture */
   "network.executor_unavailable": { network: true; execution_id: Uuid | null; cause: NetworkWatchCause; status: RideStatus };
+  /** « Valider » (public.validate_network_ride, niveau success, acteur : le membre de A) ; released : versement retenu libéré */
+  "ride.network_validated": { network: true; execution_id: Uuid; suspect_reasons: NetworkSuspectReason[]; released: boolean };
+  /**
+   * « Contester la course » (public.contest_network_ride, niveau warning) : payout_waived_cents = versement annulé (null :
+   * reversement payé à bord, inchangé) ; fee_reduction_cents = baisse des frais Rydar demandée au super admin (null : rien).
+   */
+  "ride.network_contested": {
+    network: true; execution_id: Uuid; reason: string; payout_waived_cents: number | null; fee_reduction_cents: number | null;
+  };
 }
 
 /**
@@ -1402,13 +1418,19 @@ export interface ValidateNetworkRideResult {
   settlement: Settlement | null;
 }
 
-/** RPC contest_network_ride(p_ride, p_reason) (≤ 7 jours après la fin, NETWORK_CONTEST_EXPIRED sinon). */
+/**
+ * RPC contest_network_ride(p_ride, p_reason) (≤ 7 jours après la fin, NETWORK_CONTEST_EXPIRED sinon ; motif de 5 à 300
+ * caractères, NETWORK_DISPUTE_REASON_INVALID ; course déjà contestée : même réponse, rien ne change).
+ */
 export interface ContestNetworkRideResult {
   ok: true;
   ride_id: Uuid;
   /** Versement (centrale_owes) annulé ; un reversement (driver_owes) reste inchangé */
   settlement: Settlement | null;
-  /** Demande de baisse des frais Rydar (écriture « correction » en attente du super admin) */
+  /**
+   * Demande de baisse des frais Rydar (écriture « correction » de −frais en attente du super admin, /admin/frais) ;
+   * amount_cents : montant de la baisse demandée, POSITIF (l'écriture du registre est négative).
+   */
   fee_reduction: { entry_id: Uuid; amount_cents: number } | null;
 }
 
@@ -1428,6 +1450,9 @@ export interface RemindNetworkDriverResult {
   code: "REMINDED" | "TOO_SOON" | "NOTHING_DUE";
   message?: string;
   next_allowed_at?: Iso | null;
+  /** REMINDED (lot 4b) : tout ce que ce chauffeur doit à l'organisation (reversements à régler ou « Pas reçu ») */
+  amount_cents?: number;
+  count?: number;
 }
 
 /** private.network_driver_exclusions vu par A (org_network_driver_exclusions). */
@@ -1822,8 +1847,11 @@ export const NETWORK_ERROR_CODES = [
   "NETWORK_RIDE_LOCKED", "NETWORK_RIDE_IN_PROGRESS", "NETWORK_CLOSE_NOT_ALLOWED", "NETWORK_CONTEST_EXPIRED",
   "NETWORK_SETTLEMENT_ACTION_FORBIDDEN",
   "NETWORK_CONSENT_REQUIRED", "NETWORK_PAYOUT_ON_HOLD", "NETWORK_DISPUTE_NOT_ALLOWED",
-  // Lot argent (4a) : « Je conteste » sans motif de 5 à 300 caractères (driver_dispute_network_settlement)
+  // Lot argent (4a) : « Je conteste » sans motif de 5 à 300 caractères (driver_dispute_network_settlement) ; aussi le
+  // motif de « Contester la course » (contest_network_ride, 4b)
   "NETWORK_DISPUTE_REASON_INVALID", "OFFER_CHANGED",
+  // Lot argent (4b) : validate_network_ride sur une course contestée, reopen_settlement du versement qu'elle a annulé
+  "NETWORK_RIDE_CONTESTED",
   "DRIVER_BUSY_AT_TIME", "DRIVER_HAS_NETWORK_OBLIGATIONS", "PAYOUT_DETAILS_INVALID", "PAYOUT_DETAILS_IN_USE",
   // Ajout web (revue) : org_network_payout_info, chauffeur sans coordonnées bancaires (RIB facultatif)
   "PAYOUT_DETAILS_MISSING",
@@ -1842,6 +1870,10 @@ export const NETWORK_TONE: Tone = "violet";
  * settlement_paid, settlement_payout_sent et relances ; ligne notifications chez A) : `network: true` fait ouvrir à
  * l'app l'onglet « Courses partenaires » de l'écran Commissions (sinon : commissions de sa propre organisation).
  * Jamais commission_cents, platform_fee_cents ni driver_payout_cents (U4, nettoyage de queue_notification).
+ * Lot argent (4b, private.network_notify) : aussi settlement_disputed (« Pas reçu »), settlement_waived (« Annuler »),
+ * settlement_reminder (relances : amount_cents, count), settlement_payout_info (RIB consulté par A),
+ * settlement_payout_cancelled (versement annulé par « Contester la course »), settlement_contested (course contestée,
+ * reversement inchangé) — tous « settlement_* » : l'app ouvre « Courses partenaires ».
  */
 export interface NetworkSettlementNotificationData {
   type: "settlement_due" | "settlement_payout" | "settlement_paid" | "settlement_payout_sent" | (string & {});

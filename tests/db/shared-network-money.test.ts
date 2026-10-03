@@ -2,6 +2,8 @@
 // (termes figés de l'exécution, contrepartie toujours le chauffeur), côté chauffeur (règlements partenaires par
 // organisation, « J'ai payé » avec les seuls moyens de A, « Je conteste », coordonnées de versement), accueil et gains
 // (net par course aux termes figés). Scénarios §14.1 n° 16, 17 et 19 (côté chauffeur) de la spécification.
+// Partie 4b : côté A (« Reçu » / « Versé », « Pas reçu », « Annuler », « Rouvrir », RIB, « Valider », « Contester la
+// course », « Relancer »), blocages, relances, frais Rydar, dette et suppression du compte, relevés : n° 18 à 24.
 // Réglages du réseau écrits directement (helpers de tests/db/helpers.ts). L'interrupteur est rouvert avant chaque test et
 // recoupé à la fin du fichier.
 import { randomUUID } from "node:crypto";
@@ -11,7 +13,7 @@ import {
   NETWORK_PARAMS, networkTerms, type DriverNetworkSettlementItem, type DriverNetworkSettlements, type DriverPayoutInfo,
 } from "../../packages/shared/src/network";
 import {
-  acceptDriverTerms, approveNetwork, as, CDG, createDriver, createMember, createOrg, createRideAsOwner, enableNetwork,
+  acceptDriverTerms, approveNetwork, as, CDG, createAuthUser, createDriver, createMember, createOrg, createRideAsOwner, enableNetwork,
   expectPgError, inMinutes, insertRideBypass, north, pingApp, pool, setSharedNetwork, sql, type Driver, type Org,
 } from "./helpers";
 
@@ -764,3 +766,868 @@ const ITEM_KEYS = [
   "driver_disputed_at", "driver_part_cents", "due_at", "giver_part_cents", "hold_until", "id", "on_hold", "overdue",
   "payment_method", "price_cents", "reference", "ride", "ride_id", "settled_at", "settled_method", "status",
 ].sort();
+
+// =============================================================================
+// Partie 4b — côté A, blocages, relances, frais Rydar, dette et suppression, exports
+// =============================================================================
+
+/** Raison d'inéligibilité du chauffeur pour une course de A (NULL : éligible), private.network_driver_reason. */
+async function driverReason(driverId: string, rideId: string): Promise<string | null> {
+  const [row] = await sql(
+    `select private.network_driver_reason(d, r) as reason from public.drivers d, public.rides r where d.id = $1 and r.id = $2`,
+    [driverId, rideId],
+  );
+  return row.reason;
+}
+
+/** Blocage réseau (private.network_blocker) du chauffeur envers une donneuse, montant de la course à venir. */
+const blockerOf = async (driverId: string, giverId: string, amount = 0): Promise<string | null> =>
+  (await sql(`select private.network_blocker($1, $2, $3) as b`, [driverId, giverId, amount]))[0].b;
+
+/** Notifications d'un chauffeur d'un type donné (lignes chez A pour une course partenaire). */
+const notesOf = (driverId: string, type: string) =>
+  sql(
+    `select organization_id, driver_org_id, ride_id, channel::text as channel, title, body, data from public.notifications
+      where driver_id = $1 and type = $2 order by created_at, id`,
+    [driverId, type],
+  );
+
+/** Course de A au lieu de la paire (dispatch de création ; non proposée au réseau tant que les vagues propres durent). */
+const rideOfA = (p: Pair, overrides: Record<string, unknown> = {}, A: Org = p.A) =>
+  createRideAsOwner(A, { pickup_lat: p.site[0], pickup_lng: p.site[1], price_cents: 5000, ...overrides });
+
+/** Écriture directe sans déclencheurs (horodatage tenu par un déclencheur, ex. updated_at du RIB). */
+async function rawUpdate(text: string, params: unknown[]) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("set local session_replication_role = replica");
+    await client.query(text, params);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** Relances automatiques (verrou du worker : réessai si un autre passage est en cours). */
+async function runReminders(): Promise<Record<string, any>> {
+  for (let i = 0; i < 20; i++) {
+    const [{ r }] = await sql(`select private.settlement_reminders() as r`);
+    if (r.ok) return r;
+  }
+  throw new Error("private.settlement_reminders toujours occupée");
+}
+
+async function superAdmin(): Promise<string> {
+  const id = await createAuthUser(`sa-${tag()}@test.dev`, "Super Admin");
+  await sql(`update public.users set is_super_admin = true where id = $1`, [id]);
+  return id;
+}
+
+const svc = async (fn: string, args: unknown[] = []) =>
+  as({ role: "service_role" }, async (q) => (await q(`select public.${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args))[0].r);
+
+// =============================================================================
+// n° 18 — Blocages (règles locales)
+// =============================================================================
+describe("Blocages réseau (§10.7, §14.1 n° 18)", () => {
+  it("impayé échu envers A : plus de course de A, courses de C et courses propres de B intactes ; dette propre chez B → plus aucune offre réseau", async () => {
+    const p = await networkPair({ executor: "centrale" });
+    const C = await giver("Troisième");
+    const a1 = await sharedRide(p, { payment_method: "cash" });
+    await sql(`update public.ride_settlements set due_at = now() - interval '1 hour' where id = $1`, [a1.settlement.id]);
+
+    // A : plus proposée au partenaire (règle de A), même après les vagues propres
+    const nextA = await rideOfA(p);
+    expect(await driverReason(p.partner.id, nextA.id)).toBe("giver_unpaid");
+    await sql(`update public.drivers set presence = 'available', current_ride_id = null where id = $1`, [p.partner.id]);
+    await moveTo(p.partner.id, north(p.site, 800));
+    await sql(`update public.rides set dispatch_wave = 6, next_dispatch_at = now() - interval '1 second' where id = $1`, [nextA.id]);
+    await sql("select private.dispatch_tick()");
+    expect(await sql(`select 1 from public.ride_offers where ride_id = $1 and driver_id = $2`, [nextA.id, p.partner.id])).toEqual([]);
+    expect(await blockerOf(p.partner.id, p.A.id)).toBe("giver_unpaid");
+
+    // C : intactes (course de C partagée de bout en bout)
+    expect(await blockerOf(p.partner.id, C.id)).toBeNull();
+    const c1 = await sharedRide(p, { payment_method: "cash" }, { A: C });
+    expect(c1.settlement).toMatchObject({ organization_id: C.id, status: "due" });
+
+    // B (centrale) : une dette réseau ne bloque jamais ses courses propres
+    expect((await sql(`select private.driver_blocker($1) as b`, [p.partner.id]))[0].b).toBeNull();
+    await moveTo(p.partner.id, north(p.site, 800));
+    const own = await createRideAsOwner(p.B, { pickup_lat: p.site[0], pickup_lng: p.site[1], price_cents: 3000 });
+    const [ownOffer] = await sql(`select id from public.ride_offers where ride_id = $1 and driver_id = $2 and status = 'pending'`, [
+      own.id, p.partner.id,
+    ]);
+    expect(ownOffer, "course propre de B proposée").toBeTruthy();
+    await as({ sub: p.partner.userId }, (q) => q("select public.decline_ride_offer($1)", [ownOffer.id]));
+
+    // Dette propre chez B (commission échue) : plus aucune offre réseau, quelle que soit la donneuse
+    const ownId = await ownLine(p.B, p.partner.id);
+    await sql(`update public.ride_settlements set due_at = now() - interval '1 hour' where id = $1`, [ownId]);
+    expect(await blockerOf(p.partner.id, C.id)).toBe("own_unpaid");
+    expect(await driverReason(p.partner.id, (await rideOfA(p, {}, C)).id)).toBe("own_unpaid");
+  });
+
+  it("plafond de A (encours envers A seulement) ; plafond de B (toutes donneuses confondues)", async () => {
+    const p = await networkPair();
+    const C = await giver("Troisième");
+    await sharedRide(p, { payment_method: "cash" }); // 5 € dus à A, pas encore échus
+    await sharedRide(p, { payment_method: "cash" }, { A: C }); // 5 € dus à C
+    expect(await blockerOf(p.partner.id, p.A.id, 500)).toBeNull();
+
+    // A plafonne à 9 € : 5 € dus + 5 € de la prochaine course payée à bord > 9 €
+    await sql(`update public.organization_settings set settlement_credit_limit_cents = 900 where organization_id = $1`, [p.A.id]);
+    expect(await blockerOf(p.partner.id, p.A.id, 500)).toBe("giver_credit_limit");
+    expect(await blockerOf(p.partner.id, p.A.id, 0)).toBeNull();
+    expect(await blockerOf(p.partner.id, C.id, 500)).toBeNull();
+    expect(await driverReason(p.partner.id, (await rideOfA(p, { payment_method: "cash" })).id)).toBe("giver_credit_limit");
+    // Prépayée : rien ne sera dû à A
+    expect(await driverReason(p.partner.id, (await rideOfA(p, { payment_method: "online" })).id)).toBeNull();
+    await sql(`update public.organization_settings set settlement_credit_limit_cents = null where organization_id = $1`, [p.A.id]);
+
+    // B plafonne à 9 € : 10 € dus au réseau, toutes donneuses → bloqué pour A comme pour C
+    await sql(`update public.network_memberships set executor_credit_limit_cents = 900 where organization_id = $1`, [p.B.id]);
+    expect(await blockerOf(p.partner.id, p.A.id)).toBe("executor_limit");
+    expect(await blockerOf(p.partner.id, C.id)).toBe("executor_limit");
+    const [msg] = await sql(`select private.network_blocker_message('executor_limit', $1, $2) as m`, [p.aName, p.bName]);
+    expect(msg.m).toBe(`Plafond de ${p.bName} atteint : réglez d'abord vos courses partenaires.`);
+  });
+
+  it("échéance d'un reversement : au moins 48 h même si A règle tout de suite ; « Rouvrir » : nouvelle échéance, relances remises à zéro, chauffeur prévenu", async () => {
+    const p = await networkPair();
+    await sql(`update public.organization_settings set settlement_grace_hours = 0 where organization_id = $1`, [p.A.id]);
+    const { ride, settlement } = await sharedRide(p, { payment_method: "cash" });
+    const hoursTo = async (from: "created_at" | "now()") =>
+      Number((await sql(`select extract(epoch from (due_at - ${from})) / 3600 as h from public.ride_settlements where id = $1`, [settlement.id]))[0].h);
+    expect(Math.abs((await hoursTo("created_at")) - NETWORK_PARAMS.minDriverGraceHours)).toBeLessThan(0.05);
+
+    // « Reçu », puis « Rouvrir » (erreur de saisie) trois jours plus tard
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "cash", null])).toMatchObject({ ok: true });
+    await sql(
+      `update public.ride_settlements
+          set due_at = now() - interval '3 days', reminders_sent = 2, last_reminded_at = now() - interval '1 day' where id = $1`,
+      [settlement.id],
+    );
+    expect(await rpc(p.A.ownerId, "reopen_settlement", [settlement.id])).toEqual({ ok: true, code: "REOPENED", message: "Règlement rouvert." });
+    const [x] = await sql(`select status, reminders_sent, last_reminded_at, settled_at from public.ride_settlements where id = $1`, [settlement.id]);
+    expect(x).toEqual({ status: "due", reminders_sent: 0, last_reminded_at: null, settled_at: null });
+    expect(Math.abs((await hoursTo("now()")) - NETWORK_PARAMS.minDriverGraceHours)).toBeLessThan(0.05);
+    const notes = await notesOf(p.partner.id, "settlement_due");
+    expect(notes).toHaveLength(2); // fin de course, puis réouverture
+    expect(notes[1]).toMatchObject({
+      organization_id: p.A.id, driver_org_id: p.B.id, ride_id: ride.id, title: `À RÉGLER À ${p.aName}`,
+      data: { type: "settlement_due", network: true, settlement_id: settlement.id, ride_id: ride.id, amount_cents: 500 },
+    });
+    expect(notes[1].body).toContain(`Course #${ride.number} · ${p.aName} attend toujours 5 €, à régler avant `);
+    const [ev] = await sql(`select * from public.ride_events where ride_id = $1 and type = 'settlement.reopened'`, [ride.id]);
+    expect(ev).toMatchObject({ actor_type: "user", actor_id: p.A.ownerId, data: { settlement_id: settlement.id, network: true } });
+    expect(ev.message).toContain(`Règlement de 5 € avec le chauffeur partenaire Karim T. · ${p.bName} rouvert — à régler avant `);
+    const [msg] = (await messagesOf(`driver:${p.partner.id}`, settlement.id)).slice(-1);
+    expect(msg.payload).toMatchObject({ action: "reopened", network: true, item: { status: "due", overdue: false } });
+
+    // Délai de A plus long (72 h) : c'est lui qui compte
+    await sql(`update public.organization_settings set settlement_grace_hours = 72 where organization_id = $1`, [p.A.id]);
+    await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "cash", null]);
+    await rpc(p.A.ownerId, "reopen_settlement", [settlement.id]);
+    expect(Math.abs((await hoursTo("now()")) - 72)).toBeLessThan(0.05);
+  });
+
+  it("débiteur de A revenu par une autre organisation (nouvelle fiche, mêmes empreintes) : bloqué chez A seulement, selon la règle de A", async () => {
+    const p = await networkPair();
+    const a1 = await sharedRide(p, { payment_method: "cash" });
+    await sql(`update public.ride_settlements set due_at = now() - interval '1 hour' where id = $1`, [a1.settlement.id]);
+    // Il rejoint C (qui reçoit le réseau) avec le même téléphone
+    const C = await createOrg(`Executante C ${tag()}`);
+    await enableNetwork(C, { in: true });
+    await approveNetwork(C);
+    const again = await readyPartner(C, { firstName: "Revenu", at: north(p.site, 900) });
+    await sql(`update public.drivers set phone = (select phone from public.drivers where id = $2) where id = $1`, [again.id, p.partner.id]);
+    const nextA = await rideOfA(p);
+    expect(await driverReason(again.id, nextA.id)).toBe("debtor");
+    // Une autre donneuse : rien
+    const D = await giver("Quatrième");
+    expect(await driverReason(again.id, (await rideOfA(p, {}, D)).id)).toBeNull();
+    // Règle de A : sans blocage des impayés, rien
+    await sql(`update public.organization_settings set block_unpaid = false where organization_id = $1`, [p.A.id]);
+    expect(await driverReason(again.id, nextA.id)).toBeNull();
+    await sql(`update public.organization_settings set block_unpaid = true where organization_id = $1`, [p.A.id]);
+    expect(await driverReason(again.id, nextA.id)).toBe("debtor");
+    // Dette réglée : plus rien
+    await rpc(p.A.ownerId, "confirm_settlements", [[a1.settlement.id], "cash", null]);
+    expect(await driverReason(again.id, nextA.id)).toBeNull();
+  });
+});
+
+// =============================================================================
+// n° 19 (côté A) — Prépayé : RIB, « Annuler » refusé, « Versé »
+// =============================================================================
+describe("Versements prépayés côté A (§10.5, §14.1 n° 19)", () => {
+  it("RIB pour un versement : owner / admin de A seulement, consultation journalisée sans IBAN et notifiée au chauffeur, avertissements", async () => {
+    const p = await networkPair();
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const admin = await createMember(p.A, "admin");
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_FR, "BNPAFRPPXXX"]);
+    await rawUpdate(`update public.driver_payout_details set updated_at = now() - interval '5 days' where driver_id = $1`, [p.partner.id]);
+    const { ride, settlement } = await sharedRide(p, { payment_method: "online" });
+    const info = (who: string) => rpc(who, "org_network_payout_info", [settlement.id]);
+
+    for (const who of [dispatcher, p.B.ownerId, p.partner.userId]) {
+      expect((await expectPgError(info(who))).code, who).toBe("42501");
+    }
+    expect(await sql(`select 1 from public.audit_logs where action = 'network.payout_info_viewed' and entity_id = $1`, [settlement.id])).toEqual([]);
+
+    const first = await info(p.A.ownerId);
+    expect(first).toEqual({
+      settlement_id: settlement.id, amount_cents: 4500, currency: "EUR", reference: `R${ride.number}`, payee_name: "Karim Tazi",
+      iban: IBAN_FR, bic: "BNPAFRPPXXX", updated_at: expect.any(String), warnings: [],
+    });
+    const audits = await sql(
+      `select organization_id, actor_type, actor_user_id, entity_id, severity, metadata from public.audit_logs
+        where action = 'network.payout_info_viewed' and entity_id = $1`,
+      [settlement.id],
+    );
+    expect(audits).toEqual([{
+      organization_id: p.A.id, actor_type: "user", actor_user_id: p.A.ownerId, entity_id: settlement.id, severity: "info",
+      metadata: { settlement_id: settlement.id },
+    }]);
+    expect(JSON.stringify(audits)).not.toMatch(/30006000|FR76|Karim/);
+    const [note] = await notesOf(p.partner.id, "settlement_payout_info");
+    expect(note).toMatchObject({
+      organization_id: p.A.id, ride_id: ride.id, title: `RIB CONSULTÉ PAR ${p.aName}`,
+      body: `${p.aName} a consulté votre RIB pour vous verser 45 €`,
+      data: { type: "settlement_payout_info", network: true, settlement_id: settlement.id, ride_id: ride.id, amount_cents: 4500 },
+    });
+
+    // IBAN changé depuis la fin de la course (et il y a moins de 72 h) : les deux avertissements
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_DE, null]);
+    const second = await info(admin);
+    expect(second).toMatchObject({ iban: IBAN_DE, bic: null, warnings: ["iban_changed", "recent_change"] });
+    const [warned] = await sql(
+      `select severity from public.audit_logs where action = 'network.payout_info_viewed' and entity_id = $1 order by id desc limit 1`,
+      [settlement.id],
+    );
+    expect(warned.severity).toBe("warning");
+    expect(await notesOf(p.partner.id, "settlement_payout_info")).toHaveLength(2);
+
+    // « Versé » : plus de raison de lire le RIB
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "transfer", null])).toMatchObject({ ok: true, paid_out_cents: 4500 });
+    expect((await expectPgError(info(p.A.ownerId))).code).toBe("42501");
+  });
+
+  it("RIB non renseigné : PAYOUT_DETAILS_MISSING ; course à vérifier : ni RIB ni « Versé » (NETWORK_PAYOUT_ON_HOLD) ; reversement : pas de RIB", async () => {
+    const p = await networkPair();
+    const { settlement } = await sharedRide(p, { payment_method: "online" });
+    let err = await expectPgError(rpc(p.A.ownerId, "org_network_payout_info", [settlement.id]));
+    expect([err.code, err.message]).toEqual(["P0002", expect.stringContaining("PAYOUT_DETAILS_MISSING")]);
+    expect(await sql(`select 1 from public.audit_logs where action = 'network.payout_info_viewed' and entity_id = $1`, [settlement.id])).toEqual([]);
+
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_FR, null]);
+    const held = await sharedRide(p, { payment_method: "online" }, { gps: false });
+    err = await expectPgError(rpc(p.A.ownerId, "org_network_payout_info", [held.settlement.id]));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("NETWORK_PAYOUT_ON_HOLD")]);
+    err = await expectPgError(rpc(p.A.ownerId, "confirm_settlements", [[held.settlement.id], "transfer", null]));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("NETWORK_PAYOUT_ON_HOLD")]);
+    // Lot mêlé (versement libre + versement retenu) : rien n'est confirmé
+    await expectPgError(rpc(p.A.ownerId, "confirm_settlements", [[settlement.id, held.settlement.id], "transfer", null]));
+    expect((await sql(`select array_agg(status) as s from public.ride_settlements where id = any ($1)`, [[settlement.id, held.settlement.id]]))[0].s)
+      .toEqual(["due", "due"]);
+
+    const cash = await sharedRide(p, { payment_method: "cash" });
+    expect((await expectPgError(rpc(p.A.ownerId, "org_network_payout_info", [cash.settlement.id]))).code).toBe("42501");
+  });
+
+  it("« Annuler » : refusé sur un versement (NETWORK_SETTLEMENT_ACTION_FORBIDDEN), permis sur un reversement avec motif ; « Versé » notifié, puis « Je conteste »", async () => {
+    const p = await networkPair();
+    const online = await sharedRide(p, { payment_method: "online" });
+    let err = await expectPgError(rpc(p.A.ownerId, "waive_settlement", [online.settlement.id, "Geste commercial"]));
+    expect([err.code, err.message]).toEqual(["42501", expect.stringContaining("NETWORK_SETTLEMENT_ACTION_FORBIDDEN")]);
+    expect((await sql(`select status from public.ride_settlements where id = $1`, [online.settlement.id]))[0].status).toBe("due");
+
+    // « Versé »
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[online.settlement.id], "transfer", "virement du jour"])).toEqual({
+      ok: true, code: "CONFIRMED", count: 1, amount_cents: 4500, received_cents: 0, paid_out_cents: 4500, message: "1 règlement confirmé",
+    });
+    const [sent] = await notesOf(p.partner.id, "settlement_payout_sent");
+    expect(sent).toMatchObject({
+      organization_id: p.A.id, ride_id: online.ride.id, title: `VERSEMENT DE ${p.aName}`, body: `${p.aName} vous a versé 45 €`,
+      data: { type: "settlement_payout_sent", network: true, amount_cents: 4500, settlement_id: online.settlement.id, ride_id: online.ride.id },
+    });
+    const [paid] = await sql(`select * from public.ride_events where ride_id = $1 and type = 'settlement.paid'`, [online.ride.id]);
+    expect(paid).toMatchObject({ actor_type: "user", actor_id: p.A.ownerId, data: { network: true, method: "transfer" } });
+    expect(paid.message).toBe(`45 € versés au chauffeur partenaire Karim T. · ${p.bName} (virement)`);
+    expect(await rpc(p.partner.userId, "driver_dispute_network_settlement", [online.settlement.id, "Rien reçu sur mon compte"])).toMatchObject({ ok: true });
+
+    // Reversement (payé à bord) : « Annuler » avec motif
+    const cash = await sharedRide(p, { payment_method: "cash" });
+    expect(await rpc(p.A.ownerId, "waive_settlement", [cash.settlement.id, "x"])).toMatchObject({ ok: false, code: "REASON_REQUIRED" });
+    expect(await rpc(p.A.ownerId, "waive_settlement", [cash.settlement.id, "Geste commercial"])).toEqual({
+      ok: true, code: "WAIVED", message: "Règlement annulé.",
+    });
+    const [waived] = await notesOf(p.partner.id, "settlement_waived");
+    expect(waived).toMatchObject({
+      title: `ANNULÉ PAR ${p.aName}`, body: `Course #${cash.ride.number} · ${p.aName} a annulé les 5 € à régler`,
+      data: { type: "settlement_waived", network: true, settlement_id: cash.settlement.id, ride_id: cash.ride.id, amount_cents: 500 },
+    });
+    const [ev] = await sql(`select message, data from public.ride_events where ride_id = $1 and type = 'settlement.waived'`, [cash.ride.id]);
+    expect(ev).toEqual({
+      message: `Reversement de 5 € du chauffeur partenaire Karim T. · ${p.bName} annulé : Geste commercial`,
+      data: { settlement_id: cash.settlement.id, reason: "Geste commercial", network: true },
+    });
+    for (const n of [sent, waived]) expect(JSON.stringify(n.data)).not.toMatch(/commission|platform_fee|driver_payout/);
+  });
+
+  it("« Pas reçu » : owner / admin de A seulement (jamais un dispatcher), chauffeur prévenu, effet limité aux courses de A", async () => {
+    const p = await networkPair();
+    const C = await giver("Troisième");
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const { ride, settlement } = await sharedRide(p, { payment_method: "cash" });
+    await rpc(p.partner.userId, "driver_declare_network_payment", [p.A.id, [settlement.id], "link", null]);
+    for (const [fn, args] of [
+      ["dispute_settlement", [settlement.id, "Rien reçu"]],
+      ["confirm_settlements", [[settlement.id], "link", null]],
+      ["waive_settlement", [settlement.id, "Geste commercial"]],
+    ] as const) {
+      expect((await expectPgError(rpc(dispatcher, fn, [...args]))).code, fn).toBe("42501");
+    }
+    expect(await rpc(p.A.ownerId, "dispute_settlement", [settlement.id, "Rien reçu sur le lien"])).toEqual({
+      ok: true, code: "DISPUTED", message: "Paiement contesté : le chauffeur est prévenu.",
+    });
+    const [note] = await notesOf(p.partner.id, "settlement_disputed");
+    expect(note).toMatchObject({
+      ride_id: ride.id, title: `NON REÇU PAR ${p.aName}`, body: `Course #${ride.number} · 5 € non reçus par ${p.aName} : Rien reçu sur le lien`,
+      data: { type: "settlement_disputed", network: true, settlement_id: settlement.id, ride_id: ride.id, amount_cents: 500 },
+    });
+    const [ev] = await sql(`select message, actor_type, actor_id from public.ride_events where ride_id = $1 and type = 'settlement.disputed'`, [ride.id]);
+    expect(ev).toEqual({
+      message: `Paiement de 5 € du chauffeur partenaire Karim T. · ${p.bName} contesté : Rien reçu sur le lien`, actor_type: "user",
+      actor_id: p.A.ownerId,
+    });
+    // Bloqué chez A seulement (même avant l'échéance) ; une redéclaration ne débloque pas
+    expect(await blockerOf(p.partner.id, p.A.id)).toBe("giver_unpaid");
+    expect(await blockerOf(p.partner.id, C.id)).toBeNull();
+    await rpc(p.partner.userId, "driver_declare_network_payment", [p.A.id, [settlement.id], "cash", null]);
+    expect(await blockerOf(p.partner.id, p.A.id)).toBe("giver_unpaid");
+    // Ligne prépayée : rien à contester pour A (inchangé)
+    const online = await sharedRide(p, { payment_method: "online" }, { A: C });
+    expect(await rpc(C.ownerId, "dispute_settlement", [online.settlement.id, "Rien reçu"])).toMatchObject({ ok: false, code: "NOT_DISPUTABLE" });
+  });
+});
+
+// =============================================================================
+// n° 20 — Course « à vérifier » : retenue, « Valider », « Contester la course »
+// =============================================================================
+describe("Course « à vérifier » (§10.9, §14.1 n° 20)", () => {
+  it("versement retenu 72 h ; « Valider » lève la retenue une fois, chauffeur prévenu ; dispatcher et B refusés", async () => {
+    const p = await networkPair();
+    const dispatcher = await createMember(p.A, "dispatcher");
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_FR, null]);
+    const { ride, settlement, execution } = await sharedRide(p, { payment_method: "online" }, { gps: false });
+    const [held] = await sql(`select extract(epoch from (hold_until - ended_at)) / 3600 as h from public.ride_network_executions where id = $1`, [execution.id]);
+    expect(Math.abs(Number(held.h) - NETWORK_PARAMS.payoutHoldHours)).toBeLessThan(0.05);
+
+    for (const who of [dispatcher, p.B.ownerId, p.partner.userId]) {
+      expect((await expectPgError(rpc(who, "validate_network_ride", [ride.id]))).code, who).toBe("42501");
+    }
+    const before = (await sql(`select count(*)::int as n from realtime.messages where topic = $1 and event = 'network.updated'`, [`org:${p.B.id}`]))[0].n;
+    const v = await rpc(p.A.ownerId, "validate_network_ride", [ride.id]);
+    expect(v).toMatchObject({
+      ok: true, ride_id: ride.id,
+      settlement: { id: settlement.id, status: "due", network: { on_hold: false, suspect_reasons: ["no_gps"] } },
+    });
+    const [e] = await sql(`select validated_at, validated_by, hold_until <= now() as released from public.ride_network_executions where id = $1`, [execution.id]);
+    expect(e).toMatchObject({ validated_by: p.A.ownerId, released: true });
+    expect(e.validated_at).not.toBeNull();
+    // Chauffeur : versement à recevoir (plus retenu), prévenu
+    const net: DriverNetworkSettlements = await rpc(p.partner.userId, "driver_network_settlements");
+    expect(net.summary).toMatchObject({ payout_due_cents: 4500, on_hold_cents: 0 });
+    const payouts = await notesOf(p.partner.id, "settlement_payout");
+    expect(payouts.at(-1)).toMatchObject({
+      title: `GAIN À RECEVOIR DE ${p.aName}`, body: `Course #${ride.number} · ${p.aName} a validé la course : 45 € vous seront versés`,
+      data: { type: "settlement_payout", network: true, settlement_id: settlement.id, ride_id: ride.id, amount_cents: 4500 },
+    });
+    const [ev] = await sql(`select * from public.ride_events where ride_id = $1 and type = 'ride.network_validated'`, [ride.id]);
+    expect(ev).toMatchObject({
+      actor_type: "user", actor_id: p.A.ownerId, level: "success",
+      data: { network: true, execution_id: execution.id, suspect_reasons: ["no_gps"], released: true },
+    });
+    expect(ev.message).toBe(`Course partagée vérifiée et validée : versement de 45 € au chauffeur partenaire Karim T. · ${p.bName} libéré`);
+    expect(await sql(`select 1 from public.audit_logs where action = 'network.ride_validated' and entity_id = $1`, [ride.id])).toHaveLength(1);
+    // B reçoit l'identifiant de l'exécution seulement
+    const toB = await sql(`select payload from realtime.messages where topic = $1 and event = 'network.updated' order by id`, [`org:${p.B.id}`]);
+    expect(toB.length).toBeGreaterThan(before);
+    expect(toB.at(-1)!.payload).toEqual({ execution_id: execution.id });
+
+    // Une seule fois : même réponse, rien de plus
+    expect(await rpc(p.A.ownerId, "validate_network_ride", [ride.id])).toMatchObject({ ok: true, settlement: { id: settlement.id } });
+    expect(await sql(`select 1 from public.ride_events where ride_id = $1 and type = 'ride.network_validated'`, [ride.id])).toHaveLength(1);
+    // Le RIB se lit, « Versé » est permis
+    expect(await rpc(p.A.ownerId, "org_network_payout_info", [settlement.id])).toMatchObject({ amount_cents: 4500 });
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "transfer", null])).toMatchObject({ ok: true });
+  });
+
+  it("course payée à bord « à vérifier » : « Valider » sans retenue ; course propre ou en cours : RIDE_NOT_FOUND", async () => {
+    const p = await networkPair();
+    const { ride, execution } = await sharedRide(p, { payment_method: "cash" }, { gps: false });
+    expect(await rpc(p.A.ownerId, "validate_network_ride", [ride.id])).toMatchObject({ ok: true, settlement: { direction: "driver_owes" } });
+    const [e] = await sql(`select validated_at, hold_until from public.ride_network_executions where id = $1`, [execution.id]);
+    expect(e.validated_at).not.toBeNull();
+    expect(e.hold_until).toBeNull();
+    const [ev] = await sql(`select message, data from public.ride_events where ride_id = $1 and type = 'ride.network_validated'`, [ride.id]);
+    expect(ev).toMatchObject({ message: "Course partagée vérifiée et validée", data: { released: false } });
+    expect(await notesOf(p.partner.id, "settlement_payout")).toEqual([]);
+
+    const own = await createRideAsOwner(p.A, { pickup_lat: p.site[0], pickup_lng: p.site[1] });
+    const { ride: running } = await partnerAccepts(p, p.partner);
+    for (const id of [own.id, running.id, randomUUID()]) {
+      const err = await expectPgError(rpc(p.A.ownerId, "validate_network_ride", [id]));
+      expect([err.code, err.message]).toEqual(["P0002", expect.stringContaining("RIDE_NOT_FOUND")]);
+    }
+  });
+
+  it("« Contester la course » : versement annulé, baisse des frais Rydar en attente du super admin, chauffeur prévenu ; ni « Valider » ni « Rouvrir » ensuite", async () => {
+    const p = await networkPair({ giver: "centrale" });
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const { ride, settlement, execution } = await sharedRide(p, { payment_method: "online" }, { gps: false });
+    expect(await sql(`select amount_cents, status from public.platform_fee_entries where ride_id = $1`, [ride.id])).toEqual([
+      { amount_cents: 500, status: "posted" },
+    ]);
+    expect((await expectPgError(rpc(dispatcher, "contest_network_ride", [ride.id, "Client jamais pris en charge"]))).code).toBe("42501");
+
+    const res = await rpc(p.A.ownerId, "contest_network_ride", [ride.id, "  Client   jamais pris en charge  "]);
+    expect(res).toMatchObject({
+      ok: true, ride_id: ride.id,
+      settlement: { id: settlement.id, status: "waived", note: "Course contestée : Client jamais pris en charge", network: { contested: true } },
+      fee_reduction: { entry_id: expect.any(String), amount_cents: 500 },
+    });
+    const [fee] = await sql(`select * from public.platform_fee_entries where id = $1`, [res.fee_reduction.entry_id]);
+    expect(fee).toMatchObject({
+      organization_id: p.A.id, ride_id: ride.id, kind: "correction", amount_cents: -500, status: "pending", created_by: p.A.ownerId,
+      label: `Contestation course ${ride.number} · réseau partagé : frais 5 € → 0 €`, reason: "Course contestée : Client jamais pris en charge",
+    });
+    const [e] = await sql(`select contested_at, contested_by, contested_reason from public.ride_network_executions where id = $1`, [execution.id]);
+    expect(e).toMatchObject({ contested_by: p.A.ownerId, contested_reason: "Client jamais pris en charge" });
+    const [note] = await notesOf(p.partner.id, "settlement_payout_cancelled");
+    expect(note).toMatchObject({
+      ride_id: ride.id, title: `VERSEMENT ANNULÉ — ${p.aName}`,
+      body: `Course #${ride.number} · ${p.aName} conteste la course (Client jamais pris en charge) : les 37,50 € prévus ne vous seront pas versés`,
+      data: { type: "settlement_payout_cancelled", network: true, ride_id: ride.id, settlement_id: settlement.id, amount_cents: 3750 },
+    });
+    const [ev] = await sql(`select * from public.ride_events where ride_id = $1 and type = 'ride.network_contested'`, [ride.id]);
+    expect(ev).toMatchObject({
+      actor_type: "user", actor_id: p.A.ownerId, level: "warning",
+      data: { network: true, execution_id: execution.id, reason: "Client jamais pris en charge", payout_waived_cents: 3750, fee_reduction_cents: 500 },
+    });
+    expect(ev.message).toBe(
+      `Course partagée contestée : Client jamais pris en charge — versement de 37,50 € au chauffeur partenaire Karim T. · ${p.bName} annulé ; baisse des frais Rydar de 5 € demandée à Rydar`,
+    );
+    expect(await sql(`select 1 from public.audit_logs where action = 'network.ride_contested' and entity_id = $1`, [ride.id])).toHaveLength(1);
+    expect(await sql(`select 1 from realtime.messages where topic = $1 and event = 'platform.updated' and payload ->> 'entry_id' = $2`, [
+      `org:${p.A.id}`, res.fee_reduction.entry_id,
+    ])).toHaveLength(1);
+
+    // Double envoi : même réponse, rien de plus
+    const again = await rpc(p.A.ownerId, "contest_network_ride", [ride.id, "Autre motif bien long"]);
+    expect(again.fee_reduction).toEqual(res.fee_reduction);
+    expect(await sql(`select 1 from public.platform_fee_entries where ride_id = $1 and kind = 'correction'`, [ride.id])).toHaveLength(1);
+    // Ensuite : ni « Valider » ni « Rouvrir » le versement annulé
+    let err = await expectPgError(rpc(p.A.ownerId, "validate_network_ride", [ride.id]));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("NETWORK_RIDE_CONTESTED")]);
+    err = await expectPgError(rpc(p.A.ownerId, "reopen_settlement", [settlement.id]));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("NETWORK_RIDE_CONTESTED")]);
+    expect(ERROR_MESSAGES.NETWORK_RIDE_CONTESTED).toBeTruthy();
+    // Le chauffeur peut répondre « Je conteste »
+    expect(await rpc(p.partner.userId, "driver_dispute_network_settlement", [settlement.id, "J'ai bien fait la course"])).toMatchObject({ ok: true });
+    // Rydar décide de ses frais : baisse acceptée → plus rien de dû pour cette course
+    const sa = await superAdmin();
+    expect(await svc("svc_platform_review_entry", [res.fee_reduction.entry_id, sa, true, null])).toMatchObject({ ok: true, code: "APPROVED" });
+    expect((await sql(`select sum(amount_cents)::int as s from public.platform_fee_entries where ride_id = $1 and status = 'posted'`, [ride.id]))[0].s).toBe(0);
+  });
+
+  it("« Contester la course » : 7 jours au plus après la fin, motif de 5 à 300 caractères ; reversement inchangé ; course propre : RIDE_NOT_FOUND", async () => {
+    const p = await networkPair();
+    const { ride, settlement, execution } = await sharedRide(p, { payment_method: "cash" });
+    let err = await expectPgError(rpc(p.A.ownerId, "contest_network_ride", [ride.id, "non"]));
+    expect([err.code, err.message]).toEqual(["22023", expect.stringContaining("NETWORK_DISPUTE_REASON_INVALID")]);
+    await sql(`update public.ride_network_executions set ended_at = now() - interval '8 days' where id = $1`, [execution.id]);
+    err = await expectPgError(rpc(p.A.ownerId, "contest_network_ride", [ride.id, "Trajet jamais effectué"]));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("NETWORK_CONTEST_EXPIRED")]);
+    await sql(`update public.ride_network_executions set ended_at = now() - interval '6 days' where id = $1`, [execution.id]);
+    const res = await rpc(p.A.ownerId, "contest_network_ride", [ride.id, "Trajet jamais effectué"]);
+    expect(res).toMatchObject({ ok: true, settlement: { id: settlement.id, status: "due", network: { contested: true } }, fee_reduction: { amount_cents: 500 } });
+    const [note] = await notesOf(p.partner.id, "settlement_contested");
+    expect(note).toMatchObject({
+      title: `COURSE CONTESTÉE — ${p.aName}`, body: `Course #${ride.number} · ${p.aName} conteste la course : Trajet jamais effectué`,
+      data: { type: "settlement_contested", network: true, ride_id: ride.id, settlement_id: settlement.id, amount_cents: 500 },
+    });
+    // Les frais restent dus tant que Rydar n'a pas décidé
+    expect((await sql(`select sum(amount_cents)::int as s from public.platform_fee_entries where ride_id = $1 and status = 'posted'`, [ride.id]))[0].s).toBe(500);
+
+    const own = await createRideAsOwner(p.A, { pickup_lat: p.site[0], pickup_lng: p.site[1] });
+    err = await expectPgError(rpc(p.A.ownerId, "contest_network_ride", [own.id, "Trajet jamais effectué"]));
+    expect([err.code, err.message]).toEqual(["P0002", expect.stringContaining("RIDE_NOT_FOUND")]);
+  });
+});
+
+// =============================================================================
+// n° 21 — « Reçu » d'une ligne réseau (C2) ; droits et organisation suspendue
+// =============================================================================
+describe("« Reçu » d'une ligne réseau (§10.5, §14.1 n° 21)", () => {
+  it("ligne réseau unique : chauffeur prévenu, niveau de confiance de sa fiche de B inchangé ; les courses partenaires ne comptent pas chez B", async () => {
+    const p = await networkPair({ executor: "centrale" });
+    await sql(`update public.organization_settings set trust_after_rides = 2 where organization_id = $1`, [p.B.id]);
+    await sql(`update public.drivers set trust_level = 'new' where id = $1`, [p.partner.id]);
+    await insertRideBypass(p.B, { driver_id: p.partner.id, completed_at: new Date(), payment_method: "online" });
+    const { ride, settlement } = await sharedRide(p, { payment_method: "cash" });
+
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "cash", null])).toEqual({
+      ok: true, code: "CONFIRMED", count: 1, amount_cents: 500, received_cents: 500, paid_out_cents: 0, message: "1 règlement confirmé",
+    });
+    const [note] = await notesOf(p.partner.id, "settlement_paid");
+    expect(note).toMatchObject({
+      organization_id: p.A.id, driver_org_id: p.B.id, ride_id: ride.id, title: `PAIEMENT REÇU PAR ${p.aName}`,
+      body: `${p.aName} a bien reçu 5 € — merci !`,
+      data: { type: "settlement_paid", network: true, amount_cents: 500, settlement_id: settlement.id, ride_id: ride.id },
+    });
+    const [ev] = await sql(`select message from public.ride_events where ride_id = $1 and type = 'settlement.paid'`, [ride.id]);
+    expect(ev.message).toBe(`5 € reçus du chauffeur partenaire Karim T. · ${p.bName} (espèces)`);
+    const trust = async () => (await sql(`select trust_level from public.drivers where id = $1`, [p.partner.id]))[0].trust_level;
+    expect(await trust()).toBe("new");
+    // Promotion de B : 1 course propre sur 2 (la course partenaire réglée n'entre pas)
+    expect((await sql(`select private.maybe_promote_driver($1) as r`, [p.partner.id]))[0].r).toBe(false);
+    await insertRideBypass(p.B, { driver_id: p.partner.id, completed_at: new Date(), payment_method: "online" });
+    expect((await sql(`select private.maybe_promote_driver($1) as r`, [p.partner.id]))[0].r).toBe(true);
+    expect(await trust()).toBe("trusted");
+  });
+
+  it("plusieurs lignes d'un coup (notification sans course) ; dispatcher refusé, lot mêlé compris ; A suspendue : owner / admin pour ses lignes réseau", async () => {
+    const p = await networkPair({ giver: "centrale" });
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const admin = await createMember(p.A, "admin");
+    const s1 = await sharedRide(p, { payment_method: "cash" });
+    const s2 = await sharedRide(p, { payment_method: "cash" });
+    const s3 = await sharedRide(p, { payment_method: "cash" });
+    const own = await createDriver(p.A, { firstName: "Interne" });
+    const ownId = await ownLine(p.A, own.id);
+    const ownId2 = await ownLine(p.A, own.id);
+
+    for (const ids of [[s1.settlement.id], [ownId, s1.settlement.id]]) {
+      expect((await expectPgError(rpc(dispatcher, "confirm_settlements", [ids, "cash", null]))).code).toBe("42501");
+    }
+    expect((await expectPgError(rpc(dispatcher, "dispute_settlement", [s1.settlement.id, "Rien reçu"]))).code).toBe("42501");
+    expect((await sql(`select count(*)::int as n from public.ride_settlements where id = any ($1) and status = 'due'`, [[s1.settlement.id, ownId]]))[0].n).toBe(2);
+    // Ligne propre seule : inchangé (dispatcher permis)
+    expect(await rpc(dispatcher, "confirm_settlements", [[ownId], "cash", null])).toMatchObject({ ok: true, count: 1 });
+
+    // Deux lignes réseau d'un coup : une notification, sans course
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[s1.settlement.id, s2.settlement.id], "cash", null])).toMatchObject({
+      ok: true, count: 2, received_cents: 2500,
+    });
+    const paid = await notesOf(p.partner.id, "settlement_paid");
+    expect(paid).toHaveLength(1);
+    expect(paid[0]).toMatchObject({ ride_id: null, body: `${p.aName} a bien reçu 25 € — merci !`, data: { type: "settlement_paid", network: true, amount_cents: 2500 } });
+    expect(paid[0].data).not.toHaveProperty("settlement_id");
+
+    // A suspendue : owner / admin gardent la main sur leurs lignes réseau ; jamais un dispatcher ; jamais une ligne propre
+    await sql(`update public.organizations set status = 'suspended' where id = $1`, [p.A.id]);
+    try {
+      expect((await expectPgError(rpc(dispatcher, "confirm_settlements", [[s3.settlement.id], "cash", null]))).code).toBe("42501");
+      expect((await expectPgError(rpc(p.A.ownerId, "confirm_settlements", [[ownId2, s3.settlement.id], "cash", null]))).code).toBe("42501");
+      expect(await rpc(admin, "dispute_settlement", [s3.settlement.id, "Rien reçu"])).toMatchObject({ ok: true, code: "DISPUTED" });
+      expect(await rpc(p.A.ownerId, "confirm_settlements", [[s3.settlement.id], "cash", null])).toMatchObject({ ok: true, count: 1 });
+      expect(await rpc(p.A.ownerId, "reopen_settlement", [s3.settlement.id])).toMatchObject({ ok: true });
+      expect(await rpc(p.A.ownerId, "waive_settlement", [s3.settlement.id, "Geste commercial"])).toMatchObject({ ok: true });
+    } finally {
+      await sql(`update public.organizations set status = 'active' where id = $1`, [p.A.id]);
+    }
+  });
+});
+
+// =============================================================================
+// n° 22 — Relances réseau
+// =============================================================================
+describe("Relances réseau (§10.8, §14.1 n° 22)", () => {
+  it("automatiques : application seulement (même si A relance par WhatsApp), 23 h d'écart, 3 au plus ; A suspendue ou chauffeur inactif : aucune", async () => {
+    const p = await networkPair();
+    await sql(`update public.organization_settings set reminder_channels = '{whatsapp}' where organization_id = $1`, [p.A.id]);
+    const { settlement } = await sharedRide(p, { payment_method: "cash" });
+    await sql(`update public.ride_settlements set due_at = now() - interval '1 hour' where id = $1`, [settlement.id]);
+
+    const r1 = await runReminders();
+    expect(r1.network).toBeGreaterThanOrEqual(1);
+    expect(r1.reminders).toBeGreaterThanOrEqual(r1.network);
+    const notes = await notesOf(p.partner.id, "settlement_reminder");
+    expect(notes).toEqual([{
+      organization_id: p.A.id, driver_org_id: p.B.id, ride_id: null, channel: "push", title: `RAPPEL — À RÉGLER À ${p.aName}`,
+      body: `Rappel : 5 € à régler à ${p.aName} (1 course partenaire)`,
+      data: { type: "settlement_reminder", network: true, amount_cents: 500, count: 1 },
+    }]);
+    expect(await sql(`select 1 from public.notifications where driver_id = $1 and channel = 'whatsapp'`, [p.partner.id])).toEqual([]);
+    const sent = async () => (await sql(`select reminders_sent from public.ride_settlements where id = $1`, [settlement.id]))[0].reminders_sent;
+    expect(await sent()).toBe(1);
+    await runReminders();
+    expect(await notesOf(p.partner.id, "settlement_reminder")).toHaveLength(1);
+    // 23 h plus tard, deux fois encore ; jamais une quatrième
+    for (let i = 0; i < 3; i++) {
+      await sql(`update public.ride_settlements set last_reminded_at = now() - interval '24 hours' where id = $1`, [settlement.id]);
+      await runReminders();
+    }
+    expect(await notesOf(p.partner.id, "settlement_reminder")).toHaveLength(NETWORK_PARAMS.autoRemindersMax);
+    expect(await sent()).toBe(3);
+
+    // A suspendue / chauffeur inactif : aucune relance
+    const q = await networkPair();
+    const s2 = await sharedRide(q, { payment_method: "cash" });
+    const q2 = await networkPair();
+    const s3 = await sharedRide(q2, { payment_method: "cash" });
+    await sql(`update public.ride_settlements set due_at = now() - interval '1 hour' where id = any ($1)`, [[s2.settlement.id, s3.settlement.id]]);
+    await sql(`update public.organizations set status = 'suspended' where id = $1`, [q.A.id]);
+    await sql(`update public.drivers set status = 'inactive' where id = $1`, [q2.partner.id]);
+    try {
+      await runReminders();
+      expect(await notesOf(q.partner.id, "settlement_reminder")).toEqual([]);
+      expect(await notesOf(q2.partner.id, "settlement_reminder")).toEqual([]);
+    } finally {
+      await sql(`update public.organizations set status = 'active' where id = $1`, [q.A.id]);
+    }
+  });
+
+  it("manuelle (« Relancer ») : tout membre de A, application seulement, une par 30 min, seulement envers son organisation", async () => {
+    const p = await networkPair();
+    const C = await giver("Troisième");
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const a1 = await sharedRide(p, { payment_method: "cash" });
+    const a2 = await sharedRide(p, { payment_method: "cash" });
+    const c1 = await sharedRide(p, { payment_method: "cash" }, { A: C });
+    const remind = (who: string, org: string, id: string) => rpc(who, "remind_network_driver", [org, id]);
+
+    expect(await remind(dispatcher, p.A.id, a1.settlement.id)).toEqual({
+      ok: true, code: "REMINDED", amount_cents: 1000, count: 2, channels: ["app"], message: "Rappel envoyé au chauffeur (application).",
+    });
+    const notes = await notesOf(p.partner.id, "settlement_reminder");
+    expect(notes).toEqual([expect.objectContaining({
+      organization_id: p.A.id, ride_id: null, channel: "push", title: `RAPPEL — À RÉGLER À ${p.aName}`,
+      body: `Rappel : 10 € à régler à ${p.aName} (2 courses partenaires)`,
+      data: { type: "settlement_reminder", network: true, amount_cents: 1000, count: 2 },
+    })]);
+    const [ev] = await sql(
+      `select * from public.ride_events where organization_id = $1 and type = 'settlement.reminded' order by id desc limit 1`,
+      [p.A.id],
+    );
+    expect(ev).toMatchObject({ ride_id: null, actor_type: "user", actor_id: dispatcher, data: { network: true, amount_cents: 1000, count: 2, channels: ["app"] } });
+    expect(ev.message).toBe(`Rappel envoyé par l'application au chauffeur partenaire Karim T. · ${p.bName} : 10 € à régler (2 courses)`);
+    expect(JSON.stringify(ev)).not.toContain(p.partner.id);
+    expect((await sql(`select reminders_sent from public.ride_settlements where id = $1`, [c1.settlement.id]))[0].reminders_sent).toBe(0);
+
+    // Une par 30 min (toutes les lignes du chauffeur envers A)
+    const tooSoon = await remind(p.A.ownerId, p.A.id, a2.settlement.id);
+    expect(tooSoon).toMatchObject({ ok: false, code: "TOO_SOON", message: "Rappel déjà envoyé il y a moins de 30 minutes." });
+    expect(new Date(tooSoon.next_allowed_at).getTime()).toBeGreaterThan(Date.now() + 25 * 60_000);
+    // Seulement envers son organisation : ligne de C demandée par A, ligne de A demandée par C → rien ; non-membre → refusé
+    expect(await remind(p.A.ownerId, p.A.id, c1.settlement.id)).toMatchObject({ ok: false, code: "NOTHING_DUE" });
+    expect(await remind(C.ownerId, C.id, a1.settlement.id)).toMatchObject({ ok: false, code: "NOTHING_DUE" });
+    for (const who of [C.ownerId, p.B.ownerId, p.partner.userId]) {
+      expect((await expectPgError(remind(who, p.A.id, a1.settlement.id))).code, who).toBe("42501");
+    }
+    // Signalé payé : plus rien à relancer
+    await rpc(p.partner.userId, "driver_declare_network_payment", [p.A.id, [a1.settlement.id, a2.settlement.id], "link", null]);
+    await sql(`update public.ride_settlements set last_reminded_at = now() - interval '31 minutes' where id = any ($1)`, [[a1.settlement.id, a2.settlement.id]]);
+    expect(await remind(p.A.ownerId, p.A.id, a1.settlement.id)).toMatchObject({ ok: false, code: "NOTHING_DUE" });
+  });
+});
+
+// =============================================================================
+// n° 23 — Frais Rydar d'une course partagée
+// =============================================================================
+describe("Frais Rydar d'une course partagée (§10.9, §14.1 n° 23)", () => {
+  it("flotte : écriture chez A au taux figé à l'acceptation, « réseau partagé », rien chez B, aucun recalcul, due même règlement contesté", async () => {
+    const p = await networkPair();
+    await sql(`update public.organizations set platform_fee_percent = 20 where id = $1`, [p.A.id]);
+    const { ride, execution } = await partnerAccepts(p, p.partner, { payment_method: "cash" });
+    expect(execution.terms).toMatchObject({ platform_fee_cents: 1000, amount_cents: 1000 });
+    // A baisse ses frais pendant la course : les termes acceptés comptent
+    await sql(`update public.organizations set platform_fee_percent = 10 where id = $1`, [p.A.id]);
+    await finish(p.partner, ride.id, p.site);
+    const entries = () => sql(`select organization_id, kind, amount_cents, status, label from public.platform_fee_entries where ride_id = $1`, [ride.id]);
+    expect(await entries()).toEqual([
+      { organization_id: p.A.id, kind: "ride", amount_cents: 1000, status: "posted", label: `Course ${ride.number} · réseau partagé` },
+    ]);
+    expect(await sql(`select 1 from public.platform_fee_entries where organization_id = $1`, [p.B.id])).toEqual([]);
+    expect(await sql(`select 1 from private.fleet_fee_basis where ride_id = $1`, [ride.id])).toEqual([]);
+    // Aucun recalcul (déclencheur des frais réveillé)
+    await sql(`update public.rides set commission_cents = commission_cents, payment_method = payment_method where id = $1`, [ride.id]);
+    expect(await entries()).toHaveLength(1);
+    // « Pas reçu » : les frais de A restent dus
+    const [x] = await sql(`select id from public.ride_settlements where ride_id = $1`, [ride.id]);
+    await rpc(p.A.ownerId, "dispute_settlement", [x.id, "Rien reçu"]);
+    expect(await entries()).toEqual([expect.objectContaining({ amount_cents: 1000, status: "posted" })]);
+    // Compte de A : course payée à bord, chez le chauffeur tant que la ligne réseau est ouverte
+    const [account] = await sql(`select private.platform_account($1) as a`, [p.A.id]);
+    expect(account.a).toMatchObject({ with_drivers_cents: 1000, collected_by_centrale_cents: 0 });
+    await rpc(p.A.ownerId, "confirm_settlements", [[x.id], "cash", null]);
+    const [after] = await sql(`select private.platform_account($1) as a`, [p.A.id]);
+    expect(after.a).toMatchObject({ with_drivers_cents: 0, collected_by_centrale_cents: 1000 });
+  });
+
+  it("A passée en centrale pendant la course (répartition vivante recalculée à 20 %) : frais des termes figés", async () => {
+    const p = await networkPair();
+    const { ride, execution } = await partnerAccepts(p, p.partner, { payment_method: "online" });
+    expect(execution.terms).toMatchObject({ platform_fee_cents: 500, commission_cents: 0 });
+    await sql(`update public.organization_settings set driver_commission_percent = 15 where organization_id = $1`, [p.A.id]);
+    await sql(`update public.organizations set dispatch_model = 'centrale', platform_fee_percent = 20 where id = $1`, [p.A.id]);
+    const [live] = await sql(`select platform_fee_cents from public.rides where id = $1`, [ride.id]);
+    expect(live.platform_fee_cents).toBe(1000);
+    await finish(p.partner, ride.id, p.site);
+    expect(await sql(`select amount_cents, label from public.platform_fee_entries where ride_id = $1`, [ride.id])).toEqual([
+      { amount_cents: 500, label: `Course ${ride.number} · réseau partagé` },
+    ]);
+    expect(await sql(`select amount_cents, platform_fee_cents from public.ride_settlements where ride_id = $1`, [ride.id])).toEqual([
+      { amount_cents: 4500, platform_fee_cents: 500 },
+    ]);
+  });
+});
+
+// =============================================================================
+// n° 24 — Encaissements et garde de changement de modèle
+// =============================================================================
+describe("Encaissements et changement de modèle (§10.5, §14.1 n° 24)", () => {
+  it("Encaissements sans ligne réseau ; retour en flotte permis avec des lignes réseau ouvertes, refusé avec des lignes propres", async () => {
+    const p = await networkPair({ giver: "centrale" });
+    const { settlement } = await sharedRide(p, { payment_method: "cash" });
+    const overview = await rpc(p.A.ownerId, "org_settlement_overview", [p.A.id]);
+    expect(overview.totals).toMatchObject({ to_collect_cents: 0, open_count: 0, declared_count: 0, to_pay_cents: 0 });
+    expect(overview.month).toMatchObject({ rides: 0, volume_cents: 0 });
+    expect(overview.drivers).toEqual([]);
+    for (const filter of ["open", "all", "overdue"]) {
+      expect((await rpc(p.A.ownerId, "org_settlements", [p.A.id, filter, null, 100, null])).items, filter).toEqual([]);
+    }
+
+    // Retour en flotte : les lignes réseau ne le bloquent pas
+    await sql(`update public.organizations set dispatch_model = 'fleet' where id = $1`, [p.A.id]);
+    // … elles se règlent toujours (onglet « Réseau partagé »)
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[settlement.id], "cash", null])).toMatchObject({ ok: true });
+    // Ligne propre ouverte : refus inchangé
+    await sql(`update public.organizations set dispatch_model = 'centrale' where id = $1`, [p.A.id]);
+    const own = await createDriver(p.A, { firstName: "Interne" });
+    const ownId = await ownLine(p.A, own.id);
+    const err = await expectPgError(sql(`update public.organizations set dispatch_model = 'fleet' where id = $1`, [p.A.id]));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("SETTLEMENTS_OPEN")]);
+    // Ligne propre : comptée dans Encaissements comme avant
+    expect((await rpc(p.A.ownerId, "org_settlement_overview", [p.A.id])).totals).toMatchObject({ open_count: 1, to_collect_cents: 1500 });
+    expect((await rpc(p.A.ownerId, "org_settlements", [p.A.id, "open", null, 100, null])).items.map((i: any) => i.id)).toEqual([ownId]);
+  });
+});
+
+// =============================================================================
+// Dette et suppression de compte (§10.10)
+// =============================================================================
+describe("Dette réseau et suppression du compte (§10.10, S2)", () => {
+  it("dette rappelée avant la suppression ; empreintes gardées pour chaque créancière ; débiteur bloqué chez elle sous une nouvelle fiche ; purge une fois réglée", async () => {
+    const p = await networkPair();
+    const C = await giver("Troisième");
+    const cName = await orgName(C);
+    const a1 = await sharedRide(p, { payment_method: "cash" });
+    const a2 = await sharedRide(p, { payment_method: "cash" });
+    await sharedRide(p, { payment_method: "cash" }, { A: C });
+    await rpc(p.partner.userId, "driver_declare_network_payment", [p.A.id, [a2.settlement.id], "link", null]);
+
+    const expected = {
+      owed_cents: 0, declared_cents: 0, currency: "EUR", organization: p.bName,
+      network: [
+        { organization: p.aName, owed_cents: 500, declared_cents: 500 },
+        { organization: cName, owed_cents: 500, declared_cents: 0 },
+      ].sort((x, y) => x.organization.localeCompare(y.organization)),
+    };
+    expect(await rpc(p.partner.userId, "driver_deletion_debt")).toEqual(expected);
+    expect(await svc("svc_driver_deletion_debt", [p.partner.userId])).toEqual(expected);
+    // Sans dette réseau : réponse d'avant (pas de clé « network »)
+    const lone = await createDriver(p.B, { firstName: "Solo" });
+    expect(await rpc(lone.userId, "driver_deletion_debt")).toEqual({ owed_cents: 0, declared_cents: 0, currency: "EUR", organization: p.bName });
+
+    const [{ phone }] = await sql(`select phone from public.drivers where id = $1`, [p.partner.id]);
+    expect(await svc("svc_delete_driver_account", [p.partner.userId])).toMatchObject({ ok: true, code: "DELETED" });
+    const kept = await sql(`select creditor_org_id, kind from private.network_debtor_identities where driver_id = $1`, [p.partner.id]);
+    expect(new Set(kept.map((k) => k.creditor_org_id))).toEqual(new Set([p.A.id, C.id]));
+    expect(new Set(kept.map((k) => k.kind))).toEqual(new Set(["phone", "email", "vtc_card"]));
+    const [audit] = await sql(`select metadata from public.audit_logs where action = 'driver.deleted' and entity_id = $1`, [p.partner.id]);
+    expect(audit.metadata.network_debtor_identities).toBe(kept.length);
+
+    // Il revient par une autre organisation avec le même téléphone : bloqué chez A (et chez C), pas ailleurs
+    const E = await createOrg(`Executante E ${tag()}`);
+    await enableNetwork(E, { in: true });
+    await approveNetwork(E);
+    const again = await readyPartner(E, { firstName: "Revenu", at: north(p.site, 900) });
+    await sql(`update public.drivers set phone = $2 where id = $1`, [again.id, phone]);
+    const nextA = await rideOfA(p);
+    expect(await driverReason(again.id, nextA.id)).toBe("debtor");
+    expect(await driverReason(again.id, (await rideOfA(p, {}, await giver("Autre"))).id)).toBeNull();
+
+    // A encaisse : plus rien chez A (aucune notification à une fiche supprimée), purge par le ménage ; C garde les siennes
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[a1.settlement.id, a2.settlement.id], "cash", null])).toMatchObject({ ok: true, count: 2 });
+    expect(await notesOf(p.partner.id, "settlement_paid")).toEqual([]);
+    expect(await driverReason(again.id, nextA.id)).toBeNull();
+    const [{ r }] = await sql(`select private.housekeeping() as r`);
+    expect(r.debtor_identities_purged).toBeGreaterThanOrEqual(1);
+    const left = await sql(`select distinct creditor_org_id from private.network_debtor_identities where driver_id = $1`, [p.partner.id]);
+    expect(left.map((k) => k.creditor_org_id)).toEqual([C.id]);
+  });
+});
+
+// =============================================================================
+// Relevés (§10.11), réseau fermé, droits de la partie 4b
+// =============================================================================
+describe("Relevés, réseau fermé et droits (partie 4b)", () => {
+  it("mois d'une course partagée (relevés, exports) : fin de la course dans le fuseau de A, le même chez A et chez B", async () => {
+    const p = await networkPair();
+    await sql(`update public.organizations set timezone = 'Pacific/Auckland' where id = $1`, [p.A.id]);
+    const { execution } = await sharedRide(p, { payment_method: "cash" });
+    await sql(`update public.ride_network_executions set ended_at = '2026-10-31T13:00:00Z' where id = $1`, [execution.id]);
+    const month = async () => (await sql(`select private.network_month(e) as m from public.ride_network_executions e where id = $1`, [execution.id]))[0].m;
+    expect(await month()).toBe("2026-11"); // 1er novembre à Auckland, encore octobre à Paris (B)
+    await sql(`update public.organizations set timezone = 'Europe/Paris' where id = $1`, [p.A.id]);
+    expect(await month()).toBe("2026-10");
+  });
+
+  it("réseau fermé par Rydar : les décisions d'argent de A restent possibles (NETWORK_CLOSED_RPCS)", async () => {
+    const p = await networkPair();
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_FR, null]);
+    const held = await sharedRide(p, { payment_method: "online" }, { gps: false });
+    const cash = await sharedRide(p, { payment_method: "cash" });
+    await setSharedNetwork(false);
+    expect(await rpc(p.A.ownerId, "validate_network_ride", [held.ride.id])).toMatchObject({ ok: true });
+    expect(await rpc(p.A.ownerId, "org_network_payout_info", [held.settlement.id])).toMatchObject({ iban: IBAN_FR });
+    expect(await rpc(p.A.ownerId, "confirm_settlements", [[held.settlement.id], "transfer", null])).toMatchObject({ ok: true });
+    expect(await rpc(p.A.ownerId, "remind_network_driver", [p.A.id, cash.settlement.id])).toMatchObject({ ok: true, code: "REMINDED" });
+    expect(await rpc(p.A.ownerId, "contest_network_ride", [cash.ride.id, "Trajet non conforme"])).toMatchObject({ ok: true });
+    expect(await rpc(p.A.ownerId, "dispute_settlement", [cash.settlement.id, "Rien reçu"])).toMatchObject({ ok: true });
+  });
+
+  it("RPC de A : jamais anonymes, contrôle dans la fonction ; aides : serveur seulement", async () => {
+    const calls: Array<[string, unknown[]]> = [
+      ["org_network_payout_info", [randomUUID()]],
+      ["validate_network_ride", [randomUUID()]],
+      ["contest_network_ride", [randomUUID(), "Trajet non conforme"]],
+      ["remind_network_driver", [randomUUID(), randomUUID()]],
+    ];
+    for (const [fn, args] of calls) {
+      const anon = await expectPgError(as({ role: "anon" }, (q) => q(`select public.${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")})`, args)));
+      expect(anon.code, `${fn} anon`).toBe("42501");
+    }
+    const rows = await sql(
+      `select n.nspname, p.proname, p.prosecdef as definer, 'search_path=""' = any (p.proconfig) as empty_path,
+              has_function_privilege('authenticated', p.oid, 'execute') as auth, has_function_privilege('anon', p.oid, 'execute') as anon
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where (n.nspname = 'public' and p.proname in ('org_network_payout_info', 'validate_network_ride', 'contest_network_ride',
+                 'remind_network_driver'))
+           or (n.nspname = 'private' and p.proname in ('network_notify', 'network_month'))`,
+    );
+    expect(rows).toHaveLength(6);
+    for (const r of rows) {
+      const isPublic = r.nspname === "public";
+      expect(r, r.proname).toMatchObject({ definer: isPublic, empty_path: true, auth: isPublic, anon: false });
+    }
+  });
+});

@@ -5,8 +5,14 @@
 -- chauffeur de B, sérialisation et diffusion (A : settlement_json avec son bloc « network » ; chauffeur :
 -- driver:{network_driver_id}, jamais settlement_json ni org:{B}), côté chauffeur (règlements partenaires par
 -- organisation, déclaration de paiement avec les SEULS moyens de A, « Je conteste », coordonnées de versement),
--- accueil et gains du chauffeur (net PAR COURSE avec les termes figés). La partie 4b (côté A, blocages, relances,
--- frais Rydar, exports) complète ce fichier.
+-- accueil et gains du chauffeur (net PAR COURSE avec les termes figés).
+-- Partie 4b (§10.5, §10.7 à §10.11, section 8) : côté A — « Reçu » / « Versé », « Pas reçu », « Annuler », « Rouvrir »
+-- (owner / admin de A, même suspendue : private.assert_network_creditor), RIB du chauffeur pour un versement
+-- (org_network_payout_info, consultation journalisée et notifiée), « Valider » / « Contester la course » (retenue levée ;
+-- versement annulé + demande de baisse des frais Rydar), « Relancer » ; blocage d'un débiteur de A revenu par une autre
+-- fiche ; relances automatiques (application seulement) ; frais Rydar d'une course partagée aux termes figés chez A ;
+-- dette rappelée avant la suppression du compte et empreintes gardées pour chaque créancière ; Encaissements et garde
+-- de changement de modèle sans les lignes réseau ; mois des relevés (identique chez A et chez B).
 --
 -- Décisions du propriétaire appliquées :
 --  * Q1 : le chauffeur partenaire est traité comme les chauffeurs de A ; B ne prend rien. Montants = termes figés à
@@ -1415,4 +1421,1988 @@ grant execute on function
   public.driver_network_settlements(),
   public.driver_declare_network_payment(uuid, uuid[], text, text),
   public.driver_dispute_network_settlement(uuid, text)
+to authenticated, service_role;
+
+-- =============================================================================
+-- 8. Partie 4b — côté A (donneuse), blocages, relances, frais Rydar, dette et suppression, exports (§10.5, §10.7 à
+--    §10.11)
+-- =============================================================================
+-- Toutes les actions d'argent réseau de A passent par private.assert_network_creditor (propriétaire ou administrateur,
+-- jwt_issued_after, organisation active, suspendue OU archivée ; lot dispatch) : « Reçu », « Pas reçu », « Annuler »,
+-- « Rouvrir », RIB, « Valider », « Contester la course ». Seule « Relancer » est ouverte à tout membre (dispatcher
+-- compris). Le chauffeur partenaire est prévenu (notification chez A, data.network) ; jamais de promotion « chauffeur
+-- confirmé » chez B. Rien ne dépend de l'interrupteur (NETWORK_CLOSED_RPCS) ; sans ligne réseau, les fonctions
+-- redéfinies répondent comme avant (branches gardées par « network_driver_org_id is not null » ou par une course
+-- tenue par un chauffeur d'une autre organisation).
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.1 Validation d'une course « à vérifier » par A (validate_network_ride)
+-- -----------------------------------------------------------------------------------------------------------------
+alter table public.ride_network_executions
+  add column validated_at timestamptz,
+  add column validated_by uuid references public.users (id) on delete set null;
+comment on column public.ride_network_executions.validated_at is
+  'Course « à vérifier » validée par A (public.validate_network_ride) : versement retenu libéré (hold_until ramené à la validation), plus « à vérifier », y compris une course payée à bord (sans retenue).';
+
+-- Diffusion de l'exécution (org:{A} : id de la course ; org:{B} : id de l'exécution seulement, S14), aussi à la
+-- validation. Dernière définition du déclencheur : 20260924006700 (même fonction, colonne validated_at ajoutée).
+drop trigger ride_network_executions_broadcast on public.ride_network_executions;
+create trigger ride_network_executions_broadcast
+  after insert or update of ended_at, end_reason, suspect_reasons, hold_until, contested_at, driver_disputed_at, validated_at
+  on public.ride_network_executions
+  for each row execute function private.broadcast_network_execution();
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.2 Aides (private, sans definer : appelées par des fonctions privilégiées)
+-- -----------------------------------------------------------------------------------------------------------------
+
+-- Notification au chauffeur partenaire au sujet d'une course ou d'un règlement de A (ligne chez A ; G1 pose
+-- driver_org_id = B : lisible par lui seul) : data { type, network: true, … } (contrat NetworkSettlementNotificationData :
+-- l'app ouvre « Courses partenaires ») — jamais commission, frais Rydar ni détail de la part de A (U4). Fiche supprimée
+-- (compte effacé) ou absente : personne à prévenir.
+create or replace function private.network_notify(p_org uuid, p_driver uuid, p_ride uuid, p_type text, p_title text,
+                                                  p_body text, p_data jsonb default '{}'::jsonb,
+                                                  p_priority text default 'normal')
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if p_driver is null or not exists (select 1 from public.drivers d where d.id = p_driver and d.deleted_at is null) then
+    return;
+  end if;
+  perform private.queue_notification(p_org, p_driver, p_ride, null, p_type, p_title, p_body,
+    jsonb_build_object('type', p_type, 'network', true) || coalesce(p_data, '{}'::jsonb), p_priority, null);
+end;
+$$;
+
+-- Mois d'une course partagée pour les relevés et exports (§10.11, U14) : fin de l'exécution (sinon acceptation) dans
+-- le fuseau de A — la MÊME valeur chez A (« Courses confiées ») et chez B (« Courses reçues ») : mêmes courses, et donc
+-- mêmes totaux, calculés des deux côtés depuis les termes figés de l'exécution. Les RPC org_network_given /
+-- org_network_received (lot accès) filtrent p_month (« AAAA-MM ») avec elle.
+create or replace function private.network_month(e public.ride_network_executions)
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select to_char(coalesce(e.ended_at, e.accepted_at)
+                 at time zone coalesce((select o.timezone from public.organizations o where o.id = e.organization_id),
+                                       'Europe/Paris'), 'YYYY-MM');
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.3 Nouvelles RPC de A (security definer, contrôle d'accès DANS la fonction ; indépendantes de l'interrupteur :
+--     NETWORK_CLOSED_RPCS — les sommes en cours se règlent même réseau fermé)
+-- -----------------------------------------------------------------------------------------------------------------
+
+-- RIB du chauffeur partenaire pour un versement de A (§10.5, S16, contrat OrgNetworkPayoutInfo) : propriétaire ou
+-- administrateur de A, même suspendue ou archivée (private.assert_network_creditor, C12) ; ligne réseau prépayée
+-- (centrale_owes) encore « à verser » (sinon FORBIDDEN_TENANT : aucune raison de lire le RIB), non retenue (course « à
+-- vérifier » : validée ou retenue passée, sinon NETWORK_PAYOUT_ON_HOLD). Chauffeur sans RIB (facultatif) :
+-- PAYOUT_DETAILS_MISSING, jamais une réponse NULL. Avertissements : « iban_changed » (empreinte du RIB ≠ celle figée à la
+-- fin de la course), « recent_change » (RIB modifié il y a moins de 72 h). Chaque consultation : audit
+-- « network.payout_info_viewed » chez A avec l'identifiant du règlement SEULEMENT (jamais l'IBAN) et notification au
+-- chauffeur « {A} a consulté votre RIB pour vous verser {montant} ».
+create or replace function public.org_network_payout_info(p_settlement uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x public.ride_settlements;
+  e public.ride_network_executions;
+  p public.driver_payout_details;
+  g public.organizations;
+  v_warnings text[] := '{}';
+begin
+  select * into x from public.ride_settlements y where y.id = p_settlement and y.network_driver_org_id is not null;
+  if not found then
+    raise exception 'FORBIDDEN_TENANT: règlement réseau introuvable' using errcode = '42501';
+  end if;
+  perform private.assert_network_creditor(x.organization_id);
+  if x.direction <> 'centrale_owes' or x.status <> 'due' then
+    raise exception 'FORBIDDEN_TENANT: coordonnées bancaires réservées à un versement en attente' using errcode = '42501';
+  end if;
+  select * into e from public.ride_network_executions y where y.id = x.network_execution_id;
+  if coalesce(e.hold_until > now(), false) then
+    raise exception 'NETWORK_PAYOUT_ON_HOLD: versement retenu, course à vérifier' using errcode = '55000';
+  end if;
+  select * into p from public.driver_payout_details y where y.driver_id = x.network_driver_id;
+  if not found then
+    raise exception 'PAYOUT_DETAILS_MISSING: coordonnées bancaires non renseignées par le chauffeur' using errcode = 'P0002';
+  end if;
+  if e.payout_iban_hash is not null and e.payout_iban_hash <> p.iban_hash then
+    v_warnings := v_warnings || 'iban_changed'::text;
+  end if;
+  if p.updated_at > now() - interval '72 hours' then
+    v_warnings := v_warnings || 'recent_change'::text;
+  end if;
+
+  select * into g from public.organizations o where o.id = x.organization_id;
+  insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+  values (x.organization_id, 'user', auth.uid(), 'network.payout_info_viewed', 'ride_settlements', x.id::text,
+          case when cardinality(v_warnings) > 0 then 'warning' else 'info' end,
+          jsonb_build_object('settlement_id', x.id));
+  perform private.network_notify(x.organization_id, x.network_driver_id, x.ride_id, 'settlement_payout_info',
+    'RIB CONSULTÉ PAR ' || g.name,
+    format('%s a consulté votre RIB pour vous verser %s', g.name, private.fmt_eur(x.amount_cents)),
+    jsonb_build_object('settlement_id', x.id, 'ride_id', x.ride_id, 'amount_cents', x.amount_cents));
+
+  return jsonb_build_object(
+    'settlement_id', x.id,
+    'amount_cents', x.amount_cents,
+    'currency', x.currency,
+    'reference', x.reference,
+    'payee_name', p.payee_name,
+    'iban', p.iban,
+    'bic', p.bic,
+    'updated_at', p.updated_at,
+    'warnings', to_jsonb(v_warnings));
+end;
+$$;
+
+-- « Valider » une course partagée « à vérifier » (§10.5, §10.9, S10, contrat ValidateNetworkRideResult) : propriétaire
+-- ou administrateur de A (même suspendue) ; course terminée par un partenaire (exécution « completed », sinon
+-- RIDE_NOT_FOUND), non contestée (NETWORK_RIDE_CONTESTED). La retenue d'un versement prépayé est levée (hold_until
+-- ramené à maintenant : « retenu » se lit partout hold_until > now()) et la course n'est plus « à vérifier »
+-- (validated_at, aussi pour une course payée à bord, sans retenue). Une seule fois (appel répété : même réponse).
+-- Journal « ride.network_validated » et audit « network.ride_validated » chez A ; chauffeur prévenu si son versement
+-- est libéré ; diffusion du règlement (A et chauffeur) et de l'exécution (network.updated).
+create or replace function public.validate_network_ride(p_ride uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.rides;
+  e public.ride_network_executions;
+  x public.ride_settlements;
+  g public.organizations;
+  v_released boolean := false;
+begin
+  select * into r from public.rides y where y.id = p_ride;
+  if not found then
+    raise exception 'RIDE_NOT_FOUND: course introuvable' using errcode = 'P0002';
+  end if;
+  perform private.assert_network_creditor(r.organization_id);
+  select * into e from public.ride_network_executions y
+   where y.ride_id = r.id and y.end_reason = 'completed'
+   order by y.ended_at desc
+   limit 1
+   for update;
+  if not found then
+    raise exception 'RIDE_NOT_FOUND: course partagée terminée introuvable' using errcode = 'P0002';
+  end if;
+  if e.contested_at is not null then
+    raise exception 'NETWORK_RIDE_CONTESTED: course contestée, elle ne peut plus être validée' using errcode = '55000';
+  end if;
+  select * into x from public.ride_settlements y where y.ride_id = r.id and y.network_driver_org_id is not null for update;
+
+  if e.validated_at is null then
+    v_released := coalesce(e.hold_until > now(), false) and x.id is not null and x.direction = 'centrale_owes'
+                  and x.status = 'due';
+    perform private.set_actor('user', auth.uid());
+    update public.ride_network_executions y
+       set validated_at = now(), validated_by = auth.uid(),
+           hold_until = case when y.hold_until > now() then now() else y.hold_until end
+     where y.id = e.id
+    returning * into e;
+    select * into g from public.organizations o where o.id = r.organization_id;
+    perform private.log_event(r.organization_id, r.id, 'ride.network_validated',
+      'Course partagée vérifiée et validée'
+        || case when v_released
+                then format(' : versement de %s au chauffeur partenaire %s libéré', private.fmt_eur(x.amount_cents),
+                       x.driver_label)
+                else '' end,
+      'timeline', 'success',
+      jsonb_build_object('network', true, 'execution_id', e.id, 'suspect_reasons', to_jsonb(e.suspect_reasons),
+        'released', v_released),
+      'user', auth.uid());
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (r.organization_id, 'user', auth.uid(), 'network.ride_validated', 'rides', r.id::text, 'info',
+            jsonb_build_object('execution_id', e.id, 'suspect_reasons', to_jsonb(e.suspect_reasons),
+              'released_cents', case when v_released then x.amount_cents end));
+    if x.id is not null then
+      perform private.broadcast_settlement(x, 'updated');
+    end if;
+    if v_released then
+      perform private.network_notify(r.organization_id, x.network_driver_id, r.id, 'settlement_payout',
+        'GAIN À RECEVOIR DE ' || g.name,
+        format('Course #%s · %s a validé la course : %s vous seront versés', r.number, g.name, private.fmt_eur(x.amount_cents)),
+        jsonb_build_object('settlement_id', x.id, 'ride_id', r.id, 'amount_cents', x.amount_cents));
+    end if;
+  end if;
+
+  return jsonb_build_object('ok', true, 'ride_id', r.id,
+    'settlement', case when x.id is null then null else private.settlement_json(x) end);
+end;
+$$;
+
+-- « Contester la course » (§10.9, S10, contrat ContestNetworkRideResult) : propriétaire ou administrateur de A (même
+-- suspendue), course terminée par un partenaire (RIDE_NOT_FOUND sinon), au plus 7 jours après sa fin
+-- (NETWORK_CONTEST_EXPIRED), motif de 5 à 300 caractères (NETWORK_DISPUTE_REASON_INVALID). Effets :
+--  * contestation posée sur l'exécution (contested_at / by / reason : compteur « contestations » de B dans /admin/reseau) ;
+--  * versement prépayé encore dû (centrale_owes) → annulé, motif « Course contestée : … » (le chauffeur peut répondre
+--    « Je conteste ») ; un reversement (payé à bord, driver_owes) reste dû : A seule juge de ses encaissements ;
+--  * frais Rydar de la course : demande de baisse = correction de −frais EN ATTENTE du super admin (mécanisme des
+--    baisses du registre, /admin/frais ; acceptée d'office après 30 jours sans décision) — Rydar ne décide que de ses
+--    propres frais, jamais de l'argent entre organisations ;
+--  * journal « ride.network_contested », audit « network.ride_contested », chauffeur prévenu, diffusions.
+-- Déjà contestée : même réponse, rien ne change (double envoi). fee_reduction.amount_cents : montant de la baisse
+-- demandée (positif).
+create or replace function public.contest_network_ride(p_ride uuid, p_reason text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.rides;
+  e public.ride_network_executions;
+  x public.ride_settlements;
+  g public.organizations;
+  f public.platform_fee_entries;
+  v_reason text := nullif(btrim(regexp_replace(coalesce(p_reason, ''), '\s+', ' ', 'g')), '');
+  v_posted integer;
+  v_waived integer;
+begin
+  select * into r from public.rides y where y.id = p_ride;
+  if not found then
+    raise exception 'RIDE_NOT_FOUND: course introuvable' using errcode = 'P0002';
+  end if;
+  perform private.assert_network_creditor(r.organization_id);
+  select * into e from public.ride_network_executions y
+   where y.ride_id = r.id and y.end_reason = 'completed'
+   order by y.ended_at desc
+   limit 1
+   for update;
+  if not found then
+    raise exception 'RIDE_NOT_FOUND: course partagée terminée introuvable' using errcode = 'P0002';
+  end if;
+  select * into x from public.ride_settlements y where y.ride_id = r.id and y.network_driver_org_id is not null for update;
+
+  -- Déjà contestée : même réponse, rien ne change
+  if e.contested_at is not null then
+    select * into f from public.platform_fee_entries y
+     where y.ride_id = r.id and y.kind = 'correction' and y.created_at >= e.contested_at
+     order by y.created_at
+     limit 1;
+    return jsonb_build_object('ok', true, 'ride_id', r.id,
+      'settlement', case when x.id is null then null else private.settlement_json(x) end,
+      'fee_reduction', case when f.id is null then null
+                            else jsonb_build_object('entry_id', f.id, 'amount_cents', -f.amount_cents) end);
+  end if;
+  if v_reason is null or char_length(v_reason) not between 5 and 300 then
+    raise exception 'NETWORK_DISPUTE_REASON_INVALID: motif de 5 à 300 caractères' using errcode = '22023';
+  end if;
+  if e.ended_at < now() - interval '7 days' then
+    raise exception 'NETWORK_CONTEST_EXPIRED: course terminée depuis plus de 7 jours' using errcode = '55000';
+  end if;
+
+  perform private.set_actor('user', auth.uid());
+  select * into g from public.organizations o where o.id = r.organization_id;
+  update public.ride_network_executions y
+     set contested_at = now(), contested_by = auth.uid(), contested_reason = v_reason
+   where y.id = e.id
+  returning * into e;
+
+  -- Versement prépayé encore dû : annulé
+  if x.id is not null and x.direction = 'centrale_owes' and x.status in ('due', 'declared', 'disputed') then
+    update public.ride_settlements y
+       set status = 'waived', note = left('Course contestée : ' || v_reason, 500), settled_at = now(),
+           settled_by = auth.uid(), settled_method = null
+     where y.id = x.id
+    returning * into x;
+    v_waived := x.amount_cents;
+  end if;
+
+  -- Frais Rydar de la course : demande de baisse au super admin (jamais une baisse directe ; une demande en attente
+  -- n'est pas doublée)
+  perform 1 from public.platform_fee_entries y where y.ride_id = r.id and y.status = 'pending' for update;
+  select * into f from public.platform_fee_entries y
+   where y.ride_id = r.id and y.status = 'pending'
+   order by y.created_at desc
+   limit 1;
+  if f.id is null then
+    select coalesce(sum(y.amount_cents) filter (where y.status = 'posted'), 0)::integer into v_posted
+      from public.platform_fee_entries y where y.ride_id = r.id;
+    if v_posted > 0 then
+      insert into public.platform_fee_entries (organization_id, ride_id, kind, amount_cents, status, label, reason,
+                                               occurred_at, due_at, created_by)
+      values (r.organization_id, r.id, 'correction', -v_posted, 'pending',
+        format('Contestation course %s · réseau partagé : frais %s → %s', r.number, private.fmt_eur(v_posted),
+          private.fmt_eur(0)),
+        left('Course contestée : ' || v_reason, 500), now(), private.platform_due_at(r.organization_id, now()), auth.uid())
+      returning * into f;
+      perform private.broadcast_platform(r.organization_id, 'reduction_pending',
+        jsonb_build_object('entry', private.platform_entry_json(f)));
+    end if;
+  end if;
+
+  perform private.log_event(r.organization_id, r.id, 'ride.network_contested',
+    format('Course partagée contestée : %s', v_reason)
+      || case when v_waived is not null
+              then format(' — versement de %s au chauffeur partenaire %s annulé', private.fmt_eur(v_waived), x.driver_label)
+              else '' end
+      || case when f.id is not null
+              then format(' ; baisse des frais Rydar de %s demandée à Rydar', private.fmt_eur(-f.amount_cents))
+              else '' end,
+    'timeline', 'warning',
+    jsonb_build_object('network', true, 'execution_id', e.id, 'reason', v_reason, 'payout_waived_cents', v_waived,
+      'fee_reduction_cents', case when f.id is not null then -f.amount_cents end),
+    'user', auth.uid());
+  insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+  values (r.organization_id, 'user', auth.uid(), 'network.ride_contested', 'rides', r.id::text, 'warning',
+          jsonb_build_object('execution_id', e.id, 'payout_waived_cents', v_waived, 'fee_entry_id', f.id,
+            'fee_reduction_cents', case when f.id is not null then -f.amount_cents end));
+  if x.id is not null then
+    perform private.broadcast_settlement(x, case when v_waived is not null then 'waived' else 'updated' end);
+  end if;
+  perform private.network_notify(r.organization_id, e.executor_driver_id, r.id,
+    case when v_waived is not null then 'settlement_payout_cancelled' else 'settlement_contested' end,
+    case when v_waived is not null then 'VERSEMENT ANNULÉ — ' || g.name else 'COURSE CONTESTÉE — ' || g.name end,
+    case when v_waived is not null
+         then format('Course #%s · %s conteste la course (%s) : les %s prévus ne vous seront pas versés', r.number, g.name,
+                v_reason, private.fmt_eur(v_waived))
+         else format('Course #%s · %s conteste la course : %s', r.number, g.name, v_reason) end,
+    jsonb_build_object('ride_id', r.id)
+      || case when x.id is not null then jsonb_build_object('settlement_id', x.id, 'amount_cents', x.amount_cents)
+              else '{}'::jsonb end);
+
+  return jsonb_build_object('ok', true, 'ride_id', r.id,
+    'settlement', case when x.id is null then null else private.settlement_json(x) end,
+    'fee_reduction', case when f.id is null then null
+                          else jsonb_build_object('entry_id', f.id, 'amount_cents', -f.amount_cents) end);
+end;
+$$;
+
+-- « Relancer » un chauffeur partenaire (§10.5, §10.8, S19, contrat RemindNetworkDriverResult) : tout membre de A,
+-- dispatcher compris (organisation active : private.assert_org_member) ; seulement pour une ligne réseau de p_org (jamais
+-- celle d'une autre organisation) ; APPLICATION seulement (aucun WhatsApp en v1) ; rappelle tout ce que ce chauffeur
+-- doit à p_org (reversements à régler ou « Pas reçu ») ; une relance par 30 min au plus (TOO_SOON, next_allowed_at).
+-- Journal de A sans identifiant du chauffeur.
+create or replace function public.remind_network_driver(p_org uuid, p_settlement uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x public.ride_settlements;
+  g public.organizations;
+  v_total integer;
+  v_n integer;
+  v_ids uuid[];
+  v_last timestamptz;
+begin
+  perform private.assert_org_member(p_org);
+  select * into x from public.ride_settlements y
+   where y.id = p_settlement
+     and y.organization_id = p_org
+     and y.network_driver_org_id is not null
+     and y.direction = 'driver_owes';
+  if not found or x.network_driver_id is null
+     or not exists (select 1 from public.drivers d where d.id = x.network_driver_id and d.deleted_at is null) then
+    return jsonb_build_object('ok', false, 'code', 'NOTHING_DUE', 'message', 'Rien à relancer pour ce règlement.');
+  end if;
+  -- Lignes de ce chauffeur envers p_org, verrouillées : deux relances simultanées, la seconde voit la première
+  perform 1 from public.ride_settlements y
+   where y.organization_id = p_org
+     and y.network_driver_id = x.network_driver_id
+     and y.network_driver_org_id is not null
+     and y.direction = 'driver_owes'
+     and y.status in ('due', 'disputed')
+   order by y.id
+   for update;
+  select coalesce(sum(y.amount_cents), 0)::integer, count(*)::integer, coalesce(array_agg(y.id), '{}'), max(y.last_reminded_at)
+    into v_total, v_n, v_ids, v_last
+    from public.ride_settlements y
+   where y.organization_id = p_org
+     and y.network_driver_id = x.network_driver_id
+     and y.network_driver_org_id is not null
+     and y.direction = 'driver_owes'
+     and y.status in ('due', 'disputed')
+     and y.amount_cents > 0;
+  if v_n = 0 then
+    return jsonb_build_object('ok', false, 'code', 'NOTHING_DUE', 'message', 'Rien à relancer pour ce règlement.');
+  end if;
+  if v_last > now() - interval '30 minutes' then
+    return jsonb_build_object('ok', false, 'code', 'TOO_SOON', 'message', 'Rappel déjà envoyé il y a moins de 30 minutes.',
+      'next_allowed_at', v_last + interval '30 minutes');
+  end if;
+
+  perform private.set_actor('user', auth.uid());
+  select * into g from public.organizations o where o.id = p_org;
+  perform private.network_notify(p_org, x.network_driver_id, null, 'settlement_reminder', 'RAPPEL — À RÉGLER À ' || g.name,
+    format('Rappel : %s à régler à %s (%s %s)', private.fmt_eur(v_total), g.name, v_n,
+      private.pl(v_n, 'course partenaire', 'courses partenaires')),
+    jsonb_build_object('amount_cents', v_total, 'count', v_n), 'high');
+  update public.ride_settlements
+     set last_reminded_at = now(), reminders_sent = reminders_sent + 1
+   where id = any (v_ids);
+  perform private.log_event(p_org, null, 'settlement.reminded',
+    format('Rappel envoyé par l''application au chauffeur partenaire %s : %s à régler (%s %s)', x.driver_label,
+      private.fmt_eur(v_total), v_n, private.pl(v_n, 'course', 'courses')),
+    'timeline', 'info',
+    jsonb_build_object('network', true, 'amount_cents', v_total, 'count', v_n, 'channels', jsonb_build_array('app'),
+      'settlement_ids', to_jsonb(v_ids)),
+    'user', auth.uid());
+  return jsonb_build_object('ok', true, 'code', 'REMINDED', 'amount_cents', v_total, 'count', v_n,
+    'channels', jsonb_build_array('app'), 'message', 'Rappel envoyé au chauffeur (application).');
+end;
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.4 Actions de A sur un règlement : « Reçu » / « Versé », « Pas reçu », « Annuler », « Rouvrir » (§10.5, S9, C6, C7, C12)
+-- -----------------------------------------------------------------------------------------------------------------
+
+-- Dernière définition : 20260924004400_audit_argent.sql. Réseau partagé — ajouts pour une ligne réseau
+-- (network_driver_org_id non NULL) : owner / admin de A seulement, même suspendue (private.assert_network_creditor ;
+-- lot mêlé : les deux contrôles, un dispatcher est refusé) ; versement retenu (course « à vérifier ») refusé
+-- (NETWORK_PAYOUT_ON_HOLD) ; journal au libellé court du chauffeur partenaire ; une notification par chauffeur
+-- partenaire (data.network, nom de A) ; jamais private.maybe_promote_driver (niveau de confiance de la fiche de B
+-- inchangé). Lignes propres : corps et réponses identiques.
+create or replace function public.confirm_settlements(p_ids uuid[], p_method text default null, p_note text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_org uuid;
+  v_orgs integer;
+  v_ids uuid[];
+  v_total integer;
+  v_received integer;
+  v_paid_out integer;
+  v_name text;
+  v_note text := left(nullif(btrim(coalesce(p_note, '')), ''), 500);
+  x public.ride_settlements;
+  v record;
+  -- Réseau partagé
+  v_network boolean;
+  v_own boolean;
+begin
+  if coalesce(cardinality(p_ids), 0) = 0 or cardinality(p_ids) > 500 then
+    return jsonb_build_object('ok', false, 'code', 'NOTHING_TO_CONFIRM', 'message', 'Aucun règlement sélectionné.');
+  end if;
+  select count(distinct y.organization_id), (array_agg(distinct y.organization_id))[1],
+         coalesce(bool_or(y.network_driver_org_id is not null), false), coalesce(bool_or(y.network_driver_org_id is null), false)
+    into v_orgs, v_org, v_network, v_own
+  from public.ride_settlements y
+  where y.id = any (p_ids);
+  if v_orgs = 0 then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Règlement introuvable.');
+  end if;
+  if v_orgs > 1 then
+    raise exception 'FORBIDDEN_TENANT: règlements de plusieurs organisations' using errcode = '42501';
+  end if;
+  -- Réseau partagé : une ligne réseau → owner / admin de A, même suspendue ou archivée (private.assert_network_creditor,
+  -- S9, C12 : un dispatcher est refusé, lot mêlé compris) ; lignes propres : contrôle inchangé
+  if v_own then
+    perform private.assert_org_member(v_org, array['owner', 'admin', 'dispatcher']::public.org_role[]);
+  end if;
+  if v_network then
+    perform private.assert_network_creditor(v_org);
+  end if;
+  perform private.set_actor('user', auth.uid());
+  if p_method is not null and p_method not in ('link', 'cash', 'transfer', 'other') then
+    return jsonb_build_object('ok', false, 'code', 'INVALID_METHOD', 'message', 'Moyen de paiement invalide.');
+  end if;
+  -- Réseau partagé : versement au chauffeur partenaire retenu (course « à vérifier », ni validée ni 72 h passées)
+  if v_network and exists (
+    select 1
+      from public.ride_settlements y
+      join public.ride_network_executions e on e.id = y.network_execution_id
+     where y.id = any (p_ids)
+       and y.organization_id = v_org
+       and y.network_driver_org_id is not null
+       and y.direction = 'centrale_owes'
+       and y.status in ('due', 'declared', 'disputed')
+       and e.hold_until > now()) then
+    raise exception 'NETWORK_PAYOUT_ON_HOLD: versement retenu, course à vérifier (validez-la, ou attendez la fin de la retenue)'
+      using errcode = '55000';
+  end if;
+
+  with upd as (
+    update public.ride_settlements y
+       set status = 'paid',
+           settled_at = now(),
+           settled_by = auth.uid(),
+           settled_method = coalesce(p_method, y.declared_method, 'other'),
+           note = coalesce(v_note, y.note)
+     where y.id = any (p_ids)
+       and y.organization_id = v_org
+       and y.status in ('due', 'declared', 'disputed')
+    returning y.id, y.amount_cents, y.direction
+  )
+  select coalesce(array_agg(u.id), '{}'), coalesce(sum(u.amount_cents), 0),
+         coalesce(sum(u.amount_cents) filter (where u.direction = 'driver_owes'), 0),
+         coalesce(sum(u.amount_cents) filter (where u.direction = 'centrale_owes'), 0)
+    into v_ids, v_total, v_received, v_paid_out
+  from upd u;
+  if cardinality(v_ids) = 0 then
+    return jsonb_build_object('ok', false, 'code', 'NOTHING_TO_CONFIRM', 'message', 'Ces règlements sont déjà traités.');
+  end if;
+
+  for x in select * from public.ride_settlements where id = any (v_ids) order by created_at loop
+    perform private.log_event(x.organization_id, x.ride_id, 'settlement.paid',
+      case -- Réseau partagé : libellé court du chauffeur partenaire, jamais « commission »
+           when x.network_driver_org_id is not null and x.direction = 'driver_owes'
+           then format('%s reçus du chauffeur partenaire %s (%s)', private.fmt_eur(x.amount_cents), x.driver_label,
+                  private.settlement_method_label(x.settled_method))
+           when x.network_driver_org_id is not null
+           then format('%s versés au chauffeur partenaire %s (%s)', private.fmt_eur(x.amount_cents), x.driver_label,
+                  private.settlement_method_label(x.settled_method))
+           when x.direction = 'driver_owes'
+           then format('Commission de %s encaissée (%s)', private.fmt_eur(x.amount_cents), private.settlement_method_label(x.settled_method))
+           else format('%s versés au chauffeur (%s)', private.fmt_eur(x.amount_cents), private.settlement_method_label(x.settled_method))
+      end,
+      'timeline', 'success',
+      jsonb_build_object('settlement_id', x.id, 'method', x.settled_method)
+        || case when x.network_driver_org_id is not null then jsonb_build_object('network', true) else '{}'::jsonb end,
+      'user', auth.uid());
+    perform private.broadcast_settlement(x, 'paid');
+  end loop;
+
+  -- Une notification par chauffeur (+ passage « confirmé » éventuel)
+  select o.name into v_name from public.organizations o where o.id = v_org;
+  for v in
+    select y.driver_id,
+           coalesce(sum(y.amount_cents) filter (where y.direction = 'driver_owes'), 0)::integer as received,
+           coalesce(sum(y.amount_cents) filter (where y.direction = 'centrale_owes'), 0)::integer as paid_out
+    from public.ride_settlements y
+    where y.id = any (v_ids) and y.driver_id is not null
+    group by y.driver_id
+  loop
+    if v.received > 0 then
+      perform private.queue_notification(v_org, v.driver_id, null, null, 'settlement_paid', 'PAIEMENT REÇU',
+        format('%s a bien reçu %s — merci !', v_name, private.fmt_eur(v.received)),
+        jsonb_build_object('type', 'settlement_paid', 'amount_cents', v.received), 'normal', null);
+    end if;
+    if v.paid_out > 0 then
+      perform private.queue_notification(v_org, v.driver_id, null, null, 'settlement_payout_sent', 'VERSEMENT EFFECTUÉ',
+        format('%s vous a versé %s', v_name, private.fmt_eur(v.paid_out)),
+        jsonb_build_object('type', 'settlement_payout_sent', 'amount_cents', v.paid_out), 'normal', null);
+    end if;
+    perform private.maybe_promote_driver(v.driver_id);
+  end loop;
+
+  -- Réseau partagé : une notification par chauffeur partenaire (ligne chez A, data.network, nom de A) ; jamais de
+  -- passage « confirmé » chez B (private.maybe_promote_driver : règlements et courses propres seulement)
+  for v in
+    select y.network_driver_id as driver_id, count(*)::integer as n,
+           (array_agg(y.id))[1] as settlement_id, (array_agg(y.ride_id))[1] as ride_id,
+           coalesce(sum(y.amount_cents) filter (where y.direction = 'driver_owes'), 0)::integer as received,
+           coalesce(sum(y.amount_cents) filter (where y.direction = 'centrale_owes'), 0)::integer as paid_out
+    from public.ride_settlements y
+    where y.id = any (v_ids) and y.network_driver_org_id is not null and y.network_driver_id is not null
+    group by y.network_driver_id
+  loop
+    if v.received > 0 then
+      perform private.network_notify(v_org, v.driver_id, case when v.n = 1 then v.ride_id end, 'settlement_paid',
+        'PAIEMENT REÇU PAR ' || v_name, format('%s a bien reçu %s — merci !', v_name, private.fmt_eur(v.received)),
+        jsonb_build_object('amount_cents', v.received)
+          || case when v.n = 1 then jsonb_build_object('settlement_id', v.settlement_id, 'ride_id', v.ride_id) else '{}'::jsonb end);
+    end if;
+    if v.paid_out > 0 then
+      perform private.network_notify(v_org, v.driver_id, case when v.n = 1 then v.ride_id end, 'settlement_payout_sent',
+        'VERSEMENT DE ' || v_name, format('%s vous a versé %s', v_name, private.fmt_eur(v.paid_out)),
+        jsonb_build_object('amount_cents', v.paid_out)
+          || case when v.n = 1 then jsonb_build_object('settlement_id', v.settlement_id, 'ride_id', v.ride_id) else '{}'::jsonb end);
+    end if;
+  end loop;
+
+  return jsonb_build_object('ok', true, 'code', 'CONFIRMED', 'count', cardinality(v_ids), 'amount_cents', v_total,
+    'received_cents', v_received, 'paid_out_cents', v_paid_out,
+    'message', format('%s %s', cardinality(v_ids), private.pl(cardinality(v_ids), 'règlement confirmé', 'règlements confirmés')));
+end;
+$$;
+
+-- Dernière définition : 20260924002600_centrale_mode.sql. Réseau partagé — « Pas reçu » sur une ligne réseau : owner /
+-- admin de A seulement (S9), effet limité aux courses de A (private.network_blocker, « giver_unpaid »), chauffeur
+-- partenaire prévenu (il peut répondre « Je conteste »). Ligne propre : inchangé.
+create or replace function public.dispute_settlement(p_id uuid, p_reason text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x public.ride_settlements;
+  v_number bigint;
+  v_reason text := left(nullif(btrim(coalesce(p_reason, '')), ''), 500);
+  -- Réseau partagé
+  v_giver text;
+begin
+  select * into x from public.ride_settlements where id = p_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Règlement introuvable.');
+  end if;
+  -- Réseau partagé : « Pas reçu » sur une ligne réseau réservé au propriétaire et aux administrateurs de A (S9 : un
+  -- dispatcher ne coupe pas un chauffeur partenaire ; A suspendue comprise, C12) ; effet limité aux courses de A
+  -- (private.network_blocker, « giver_unpaid »). Ligne propre : inchangé.
+  if x.network_driver_org_id is not null then
+    perform private.assert_network_creditor(x.organization_id);
+  else
+    perform private.assert_org_member(x.organization_id, array['owner', 'admin', 'dispatcher']::public.org_role[]);
+  end if;
+  perform private.set_actor('user', auth.uid());
+  if x.direction <> 'driver_owes' or x.status not in ('due', 'declared') then
+    return jsonb_build_object('ok', false, 'code', 'NOT_DISPUTABLE',
+      'message', case when x.network_driver_org_id is not null   -- Réseau partagé
+                      then 'Seul un reversement à régler ou signalé payé par le chauffeur partenaire peut être contesté.'
+                      else 'Seule une commission à régler ou signalée payée peut être contestée.' end);
+  end if;
+  if v_reason is null or char_length(v_reason) < 3 then
+    return jsonb_build_object('ok', false, 'code', 'REASON_REQUIRED', 'message', 'Précisez ce qui ne va pas.');
+  end if;
+
+  update public.ride_settlements set status = 'disputed', note = v_reason where id = x.id returning * into x;
+  select r.number into v_number from public.rides r where r.id = x.ride_id;
+
+  perform private.log_event(x.organization_id, x.ride_id, 'settlement.disputed',
+    case when x.network_driver_org_id is not null   -- Réseau partagé
+         then format('Paiement de %s du chauffeur partenaire %s contesté : %s', private.fmt_eur(x.amount_cents), x.driver_label,
+                v_reason)
+         else format('Paiement de %s contesté par la centrale : %s', private.fmt_eur(x.amount_cents), v_reason) end,
+    'timeline', 'warning',
+    jsonb_build_object('settlement_id', x.id, 'reason', v_reason)
+      || case when x.network_driver_org_id is not null then jsonb_build_object('network', true) else '{}'::jsonb end,
+    'user', auth.uid());
+  perform private.broadcast_settlement(x, 'disputed');
+  -- Réseau partagé : le chauffeur partenaire est prévenu (ligne chez A), il peut répondre « Je conteste »
+  if x.network_driver_org_id is not null then
+    select o.name into v_giver from public.organizations o where o.id = x.organization_id;
+    perform private.network_notify(x.organization_id, x.network_driver_id, x.ride_id, 'settlement_disputed',
+      'NON REÇU PAR ' || v_giver,
+      format('Course #%s · %s non reçus par %s : %s', v_number, private.fmt_eur(x.amount_cents), v_giver, v_reason),
+      jsonb_build_object('settlement_id', x.id, 'ride_id', x.ride_id, 'amount_cents', x.amount_cents), 'high');
+  elsif x.driver_id is not null then
+    perform private.queue_notification(x.organization_id, x.driver_id, x.ride_id, null, 'settlement_disputed', 'PAIEMENT NON REÇU',
+      format('Course #%s · %s non reçus par la centrale : %s', v_number, private.fmt_eur(x.amount_cents), v_reason),
+      jsonb_build_object('type', 'settlement_disputed', 'settlement_id', x.id, 'amount_cents', x.amount_cents), 'high', null);
+  end if;
+  return jsonb_build_object('ok', true, 'code', 'DISPUTED', 'message', 'Paiement contesté : le chauffeur est prévenu.');
+end;
+$$;
+
+-- Dernière définition : 20260924004400_audit_argent.sql. Réseau partagé — « Annuler » une ligne réseau : owner / admin
+-- de A ; un versement dû au chauffeur partenaire (prépayé) ne s'annule jamais (NETWORK_SETTLEMENT_ACTION_FORBIDDEN :
+-- seule voie, « Contester la course ») ; un reversement (payé à bord, favorable au chauffeur) s'annule, motif
+-- obligatoire ; chauffeur partenaire prévenu. Ligne propre : inchangé.
+create or replace function public.waive_settlement(p_id uuid, p_reason text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x public.ride_settlements;
+  v_number bigint;
+  v_reason text := left(nullif(btrim(coalesce(p_reason, '')), ''), 500);
+  -- Réseau partagé
+  v_giver text;
+begin
+  select * into x from public.ride_settlements where id = p_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Règlement introuvable.');
+  end if;
+  -- Réseau partagé : ligne réseau → owner / admin de A (même suspendue, C12) ; un versement dû au chauffeur
+  -- partenaire (prépayé) ne s'annule jamais (C6 : seule voie, « Contester la course », contest_network_ride) ; un
+  -- reversement (payé à bord) s'annule, motif obligatoire. Ligne propre : inchangé.
+  if x.network_driver_org_id is not null then
+    perform private.assert_network_creditor(x.organization_id);
+    if x.direction = 'centrale_owes' then
+      raise exception 'NETWORK_SETTLEMENT_ACTION_FORBIDDEN: versement dû au chauffeur partenaire, contestez la course'
+        using errcode = '42501';
+    end if;
+  else
+    perform private.assert_org_member(x.organization_id, array['owner', 'admin']::public.org_role[]);
+  end if;
+  perform private.set_actor('user', auth.uid());
+  if x.status not in ('due', 'declared', 'disputed') then
+    return jsonb_build_object('ok', false, 'code', 'NOT_OPEN', 'message', 'Ce règlement est déjà traité.');
+  end if;
+  if v_reason is null or char_length(v_reason) < 3 then
+    return jsonb_build_object('ok', false, 'code', 'REASON_REQUIRED', 'message', 'Indiquez le motif de l''annulation.');
+  end if;
+
+  update public.ride_settlements
+     set status = 'waived', note = v_reason, settled_at = now(), settled_by = auth.uid(), settled_method = null
+   where id = x.id
+  returning * into x;
+  select r.number into v_number from public.rides r where r.id = x.ride_id;
+
+  perform private.log_event(x.organization_id, x.ride_id, 'settlement.waived',
+    case when x.network_driver_org_id is not null   -- Réseau partagé
+         then format('Reversement de %s du chauffeur partenaire %s annulé : %s', private.fmt_eur(x.amount_cents), x.driver_label,
+                v_reason)
+         else format('%s annulé%s par la centrale : %s', case when x.direction = 'driver_owes' then 'Commission' else 'Versement' end,
+                case when x.direction = 'driver_owes' then 'e' else '' end, v_reason) end,
+    'timeline', 'warning',
+    jsonb_build_object('settlement_id', x.id, 'reason', v_reason)
+      || case when x.network_driver_org_id is not null then jsonb_build_object('network', true) else '{}'::jsonb end,
+    'user', auth.uid());
+  perform private.broadcast_settlement(x, 'waived');
+  -- Réseau partagé : le chauffeur partenaire est prévenu (somme annulée par A)
+  if x.network_driver_org_id is not null then
+    select o.name into v_giver from public.organizations o where o.id = x.organization_id;
+    perform private.network_notify(x.organization_id, x.network_driver_id, x.ride_id, 'settlement_waived',
+      'ANNULÉ PAR ' || v_giver,
+      format('Course #%s · %s a annulé les %s à régler', v_number, v_giver, private.fmt_eur(x.amount_cents)),
+      jsonb_build_object('settlement_id', x.id, 'ride_id', x.ride_id, 'amount_cents', x.amount_cents));
+  elsif x.driver_id is not null and x.direction = 'driver_owes' then
+    perform private.queue_notification(x.organization_id, x.driver_id, x.ride_id, null, 'settlement_waived', 'COMMISSION ANNULÉE',
+      format('Course #%s · la centrale a annulé les %s à régler', v_number, private.fmt_eur(x.amount_cents)),
+      jsonb_build_object('type', 'settlement_waived', 'settlement_id', x.id), 'normal', null);
+  elsif x.driver_id is not null then
+    perform private.queue_notification(x.organization_id, x.driver_id, x.ride_id, null, 'settlement_payout_cancelled', 'VERSEMENT ANNULÉ',
+      format('Course #%s · les %s prévus ne vous seront pas versés : %s', v_number, private.fmt_eur(x.amount_cents), v_reason),
+      jsonb_build_object('type', 'settlement_payout_cancelled', 'settlement_id', x.id, 'ride_id', x.ride_id,
+        'amount_cents', x.amount_cents), 'normal', null);
+  end if;
+  return jsonb_build_object('ok', true, 'code', 'WAIVED', 'message', 'Règlement annulé.');
+end;
+$$;
+
+-- Dernière définition : 20260924004400_audit_argent.sql. Réseau partagé — « Rouvrir » une ligne réseau : owner / admin
+-- de A ; reversement → nouvelle échéance (délai de A, au moins 48 h : private.network_grace_hours, C7) et relances
+-- remises à zéro ; versement d'une course contestée : refusé (NETWORK_RIDE_CONTESTED) ; chauffeur partenaire prévenu.
+-- Ligne propre : inchangé (échéance d'origine gardée).
+create or replace function public.reopen_settlement(p_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x public.ride_settlements;
+  v_number bigint;
+  v_name text;
+  -- Réseau partagé
+  g public.organizations;
+  v_tz text;
+begin
+  select * into x from public.ride_settlements where id = p_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_FOUND', 'message', 'Règlement introuvable.');
+  end if;
+  -- Réseau partagé : ligne réseau → owner / admin de A (même suspendue, C12) ; le versement d'une course contestée
+  -- (annulé par contest_network_ride) ne se rouvre pas. Ligne propre : inchangé.
+  if x.network_driver_org_id is not null then
+    perform private.assert_network_creditor(x.organization_id);
+    if x.direction = 'centrale_owes' and exists (
+      select 1 from public.ride_network_executions e where e.id = x.network_execution_id and e.contested_at is not null) then
+      raise exception 'NETWORK_RIDE_CONTESTED: course contestée, versement annulé' using errcode = '55000';
+    end if;
+  else
+    perform private.assert_org_member(x.organization_id, array['owner', 'admin']::public.org_role[]);
+  end if;
+  perform private.set_actor('user', auth.uid());
+  if x.status not in ('paid', 'waived') then
+    return jsonb_build_object('ok', false, 'code', 'NOT_CLOSED', 'message', 'Ce règlement est déjà ouvert.');
+  end if;
+  if x.amount_cents <= 0 then
+    return jsonb_build_object('ok', false, 'code', 'ZERO_AMOUNT',
+      'message', 'Montant nul : corrigez le prix de la course, le règlement sera recalculé.');
+  end if;
+
+  if x.network_driver_org_id is not null and x.direction = 'driver_owes' then
+    -- Réseau partagé : reversement rouvert → nouvelle échéance (délai de A, au moins 48 h, C7), relances remises à zéro
+    update public.ride_settlements
+       set status = 'due', settled_at = null, settled_by = null, settled_method = null,
+           due_at = now() + make_interval(hours => private.network_grace_hours(x.organization_id)),
+           reminders_sent = 0, last_reminded_at = null
+     where id = x.id
+    returning * into x;
+  else
+    update public.ride_settlements
+       set status = 'due', settled_at = null, settled_by = null, settled_method = null
+     where id = x.id
+    returning * into x;
+  end if;
+  select r.number into v_number from public.rides r where r.id = x.ride_id;
+
+  if x.network_driver_org_id is not null then
+    -- Réseau partagé : journal de A (libellé court du chauffeur partenaire), chauffeur partenaire prévenu
+    select * into g from public.organizations o where o.id = x.organization_id;
+    perform private.log_event(x.organization_id, x.ride_id, 'settlement.reopened',
+      format('Règlement de %s avec le chauffeur partenaire %s rouvert%s', private.fmt_eur(x.amount_cents), x.driver_label,
+        case when x.direction = 'driver_owes'
+             then ' — à régler avant ' || private.fmt_local_time(x.due_at, g.timezone, now()) else '' end),
+      'timeline', 'warning', jsonb_build_object('settlement_id', x.id, 'network', true, 'due_at', x.due_at), 'user', auth.uid());
+    perform private.broadcast_settlement(x, 'reopened');
+    select b.timezone into v_tz from public.organizations b where b.id = x.network_driver_org_id;
+    if x.direction = 'driver_owes' then
+      perform private.network_notify(x.organization_id, x.network_driver_id, x.ride_id, 'settlement_due',
+        'À RÉGLER À ' || g.name,
+        format('Course #%s · %s attend toujours %s, à régler avant %s', v_number, g.name, private.fmt_eur(x.amount_cents),
+          private.fmt_local_time(x.due_at, coalesce(v_tz, g.timezone), now())),
+        jsonb_build_object('settlement_id', x.id, 'ride_id', x.ride_id, 'amount_cents', x.amount_cents));
+    else
+      perform private.network_notify(x.organization_id, x.network_driver_id, x.ride_id, 'settlement_payout',
+        'GAIN À RECEVOIR DE ' || g.name,
+        format('Course #%s · %s vous seront versés par %s', v_number, private.fmt_eur(x.amount_cents), g.name),
+        jsonb_build_object('settlement_id', x.id, 'ride_id', x.ride_id, 'amount_cents', x.amount_cents));
+    end if;
+    return jsonb_build_object('ok', true, 'code', 'REOPENED', 'message', 'Règlement rouvert.');
+  end if;
+
+  perform private.log_event(x.organization_id, x.ride_id, 'settlement.reopened',
+    format('Règlement de %s rouvert par la centrale', private.fmt_eur(x.amount_cents)),
+    'timeline', 'warning', jsonb_build_object('settlement_id', x.id), 'user', auth.uid());
+  perform private.broadcast_settlement(x, 'reopened');
+  if x.driver_id is not null and x.direction = 'driver_owes' then
+    perform private.queue_notification(x.organization_id, x.driver_id, x.ride_id, null, 'settlement_due', 'COMMISSION À RÉGLER',
+      format('Course #%s · la centrale attend toujours %s', v_number, private.fmt_eur(x.amount_cents)),
+      jsonb_build_object('type', 'settlement_due', 'settlement_id', x.id, 'amount_cents', x.amount_cents), 'normal', null);
+  elsif x.driver_id is not null then
+    select o.name into v_name from public.organizations o where o.id = x.organization_id;
+    perform private.queue_notification(x.organization_id, x.driver_id, x.ride_id, null, 'settlement_payout', 'GAIN À RECEVOIR',
+      format('Course #%s · %s vous seront versés par %s', v_number, private.fmt_eur(x.amount_cents), v_name),
+      jsonb_build_object('type', 'settlement_payout', 'settlement_id', x.id, 'ride_id', x.ride_id,
+        'amount_cents', x.amount_cents), 'normal', null);
+  end if;
+  return jsonb_build_object('ok', true, 'code', 'REOPENED', 'message', 'Règlement rouvert.');
+end;
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.5 Encaissements = règlements propres ; changement de modèle ; promotion propre à B (§10.5, P4)
+-- -----------------------------------------------------------------------------------------------------------------
+
+-- Dernière définition : 20260924002600_centrale_mode.sql. Réseau partagé — totaux sans les lignes réseau (réglées dans
+-- l'onglet « Réseau partagé ») ; chiffres du mois sans les courses tenues par un chauffeur d'une autre organisation
+-- (réglées aux termes figés). Sans réseau : réponse identique.
+create or replace function public.org_settlement_overview(p_org uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  o public.organizations;
+  s public.organization_settings;
+  v_month timestamptz;
+  v_totals jsonb;
+  v_month_rides jsonb;
+  v_drivers jsonb;
+begin
+  perform private.assert_org_member(p_org);
+  select * into o from public.organizations where id = p_org;
+  select * into s from public.organization_settings where organization_id = p_org;
+  v_month := date_trunc('month', now() at time zone o.timezone) at time zone o.timezone;
+
+  select jsonb_build_object(
+      'to_collect_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes'
+        and x.status in ('due', 'declared', 'disputed')), 0),
+      'overdue_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes'
+        and (x.status = 'disputed' or (x.status = 'due' and x.due_at <= now()))), 0),
+      'declared_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes' and x.status = 'declared'), 0),
+      'declared_count', count(*) filter (where x.direction = 'driver_owes' and x.status = 'declared'),
+      'disputed_count', count(*) filter (where x.status = 'disputed'),
+      'open_count', count(*) filter (where x.status in ('due', 'declared', 'disputed')),
+      'to_pay_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'centrale_owes' and x.status = 'due'), 0),
+      'collected_month_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes' and x.status = 'paid'
+        and x.settled_at >= v_month), 0),
+      'paid_out_month_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'centrale_owes' and x.status = 'paid'
+        and x.settled_at >= v_month), 0),
+      'waived_month_cents', coalesce(sum(x.amount_cents) filter (where x.status = 'waived' and x.updated_at >= v_month), 0))
+    into v_totals
+  from public.ride_settlements x
+  where x.organization_id = p_org
+    -- Réseau partagé : Encaissements = règlements propres (lignes réseau : onglet « Réseau partagé »)
+    and x.network_driver_org_id is null;
+
+  select jsonb_build_object(
+      'rides', count(*),
+      'volume_cents', coalesce(sum(r.price_cents), 0),
+      'commission_cents', coalesce(sum(r.commission_cents), 0),
+      'platform_fee_cents', coalesce(sum(r.platform_fee_cents), 0),
+      'driver_payout_cents', coalesce(sum(r.driver_payout_cents), 0))
+    into v_month_rides
+  from public.rides r
+  where r.organization_id = p_org
+    and r.status = 'COMPLETED'
+    and r.completed_at >= v_month
+    and r.driver_payout_cents is not null
+    -- Réseau partagé : courses de ses chauffeurs (une course partagée se règle aux termes figés, hors Encaissements)
+    and (r.driver_org_id is null or r.driver_org_id = r.organization_id);
+
+  select coalesce(jsonb_agg(t.j order by t.overdue desc, t.owed desc, t.label), '[]'::jsonb)
+    into v_drivers
+  from (
+    select jsonb_build_object(
+        'driver_id', d.id,
+        'number', d.number,
+        'first_name', d.first_name,
+        'last_name', d.last_name,
+        'phone', d.phone,
+        'status', d.status,
+        'trust_level', d.trust_level,
+        'banned', d.banned_at is not null,
+        'owed_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes' and x.status in ('due', 'disputed')), 0),
+        'overdue_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes'
+          and (x.status = 'disputed' or (x.status = 'due' and x.due_at <= now()))), 0),
+        'declared_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes' and x.status = 'declared'), 0),
+        'to_pay_cents', coalesce(sum(x.amount_cents) filter (where x.direction = 'centrale_owes' and x.status = 'due'), 0),
+        'open_count', count(*),
+        'oldest_due_at', min(x.due_at) filter (where x.direction = 'driver_owes' and x.status in ('due', 'disputed')),
+        'last_reminded_at', max(x.last_reminded_at),
+        'blocked', private.driver_blocker(d.id, null)) as j,
+      coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes'
+        and (x.status = 'disputed' or (x.status = 'due' and x.due_at <= now()))), 0) as overdue,
+      coalesce(sum(x.amount_cents) filter (where x.direction = 'driver_owes'), 0) as owed,
+      d.last_name || ' ' || d.first_name as label
+    from public.ride_settlements x
+    join public.drivers d on d.id = x.driver_id
+    where x.organization_id = p_org and x.status in ('due', 'declared', 'disputed')
+    group by d.id
+  ) t;
+
+  return jsonb_build_object(
+    'model', o.dispatch_model,
+    'currency', o.currency,
+    'month_start', v_month,
+    'platform_fee', jsonb_build_object('percent', o.platform_fee_percent, 'fixed_cents', o.platform_fee_fixed_cents),
+    'settings', jsonb_build_object(
+      'commission_percent', s.driver_commission_percent,
+      'commission_fixed_cents', s.driver_commission_fixed_cents,
+      'grace_hours', s.settlement_grace_hours,
+      'credit_limit_cents', s.settlement_credit_limit_cents,
+      'block_unpaid', s.block_unpaid,
+      'new_driver_max_price_cents', s.new_driver_max_price_cents,
+      'trust_after_rides', s.trust_after_rides,
+      'methods', to_jsonb(s.settlement_methods),
+      'link', s.settlement_link,
+      'instructions', s.settlement_instructions),
+    'totals', v_totals,
+    'month', v_month_rides,
+    'drivers', v_drivers
+  );
+end;
+$$;
+
+-- Dernière définition : 20260924002600_centrale_mode.sql. Réseau partagé — liste sans les lignes réseau (Encaissements
+-- = règlements propres). Sans réseau : réponse identique.
+create or replace function public.org_settlements(
+  p_org uuid,
+  p_filter text default 'open',
+  p_driver uuid default null,
+  p_limit integer default 100,
+  p_before timestamptz default null
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_filter text := coalesce(nullif(p_filter, ''), 'open');
+  v_items jsonb;
+begin
+  perform private.assert_org_member(p_org);
+  if v_filter not in ('open', 'declared', 'overdue', 'disputed', 'to_pay', 'paid', 'waived', 'all') then
+    v_filter := 'open';
+  end if;
+
+  select coalesce(jsonb_agg(private.settlement_json(q.st) || jsonb_build_object(
+      'ride', jsonb_build_object(
+        'number', r.number,
+        'pickup', coalesce(private.short_address(r.pickup_address), r.pickup_address),
+        'dropoff', coalesce(private.short_address(r.dropoff_address), r.dropoff_address),
+        'completed_at', r.completed_at,
+        'customer_name', r.customer_name),
+      'driver', case when d.id is null then null else jsonb_build_object(
+        'id', d.id, 'number', d.number, 'first_name', d.first_name, 'last_name', d.last_name, 'phone', d.phone,
+        'trust_level', d.trust_level, 'banned', d.banned_at is not null) end)
+      order by (q.st).created_at desc), '[]'::jsonb)
+    into v_items
+  from (
+    select y as st
+    from public.ride_settlements y
+    where y.organization_id = p_org
+      -- Réseau partagé : Encaissements = règlements propres (lignes réseau : onglet « Réseau partagé »)
+      and y.network_driver_org_id is null
+      and (p_driver is null or y.driver_id = p_driver)
+      and (p_before is null or y.created_at < p_before)
+      and case v_filter
+            when 'open' then y.status in ('due', 'declared', 'disputed')
+            when 'declared' then y.status = 'declared'
+            when 'overdue' then y.direction = 'driver_owes'
+              and (y.status = 'disputed' or (y.status = 'due' and y.due_at <= now()))
+            when 'disputed' then y.status = 'disputed'
+            when 'to_pay' then y.direction = 'centrale_owes' and y.status = 'due'
+            when 'paid' then y.status = 'paid'
+            when 'waived' then y.status = 'waived'
+            else true
+          end
+    order by y.created_at desc
+    limit greatest(1, least(coalesce(p_limit, 100), 500))
+  ) q
+  join public.rides r on r.id = (q.st).ride_id
+  left join public.drivers d on d.id = (q.st).driver_id;
+
+  return jsonb_build_object('filter', v_filter, 'items', v_items);
+end;
+$$;
+
+-- Dernière définition : 20260924006300_fleet_join_link.sql. Réseau partagé — lignes réseau ignorées : réglées dans
+-- l'onglet « Réseau partagé » quel que soit le modèle de A (centrale → flotte permis avec des règlements réseau ouverts).
+create or replace function private.organizations_dispatch_model_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_open integer;
+begin
+  if tg_op = 'UPDATE' and old.dispatch_model = 'centrale' and new.dispatch_model = 'fleet' then
+    select count(*) into v_open
+    from public.ride_settlements x
+    where x.organization_id = new.id and x.status in ('due', 'declared', 'disputed')
+      -- Réseau partagé : lignes réseau ignorées (réglées dans l'onglet « Réseau partagé », quel que soit le modèle de A)
+      and x.network_driver_org_id is null;
+    if v_open > 0 then
+      raise exception 'SETTLEMENTS_OPEN: % règlement(s) chauffeur encore ouvert(s) — soldez-les ou annulez-les avant le retour au mode flotte', v_open
+        using errcode = '55000';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+-- Dernière définition : 20260924004400_audit_argent.sql. Réseau partagé — seules les courses de SON organisation
+-- comptent pour devenir « chauffeur confirmé » (règle propre à B : une course partenaire n'y entre pas). Sans course
+-- partenaire : identique.
+create or replace function private.maybe_promote_driver(p_driver uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  d public.drivers;
+  v_after integer;
+  v_done integer;
+begin
+  select * into d from public.drivers where id = p_driver for update;
+  if not found or d.trust_level <> 'new' or d.status <> 'active' or d.banned_at is not null then
+    return false;
+  end if;
+  select s.trust_after_rides into v_after from public.organization_settings s where s.organization_id = d.organization_id;
+  if v_after is null then
+    return false;
+  end if;
+  if exists (
+    select 1 from public.ride_settlements x
+    where x.driver_id = d.id and x.direction = 'driver_owes' and x.amount_cents > 0
+      and (x.status = 'disputed' or (x.status = 'due' and x.due_at <= now())
+           or (x.status = 'declared' and x.disputed_at is not null))
+  ) then
+    return false;
+  end if;
+
+  select count(*) into v_done
+  from public.rides r
+  where r.driver_id = d.id
+    and r.status = 'COMPLETED'
+    -- Réseau partagé : courses de son organisation seulement (une course partenaire ne compte pas chez B)
+    and r.organization_id = d.organization_id
+    and not exists (
+      select 1 from public.ride_settlements x
+      where x.ride_id = r.id and x.direction = 'driver_owes' and x.status <> 'paid'
+    );
+  if v_done < v_after then
+    return false;
+  end if;
+
+  update public.drivers set trust_level = 'trusted' where id = d.id;
+  perform private.log_event(d.organization_id, null, 'driver.trusted',
+    format('%s %s (#%s) devient chauffeur confirmé (%s %s)', d.first_name, d.last_name, d.number,
+      v_done, private.pl(v_done, 'course réglée', 'courses réglées')),
+    'timeline', 'success', jsonb_build_object('driver_id', d.id, 'rides', v_done), 'system', null);
+  perform private.queue_notification(d.organization_id, d.id, null, null, 'driver_trusted', 'CHAUFFEUR CONFIRMÉ',
+    'Merci pour votre sérieux : toutes les courses de la centrale vous sont désormais proposées.',
+    jsonb_build_object('type', 'driver_trusted'), 'normal', null);
+  return true;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.6 Blocages (§10.7, S2, critère 12)
+-- -----------------------------------------------------------------------------------------------------------------
+-- private.network_blocker (lot dispatch, 20260924006800) applique déjà les règles locales : own_unpaid (dettes propres
+-- chez B → plus d'offre réseau), giver_unpaid (impayé envers A → courses de A seulement), giver_credit_limit (plafond de
+-- A), executor_limit (plafond de B, toutes donneuses). Échéance d'au moins 48 h : private.sync_network_settlement (4a) ;
+-- réouverture → nouvelle échéance : public.reopen_settlement (ci-dessus).
+
+-- Dernière définition : 20260924006800_shared_network_dispatch.sql. Seul ajout (« debtor ») : une AUTRE fiche non
+-- supprimée du même chauffeur (mêmes empreintes : il a changé d'organisation) qui doit à A un reversement réseau
+-- bloquant selon la règle de A (block_unpaid : « Pas reçu », échu, ou redéclaré après « Pas reçu ») — un débiteur de A
+-- ne revient pas par une autre organisation (le lot dispatch ne couvrait que les comptes supprimés).
+create or replace function private.network_identity_block(p_driver uuid, p_giver uuid)
+returns text
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1
+      from (select k.kind, k.value_hash from private.driver_identity_keys k
+             where k.driver_id = p_driver and k.kind <> 'account'
+            union
+            select i.kind, i.value_hash from private.driver_identities(p_driver, true) i) x
+      join public.banned_identities b on b.kind = x.kind and b.value_hash = x.value_hash and b.lifted_at is null
+     where b.scope = 'platform' or b.organization_id = p_giver) then
+    return 'banned';
+  end if;
+
+  if exists (
+       select 1
+         from private.driver_identity_keys k
+         join private.debtor_identities i on i.organization_id = p_giver and i.kind = k.kind and i.value_hash = k.value_hash
+        where k.driver_id = p_driver
+          and exists (select 1 from private.driver_open_debt(i.driver_id) od where od.owed_count > 0))
+     or exists (
+       select 1
+         from private.driver_identity_keys k
+         join private.network_debtor_identities n
+           on n.creditor_org_id = p_giver and n.kind = k.kind and n.value_hash = k.value_hash
+        where k.driver_id = p_driver
+          and exists (select 1 from public.ride_settlements x
+                       where x.organization_id = p_giver
+                         and x.network_driver_id = n.driver_id
+                         -- prédicat de l'index partiel ride_settlements_network_driver_idx (lignes réseau seulement)
+                         and x.network_driver_org_id is not null
+                         and x.direction = 'driver_owes'
+                         and x.amount_cents > 0
+                         and x.status in ('due', 'declared', 'disputed')))
+     -- Réseau partagé, lot argent : AUTRE fiche non supprimée du même chauffeur (mêmes empreintes : il a changé
+     -- d'organisation) avec un reversement réseau envers A qui le bloquerait chez A (règle de A, block_unpaid : « Pas
+     -- reçu », échu, ou redéclaré après « Pas reçu ») — un débiteur de A ne revient pas par une autre organisation
+     or (coalesce((select s.block_unpaid from public.organization_settings s where s.organization_id = p_giver), true)
+         and exists (
+           select 1
+             from private.driver_identity_keys k
+             join private.driver_identity_keys o
+               on o.kind = k.kind and o.value_hash = k.value_hash and o.driver_id <> k.driver_id
+             join public.ride_settlements x
+               on x.network_driver_id = o.driver_id
+              -- prédicat de l'index partiel ride_settlements_network_driver_idx (lignes réseau seulement)
+              and x.network_driver_org_id is not null
+              and x.status in ('due', 'declared', 'disputed')
+            where k.driver_id = p_driver
+              and x.organization_id = p_giver
+              and x.direction = 'driver_owes'
+              and x.amount_cents > 0
+              and (x.status = 'disputed'
+                   or (x.status = 'due' and x.due_at <= now())
+                   or (x.status = 'declared' and x.disputed_at is not null)))) then
+    return 'debtor';
+  end if;
+
+  if exists (
+    select 1
+      from private.driver_identity_keys k
+      join private.driver_identity_keys g
+        on g.kind = k.kind and g.value_hash = k.value_hash and g.organization_id = p_giver and g.driver_id <> k.driver_id
+      join public.drivers a on a.id = g.driver_id
+     where k.driver_id = p_driver
+       and (a.status in ('active', 'invited', 'suspended')
+            or a.banned_at is not null
+            or exists (select 1 from private.driver_open_debt(a.id) od where od.owed_count > 0))) then
+    return 'giver_driver';
+  end if;
+
+  if exists (
+    select 1
+      from private.network_driver_exclusions x
+     cross join lateral unnest(x.kinds, x.value_hashes) as u(kind, value_hash)
+      join private.driver_identity_keys k on k.driver_id = p_driver and k.kind = u.kind and k.value_hash = u.value_hash
+     where x.giver_org_id = p_giver and x.lifted_at is null) then
+    return 'excluded';
+  end if;
+  return null;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.7 Relances automatiques (§10.8)
+-- -----------------------------------------------------------------------------------------------------------------
+
+-- Dernière définition : 20260924003700_whatsapp_reminders.sql. Réseau partagé — seconde boucle sur les lignes réseau
+-- (application seulement) ; la boucle propre et ses relances WhatsApp sont inchangées (jointure sur driver_id : jamais
+-- une ligne réseau). Clé « network » seulement s'il y a eu une relance réseau.
+create or replace function private.settlement_reminders()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v record;
+  v_count integer := 0;
+  v_wa integer := 0;
+  v_res jsonb;
+  -- Réseau partagé
+  v_network integer := 0;
+begin
+  if not pg_try_advisory_xact_lock(hashtextextended('rydar.settlement_reminders', 0)) then
+    return jsonb_build_object('ok', false, 'code', 'BUSY', 'reminders', 0);
+  end if;
+  for v in
+    select x.driver_id, x.organization_id, o.name as org_name, d.first_name,
+           coalesce(s.reminder_channels, '{app}') as channels,
+           sum(x.amount_cents)::integer as total, count(*) as n, array_agg(x.id) as ids
+    from public.ride_settlements x
+    join public.organizations o on o.id = x.organization_id
+    join public.drivers d on d.id = x.driver_id
+    left join public.organization_settings s on s.organization_id = x.organization_id
+    where x.direction = 'driver_owes'
+      and x.status in ('due', 'disputed')
+      and x.due_at <= now()
+      and o.status = 'active'
+      and o.dispatch_model = 'centrale'
+      and d.status = 'active'
+    group by x.driver_id, x.organization_id, o.name, d.first_name, s.reminder_channels
+    having min(x.reminders_sent) < 3
+       and coalesce(max(x.last_reminded_at), '-infinity'::timestamptz) < now() - interval '23 hours'
+  loop
+    v_res := private.remind_driver(v.organization_id, v.driver_id, v.channels, 'settlement_reminder', 'COMMISSION EN RETARD',
+      format('%s à régler à %s — réglez-les pour continuer à recevoir des courses', private.fmt_eur(v.total), v.org_name),
+      jsonb_build_object('type', 'settlement_reminder', 'amount_cents', v.total, 'count', v.n),
+      array[v.first_name, private.fmt_eur(v.total), v.org_name, format('%s %s', v.n, private.pl(v.n, 'course', 'courses'))]);
+    update public.ride_settlements
+       set reminders_sent = reminders_sent + 1, last_reminded_at = now()
+     where id = any (v.ids);
+    v_count := v_count + 1;
+    if v_res -> 'channels' ? 'whatsapp' then
+      v_wa := v_wa + 1;
+    end if;
+  end loop;
+
+  -- Réseau partagé (§10.8) : reversements échus des chauffeurs partenaires (lignes réseau : la boucle ci-dessus ne les
+  -- voit jamais, jointure sur driver_id), par chauffeur et par organisation créancière A, quel que soit son modèle :
+  -- APPLICATION seulement (aucun WhatsApp en v1 : modèles non approuvés), 3 relances au plus, 23 h d'écart ; chauffeur
+  -- actif (fiche non supprimée), A active. Jamais de mot « commission » : « Rappel : X à régler à {A} ».
+  for v in
+    select x.network_driver_id as driver_id, x.organization_id, o.name as org_name,
+           sum(x.amount_cents)::integer as total, count(*) as n, array_agg(x.id) as ids
+    from public.ride_settlements x
+    join public.organizations o on o.id = x.organization_id
+    join public.drivers d on d.id = x.network_driver_id
+    where x.network_driver_org_id is not null
+      and x.direction = 'driver_owes'
+      and x.status in ('due', 'disputed')
+      and x.due_at <= now()
+      and x.amount_cents > 0
+      and o.status = 'active'
+      and d.status = 'active'
+      and d.deleted_at is null
+    group by x.network_driver_id, x.organization_id, o.name
+    having min(x.reminders_sent) < 3
+       and coalesce(max(x.last_reminded_at), '-infinity'::timestamptz) < now() - interval '23 hours'
+  loop
+    perform private.network_notify(v.organization_id, v.driver_id, null, 'settlement_reminder',
+      'RAPPEL — À RÉGLER À ' || v.org_name,
+      format('Rappel : %s à régler à %s (%s %s)', private.fmt_eur(v.total), v.org_name, v.n,
+        private.pl(v.n, 'course partenaire', 'courses partenaires')),
+      jsonb_build_object('amount_cents', v.total, 'count', v.n), 'high');
+    update public.ride_settlements
+       set reminders_sent = reminders_sent + 1, last_reminded_at = now()
+     where id = any (v.ids);
+    v_network := v_network + 1;
+  end loop;
+
+  -- Réseau partagé : relances réseau comptées dans « reminders » (le worker traite alors la file) et détaillées dans
+  -- « network » (clé absente sans relance réseau : réponse d'avant)
+  return jsonb_build_object('ok', true, 'reminders', v_count + v_network, 'whatsapp', v_wa)
+    || case when v_network > 0 then jsonb_build_object('network', v_network) else '{}'::jsonb end;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.8 Frais Rydar d'une course partagée (§10.9)
+-- -----------------------------------------------------------------------------------------------------------------
+
+-- Dernière définition : 20260924006400_fleet_platform_fees.sql. Réseau partagé — course tenue par un chauffeur d'une
+-- autre organisation : cible = frais Rydar des termes FIGÉS de l'exécution « completed » (taux de A à l'acceptation,
+-- flotte comme centrale), écriture « Course N · réseau partagé » dans le registre de A, une seule fois (aucune base
+-- « flotte » figée, aucun recalcul : la baisse demandée par contest_network_ride reste en attente du super admin).
+-- Course propre : corps identique.
+create or replace function private.sync_platform_fee()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_target integer;
+  v_posted integer;
+  v_pending integer;
+  v_count integer;
+  v_delta integer;
+  v_at timestamptz;
+  o public.organizations;
+  b private.fleet_fee_basis;
+  e public.platform_fee_entries;
+  s public.platform_fee_entries;
+  -- Réseau partagé
+  v_network boolean := false;
+  v_network_fee integer;
+begin
+  if new.status <> 'COMPLETED' then
+    return null;
+  end if;
+
+  -- Réseau partagé : course exécutée par un chauffeur d'une autre organisation → frais Rydar de A aux termes FIGÉS de
+  -- l'exécution « completed » (taux de A à l'acceptation : jamais rides.platform_fee_cents ni les taux du moment),
+  -- une seule écriture « Course N · réseau partagé », dans le registre de A seulement (rien chez B), due même si le
+  -- règlement avec le chauffeur est contesté ; jamais de recalcul ensuite (prix verrouillé, G6 : la baisse demandée par
+  -- contest_network_ride reste en attente du super admin) ; aucune base « flotte » figée.
+  if new.driver_org_id is not null and new.driver_org_id <> new.organization_id then
+    select (x.terms ->> 'platform_fee_cents')::integer into v_network_fee
+      from public.ride_network_executions x
+     where x.ride_id = new.id and x.end_reason = 'completed'
+     order by x.ended_at desc
+     limit 1;
+    v_network := found;
+    if v_network and exists (select 1 from public.platform_fee_entries x where x.ride_id = new.id) then
+      return null;
+    end if;
+  end if;
+
+  -- Flotte : base figée à la fin de la course (seulement à cet instant : une course terminée avant, ou en centrale,
+  -- n'en reçoit jamais). Rien à figer pour une flotte sans frais ni répartition héritée d'un passage en centrale.
+  select * into b from private.fleet_fee_basis where ride_id = new.id;
+  if not found and not v_network and (tg_op = 'INSERT' or old.status is distinct from 'COMPLETED') then
+    select * into o from public.organizations where id = new.organization_id;
+    if o.dispatch_model = 'fleet'
+       and (o.platform_fee_percent > 0 or o.platform_fee_fixed_cents > 0 or new.platform_fee_cents is not null) then
+      insert into private.fleet_fee_basis (ride_id, organization_id, fee_percent, fee_fixed_cents)
+      values (new.id, new.organization_id, o.platform_fee_percent, o.platform_fee_fixed_cents)
+      on conflict (ride_id) do nothing;
+      select * into b from private.fleet_fee_basis where ride_id = new.id;
+    end if;
+  end if;
+
+  if v_network then
+    v_target := coalesce(v_network_fee, 0);   -- Réseau partagé : termes figés
+  elsif b.ride_id is not null and not exists (select 1 from public.ride_settlements x where x.ride_id = new.id) then
+    v_target := private.fleet_platform_fee(new.price_cents, b.fee_percent, b.fee_fixed_cents);
+  elsif new.platform_fee_cents is not null then
+    v_target := new.platform_fee_cents;
+  else
+    -- Répartition calculée à la fin par sync_ride_settlement (déclenché avant), non écrite sur la course
+    select x.platform_fee_cents into v_target from public.ride_settlements x where x.ride_id = new.id;
+    v_target := coalesce(v_target, 0);
+  end if;
+  -- Baisses encore à valider verrouillées AVANT le calcul (décision du super admin en parallèle :
+  -- l'une attend l'autre, jamais les deux sur le même état)
+  perform 1 from public.platform_fee_entries x where x.ride_id = new.id and x.status = 'pending' for update;
+  select coalesce(sum(x.amount_cents) filter (where x.status = 'posted'), 0)::integer,
+         coalesce(sum(x.amount_cents) filter (where x.status = 'pending'), 0)::integer,
+         count(*)
+    into v_posted, v_pending, v_count
+  from public.platform_fee_entries x
+  where x.ride_id = new.id;
+  if v_target = v_posted + v_pending then
+    return null;
+  end if;
+
+  -- Nouveau montant : la baisse encore en attente est REMPLACÉE (sinon, refusée après une correction
+  -- ultérieure calculée en la supposant acceptée, la hausse suivante compterait deux fois) ;
+  -- la nouvelle correction se calcule sur les seuls frais comptabilisés
+  for s in
+    update public.platform_fee_entries
+       set status = 'rejected', reviewed_at = now(),
+           review_note = 'Remplacée : le prix de la course a de nouveau été modifié'
+     where ride_id = new.id and status = 'pending'
+    returning *
+  loop
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (new.organization_id, 'system', auth.uid(), 'platform_fee.reduction_superseded', 'platform_fee_entries', s.id::text,
+      'info', jsonb_build_object('ride_id', new.id, 'amount_cents', s.amount_cents, 'target_cents', v_target));
+  end loop;
+  v_delta := v_target - v_posted;
+  if v_delta = 0 then
+    if s.id is not null then
+      perform private.broadcast_platform(new.organization_id, 'fee', jsonb_build_object('entry', private.platform_entry_json(s)));
+    end if;
+    return null;
+  end if;
+
+  if v_count = 0 then
+    v_at := coalesce(new.completed_at, now());
+    -- Course déjà terminée (prix fixé après coup) : échéance à partir de maintenant ; course qui se
+    -- termine maintenant : identique (completed_at = maintenant) ; import d'historique : inchangé
+    insert into public.platform_fee_entries (organization_id, ride_id, kind, amount_cents, status, label, occurred_at, due_at)
+    values (new.organization_id, new.id, 'ride', v_delta, 'posted',
+      format('Course %s', new.number) || case when v_network then ' · réseau partagé' else '' end, v_at,
+      private.platform_due_at(new.organization_id,
+        case when tg_op = 'UPDATE' and old.status = 'COMPLETED' then greatest(v_at, now()) else v_at end))
+    returning * into e;
+  else
+    -- Hausse : comptée tout de suite ; baisse : en attente de l'accord du super admin
+    insert into public.platform_fee_entries (organization_id, ride_id, kind, amount_cents, status, label, reason, occurred_at, due_at)
+    values (new.organization_id, new.id, 'correction', v_delta, case when v_delta > 0 then 'posted' else 'pending' end,
+      format('Correction course %s : frais %s → %s', new.number, private.fmt_eur(v_posted), private.fmt_eur(v_target)),
+      case when new.price_cents is distinct from old.price_cents
+           then format('Prix modifié après la course : %s → %s', private.fmt_eur(old.price_cents), private.fmt_eur(new.price_cents))
+           else 'Répartition recalculée après la course' end,
+      now(), private.platform_due_at(new.organization_id, now()))
+    returning * into e;
+  end if;
+  perform private.broadcast_platform(new.organization_id, case when e.status = 'pending' then 'reduction_pending' else 'fee' end,
+    jsonb_build_object('entry', private.platform_entry_json(e)));
+  return null;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.9 Dette et suppression de compte (§10.10, S2)
+-- -----------------------------------------------------------------------------------------------------------------
+
+-- Dernière définition : 20260924005500_contre_audit_app.sql. Réseau partagé — clé « network » (sommes dues aux
+-- organisations partenaires) ajoutée seulement s'il y en a : rappelées avant la suppression du compte (app,
+-- src/lib/debt.ts), aussi par public.driver_deletion_debt() et public.svc_driver_deletion_debt (inchangées).
+create or replace function private.driver_deletion_debt(p_user_id uuid)
+returns jsonb
+language sql
+stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+      'owed_cents', coalesce(sum(s.amount_cents) filter (where s.status in ('due', 'disputed')), 0),
+      'declared_cents', coalesce(sum(s.amount_cents) filter (where s.status = 'declared'), 0),
+      'currency', o.currency,
+      'organization', o.name)
+    -- Réseau partagé : sommes dues aux organisations partenaires (reversements des courses partenaires payées à bord,
+    -- même périmètre) — contrat DriverDeletionNetworkDebt ; clé ajoutée seulement s'il y en a (réponse d'avant sinon)
+    || coalesce((
+      select jsonb_build_object('network', jsonb_agg(jsonb_build_object(
+               'organization', g.name, 'owed_cents', n.owed, 'declared_cents', n.declared) order by g.name, g.id))
+        from (select x.organization_id,
+                     coalesce(sum(x.amount_cents) filter (where x.status in ('due', 'disputed')), 0)::integer as owed,
+                     coalesce(sum(x.amount_cents) filter (where x.status = 'declared'), 0)::integer as declared
+                from public.ride_settlements x
+               where x.network_driver_id = d.id
+                 and x.network_driver_org_id is not null
+                 and x.direction = 'driver_owes'
+                 and x.status in ('due', 'declared', 'disputed')
+                 and x.amount_cents > 0
+               group by x.organization_id) n
+        join public.organizations g on g.id = n.organization_id
+      having count(*) > 0), '{}'::jsonb)
+    from public.drivers d
+    join public.organizations o on o.id = d.organization_id
+    left join public.ride_settlements s
+      on s.driver_id = d.id
+     and s.direction = 'driver_owes'
+     and s.status in ('due', 'declared', 'disputed')
+     and s.amount_cents > 0
+   where p_user_id is not null
+     and d.user_id = p_user_id
+     and d.deleted_at is null
+   group by d.id, o.currency, o.name;
+$$;
+
+-- Dernière définition : 20260924006800_shared_network_dispatch.sql. Réseau partagé — seul ajout : reversements réseau
+-- encore dus → empreintes gardées pour chaque organisation créancière (private.network_debtor_identities ; audit :
+-- « network_debtor_identities » seulement s'il y en a). L'effacement des traces chez A (private.scrub_network_traces)
+-- et private.debtor_match restent au lot administration, qui part de cette version.
+create or replace function private.delete_driver_account(p_driver_id uuid, p_source text, p_actor uuid default null)
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  d public.drivers;
+  q private.account_deletions;
+  r public.rides;
+  v_rides integer;
+  v_release integer;
+  -- Réseau partagé
+  v_partner_rides integer;
+  v_released integer := 0;
+  v_org_active boolean;
+  v_owed_cents bigint := 0;
+  v_owed_count integer := 0;
+  v_debtor_ids integer := 0;
+  v_network_debtor_ids integer := 0;
+  v_alias text;
+  v_key text;
+  v_keep boolean;
+  v_files integer;
+  v_vehicle uuid;
+  v_vehicle_action text;
+  v_admin boolean := p_source = 'admin';
+begin
+  if p_source is null or p_source not in ('app', 'admin') then
+    raise exception 'INVALID_SOURCE' using errcode = '22023';
+  end if;
+  select * into d from public.drivers where id = p_driver_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_DRIVER', 'message', 'Aucun compte chauffeur associé.');
+  end if;
+
+  -- Déjà supprimé (appel rejoué) : état de la file
+  if d.deleted_at is not null then
+    select * into q from private.account_deletions where driver_id = d.id;
+    if q.id is not null then
+      return jsonb_build_object('ok', true, 'code', 'DELETED', 'already_deleted', true) || private.account_deletion_json(q);
+    end if;
+    return jsonb_build_object('ok', true, 'code', 'DELETED', 'already_deleted', true,
+      'driver_id', d.id, 'organization_id', d.organization_id, 'number', d.number,
+      'storage_prefix', format('%s/%s/', d.organization_id, d.id), 'keep_auth', false,
+      'deletion_id', null, 'done', true, 'pending', false);
+  end if;
+
+  -- Courses attribuées. Centrale suspendue ou archivée : les courses acceptées non commencées seront libérées ;
+  -- les autres (commencées, ou toute course d'une centrale active) bloquent la suppression.
+  select coalesce(o.status = 'active', false) into v_org_active from public.organizations o where o.id = d.organization_id;
+  v_org_active := coalesce(v_org_active, false);
+  -- Réseau partagé : une course d'une autre organisation (confiée à ce chauffeur) n'est jamais libérée ici (elle l'est
+  -- par l'organisation qui l'a confiée, ou par le chien de garde du réseau) : elle refuse toujours la suppression
+  select count(*),
+         count(*) filter (where r0.status = 'ACCEPTED' and not v_org_active and r0.organization_id = d.organization_id),
+         count(*) filter (where r0.organization_id <> d.organization_id)
+    into v_rides, v_release, v_partner_rides
+    from public.rides r0
+   where r0.driver_id = d.id
+     and r0.status in ('ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS');
+  v_rides := v_rides - v_release;
+  if v_rides > 0
+     or (d.current_ride_id is not null and not exists (
+           select 1 from public.rides x
+            where x.id = d.current_ride_id and x.driver_id = d.id and x.status = 'ACCEPTED' and not v_org_active
+              and x.organization_id = d.organization_id)) then
+    return jsonb_build_object('ok', false, 'code', 'RIDES_ASSIGNED', 'count', greatest(v_rides, 1),
+      'message', case
+        -- Réseau partagé : c'est l'organisation qui a confié la course qui la retire
+        when v_partner_rides > 0 and v_admin
+        then 'Course d''une organisation partenaire attribuée à ce chauffeur : elle doit d''abord être terminée, ou retirée par l''organisation qui l''a confiée.'
+        when v_partner_rides > 0
+        then 'Vous avez une course confiée par une autre organisation : terminez-la ou demandez à l''organisation qui vous a confié la course de la retirer, puis supprimez votre compte.'
+        when v_admin and v_rides > 1
+        then format('%s courses attribuées à ce chauffeur : la centrale doit d''abord les terminer ou les réattribuer.', v_rides)
+        when v_admin then 'Une course attribuée à ce chauffeur : la centrale doit d''abord la terminer ou la réattribuer.'
+        when v_rides > 1
+        then format('Vous avez %s courses attribuées : terminez-les ou demandez à votre centrale de les réattribuer, puis supprimez votre compte.', v_rides)
+        else 'Vous avez une course attribuée : terminez-la ou demandez à votre centrale de la réattribuer, puis supprimez votre compte.' end);
+  end if;
+
+  if v_admin then
+    perform private.set_actor('super_admin', p_actor);
+  else
+    perform private.set_actor('driver', d.id);
+  end if;
+  v_key := 'driver:' || d.id::text;
+  v_alias := format('Chauffeur supprimé (#%s)', d.number);
+  -- Compte conservé s'il sert aussi à gérer une centrale ou la plateforme
+  v_keep := private.keeps_login_account(d.user_id);
+
+  -- Centrale suspendue ou archivée : courses acceptées libérées (plus de dispatch pour elle : « à attribuer »)
+  if v_release > 0 then
+    for r in
+      select * from public.rides x
+       where x.driver_id = d.id and x.status = 'ACCEPTED'
+         -- Réseau partagé : courses de son organisation seulement
+         and x.organization_id = d.organization_id
+       order by x.pickup_at, x.id
+       for update
+    loop
+      update public.ride_assignments
+         set is_active = false, released_at = now(), release_reason = 'driver_deleted'
+       where ride_id = r.id and is_active;
+      perform private.close_pending_offers(r.id, 'closed', 'driver_deleted');
+      update public.rides
+         set status = 'CREATED',
+             driver_id = null,
+             vehicle_id = null,
+             dispatch_wave = 0,
+             dispatch_radius_m = null,
+             dispatch_started_at = null,
+             next_dispatch_at = null,
+             accepted_at = null,
+             driver_en_route_at = null,
+             driver_arrived_at = null,
+             no_driver_at = null
+       where id = r.id;
+      perform private.close_ride_alerts(r.id, 'auto_resolved', null);
+      perform private.log_event(r.organization_id, r.id, 'ride.driver_deleted',
+        format('Course retirée au chauffeur #%s, qui a supprimé son compte (centrale inactive) — à attribuer manuellement', d.number),
+        'timeline', 'warning', jsonb_build_object('previous_driver_id', d.id, 'previous_status', r.status),
+        case when v_admin then 'super_admin' else 'driver' end::public.actor_type,
+        case when v_admin then p_actor else d.id end);
+      v_released := v_released + 1;
+    end loop;
+  end if;
+
+  -- Commissions encore dues à la centrale : empreintes gardées tant que la dette est ouverte (avant l'effacement
+  -- des identifiants), jamais la valeur en clair
+  select o.owed_cents, o.owed_count into v_owed_cents, v_owed_count from private.driver_open_debt(d.id) o;
+  if coalesce(v_owed_count, 0) > 0 then
+    insert into private.debtor_identities (organization_id, driver_id, driver_number, kind, value_hash)
+    select d.organization_id, d.id, d.number, i.kind, i.value_hash
+      from private.driver_identities(d.id, false) i
+     where i.kind in ('phone', 'email', 'vtc_card')
+    on conflict (driver_id, kind, value_hash) do nothing;
+    get diagnostics v_debtor_ids = row_count;
+  end if;
+
+  -- Réseau partagé (§10.10, S2) : sommes encore dues à des organisations partenaires (reversements réseau ouverts) →
+  -- empreintes (téléphone, e-mail, carte VTC ; jamais la valeur) gardées pour CHAQUE créancière dans
+  -- private.network_debtor_identities, avant l'effacement des identifiants : le chauffeur ne revient pas chez elle par
+  -- une autre organisation (private.network_identity_block, « debtor ») ; purgées par private.housekeeping une fois tout
+  -- réglé. Empreintes de l'index d'identités (toutes les formes du téléphone) et des pièces.
+  insert into private.network_debtor_identities (creditor_org_id, driver_id, kind, value_hash)
+  select c.organization_id, d.id, i.kind, i.value_hash
+    from (select distinct x.organization_id
+            from public.ride_settlements x
+           where x.network_driver_id = d.id
+             and x.network_driver_org_id is not null
+             and x.direction = 'driver_owes'
+             and x.status in ('due', 'declared', 'disputed')
+             and x.amount_cents > 0) c
+   cross join (select k.kind, k.value_hash from private.driver_identity_keys k
+                where k.driver_id = d.id and k.kind in ('phone', 'email', 'vtc_card')
+               union
+               select y.kind, y.value_hash from private.driver_identities(d.id, false) y
+                where y.kind in ('phone', 'email', 'vtc_card')) i
+  on conflict (creditor_org_id, driver_id, kind, value_hash) do nothing;
+  get diagnostics v_network_debtor_ids = row_count;
+
+  -- Offres en attente closes (le chauffeur ne peut plus répondre)
+  update public.ride_offers
+     set status = 'closed', closed_reason = 'driver_deleted', responded_at = now()
+   where driver_id = d.id and status = 'pending';
+
+  -- Nom et identification retirés de tout ce qui les a recopiés (avant l'anonymisation : noms encore connus)
+  perform private.scrub_driver_traces(d.id, d.organization_id, d.created_at, d.first_name, d.last_name, d.number, v_alias);
+
+  -- Données personnelles supprimées (les fichiers des justificatifs : dossier purgé via la file)
+  select count(*) into v_files from public.driver_documents x where x.driver_id = d.id;
+  delete from public.driver_documents where driver_id = d.id;
+  delete from public.push_tokens where driver_id = d.id;
+  delete from public.driver_devices where driver_id = d.id;
+  delete from public.driver_locations where driver_id = d.id;
+  delete from public.driver_location_history where driver_id = d.id;
+  delete from public.notifications where driver_id = d.id;
+  delete from public.chat_report_votes where voter_key = v_key;
+  delete from public.chat_reads where reader_key = v_key or thread_key = v_key;
+  delete from public.chat_messages where driver_id = d.id or author_driver_id = d.id;
+
+  -- Véhicule personnel (inscription par lien), utilisé par aucun autre chauffeur
+  if d.vehicle_id is not null and d.joined_via = 'join_link'
+     and not exists (select 1 from public.drivers x where x.vehicle_id = d.vehicle_id and x.id <> d.id) then
+    v_vehicle := d.vehicle_id;
+  end if;
+
+  -- Fiche anonymisée, détachée du compte de connexion ; conservée pour les courses et règlements passés.
+  -- Membre de centrale : ses sessions de gestion ne sont pas coupées (drivers_revoke_sessions).
+  if v_keep then
+    perform set_config('rydar.keep_sessions', d.user_id::text, true);
+  end if;
+  update public.drivers
+     set first_name = 'Chauffeur',
+         last_name = 'supprimé',
+         phone = '',
+         email = null,
+         photo_url = null,
+         vtc_card_number = null,
+         notes = null,
+         application_status = null,
+         application_message = null,
+         application_note = null,
+         suspended_reason = case when v_admin then 'Compte supprimé à la demande du chauffeur' else 'Compte supprimé par le chauffeur' end,
+         -- (motif de bannissement conservé contre la fraude, son nom déjà retiré par scrub_driver_traces)
+         status = 'inactive',
+         presence = 'offline',
+         online_since = null,
+         last_seen_at = null,
+         current_ride_id = null,
+         vehicle_id = null,
+         user_id = null,
+         deleted_at = now()
+   where id = d.id;
+  perform set_config('rydar.keep_sessions', '', true);
+
+  if v_vehicle is not null then
+    if exists (select 1 from public.rides r1 where r1.vehicle_id = v_vehicle)
+       or exists (select 1 from public.ride_assignments a where a.vehicle_id = v_vehicle) then
+      update public.vehicles
+         set plate = 'SUPPR-' || upper(left(replace(v_vehicle::text, '-', ''), 10)),
+             brand = null,
+             model = 'Véhicule supprimé',
+             color = null,
+             year = null,
+             is_active = false
+       where id = v_vehicle;
+      v_vehicle_action := 'anonymized';
+    else
+      delete from public.vehicles where id = v_vehicle;
+      v_vehicle_action := 'deleted';
+    end if;
+  end if;
+
+  -- Compte de connexion (supprimé par la file) : nom et téléphone effacés dès maintenant
+  if d.user_id is not null and not v_keep then
+    update public.users set full_name = null, phone = null, avatar_url = null where id = d.user_id;
+    begin
+      update auth.users
+         set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) - array['full_name', 'name', 'phone', 'avatar_url']
+       where id = d.user_id;
+    exception when insufficient_privilege or undefined_table or undefined_column then
+      raise warning 'delete_driver_account: métadonnées Auth non effacées (privilèges)';
+    end;
+  end if;
+
+  insert into private.account_deletions (driver_id, organization_id, driver_number, user_id, keep_auth, storage_prefix,
+    source, requested_by, auth_done_at, next_attempt_at)
+  values (d.id, d.organization_id, d.number, d.user_id, v_keep, format('%s/%s/', d.organization_id, d.id),
+    p_source, case when v_admin then p_actor end,
+    case when d.user_id is null or v_keep then now() end,
+    -- traitée aussitôt par l'appelant ; le worker ne la reprend qu'en cas d'échec
+    now() + interval '2 minutes')
+  returning * into q;
+
+  -- Journal d'audit du chauffeur et de son véhicule d'inscription : valeurs personnelles, adresse IP et navigateur
+  -- retirés (l'action reste tracée)
+  perform private.redact_driver_audit(d.id, d.user_id, v_keep, v_vehicle);
+
+  insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+  values (d.organization_id, case when v_admin then 'super_admin' else 'driver' end::public.actor_type,
+    case when v_admin then p_actor end, 'driver.deleted', 'drivers', d.id::text, 'warning',
+    jsonb_build_object('number', d.number, 'source', p_source, 'documents', v_files, 'keep_auth', v_keep,
+      'vehicle', v_vehicle_action, 'deletion_id', q.id, 'rides_released', v_released,
+      'owed_cents', v_owed_cents, 'owed_settlements', v_owed_count, 'debtor_identities', v_debtor_ids)
+      -- Réseau partagé : empreintes gardées pour des organisations partenaires (clé absente sinon)
+      || case when v_network_debtor_ids > 0 then jsonb_build_object('network_debtor_identities', v_network_debtor_ids)
+              else '{}'::jsonb end);
+
+  perform private.log_event(d.organization_id, null, 'driver.deleted',
+    case when v_admin then format('Compte du chauffeur #%s supprimé à sa demande (traité par Rydar Drive)', d.number)
+         else format('Le chauffeur #%s a supprimé son compte', d.number) end
+    || case when coalesce(v_owed_count, 0) > 0
+            then format(' — reste dû : %s de commissions (%s règlement%s au nom de « %s »)',
+                   private.fmt_eur(least(v_owed_cents, 2147483647)::integer), v_owed_count,
+                   case when v_owed_count > 1 then 's' else '' end, v_alias)
+            else '' end,
+    'system', 'warning',
+    jsonb_build_object('driver_id', d.id, 'source', p_source, 'rides_released', v_released,
+      'owed_cents', v_owed_cents, 'owed_settlements', v_owed_count),
+    case when v_admin then 'super_admin' else 'driver' end::public.actor_type,
+    case when v_admin then p_actor else d.id end);
+
+  return jsonb_build_object('ok', true, 'code', 'DELETED', 'already_deleted', false, 'documents', v_files,
+      'vehicle', v_vehicle_action, 'rides_released', v_released)
+    || private.account_deletion_json(q);
+end;
+$$;
+
+-- Dernière définition : 20260924006600_platform_fee_schedule.sql. Corps 006600 gardé À L'IDENTIQUE ; seul ajout
+-- (« Réseau partagé ») : empreintes réseau d'un compte supprimé purgées quand plus rien n'est dû à leur créancière
+-- (comptées dans debtor_identities_purged : réponse de même forme).
+create or replace function private.housekeeping()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_history integer;
+  v_logs integer;
+  v_docs integer;
+  v_notifs integer;
+  v_chat integer;
+  v_fleet integer;
+  v_network integer;
+  v_alert_positions integer;
+  v_debtors integer;
+  v_auth integer;
+  v_expired integer;
+  v_fee_changes integer;
+  v_reductions integer;
+  v_rides integer := 0;
+  v_count integer;
+  v_org uuid;
+  v_rides_before timestamptz := date_trunc('year', now() - interval '10 years');
+  v_bans jsonb;
+  v_errors jsonb := '{}'::jsonb;
+begin
+  -- Le ménage ne met jamais un chauffeur hors ligne : application fermée, c'est private.watch_driver_gps qui s'en
+  -- charge (20260924003400).
+
+  -- Courses planifiées acceptées jamais démarrées, 6 h après l'heure de prise en charge : clôturées (005900). Un
+  -- échec est journalisé par le worker et n'empêche pas le reste du ménage ; retenté au passage suivant.
+  begin
+    v_expired := private.expire_unstarted_rides();
+  exception when others then
+    v_expired := null;
+    v_errors := v_errors || jsonb_build_object('rides_expired', left(sqlerrm, 300));
+  end;
+
+  delete from public.driver_location_history where recorded_at < now() - interval '30 days';
+  get diagnostics v_history = row_count;
+  delete from public.api_logs where created_at < now() - interval '90 days';
+  get diagnostics v_logs = row_count;
+  -- Échéance au jour LOCAL de l'organisation (comme private.document_reminders), pas au jour UTC du serveur
+  update public.driver_documents x
+     set status = 'expired'
+    from public.organizations o
+   where o.id = x.organization_id
+     and x.status = 'valid'
+     and x.expires_at < (now() at time zone coalesce(o.timezone, 'Europe/Paris'))::date;
+  get diagnostics v_docs = row_count;
+  -- Notifications : 90 jours après leur envoi prévu, quel que soit leur statut ; réveils silencieux : un jour
+  delete from public.notifications
+   where greatest(created_at, scheduled_for) < now() - interval '90 days'
+      or (type = 'location_ping' and created_at < now() - interval '1 day');
+  get diagnostics v_notifs = row_count;
+  delete from public.chat_messages where created_at < now() - interval '180 days';
+  get diagnostics v_chat = row_count;
+  -- Signalements de la flotte recopiés dans le journal de la centrale : même durée que les messages
+  delete from public.ride_events
+   where type in ('fleet.report', 'fleet.report_cleared') and created_at < now() - interval '180 days';
+  get diagnostics v_fleet = row_count;
+  -- Journal d'audit : adresse IP et navigateur effacés au bout d'un an (l'action reste tracée)
+  update public.audit_logs set ip = null, user_agent = null
+   where (ip is not null or user_agent is not null) and created_at < now() - interval '1 year';
+  get diagnostics v_network = row_count;
+  -- Position du chauffeur relevée par une alerte (immobile, GPS muet) : 30 jours. Alerte encore ouverte : sa
+  -- position est celle du moment, retirée une fois l'alerte close.
+  with batch as (
+    select a.id from public.ride_alerts a
+     where a.status <> 'open' and (a.data ? 'lat' or a.data ? 'lng') and a.created_at < now() - interval '30 days'
+     order by a.created_at
+     limit 500
+  )
+  update public.ride_alerts a
+     set data = a.data - array['lat', 'lng']
+    from batch b
+   where a.id = b.id;
+  get diagnostics v_alert_positions = row_count;
+  update public.ride_events e
+     set data = e.data - array['lat', 'lng']
+   where e.type in ('alert.stalled', 'alert.no_gps') and (e.data ? 'lat' or e.data ? 'lng')
+     and e.created_at < now() - interval '30 days';
+  get diagnostics v_count = row_count;
+  v_alert_positions := v_alert_positions + v_count;
+  -- Empreintes d'un chauffeur supprimé qui devait des commissions : plus de dette ouverte, plus d'empreinte
+  delete from private.debtor_identities x
+   where not exists (
+     select 1 from public.ride_settlements s
+      where s.driver_id = x.driver_id and s.direction = 'driver_owes'
+        and s.status in ('due', 'declared', 'disputed') and s.amount_cents > 0);
+  get diagnostics v_debtors = row_count;
+  -- Réseau partagé : empreintes d'un chauffeur partenaire supprimé, plus rien d'ouvert envers CETTE organisation
+  -- créancière (comptées avec les précédentes : réponse inchangée)
+  delete from private.network_debtor_identities n
+   where not exists (
+     select 1 from public.ride_settlements s
+      where s.organization_id = n.creditor_org_id and s.network_driver_id = n.driver_id
+        and s.network_driver_org_id is not null and s.direction = 'driver_owes'
+        and s.status in ('due', 'declared', 'disputed') and s.amount_cents > 0);
+  get diagnostics v_count = row_count;
+  v_debtors := v_debtors + v_count;
+  -- Courses : 10 ans après la fin de l'année de la prise en charge, quel que soit leur statut. Par centrale (index
+  -- organization_id, pickup_at).
+  -- Purges longues ou hors de nos tables (courses, bannissements, journal Auth) : un échec est journalisé par le
+  -- worker et n'empêche pas le reste du ménage ; elles sont retentées au passage suivant.
+  begin
+    for v_org in select o.id from public.organizations o loop
+      delete from public.rides r
+       where r.organization_id = v_org and r.pickup_at < v_rides_before;
+      get diagnostics v_count = row_count;
+      v_rides := v_rides + v_count;
+    end loop;
+  exception when others then
+    v_rides := 0;
+    v_errors := v_errors || jsonb_build_object('rides', left(sqlerrm, 300));
+  end;
+  begin
+    v_bans := private.purge_expired_bans();
+  exception when others then
+    v_errors := v_errors || jsonb_build_object('bans', left(sqlerrm, 300));
+  end;
+  -- Journal d'audit de Supabase Auth : 1 an ; une fois par heure au plus (parcours complet de la table)
+  if not exists (select 1 from private.housekeeping_runs h
+                  where h.task = 'auth_audit' and h.last_run_at > now() - interval '1 hour') then
+    insert into private.housekeeping_runs (task, last_run_at) values ('auth_audit', now())
+    on conflict (task) do update set last_run_at = excluded.last_run_at;
+    begin
+      v_auth := 0;
+      if to_regclass('auth.audit_log_entries') is not null then
+        delete from auth.audit_log_entries a where a.created_at < now() - interval '1 year';
+        get diagnostics v_auth = row_count;
+      end if;
+    exception when others then
+      v_auth := null;
+      v_errors := v_errors || jsonb_build_object('auth_audit', left(sqlerrm, 300));
+    end;
+  end if;
+
+  -- Frais Rydar (20260924006600) : baisses en attente depuis 30 jours sans décision du super admin acceptées (CGV
+  -- art. 5)
+  begin
+    v_reductions := private.accept_stale_platform_reductions();
+  exception when others then
+    v_reductions := null;
+    v_errors := v_errors || jsonb_build_object('platform_reductions', left(sqlerrm, 300));
+  end;
+  -- Hausses annoncées arrivées à leur date d'effet, EN DERNIER : le verrou de l'organisation (UPDATE des taux) est gardé
+  -- jusqu'à la fin de la transaction, et la création d'une course de l'organisation l'attend
+  begin
+    v_fee_changes := private.apply_platform_fee_changes();
+  exception when others then
+    v_fee_changes := null;
+    v_errors := v_errors || jsonb_build_object('platform_fee_changes', left(sqlerrm, 300));
+  end;
+
+  return jsonb_build_object('rides_expired', v_expired, 'platform_fee_changes_applied', v_fee_changes,
+    'platform_reductions_accepted', v_reductions,
+    'history_purged', v_history, 'api_logs_purged', v_logs,
+    'documents_expired', v_docs, 'notifications_purged', v_notifs, 'chat_purged', v_chat,
+    'fleet_events_purged', v_fleet, 'audit_network_purged', v_network, 'rides_purged', v_rides,
+    'bans_purged', v_bans, 'alert_positions_purged', v_alert_positions, 'debtor_identities_purged', v_debtors,
+    'auth_audit_purged', v_auth)
+    || case when v_errors = '{}'::jsonb then '{}'::jsonb else jsonb_build_object('errors', v_errors) end;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------------------------------------------
+-- 8.10 Droits de la partie 4b
+-- -----------------------------------------------------------------------------------------------------------------
+-- Aides : fonctions serveur seulement
+revoke all on function
+  private.network_notify(uuid, uuid, uuid, text, text, text, jsonb, text),
+  private.network_month(public.ride_network_executions)
+from public, anon, authenticated;
+grant execute on function
+  private.network_notify(uuid, uuid, uuid, text, text, text, jsonb, text),
+  private.network_month(public.ride_network_executions)
+to service_role;
+
+-- RPC de A (contrôle dans la fonction : assert_network_creditor ; « Relancer » : assert_org_member). Fonctions
+-- redéfinies (même signature) : droits conservés.
+revoke all on function
+  public.org_network_payout_info(uuid),
+  public.validate_network_ride(uuid),
+  public.contest_network_ride(uuid, text),
+  public.remind_network_driver(uuid, uuid)
+from public, anon;
+grant execute on function
+  public.org_network_payout_info(uuid),
+  public.validate_network_ride(uuid),
+  public.contest_network_ride(uuid, text),
+  public.remind_network_driver(uuid, uuid)
 to authenticated, service_role;

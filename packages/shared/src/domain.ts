@@ -281,6 +281,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "Action impossible sur un règlement du réseau partagé : un versement dû à un chauffeur partenaire ne s'annule pas (contestez la course).",
   NETWORK_CONSENT_REQUIRED: "Activez « Courses du réseau partagé » et acceptez ses conditions dans votre profil.",
   NETWORK_PAYOUT_ON_HOLD: "Versement retenu : course à vérifier (validez-la, ou attendez 72 h après sa fin).",
+  // Lot argent (4b) : « Valider » une course contestée, ou rouvrir le versement annulé par la contestation
+  NETWORK_RIDE_CONTESTED: "Course contestée : elle ne peut plus être validée, ni son versement rouvert.",
   NETWORK_DISPUTE_NOT_ALLOWED: "Contestation impossible pour ce règlement (déjà contesté, ou rien à contester).",
   NETWORK_DISPUTE_REASON_INVALID: "Expliquez votre contestation en quelques mots (5 à 300 caractères).",
   OFFER_CHANGED: "La course a été modifiée : elle vous sera reproposée si elle est encore disponible.",
