@@ -2176,7 +2176,7 @@ begin
     if exists (select 1 from public.organizations o where o.id = r.organization_id and o.platform_block_after_days is not null)
        and private.platform_blocked(r.organization_id) then
       return jsonb_build_object('ok', false, 'code', 'PLATFORM_FEES_OVERDUE',
-        'message', 'Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.');
+        'message', private.fr_typo('Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.'));
     end if;
     v_max := nullif(coalesce(private.org_limits(r.organization_id), '{}'::jsonb) ->> 'max_rides_per_month', '')::bigint;
     if v_max is not null then
@@ -2830,7 +2830,7 @@ begin
   if exists (select 1 from public.organizations o where o.id = r.organization_id and o.platform_block_after_days is not null)
      and private.platform_blocked(r.organization_id) then
     return jsonb_build_object('ok', false, 'code', 'PLATFORM_FEES_OVERDUE',
-      'message', 'Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.');
+      'message', private.fr_typo('Frais plateforme en retard : réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») pour relancer ou attribuer une course.'));
   end if;
   v_max := nullif(coalesce(private.org_limits(r.organization_id), '{}'::jsonb) ->> 'max_rides_per_month', '')::bigint;
   if v_max is not null then
@@ -3173,7 +3173,7 @@ begin
       format('Prise en charge repoussée à %s : course non relancée — %s',
         private.fmt_local_time(v_target, v_tz, v_reference),
         case v_restart_block
-          when 'PLATFORM_FEES_OVERDUE' then 'frais plateforme en retard (réglez vos frais Rydar, menu « Frais Rydar » ou « Encaissements », puis relancez-la)'
+          when 'PLATFORM_FEES_OVERDUE' then private.fr_typo('frais plateforme en retard (réglez vos frais Rydar, menu « Frais Rydar » ou « Encaissements », puis relancez-la)')
           else 'limite mensuelle de courses atteinte pour votre offre'
         end),
       'timeline', 'warning', jsonb_build_object('code', v_restart_block, 'pickup_at', v_target), 'system', null);
