@@ -1209,8 +1209,11 @@ export interface BookingVoucher {
 /**
  * RPC driver_ride(p_ride) et driver_rides_upcoming() : liste blanche des champs de l'app pour SES courses (propres et
  * partenaires) ; course non tenue par le chauffeur → RIDE_NOT_FOUND. Course partenaire : adresse exacte, coordonnées,
- * tracé et commentaire après acceptation ; client dans la fenêtre seulement (chaque réponse qui le contient est
- * comptée pour A).
+ * tracé, commentaire et vol après acceptation, jusqu'à la fin + 1 h (ensuite communes et coordonnées arrondies, comme
+ * l'offre) ; client dans la fenêtre seulement (customer_visible_from / until : prise en charge − 60 min, dès
+ * l'acceptation pour une immédiate, jusqu'à la fin + 1 h) — chaque réponse de driver_ride qui le contient est comptée
+ * pour A ; driver_rides_upcoming (planning) ne renvoie jamais le client d'une course partenaire. Motif d'annulation
+ * d'une course partenaire : jamais (null). Lot accès : 20260924007000.
  */
 export interface DriverRide extends Partial<Omit<RideFlightFields, "flight_checked_at">> {
   id: Uuid;
@@ -1309,7 +1312,13 @@ export const NETWORK_GIVEN_FILTERS = [
 ] as const;
 export type NetworkGivenFilter = (typeof NETWORK_GIVEN_FILTERS)[number]["key"];
 
-/** RPC org_network_summary(p_org) : bande d'indicateurs (+ pastille de navigation). */
+/**
+ * RPC org_network_summary(p_org) : bande d'indicateurs (+ pastille de navigation). Lot accès (20260924007000) :
+ * overdue_* = règlements « dus » échus dans les deux sens (reversement du chauffeur, versement de A) ; disputed_count =
+ * règlements encore ouverts marqués « Pas reçu », contestés par le chauffeur ou d'une course contestée (le filtre
+ * « disputed » d'org_network_given liste aussi les contestations closes) ; to_check_count = courses partagées terminées,
+ * signalées, ni validées ni contestées (une course en cours n'est jamais « à vérifier »).
+ */
 export interface OrgNetworkSummary {
   currency: string;
   readiness: OrgNetworkReadiness;
@@ -1550,9 +1559,14 @@ export interface SetDriverNetworkAllowedResult {
   closed_offers: number;
 }
 
-/** driver_stats(p_driver) / org_stats(p_org) : chiffres de B + nombre de courses partenaires (sans montants de A). */
+/**
+ * driver_stats(p_driver) / org_stats(p_org) : chiffres de B + nombre de courses partenaires (sans montants de A).
+ * Lot accès (20260924007000) : clé présente seulement s'il y en a (réponse inchangée sans réseau) ; les courses
+ * partenaires (courses de A) ne comptent plus dans les compteurs et le chiffre d'affaires de driver_stats, et les
+ * offres réseau ne comptent plus dans les taux d'acceptation (driver_stats, org_stats).
+ */
 export interface NetworkStatsFields {
-  network_rides: number;
+  network_rides?: number;
 }
 
 // =============================================================================

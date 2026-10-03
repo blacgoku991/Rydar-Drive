@@ -58,6 +58,17 @@ describe("course « à vérifier » et versement retenu", () => {
     expect(suspectText(givenItem({ suspect: ["no_gps", "too_fast"] }))).toBe("Position absente pendant la course · Durée très inférieure à l'estimation");
   });
 
+  it("contrôle relevé pendant la course (pas encore terminée) : jamais « à vérifier » ni « Valider » (la base refuse avant la fin)", () => {
+    const enCours = givenItem({ status: "DRIVER_ARRIVED", suspect: ["far_from_pickup"], validatedAt: null, settlement: null });
+    expect(enCours.execution.end_reason).toBeNull();
+    expect(givenToCheck(enCours)).toBe(false);
+    expect(givenRowActions(enCours, owner).validate).toBe(false);
+    // Course retirée au partenaire avec un contrôle relevé : pas davantage
+    const retiree = givenItem({ status: "SEARCHING_DRIVER", suspect: ["no_gps"], validatedAt: null, settlement: null,
+      endedAt: "2026-09-20T09:40:00.000Z", endReason: "removed_by_giver" });
+    expect(givenToCheck(retiree)).toBe(false);
+  });
+
   it("« Valider » proposé pour une course payée à bord signalée, si la base dit qu'elle n'est pas validée", () => {
     expect(givenRowActions(givenItem({ suspect: ["far_from_dropoff"], validatedAt: null }), owner).validate).toBe(true);
     expect(givenRowActions(givenItem({ suspect: ["far_from_dropoff"] }), owner).validate).toBe(false);

@@ -10,6 +10,7 @@ import { ArrowLeftRight, CheckCheck, Mail, Phone, ShieldAlert, Undo2 } from "luc
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { closeNetworkRide, removeNetworkRide } from "@/app/dashboard/reseau-partage/actions";
+import { givenToCheck } from "@/components/network-share/given";
 import { GivenActions } from "@/components/network-share/given-actions";
 import { networkShareHref } from "@/components/network-share/paths";
 import {
@@ -73,7 +74,8 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
   const s = data.settlement;
   const live = s ? { ...s, overdue: s.direction === "driver_owes" && s.status === "due" && Date.parse(s.due_at) <= now } : null;
   const due = live ? dueInfo(live, now, { blockUnpaid: false }) : null;
-  const toCheck = !!e && e.suspect_reasons.length > 0 && !e.contested_at && (e.validated_at === undefined ? e.on_hold : e.validated_at === null);
+  // Même règle que la liste « Courses confiées » (course terminée, signalée, ni validée ni contestée)
+  const toCheck = !!item && givenToCheck(item);
   const t = e?.terms;
   const vehicle = e ? [[e.vehicle.brand, e.vehicle.model].filter(Boolean).join(" "), e.vehicle.color].filter(Boolean).join(" · ") : "";
   const op = data.operator;

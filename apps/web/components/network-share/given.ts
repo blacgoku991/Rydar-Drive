@@ -35,10 +35,14 @@ export function givenEndedAt(item: NetworkGivenItem): string | null {
   return item.execution.ended_at ?? item.ride.completed_at ?? null;
 }
 
-/** Course « à vérifier » : contrôles de fin signalés, ni validée ni contestée. */
+/**
+ * Course « à vérifier » : terminée (exécution « completed »), contrôles de fin signalés, ni validée ni contestée. Un
+ * contrôle relevé pendant la course (arrivée loin du départ, position absente) ne se valide qu'après la fin
+ * (validate_network_ride : RIDE_NOT_FOUND avant) : jamais « à vérifier » ni « Valider » avant.
+ */
 export function givenToCheck(item: NetworkGivenItem): boolean {
   const e = item.execution;
-  if (!e.suspect_reasons.length || e.contested_at) return false;
+  if (!e.suspect_reasons.length || e.contested_at || e.end_reason !== "completed") return false;
   return e.validated_at === undefined ? e.on_hold : e.validated_at === null;
 }
 

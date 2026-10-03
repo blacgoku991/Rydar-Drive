@@ -8,10 +8,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   ACCEPT_OFFER_CODES, DRIVER_NETWORK_READINESS_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES,
-  NETWORK_EXECUTION_END_REASONS, NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS, NETWORK_SHARE_CLOSED_REASONS,
-  NETWORK_SKIP_REASON_LABELS, NETWORK_SUSPECT_REASONS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
-  NETWORK_RPC_ACCESS, type DriverNetworkSettlementItem, type NetworkOfferNotificationData, type NetworkPayoutWarning,
-  type NetworkRpcs, type RemindNetworkDriverResult,
+  NETWORK_CLOSED_RPCS, NETWORK_EXECUTION_END_REASONS, NETWORK_GIVEN_FILTERS, NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS,
+  NETWORK_PICKUP_HIDDEN_LABEL, NETWORK_RECEIVED_FILTERS, NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS,
+  NETWORK_SUSPECT_REASONS, NETWORK_SUSPENDED_CREDITOR_RPCS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
+  NETWORK_RPC_ACCESS, ORG_NETWORK_READINESS_CODES, type DriverNetworkSettlementItem, type NetworkDriverMoney,
+  type NetworkOfferNotificationData, type NetworkPayoutWarning, type NetworkRpcs, type RemindNetworkDriverResult,
 } from "./network";
 import type { EarningsPeriod } from "./types";
 
@@ -321,6 +322,100 @@ describe("Réseau partagé, argent (partie 4b) : SQL = contrats de @rydar/shared
         const args = call.slice(0, call.indexOf(";"));
         expect(args, fn).not.toMatch(/'(commission_cents|platform_fee_cents|driver_payout_cents|giver_cut_cents)'/);
       }
+    }
+  });
+});
+
+describe("Réseau partagé, accès (partie 5a, 20260924007000) : SQL = contrats de @rydar/shared", () => {
+  type Args<K extends keyof NetworkRpcs> = Record<keyof NetworkRpcs[K]["args"], true>;
+  const contract = {
+    driver_offers_v2: {} satisfies Args<"driver_offers_v2">,
+    driver_ride: { p_ride: true } satisfies Args<"driver_ride">,
+    driver_rides_upcoming: {} satisfies Args<"driver_rides_upcoming">,
+    driver_network_state: {} satisfies Args<"driver_network_state">,
+    driver_network_ping: {} satisfies Args<"driver_network_ping">,
+    driver_set_network: { p_enabled: true, p_version: true } satisfies Args<"driver_set_network">,
+    org_network_summary: { p_org: true } satisfies Args<"org_network_summary">,
+    org_network_given: {
+      p_org: true, p_filter: true, p_partner: true, p_month: true, p_limit: true, p_before: true,
+    } satisfies Args<"org_network_given">,
+    org_network_ride: { p_ride: true } satisfies Args<"org_network_ride">,
+    network_partner_names: { p_org: true } satisfies Args<"network_partner_names">,
+    exclude_network_driver: { p_execution: true, p_reason: true } satisfies Args<"exclude_network_driver">,
+    org_network_driver_exclusions: { p_org: true } satisfies Args<"org_network_driver_exclusions">,
+    lift_network_driver_exclusion: { p_org: true, p_id: true } satisfies Args<"lift_network_driver_exclusion">,
+    org_network_received: {
+      p_org: true, p_filter: true, p_partner: true, p_month: true, p_limit: true, p_before: true,
+    } satisfies Args<"org_network_received">,
+    org_network_activity: { p_org: true } satisfies Args<"org_network_activity">,
+    org_network_drivers: { p_org: true } satisfies Args<"org_network_drivers">,
+    set_driver_network_allowed: { p_driver: true, p_allowed: true } satisfies Args<"set_driver_network_allowed">,
+  };
+
+  it("RPC du chauffeur, de A et de B : noms des paramètres = NetworkRpcs (appels du web et de l'app) ; contrôle d'accès dans la fonction", () => {
+    for (const [fn, args] of Object.entries(contract)) {
+      const body = lastSqlDefinition(`public.${fn}`);
+      const signature = body.slice(body.indexOf("(") + 1, body.indexOf("\nreturns")).replace(/\)\s*$/, "");
+      const params = signature.trim() === "" ? [] : signature.split(",").map((x) => x.trim().split(/\s+/)[0]!);
+      expect(params, fn).toEqual(Object.keys(args));
+      expect(body, fn).toContain("security definer");
+      const access = NETWORK_RPC_ACCESS[fn as keyof NetworkRpcs];
+      if (access === "driver") expect(body, fn).toContain("private.current_driver_id()");
+      else if (access === "owner_admin") expect(body, fn).toContain("array['owner', 'admin']::public.org_role[]");
+      else expect(body, fn).toMatch(/private\.assert_network_reader\(p_org\)|private\.assert_org_member\((p_org|r\.organization_id)\)/);
+      // Réseau fermé : NETWORK_DISABLED, sauf les sommes et courses en cours (NETWORK_CLOSED_RPCS) et les lectures
+      // générales de l'app (offres, course, planning)
+      const always = (NETWORK_CLOSED_RPCS as readonly string[]).includes(fn) || ["driver_offers_v2", "driver_ride", "driver_rides_upcoming"].includes(fn);
+      expect(body.includes("private.assert_network_open()"), fn).toBe(!always);
+    }
+    // A suspendue : seules les lectures prévues passent par private.assert_network_reader (owner / admin)
+    for (const fn of ["org_network_summary", "org_network_given", "network_partner_names"]) {
+      expect((NETWORK_SUSPENDED_CREDITOR_RPCS as readonly string[]).includes(fn), fn).toBe(true);
+      expect(lastSqlDefinition(`public.${fn}`), fn).toContain("private.assert_network_reader(p_org)");
+    }
+    for (const fn of ["org_network_received", "org_network_activity"]) {
+      expect(lastSqlDefinition(`public.${fn}`), fn).toContain("private.assert_org_member(p_org)");
+    }
+  });
+
+  it("filtres des listes = NETWORK_GIVEN_FILTERS / NETWORK_RECEIVED_FILTERS", () => {
+    const given = lastSqlDefinition("public.org_network_given");
+    const received = lastSqlDefinition("public.org_network_received");
+    const allowed = (body: string) => [...body.slice(body.indexOf("if v_filter not in (")).split(")")[0]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(allowed(given)).toEqual(NETWORK_GIVEN_FILTERS.map((f) => f.key));
+    expect(allowed(received)).toEqual(NETWORK_RECEIVED_FILTERS.map((f) => f.key));
+  });
+
+  it("lisibilité de l'organisation (private.org_network_readiness) : codes de ORG_NETWORK_READINESS_CODES, dans le même ordre", () => {
+    const body = lastSqlDefinition("private.org_network_readiness");
+    const codes = [...body.matchAll(/\|\| '([a-z_]+)'::text/g)].map((m) => m[1]!);
+    expect(codes.filter((c) => c !== "terms_grace")).toEqual(ORG_NETWORK_READINESS_CODES.filter((c) => c !== "terms_grace"));
+    expect(body).toContain("v_warnings := v_warnings || 'terms_grace'::text");
+  });
+
+  it("paramètres fixes (NETWORK_PARAMS) : coordonnées à 0,003°, client de prise en charge − 60 min à fin + 60 min, téléphones 48 h / 30 jours", () => {
+    expect(lastSqlDefinition("private.network_round_coord")).toContain(`(p / ${NETWORK_PARAMS.coordStepDegrees})`);
+    expect(lastSqlDefinition("private.network_round_coord")).toContain(`* ${NETWORK_PARAMS.coordStepDegrees})`);
+    const ride = lastSqlDefinition("private.driver_ride_json");
+    expect(ride).toContain(`r.pickup_at - interval '${NETWORK_PARAMS.clientDataBeforeMinutes} minutes'`);
+    expect(ride).toContain(`e.ended_at + interval '${NETWORK_PARAMS.clientDataAfterMinutes} minutes'`);
+    const phone = lastSqlDefinition("private.network_phone_until");
+    expect(phone).toContain(`interval '${NETWORK_PARAMS.phoneAfterHours} hours'`);
+    expect(phone).toContain(`interval '${NETWORK_PARAMS.phoneMaxDays} days'`);
+    for (const fn of ["public.driver_offers_v2", "private.driver_ride_json"]) {
+      expect(lastSqlDefinition(fn), fn).toContain(`'${NETWORK_PICKUP_HIDDEN_LABEL}'`);
+    }
+  });
+
+  it("offre partenaire : UN montant (NetworkDriverMoney), jamais commission ni frais Rydar ; ni tracé, ni commentaire, ni n° de vol", () => {
+    const body = lastSqlDefinition("public.driver_offers_v2");
+    const money = body.slice(body.indexOf("'money', jsonb_build_object("));
+    const keys = [...money.slice(0, money.indexOf("'counterparty', 'driver'") + 30).matchAll(/'([a-z_]+)', /g)].map((m) => m[1]).slice(1);
+    const expected = ["price_cents", "currency", "payment_method", "collects", "driver_part_cents", "giver_part_cents", "direction",
+      "amount_cents", "counterparty"] as const satisfies ReadonlyArray<keyof NetworkDriverMoney>;
+    expect(keys).toEqual([...expected]);
+    for (const k of ["route_polyline", "flight_number", "comment", "commission_cents", "platform_fee_cents", "dispatch_model"]) {
+      expect(body, k).toContain(`'${k}', null`);
     }
   });
 });

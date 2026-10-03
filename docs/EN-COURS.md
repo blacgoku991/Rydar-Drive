@@ -262,7 +262,8 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   non poussée), 3 (dispatch, migration `20260924006800`, non poussée : 3a éligibilité, étape réseau des immédiates et
   des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin), 4 (argent, migration
   `20260924006900`, non poussée : 4a côté chauffeur ; 4b côté A, blocages, relances, frais Rydar, dette et
-  suppression). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  suppression), 5a (accès : RPC du chauffeur, de A et de B, migration `20260924007000`, non poussée, à compléter par
+  la suite du lot 5). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
   liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
@@ -356,6 +357,21 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
     `network_debtor_identities` (sans n° de fiche de B), `scrub_network_traces` ; web et app : rien de plus (journal
     `ride.network_validated` / `ride.network_contested` affiché par son message, `NETWORK_RIDE_CONTESTED` libellé dans
     ERROR_MESSAGES, notifications `settlement_*` avec `data.network` déjà ouvertes sur « Courses partenaires »).
+- Règles posées par le lot 5a (accès, `20260924007000`, non poussée) :
+  - lectures réseau par RPC seulement (contrats `NetworkRpcs`) : chauffeur `driver_offers_v2` (offres propres =
+    `driver_offers()` à l'identique + `network: null`), `driver_ride` (liste blanche ; course partenaire : client dans
+    sa fenêtre, lectures comptées, adresse exacte jusqu'à la fin + 1 h), `driver_rides_upcoming` (jamais le client d'une
+    course partenaire), `driver_network_state` / `_ping` / `driver_set_network` ; A `org_network_summary`,
+    `org_network_given`, `org_network_ride`, `network_partner_names`, exclusions de chauffeurs ; B
+    `org_network_received`, `org_network_activity`, `org_network_drivers`, `set_driver_network_allowed` ;
+  - réseau fermé : NETWORK_DISABLED sauf `NETWORK_CLOSED_RPCS` et les lectures générales de l'app ; A suspendue :
+    owner / admin seulement pour summary / given / partner_names (`private.assert_network_reader`) ;
+  - `private.org_network_readiness` (lisibilité de l'organisation, ordre de `ORG_NETWORK_READINESS_CODES`) et
+    `private.network_driver_readiness` (lot 4a) : le lot administration les enveloppe en RPC publiques, sans les recréer ;
+    `private.driver_label_for` (« Prénom I. · B ») pour les messages de la suite du lot ;
+  - statistiques : `driver_stats` / `org_stats` (redéfinies, dernière version : 007000) = chiffres de l'organisation
+    seulement, offres réseau hors des taux, clé `network_rides` seulement s'il y en a ;
+  - web : « à vérifier » seulement pour une course partagée terminée (`givenToCheck`, fiche course).
 - Règles posées par la revue du lot 4 (corrections dans 006900, non poussée) :
   - la baisse des frais Rydar demandée par « Contester la course » n'est JAMAIS acceptée d'office : redéfinition de
     `private.accept_stale_platform_reductions` (corps 006600 à l'identique + exclusion des courses partagées contestées) ;

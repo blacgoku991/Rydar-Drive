@@ -259,6 +259,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Tests et renvois bornés (20260924006100)
   WEBHOOK_TEST_PENDING: "Un test de ce webhook est déjà en cours d'envoi : attendez son résultat avant d'en relancer un.",
   WEBHOOK_TEST_RATE_LIMITED: "Trop de tests et de renvois de webhooks en une minute (10 au plus par centrale) : réessayez dans un instant.",
+  // Statistiques (public.org_stats, redéfinie par 20260924007000 : code d'origine 20260924000500)
+  INVALID_RANGE: "Période de statistiques invalide : 400 jours au plus, fin après le début.",
   // Interrupteur plateforme des mini-sites (20260924006200)
   BOOKING_SITES_DISABLED: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
   // Réseau partagé (20260924006700 à 20260924007100 ; liste : NETWORK_ERROR_CODES de network.ts)
