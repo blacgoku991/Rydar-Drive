@@ -1208,6 +1208,12 @@ describe("Course « à vérifier » (§10.9, §14.1 n° 20)", () => {
       organization_id: p.A.id, ride_id: ride.id, kind: "correction", amount_cents: -500, status: "pending", created_by: p.A.ownerId,
       label: `Contestation course ${ride.number} · réseau partagé : frais 5 € → 0 €`, reason: "Course contestée : Client jamais pris en charge",
     });
+    // Une écriture de la course qui réveille le déclencheur des frais ne remplace jamais la demande (aucun recalcul)
+    await sql(`update public.rides set payment_method = payment_method, commission_cents = commission_cents where id = $1`, [ride.id]);
+    expect(await sql(`select kind, amount_cents, status from public.platform_fee_entries where ride_id = $1 order by created_at`, [ride.id])).toEqual([
+      { kind: "ride", amount_cents: 500, status: "posted" },
+      { kind: "correction", amount_cents: -500, status: "pending" },
+    ]);
     const [e] = await sql(`select contested_at, contested_by, contested_reason from public.ride_network_executions where id = $1`, [execution.id]);
     expect(e).toMatchObject({ contested_by: p.A.ownerId, contested_reason: "Client jamais pris en charge" });
     const [note] = await notesOf(p.partner.id, "settlement_payout_cancelled");
@@ -1603,6 +1609,45 @@ describe("Relevés, réseau fermé et droits (partie 4b)", () => {
     expect(await rpc(p.A.ownerId, "remind_network_driver", [p.A.id, cash.settlement.id])).toMatchObject({ ok: true, code: "REMINDED" });
     expect(await rpc(p.A.ownerId, "contest_network_ride", [cash.ride.id, "Trajet non conforme"])).toMatchObject({ ok: true });
     expect(await rpc(p.A.ownerId, "dispute_settlement", [cash.settlement.id, "Rien reçu"])).toMatchObject({ ok: true });
+  });
+
+  it("A suspendue ou archivée : owner / admin gardent RIB, « Valider », « Versé » et « Contester » ; « Relancer » : organisation active", async () => {
+    const p = await networkPair();
+    const admin = await createMember(p.A, "admin");
+    const dispatcher = await createMember(p.A, "dispatcher");
+    await rpc(p.partner.userId, "driver_set_payout_details", ["Karim Tazi", IBAN_FR, null]);
+    const held = await sharedRide(p, { payment_method: "online" }, { gps: false });
+    const cash = await sharedRide(p, { payment_method: "cash" });
+    try {
+      await sql(`update public.organizations set status = 'suspended' where id = $1`, [p.A.id]);
+      for (const [fn, args] of [
+        ["org_network_payout_info", [held.settlement.id]],
+        ["validate_network_ride", [held.ride.id]],
+        ["contest_network_ride", [cash.ride.id, "Trajet non conforme"]],
+        ["remind_network_driver", [p.A.id, cash.settlement.id]],
+      ] as Array<[string, unknown[]]>) {
+        expect((await expectPgError(rpc(dispatcher, fn, args))).code, `${fn} dispatcher`).toBe("42501");
+      }
+      expect(await rpc(admin, "validate_network_ride", [held.ride.id])).toMatchObject({ ok: true, ride_id: held.ride.id });
+      expect(await rpc(p.A.ownerId, "org_network_payout_info", [held.settlement.id])).toMatchObject({
+        iban: IBAN_FR, amount_cents: held.settlement.amount_cents,
+      });
+      const remind = await expectPgError(rpc(p.A.ownerId, "remind_network_driver", [p.A.id, cash.settlement.id]));
+      expect(remind.code).toBe("42501");
+      expect(remind.message).toMatch(/^FORBIDDEN_TENANT/);
+
+      await sql(`update public.organizations set status = 'archived' where id = $1`, [p.A.id]);
+      expect(await rpc(admin, "confirm_settlements", [[held.settlement.id], "transfer", null])).toMatchObject({ ok: true, count: 1 });
+      expect(await rpc(p.A.ownerId, "contest_network_ride", [cash.ride.id, "Trajet non conforme"])).toMatchObject({
+        ok: true, ride_id: cash.ride.id,
+      });
+      expect((await expectPgError(rpc(p.A.ownerId, "remind_network_driver", [p.A.id, cash.settlement.id]))).code).toBe("42501");
+      expect(await sql(`select status from public.ride_settlements where id = any ($1) order by status`, [[held.settlement.id, cash.settlement.id]]))
+        .toEqual([{ status: "due" }, { status: "paid" }]);
+      expect((await sql(`select last_reminded_at from public.ride_settlements where id = $1`, [cash.settlement.id]))[0].last_reminded_at).toBeNull();
+    } finally {
+      await sql(`update public.organizations set status = 'active' where id = $1`, [p.A.id]);
+    }
   });
 
   it("RPC de A : jamais anonymes, contrôle dans la fonction ; aides : serveur seulement", async () => {
