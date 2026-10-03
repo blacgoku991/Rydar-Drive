@@ -5,7 +5,7 @@
 // saisie dans le formulaire (le formulaire ne peut pas servir à écrire à un tiers).
 import { z } from "zod";
 import type { Tone } from "./domain";
-import { formatPhone, normalizePhone } from "./format";
+import { normalizePhone } from "./format";
 
 const NBSP = "\u{a0}";
 
@@ -289,43 +289,34 @@ function clipBody(text: string): string {
   return chars.length <= CONTACT_LIMITS.body ? text : `${chars.slice(0, CONTACT_LIMITS.body - 1).join("")}…`;
 }
 
-/** Message du demandeur cité ligne à ligne (« > ») : distinct du texte de Rydar Drive. */
-const quote = (message: string) =>
-  cleanMultiline(message)
-    .split("\n")
-    .map((line) => (line ? `> ${line}` : ">"))
-    .join("\n");
-
 /**
- * Notification au super admin (destinataire : CONTACT_NOTIFY_EMAIL) : tous les champs, lien vers la demande, puis le
- * message cité. Sujet : « Nouvelle demande de contact — <sujet> (<nom>, <société>) » (un sujet distinct par demande :
- * les messageries ne regroupent pas des demandes différentes dans une même conversation).
+ * Notification au super admin (destinataire : CONTACT_NOTIFY_EMAIL, une boîte de messagerie hors du serveur, que la
+ * purge des demandes n'atteint pas) : AUCUNE donnée personnelle de la demande (ni nom, ni société, ni e-mail, ni
+ * téléphone, ni message), seulement le sujet, l'offre visée, une référence et le lien vers la demande dans
+ * /admin/contacts, où l'on lit et répond (minimisation, RGPD art. 5.1.c et 5.1.e). Sujet distinct par demande
+ * (référence courte) : les messageries ne regroupent pas des demandes différentes dans une même conversation. Le web
+ * l'envoie sans Reply-To.
  */
-export function contactNotifyEmail(req: ContactNotifyRequest, opts: { appUrl: string; planName?: string | null }): EmailContent {
+export function contactNotifyEmail(
+  req: Pick<ContactNotifyRequest, "id" | "topic"> & Partial<Pick<ContactNotifyRequest, "planCode">>,
+  opts: { appUrl: string; planName?: string | null },
+): EmailContent {
   const topic = CONTACT_TOPIC_META[req.topic]?.label ?? "Autre demande";
-  const name = sanitizeHeaderText(req.name, CONTACT_LIMITS.name);
-  const company = sanitizeHeaderText(req.company, CONTACT_LIMITS.company);
-  const who = [name, company].filter(Boolean).join(", ");
-  const subject = sanitizeHeaderText(`Nouvelle demande de contact — ${topic}${who ? ` (${who})` : ""}`);
+  const ref = sanitizeHeaderText(req.id, 64).replace(/[^0-9a-z]/gi, "").slice(0, 8);
+  const subject = sanitizeHeaderText(`Nouvelle demande de contact — ${topic}${ref ? ` (réf. ${ref})` : ""}`);
   const plan = sanitizeHeaderText(opts.planName, 120) || sanitizeHeaderText(req.planCode, CONTACT_LIMITS.planCode);
-  const phone = sanitizeHeaderText(req.phone, CONTACT_LIMITS.phone);
   const field = (label: string, value: string | undefined) => `${label}${NBSP}: ${value || "—"}`;
   const text = [
     "Nouvelle demande de contact reçue sur le site Rydar Drive.",
     "",
     field("Sujet", topic),
     field("Offre", plan),
-    field("Nom", name),
-    field("Société", company),
-    field("E-mail", sanitizeHeaderText(req.email, CONTACT_LIMITS.email)),
-    field("Téléphone", phone ? formatPhone(phone) : undefined),
-    field("Taille de la flotte", req.fleetSize ? FLEET_SIZE_META[req.fleetSize]?.label : undefined),
+    field("Référence", ref),
     "",
-    `Voir et traiter la demande${NBSP}:`,
+    `Lire la demande et y répondre${NBSP}:`,
     `${siteUrl(opts.appUrl)}/admin/contacts/${encodeURIComponent(req.id)}`,
     "",
-    `Message${NBSP}:`,
-    quote(req.message),
+    `Les coordonnées et le message ne figurent pas dans cet e-mail${NBSP}: ils restent dans l'espace d'administration, supprimés avec la demande. Répondez depuis cet espace.`,
     "",
     "-- ",
     "E-mail automatique du formulaire de contact de Rydar Drive.",

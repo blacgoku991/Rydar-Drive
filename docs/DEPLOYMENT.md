@@ -280,9 +280,9 @@ Hors kit VPS : `docker run -e DATABASE_SSLMODE=verify-full -e DATABASE_CA_FILE=/
 
 | E-mail (`kind`) | Destinataire | Quand |
 | --- | --- | --- |
-| Notification (`contact_notify`) | le Super Admin : `CONTACT_NOTIFY_EMAIL`, à défaut l'e-mail de `/admin/legal`, puis `LEGAL_EMAIL`. « Répondre » écrit au demandeur (Reply-To) | à chaque demande |
+| Notification (`contact_notify`) | le Super Admin : `CONTACT_NOTIFY_EMAIL`, à défaut l'e-mail de `/admin/legal`, puis `LEGAL_EMAIL`. **Aucune donnée personnelle** (sujet, offre, référence et lien seulement) ni Reply-To : la demande se lit et se traite dans `/admin/contacts` (minimisation : la boîte de messagerie est hors du serveur, la purge ne l'atteint pas) | à chaque demande |
 | Accusé de réception (`contact_ack`) | le demandeur. Texte fixe, sans rien de ce qu'il a saisi (anti-abus : le formulaire ne peut pas servir à écrire à un tiers) ; un seul par adresse et par 24 h | à chaque demande |
-| Réponse (`contact_reply`) | le demandeur | réponse du Super Admin depuis `/admin/contacts` |
+| Réponse (`contact_reply`) | le demandeur (Reply-To : la boîte de contact, s'il répond par e-mail) | réponse du Super Admin depuis `/admin/contacts` |
 | E-mail de test (`test`) | l'adresse choisie | bouton de `/admin/contacts` |
 
 **Par où** : le site n'envoie rien lui-même, il écrit dans la file. Le service `mailer` (même image que le worker,

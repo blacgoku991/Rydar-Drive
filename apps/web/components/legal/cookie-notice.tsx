@@ -67,11 +67,25 @@ export function CookieNotice({ href, placement = "floating" }: { href: string; p
   return slot === "sidebar" ? <SidebarNotice href={href} onClose={close} /> : <FloatingNotice href={href} onClose={close} />;
 }
 
+/**
+ * Fermer le bandeau retire le bouton qui avait le focus : il passe au contenu principal (#contenu, sinon <main>), au
+ * lieu de tomber sur <body> (la tabulation suivante sortait de la page, WCAG 2.4.3).
+ */
+function focusMainContent() {
+  const main = document.getElementById("contenu") ?? document.querySelector("main");
+  if (!main) return;
+  if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+  main.focus({ preventScroll: true });
+}
+
 function CloseButton({ onClose, className }: { onClose: () => void; className: string }) {
   return (
     <button
       type="button"
-      onClick={onClose}
+      onClick={() => {
+        onClose();
+        focusMainContent();
+      }}
       className={cn("grid size-7 shrink-0 place-items-center rounded-md text-fg-subtle hover:bg-white/[0.06] hover:text-fg", className)}
       aria-label="Fermer l'information sur les cookies"
     >

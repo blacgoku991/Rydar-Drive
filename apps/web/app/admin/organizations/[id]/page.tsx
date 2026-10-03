@@ -182,7 +182,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
                       {org.join_enabled ? (org.join_auto_approve ? "Actif · validation auto" : "Actif · validation manuelle") : org.join_code ? "Coupé" : "Jamais créé"}
                     </p>
                     {joinUrl && org.join_enabled && (
-                      <a href={joinUrl} target="_blank" rel="noreferrer" className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate text-brand hover:underline">
+                      <a href={joinUrl} target="_blank" rel="noreferrer" className="relative mt-0.5 inline-flex max-w-full items-center gap-1 truncate text-brand hover:underline">
                         <span className="truncate">/rejoindre/{org.join_code}</span> <ExternalLink aria-hidden className="size-3 shrink-0" />
                         <NewTabHint />
                       </a>
@@ -213,7 +213,8 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
           </Card>
           <Card>
             <CardHeader title="Chauffeurs connectés" description={`${drivers.data?.length ?? 0} en ligne`} />
-            <div className="max-h-[420px] divide-y divide-line overflow-y-auto">
+            {/* Zones défilantes atteignables au clavier (flèches) et nommées (WCAG 2.1.1) */}
+            <div className="max-h-[420px] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Chauffeurs connectés">
               {(drivers.data ?? []).map((d: any) => (
                 <div key={d.id} className="flex items-center justify-between px-5 py-2.5 text-[13px]">
                   <span>{d.first_name} {d.last_name} <span className="num text-fg-subtle">#{d.number}</span></span>
@@ -227,7 +228,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
         <div className="grid gap-6 xl:grid-cols-2">
           <Card>
             <CardHeader title="Erreurs de dispatch" description="7 derniers jours" />
-            <div className="max-h-[320px] divide-y divide-line overflow-y-auto">
+            <div className="max-h-[320px] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Erreurs de dispatch">
               {(errors.data ?? []).map((e: any) => (
                 <div key={e.id} className="px-5 py-2.5">
                   <p className={`text-[12.5px] ${e.level === "error" ? "text-red" : "text-amber"}`}>{e.message}</p>
@@ -239,7 +240,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
           </Card>
           <Card>
             <CardHeader title="Notifications" description="Dernières notifications push" />
-            <div className="max-h-[320px] divide-y divide-line overflow-y-auto">
+            <div className="max-h-[320px] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Dernières notifications">
               {(notifications.data ?? []).map((n: any) => (
                 <div key={n.id} className="flex items-center justify-between gap-3 px-5 py-2.5">
                   <span className="min-w-0"><span className="block truncate text-[12.5px]">{n.title}</span><span className="block truncate text-[11.5px] text-fg-subtle">{n.last_error ?? n.type} · {formatRelative(n.created_at)}</span></span>

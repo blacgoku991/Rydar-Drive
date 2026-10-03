@@ -127,7 +127,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           )}
         </header>
 
-        <main id="contenu">
+        <main id="contenu" tabIndex={-1} className="outline-none">
           <OpenInApp
             code={code.toLowerCase()}
             appStoreUrl={process.env.IOS_APP_URL || null}

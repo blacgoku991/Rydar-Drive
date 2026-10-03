@@ -2,27 +2,33 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { legalContact } from "@/components/legal/legal-contact";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
-import { DPA_UPDATED_AT, ORG_LEGAL_VERSION, getLegalInfo } from "@/lib/legal";
+import { getLegalInfo } from "@/lib/legal";
 
 export const dynamic = "force-dynamic";
 
+// Accord de traitement tel qu'accepté par les centrales sous les versions du 27 septembre et du 2 octobre 2026
+// (ORG_LEGAL_VERSION 2026-10-02), jusqu'à la correction du 3 octobre 2026 (hébergement, sauvegardes, sous-traitants) :
+// copie FIGÉE du texte publié (commit fa25e8c), gardée consultable comme preuve de ce qui a été accepté
+// (legal_acceptances : version et date). Ne jamais la modifier (seule la mise en forme accessible du tableau diffère).
+// Non indexée ; servie telle quelle sur les mini-sites (proxy.ts, isLegalPath).
 export const metadata: Metadata = {
-  title: { absolute: "Accord de traitement des données — Rydar Drive" },
-  description:
-    "Accord de sous-traitance (article 28 du RGPD) entre les centrales et l'éditeur de Rydar Drive : rôles, sécurité, sous-traitants ultérieurs, durées de conservation.",
+  title: { absolute: "Accord de traitement des données (texte du 27 septembre 2026) — Rydar Drive" },
+  description: "Texte de l'accord de traitement des données de Rydar Drive accepté jusqu'à sa correction du 3 octobre 2026.",
+  robots: { index: false, follow: true },
 };
+
+/** Version et date figées (jamais les constantes en vigueur, qui changeront). */
+const VERSION = "2026-10-02";
+const UPDATED_AT = "27 septembre 2026";
 
 type Processor = { name: string; service: string; data: string; place: string; safeguards: string };
 
-/**
- * Sous-traitants ultérieurs : tableau défilant horizontalement sur petit écran ; la zone défilante est atteignable au
- * clavier (flèches) et nommée.
- */
+/** Sous-traitants ultérieurs : tableau défilant horizontalement, atteignable au clavier et nommé. */
 function ProcessorTable({ rows }: { rows: Processor[] }) {
   return (
-    <div className="overflow-x-auto rounded-md" tabIndex={0} role="region" aria-label="Sous-traitants ultérieurs">
+    <div className="overflow-x-auto rounded-md" tabIndex={0} role="region" aria-label="Sous-traitants ultérieurs (texte du 27 septembre 2026)">
       <table className="w-full min-w-[720px] border-collapse text-left text-[13px]">
-        <caption className="sr-only">Sous-traitants ultérieurs de l&apos;éditeur</caption>
+        <caption className="sr-only">Sous-traitants ultérieurs de l&apos;éditeur (texte du 27 septembre 2026)</caption>
         <thead>
           <tr className="border-b border-line-strong text-fg">
             <th scope="col" className="py-2 pr-4 font-medium">Sous-traitant</th>
@@ -48,18 +54,24 @@ function ProcessorTable({ rows }: { rows: Processor[] }) {
   );
 }
 
-export default async function DataProcessingPage() {
+export default async function PreviousDataProcessingPage() {
   const legal = await getLegalInfo();
-  const contact = legalContact(legal.privacyEmail);
+  const contact = legalContact(legal.privacyEmail).noun;
   const link = "text-fg underline underline-offset-2";
   const processors: Processor[] = [
     {
-      name: legal.hostName || "Hébergeur du serveur (voir les mentions légales)",
-      service:
-        "Location du serveur de l'éditeur, qui héberge le site, l'API, la base de données et les comptes de connexion (logiciel Supabase installé et administré par l'éditeur), les fichiers (justificatifs, photos), le temps réel, les sauvegardes, les traitements automatiques (dispatch, notifications, relances) et le serveur d'envoi des e-mails",
+      name: "Supabase, Inc.",
+      service: "Base de données, comptes de connexion, fichiers (justificatifs, photos), temps réel",
       data: "Toutes les données du service",
-      place: legal.dataHost || "Union européenne",
-      safeguards: "Hébergement dans l'Union européenne ; contrat de l'hébergeur (article 28 du RGPD)",
+      place: "Union européenne (région d'hébergement choisie par l'éditeur)",
+      safeguards: "Hébergement dans l'UE ; clauses contractuelles types pour l'assistance",
+    },
+    {
+      name: legal.hostName || "Hébergeur du serveur (voir les mentions légales)",
+      service: "Serveur du site, de l'API et des traitements automatiques (dispatch, notifications, relances)",
+      data: "Données en transit et journaux techniques",
+      place: legal.hostAddress || "Voir les mentions légales",
+      safeguards: "Contrat de sous-traitance de l'hébergeur",
     },
     {
       name: "650 Industries, Inc. (Expo)",
@@ -86,8 +98,8 @@ export default async function DataProcessingPage() {
       name: "Stripe Payments Europe, Ltd",
       service: "Paiement des abonnements des centrales",
       data: "Coordonnées de facturation de la centrale (aucune donnée des chauffeurs ni des clients)",
-      place: "Irlande (Union européenne) ; États-Unis pour sa maison mère Stripe, Inc.",
-      safeguards: "RGPD ; Data Privacy Framework et clauses contractuelles types pour les États-Unis",
+      place: "Irlande (Union européenne)",
+      safeguards: "RGPD",
     },
     {
       name: "Meta Platforms Ireland Ltd (WhatsApp Business)",
@@ -95,6 +107,27 @@ export default async function DataProcessingPage() {
       data: "Numéro de téléphone du destinataire, prénom, montant, nom de la centrale, nombre de courses ou échéance",
       place: "Union européenne et États-Unis",
       safeguards: "Clauses contractuelles types, Data Privacy Framework",
+    },
+    {
+      name: "IGN — Géoplateforme (ou Base Adresse Nationale)",
+      service: "Recherche d'adresses et coordonnées GPS",
+      data: "Adresses saisies ou points à convertir en adresse, sans identité",
+      place: "France",
+      safeguards: "Service public",
+    },
+    {
+      name: "OpenFreeMap (serveur de tuiles)",
+      service: "Images de la carte du tableau de bord et des mini-sites",
+      data: "Adresse IP technique du navigateur",
+      place: "Union européenne",
+      safeguards: "RGPD",
+    },
+    {
+      name: "OSRM (serveur de l'éditeur ou serveur public du projet OSRM)",
+      service: "Calcul des itinéraires et du guidage",
+      data: "Points de départ, d'arrivée et position du chauffeur, sans identité",
+      place: "Union européenne",
+      safeguards: "RGPD",
     },
     {
       name: "Mapbox, Inc. ou Google (Maps Platform)",
@@ -112,34 +145,23 @@ export default async function DataProcessingPage() {
     },
   ];
   return (
-    <LegalPage title="Accord de traitement des données" updatedAt={DPA_UPDATED_AT}>
+    <LegalPage title="Accord de traitement des données" updatedAt={UPDATED_AT}>
+      <p className="rounded-lg border border-amber/25 bg-amber/[0.06] px-4 py-3 text-[13.5px] text-fg-muted">
+        <span className="font-medium text-amber">Texte corrigé le 3 octobre 2026.</span> Voici le texte accepté jusqu&apos;à
+        cette correction (versions du 27 septembre et du 2 octobre 2026). La correction décrit l&apos;hébergement réel :
+        la base de données, les fichiers et les sauvegardes sont sur le serveur de l&apos;éditeur, chez l&apos;hébergeur
+        du site ; la société Supabase, Inc. ne reçoit aucune donnée.{" "}
+        <Link href="/dpa" className="text-fg underline underline-offset-2">
+          Texte en vigueur
+        </Link>
+      </p>
       <p>
         Le présent accord (article 28 du règlement (UE) 2016/679, « RGPD ») fait partie intégrante des{" "}
         <Link href="/cgv" className={link}>conditions générales de vente</Link>. Il s&apos;applique entre chaque
-        centrale cliente et{" "}
-        {legal.nameSet ? (
-          <span className="text-fg">{legal.name}</span>
-        ) : (
-          <>
-            la société identifiée dans les{" "}
-            <Link href="/mentions-legales" className={link}>
-              mentions légales
-            </Link>
-          </>
-        )}{" "}
-        (l&apos;« éditeur ») et prévaut sur toute
-        autre stipulation relative aux données personnelles. Version {ORG_LEGAL_VERSION}, commune aux CGV et au présent
-        accord, acceptée par le propriétaire ou un administrateur de la centrale dans le tableau de bord. Le{" "}
-        {DPA_UPDATED_AT}, la description de l&apos;hébergement, des sauvegardes et des sous-traitants (articles 5, 6, 7 et
-        11) a été corrigée pour correspondre à l&apos;installation réelle, sans nouvelle obligation pour la centrale : la
-        base de données, les fichiers et les sauvegardes ont toujours été sur le serveur de l&apos;éditeur, chez
-        l&apos;hébergeur du site, et la société Supabase, Inc. ne reçoit aucune donnée. Le texte accepté avant cette
-        correction reste consultable :{" "}
-        <Link href="/dpa/2026-10-02" className={link}>
-          texte du 27 septembre 2026
-        </Link>
-        . Une centrale qui s&apos;oppose à cette correction peut l&apos;écrire à l&apos;éditeur et, à défaut de solution,
-        résilier sans frais (article 6).
+        centrale cliente et <span className="text-fg">{legal.name}</span> (l&apos;« éditeur ») et prévaut sur toute
+        autre stipulation relative aux données personnelles. Version {VERSION}, commune aux CGV et au présent
+        accord (contenu de l&apos;accord inchangé depuis le {UPDATED_AT}), acceptée par le propriétaire ou un
+        administrateur de la centrale dans le tableau de bord.
       </p>
 
       <LegalSection title="1. Rôles">
@@ -185,14 +207,14 @@ export default async function DataProcessingPage() {
       <LegalSection title="5. Sécurité (article 32 du RGPD)">
         <LegalList
           items={[
-            <>Échanges chiffrés (HTTPS / TLS) entre les navigateurs, l&apos;application et le serveur ; la base de données, sur ce même serveur, n&apos;est joignable qu&apos;en local (aucun port public).</>,
+            <>Échanges chiffrés (HTTPS / TLS) entre les navigateurs, l&apos;application, le serveur et la base de données.</>,
             <>Cloisonnement par centrale : chaque ligne de la base est rattachée à une centrale et protégée par un contrôle d&apos;accès par ligne ; les opérations sensibles passent par des fonctions qui vérifient les droits.</>,
             <>Rôles distincts (propriétaire, administrateur, dispatcher, chauffeur, super admin) ; comptes chauffeurs suspendus ou bannis coupés immédiatement.</>,
             <>Clés d&apos;API stockées uniquement sous forme d&apos;empreinte (hachage avec un secret du serveur) ; limitation du nombre de requêtes et des tentatives de connexion.</>,
             <>Jetons d&apos;accès WhatsApp Business stockés côté serveur, jamais lisibles par les utilisateurs ni renvoyés au navigateur.</>,
             <>Journal d&apos;audit des actions sensibles ; journaux d&apos;appels de l&apos;API.</>,
             <>Session chiffrée sur le téléphone du chauffeur, avec une clé gardée dans le trousseau sécurisé du système.</>,
-            <>Sauvegarde de la base de données et des fichiers chaque nuit, par l&apos;éditeur, sur son serveur ; chaque sauvegarde est gardée 14 jours puis effacée ; mises à jour de sécurité régulières.</>,
+            <>Sauvegardes de la base de données assurées par l&apos;hébergeur des données ; mises à jour de sécurité régulières.</>,
           ]}
         />
       </LegalSection>
@@ -208,29 +230,15 @@ export default async function DataProcessingPage() {
         </p>
         <ProcessorTable rows={processors} />
         <p>
-          Services publics tiers, utilisés selon leurs propres conditions : ils ne sont pas des sous-traitants de
-          l&apos;éditeur (aucun contrat de sous-traitance n&apos;est conclu avec eux) et ne reçoivent aucune identité.
-        </p>
-        <LegalList
-          items={[
-            <>Images des cartes du tableau de bord et des mini-sites : OpenFreeMap, exploité par Hyperknot Software Kft. (Hongrie), qui reçoit l&apos;adresse IP du navigateur qui affiche la carte (journaux contenant l&apos;adresse IP gardés 30 jours au plus selon sa politique, aucun cookie) ; <a href="https://openfreemap.org/privacy/" className={link}>politique d&apos;OpenFreeMap</a>.</>,
-            <>Recherche d&apos;adresses : Géoplateforme de l&apos;IGN ou Base Adresse Nationale (France), interrogées par le serveur de l&apos;éditeur avec les adresses saisies ou les points à convertir en adresse, sans identité.</>,
-            <>Itinéraires, tant que l&apos;éditeur n&apos;utilise pas son propre serveur de calcul : serveur public du projet OSRM, exploité par FOSSGIS e.V. (Allemagne), interrogé par le serveur de l&apos;éditeur avec des points de départ et d&apos;arrivée et la position du chauffeur, sans identité ; <a href="https://www.fossgis.de/arbeitsgruppen/osm-server/nutzungsbedingungen/" className={link}>conditions de FOSSGIS</a>.</>,
-          ]}
-        />
-        <p>
-          La base de données (Supabase) est un logiciel installé et administré par l&apos;éditeur sur son serveur : la
-          société Supabase, Inc. ne reçoit aucune donnée du service. Les e-mails (invitation, mot de passe oublié,
-          accusés de réception, annonces) partent du serveur d&apos;envoi installé sur ce même serveur, directement vers
-          la messagerie du destinataire, sans prestataire d&apos;envoi. Les services marqués « si activé » ne reçoivent
-          aucune donnée tant qu&apos;ils ne sont pas utilisés.
+          Les e-mails de connexion (invitation, mot de passe oublié) partent par le relais d&apos;envoi (SMTP) configuré
+          par l&apos;éditeur dans l&apos;hébergeur des données ; son nom est communiqué sur simple demande. Les services
+          marqués « si activé » ne reçoivent aucune donnée tant qu&apos;ils ne sont pas utilisés.
         </p>
       </LegalSection>
 
       <LegalSection title="7. Transferts hors de l'Union européenne">
         <p>
-          Les données sont hébergées dans l&apos;Union européenne, sur le serveur de l&apos;éditeur (hébergeur et lieu :
-          voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>). Les transferts vers un pays tiers, limités aux services
+          Les données sont hébergées dans l&apos;Union européenne. Les transferts vers un pays tiers, limités aux services
           indiqués dans le tableau, sont encadrés par une décision d&apos;adéquation (notamment le Data Privacy Framework
           UE–États-Unis pour les entreprises certifiées) ou par les clauses contractuelles types de la Commission
           européenne, complétées si besoin de mesures supplémentaires.
@@ -284,8 +292,8 @@ export default async function DataProcessingPage() {
           par un moyen sécurisé). Il supprime ensuite, dans les 30 jours et selon sa procédure interne documentée, les
           données personnelles traitées pour son compte (comptes des chauffeurs et candidats, avec leurs justificatifs et
           leurs fichiers ; courses et coordonnées des clients ; messages ; positions ; comptes de l&apos;équipe et journal
-          de leurs actions ; mini-site), copies comprises, sauf obligation légale de conservation ; les sauvegardes, gardées
-          14 jours, en disparaissent à l&apos;expiration de ce cycle. Il conserve, comme responsable de traitement distinct, la fiche
+          de leurs actions ; mini-site), copies comprises, sauf obligation légale de conservation ; les sauvegardes sont
+          effacées à l&apos;expiration de leur cycle. Il conserve, comme responsable de traitement distinct, la fiche
           archivée de la centrale, le registre des frais plateforme et les paiements, avec le journal des actions qui s&apos;y
           rapportent (obligations comptables, 10 ans au moins) et la preuve d&apos;acceptation des CGV et du présent accord, avec l&apos;e-mail de la personne qui les a
           acceptés (preuve du contrat).
@@ -311,7 +319,7 @@ export default async function DataProcessingPage() {
       </LegalSection>
 
       <LegalSection title="14. Contact">
-        <p>Contact « données personnelles » de l&apos;éditeur : {contact.noun}.</p>
+        <p>Délégué ou contact « données personnelles » de l&apos;éditeur : {contact}.</p>
       </LegalSection>
     </LegalPage>
   );

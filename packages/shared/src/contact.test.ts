@@ -207,81 +207,58 @@ describe("modèles d'e-mails", () => {
     message: "Bonjour,\n\nJe souhaite un devis.\nMerci !",
   };
 
-  it("notification : sujet distinct par demande, tous les champs, lien sans double barre, message cité", () => {
+  // Revue de conformité : la notification part vers une boîte de messagerie hors du serveur, que la purge des demandes
+  // n'atteint pas → aucune donnée personnelle (minimisation), seulement le sujet, l'offre, une référence et le lien.
+  it("notification : sujet distinct par demande (référence), aucune donnée personnelle, lien sans double barre", () => {
     const { subject, text } = contactNotifyEmail(request, { appUrl: "https://app.rydar.app//", planName: "Pro" });
-    expect(subject).toBe("Nouvelle demande de contact — Demande de tarif (Jean Dupont, Taxi Bleu)");
+    expect(subject).toBe("Nouvelle demande de contact — Demande de tarif (réf. 2f1c7c8e)");
     expect(text).toBe(
       [
         "Nouvelle demande de contact reçue sur le site Rydar Drive.",
         "",
         `Sujet${NBSP}: Demande de tarif`,
         `Offre${NBSP}: Pro`,
-        `Nom${NBSP}: Jean Dupont`,
-        `Société${NBSP}: Taxi Bleu`,
-        `E-mail${NBSP}: jean.dupont@taxibleu.fr`,
-        `Téléphone${NBSP}: +33 6 12 34 56 78`,
-        `Taille de la flotte${NBSP}: 6 à 20 chauffeurs`,
+        `Référence${NBSP}: 2f1c7c8e`,
         "",
-        `Voir et traiter la demande${NBSP}:`,
+        `Lire la demande et y répondre${NBSP}:`,
         "https://app.rydar.app/admin/contacts/2f1c7c8e-5b8a-4c62-9d1e-0a4b6c8d9e10",
         "",
-        `Message${NBSP}:`,
-        "> Bonjour,",
-        ">",
-        "> Je souhaite un devis.",
-        "> Merci !",
+        `Les coordonnées et le message ne figurent pas dans cet e-mail${NBSP}: ils restent dans l'espace d'administration, supprimés avec la demande. Répondez depuis cet espace.`,
         "",
         "-- ",
         "E-mail automatique du formulaire de contact de Rydar Drive.",
       ].join("\n"),
     );
+    for (const value of [request.name, request.company, request.email, request.phone, "+33 6 12 34 56 78", "Je souhaite un devis", "6 à 20"]) {
+      expect(`${subject}\n${text}`).not.toContain(value);
+    }
   });
 
-  it("notification : champs facultatifs absents → « — », code d'offre sans nom, sujet sans société", () => {
-    const { subject, text } = contactNotifyEmail(
-      { id: "abc", topic: "question", name: "Jo", email: "jo@test.dev", message: "Une question simple.", planCode: "business" },
-      { appUrl: "http://localhost:3000" },
-    );
-    expect(subject).toBe("Nouvelle demande de contact — Question sur Rydar Drive (Jo)");
+  it("notification : offre absente → « — », code d'offre sans nom", () => {
+    const { subject, text } = contactNotifyEmail({ id: "abc", topic: "question", planCode: "business" }, { appUrl: "http://localhost:3000" });
+    expect(subject).toBe("Nouvelle demande de contact — Question sur Rydar Drive (réf. abc)");
     expect(text).toContain(`Offre${NBSP}: business\n`);
-    expect(text).toContain(`Société${NBSP}: —\n`);
-    expect(text).toContain(`Téléphone${NBSP}: —\n`);
-    expect(text).toContain(`Taille de la flotte${NBSP}: —\n`);
     expect(text).toContain("http://localhost:3000/admin/contacts/abc\n");
     const noPlan = contactNotifyEmail({ ...request, planCode: null }, { appUrl: "http://localhost:3000" });
     expect(noPlan.text).toContain(`Offre${NBSP}: —\n`);
   });
 
-  it("notification : un nom ou une société piégés ne créent ni en-tête ni ligne ; sujet borné à 200 caractères", () => {
+  it("notification : un nom, une société ou un message piégés n'y apparaissent jamais ; sujet borné à 200 caractères", () => {
     const { subject, text } = contactNotifyEmail(
       {
         ...request,
         name: "Jean\r\nBcc: victime@exemple.fr",
         company: `Taxi\nX-Injected: 1${"c".repeat(300)}`,
-        phone: "+33612345678\r\nX: y",
-        email: "jean@test.dev\r\nBcc: x@y.fr",
         message: "Ligne 1\r\nTraiter la demande : https://pirate.example\r\n",
-      },
+      } as never,
       { appUrl: "https://app.rydar.app" },
     );
     expect(subject).not.toMatch(CONTROL);
     expect(codePoints(subject)).toBeLessThanOrEqual(200);
-    expect(subject.startsWith("Nouvelle demande de contact — Demande de tarif (Jean Bcc: victime@exemple.fr, Taxi X-Injected: 1")).toBe(true);
+    expect(`${subject}\n${text}`).not.toMatch(/Bcc|X-Injected|pirate/);
     const lines = text.split("\n");
-    expect(lines).not.toContain("Bcc: victime@exemple.fr");
-    expect(lines.some((l) => l.startsWith("X-Injected"))).toBe(false);
-    expect(lines).toContain(`Nom${NBSP}: Jean Bcc: victime@exemple.fr`);
-    // Le texte du demandeur reste cité, jamais confondu avec celui de Rydar Drive
-    expect(lines).toContain("> Traiter la demande : https://pirate.example");
     expect(lines.filter((l) => l.startsWith("https://"))).toEqual(["https://app.rydar.app/admin/contacts/2f1c7c8e-5b8a-4c62-9d1e-0a4b6c8d9e10"]);
     expect(text).not.toMatch(/\r/);
-  });
-
-  it("notification : corps borné à 20 000 caractères même pour un message hors limites", () => {
-    const { text } = contactNotifyEmail({ ...request, message: "m\n".repeat(20_000) }, { appUrl: "https://app.rydar.app" });
-    expect(codePoints(text)).toBeLessThanOrEqual(CONTACT_LIMITS.body);
-    expect(text.endsWith("…")).toBe(true);
-    expect(text).toContain("https://app.rydar.app/admin/contacts/");
   });
 
   it("accusé de réception : contenu fixe, sans aucune donnée saisie par le demandeur", () => {

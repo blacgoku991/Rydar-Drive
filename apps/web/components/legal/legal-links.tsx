@@ -17,7 +17,21 @@ export const LEGAL_LINKS = [
   { href: "/accessibilite", label: "Accessibilité : non conforme" },
 ] as const;
 
-export function LegalLinks({ className, withDeletion, only }: { className?: string; withDeletion?: boolean; only?: (typeof LEGAL_LINKS)[number]["href"][] }) {
+/**
+ * `prefetch={false}` dans le tableau de bord (règle du dépôt : aucun préchargement des liens qui y sont affichés en
+ * permanence).
+ */
+export function LegalLinks({
+  className,
+  withDeletion,
+  only,
+  prefetch,
+}: {
+  className?: string;
+  withDeletion?: boolean;
+  only?: (typeof LEGAL_LINKS)[number]["href"][];
+  prefetch?: false;
+}) {
   const links = [
     ...LEGAL_LINKS.filter((l) => !only || only.includes(l.href)),
     ...(withDeletion ? [{ href: "/suppression-compte", label: "Supprimer son compte" }] : []),
@@ -25,7 +39,7 @@ export function LegalLinks({ className, withDeletion, only }: { className?: stri
   return (
     <nav aria-label="Informations légales" className={cn("flex flex-wrap gap-x-4 gap-y-1.5 text-fg-muted", className)}>
       {links.map((l) => (
-        <Link key={l.href} href={l.href} className="hover:text-fg">
+        <Link key={l.href} href={l.href} prefetch={prefetch} className="hover:text-fg">
           {l.label}
         </Link>
       ))}

@@ -107,7 +107,7 @@ describe("adresses de la file d'envoi (même règle que public.email_outbox)", (
 });
 
 describe("submitContactRequest", () => {
-  it("demande valide : une transaction, notification à l'admin (réponse au demandeur), accusé au demandeur", async () => {
+  it("demande valide : une transaction, notification à l'admin (sans donnée personnelle), accusé au demandeur", async () => {
     const res = await submitContactRequest(VALID);
     expect(res).toEqual({ ok: true, ackQueued: true });
     expect(h.calls).toHaveLength(1);
@@ -127,7 +127,9 @@ describe("submitContactRequest", () => {
     expect(args.p_request.ip_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(args)).not.toContain(h.ip);
     const [notify, ack] = args.p_emails as Row[];
-    expect(notify).toMatchObject({ kind: "contact_notify", to_email: "contact@rydar.test", reply_to: "samir@centrale-nord.fr" });
+    // Aucune donnée personnelle dans la notification, ni Reply-To (réponses depuis /admin/contacts)
+    expect(notify).toMatchObject({ kind: "contact_notify", to_email: "contact@rydar.test", reply_to: null });
+    expect(`${notify!.subject}\n${notify!.body_text}`).not.toMatch(/samir|centrale[ -]nord|612345678|chauffeurs/i);
     expect(notify!.subject).toContain("Demande de tarif");
     expect(notify!.body_text).toContain(`https://app.rydar.test/admin/contacts/${args.p_request.id}`);
     expect(notify!.body_text).toContain("Pro");

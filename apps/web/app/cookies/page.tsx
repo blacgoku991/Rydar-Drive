@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { legalContact } from "@/components/legal/legal-contact";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
 import { COOKIES_UPDATED_AT, getLegalInfo } from "@/lib/legal";
 
@@ -75,11 +76,7 @@ const STORAGE: Line[] = [
 
 export default async function CookiesPage() {
   const legal = await getLegalInfo();
-  const contact = legal.privacyEmail ? (
-    <a href={`mailto:${legal.privacyEmail}`} className="text-fg underline underline-offset-2">{legal.privacyEmail}</a>
-  ) : (
-    "l'adresse indiquée dans les mentions légales"
-  );
+  const contact = legalContact(legal.privacyEmail);
   return (
     <LegalPage title="Cookies et stockage local" updatedAt={COOKIES_UPDATED_AT}>
       <p>
@@ -141,7 +138,7 @@ export default async function CookiesPage() {
 
       <LegalSection title="Contact">
         <p>
-          Pour toute question : {contact}. Voir aussi la{" "}
+          Pour toute question : {contact.noun}. Voir aussi la{" "}
           <Link href="/confidentialite" className="text-fg underline underline-offset-2">politique de confidentialité</Link>.
         </p>
       </LegalSection>

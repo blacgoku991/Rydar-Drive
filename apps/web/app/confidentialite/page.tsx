@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { legalContact } from "@/components/legal/legal-contact";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
 import { LEGAL_VERSION, PRIVACY_UPDATED_AT, getLegalInfo } from "@/lib/legal";
 
@@ -13,11 +14,7 @@ export const metadata: Metadata = {
 
 export default async function PrivacyPage() {
   const legal = await getLegalInfo();
-  const contact = legal.privacyEmail ? (
-    <a href={`mailto:${legal.privacyEmail}`} className="text-fg underline underline-offset-2">{legal.privacyEmail}</a>
-  ) : (
-    "l'adresse indiquée dans les mentions légales"
-  );
+  const contact = legalContact(legal.privacyEmail);
   const link = "text-fg underline underline-offset-2";
   return (
     <LegalPage title="Politique de confidentialité" updatedAt={PRIVACY_UPDATED_AT}>
@@ -54,7 +51,7 @@ export default async function PrivacyPage() {
             <>L&apos;éditeur est lui-même responsable de la sécurité de la plateforme, de la lutte contre la fraude entre centrales, des comptes et de la facturation des centrales, et de son site vitrine.</>,
           ]}
         />
-        <p>Contact « données personnelles » de l&apos;éditeur : {contact}.</p>
+        <p>Contact « données personnelles » de l&apos;éditeur : {contact.noun}.</p>
       </LegalSection>
 
       <LegalSection title="2. Chauffeurs et candidats : données traitées">
@@ -129,7 +126,7 @@ export default async function PrivacyPage() {
             <>Examiner une candidature, vérifier les justificatifs et rappeler leurs échéances : mesures précontractuelles et obligations légales de la centrale (Code des transports).</>,
             <>Calculer gains, commissions et règlements, tenir la comptabilité : exécution du contrat et obligation légale.</>,
             <>Envoyer les offres, messages, rappels et relances de commission par notification dans l&apos;application : exécution du contrat.</>,
-            <>Envoyer les relances de commission par WhatsApp, si la centrale les active : votre consentement, recueilli par la centrale avant le premier envoi. Pour le retirer, prévenez la centrale ou bloquez son numéro WhatsApp : les relances passent alors par l&apos;application.</>,
+            <>Envoyer les relances de commission par WhatsApp, si la centrale les active : exécution du contrat qui vous lie à la centrale (somme due), avec votre accord préalable, que la centrale s&apos;engage à recueillir (<Link href="/cgv#article-10" className={link}>conditions générales de vente, article 10</Link>). Pour ne plus les recevoir par WhatsApp, prévenez la centrale : elle peut faire partir ses relances par l&apos;application seule (réglage commun à tous ses chauffeurs).</>,
             <>Relancer par WhatsApp le propriétaire d&apos;une centrale à commission pour les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur (conditions générales de vente).</>,
             <>Assurer la sécurité, prévenir la fraude, bannir un auteur de fraude : intérêt légitime de la centrale et de l&apos;éditeur.</>,
             <>Garder, après la suppression d&apos;un compte, les empreintes d&apos;un chauffeur qui doit encore des commissions à la centrale : constatation, exercice ou défense des droits de la centrale en justice (article 17.3.e du RGPD), l&apos;éditeur agissant pour son compte.</>,
@@ -139,16 +136,20 @@ export default async function PrivacyPage() {
             <>Établir des statistiques anonymes pour améliorer le service : intérêt légitime de l&apos;éditeur.</>,
           ]}
         />
-        <p>Certaines décisions sont prises automatiquement, sans intervention humaine :</p>
+        <p>
+          Certaines décisions sont prises automatiquement, sans intervention humaine. Elles reposent sur
+          l&apos;article 22.2.a du RGPD : elles sont nécessaires à la conclusion et à l&apos;exécution du contrat qui vous lie
+          à la centrale, et au respect des CGU (prévention de la fraude entre centrales) :
+        </p>
         <LegalList
           items={[
-            <>l&apos;attribution des offres, selon la distance, la catégorie du véhicule et les règles fixées par la centrale (par exemple un blocage en cas de commission impayée) ;</>,
-            <>le refus d&apos;une inscription ou d&apos;une candidature, ou la suspension d&apos;un compte, lorsqu&apos;une identité ou un appareil correspond à une personne bannie pour fraude (article 2).</>,
+            <>l&apos;attribution des offres, selon la distance au point de départ, la catégorie du véhicule et les règles fixées par la centrale (par exemple un blocage en cas de commission impayée) : vous recevez ou non une offre ;</>,
+            <>le refus d&apos;une inscription ou d&apos;une candidature, ou la suspension d&apos;un compte, lorsqu&apos;une identité ou un appareil correspond à une personne bannie pour fraude (article 2) : la logique est une comparaison exacte d&apos;empreintes (hachages) de vos identifiants (téléphone, e-mail, numéros de carte VTC, de permis et de pièce d&apos;identité, plaque, identifiant d&apos;appareil) avec celles d&apos;une personne bannie ; la conséquence est le refus de l&apos;inscription, de la fiche ou du justificatif, ou la suspension du compte, et une alerte à la centrale.</>,
           ]}
         />
         <p>
           Vous pouvez présenter vos observations, contester la décision et demander qu&apos;une personne la réexamine :
-          adressez-vous à la centrale, ou à {contact} pour un bannissement décidé par l&apos;éditeur. Aucune donnée
+          adressez-vous à la centrale, ou {contact.to} pour un bannissement décidé par l&apos;éditeur. Aucune donnée
           n&apos;est vendue, utilisée pour de la publicité ou pour vous suivre sur d&apos;autres applications.
         </p>
         <p>
@@ -180,8 +181,8 @@ export default async function PrivacyPage() {
             <>Les chauffeurs à qui une course est proposée (les plus proches pour une course immédiate, tous les chauffeurs compatibles de la centrale pour une course planifiée) : adresses de départ et d&apos;arrivée, date et heure, nombre de passagers et de bagages, numéro et provenance du vol, précisions et prix, sans le nom ni le téléphone du client. Le chauffeur attribué reçoit en plus le nom et le téléphone du client.</>,
             <>Le client : seulement ce que la centrale lui communique, par exemple le prénom du chauffeur et le modèle, la couleur et la plaque du véhicule (que l&apos;API remet à la centrale). Le logiciel ne montre pas la position du chauffeur au client.</>,
             <>L&apos;éditeur (support, sécurité, traitement des signalements, facturation) : il peut consulter les données des centrales, y compris le fil « Chauffeurs » et la carte des chauffeurs en ligne, dans la limite de ces missions.</>,
-            <>Demandes du formulaire de contact : l&apos;éditeur seul. Les e-mails qui s&apos;y rapportent partent du serveur de messagerie de l&apos;éditeur, hébergé avec le site.</>,
-            <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : l&apos;hébergeur du serveur de l&apos;éditeur (site, base de données, fichiers, sauvegardes et e-mails, voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>), notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
+            <>Demandes du formulaire de contact : l&apos;éditeur seul, dans son espace d&apos;administration. L&apos;e-mail qui l&apos;avertit d&apos;une nouvelle demande ne contient aucune donnée de la demande (seulement son sujet et un lien) ; l&apos;accusé de réception et les réponses partent du serveur de messagerie de l&apos;éditeur, hébergé avec le site. Si vous répondez par e-mail, votre message arrive dans la boîte de messagerie de contact de l&apos;éditeur, chez son prestataire de messagerie.</>,
+            <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : l&apos;hébergeur du serveur de l&apos;éditeur (site, base de données, fichiers, sauvegardes et e-mails, voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>), notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète, avec les services publics tiers utilisés pour les cartes, les adresses et les itinéraires (OpenFreeMap, IGN, OSRM), dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
             <>Les autorités, lorsque la loi l&apos;exige.</>,
           ]}
         />
@@ -210,7 +211,7 @@ export default async function PrivacyPage() {
             <>Historique des positions, y compris la position relevée lors d&apos;une alerte de course (chauffeur immobile, GPS muet) : 30 jours, ou jusqu&apos;à la clôture de l&apos;alerte si elle reste ouverte plus longtemps. La dernière position connue est remplacée à chaque envoi.</>,
             <>Messages, signalements pour la flotte (y compris leur copie dans le journal de la centrale) et signalements de messages : 180 jours. Un message retiré par la centrale disparaît aussitôt de l&apos;application, du tableau de bord et des alertes enregistrées ; une notification déjà affichée sur un téléphone y reste jusqu&apos;à ce que son destinataire l&apos;efface. Il est effacé à la même échéance. Auteurs masqués : tant que les deux comptes existent.</>,
             <>Notifications, y compris les relances WhatsApp : 90 jours après leur envoi prévu, qu&apos;elles aient abouti ou non. Journaux d&apos;appels de l&apos;API : 90 jours.</>,
-            <>Demandes du formulaire de contact : 3 ans après leur envoi, puis supprimées avec les e-mails qui s&apos;y rapportent ; une demande classée indésirable, 30 jours après ce classement. L&apos;empreinte de l&apos;adresse IP est effacée au bout d&apos;un an. Vous pouvez demander l&apos;effacement plus tôt (article 11).</>,
+            <>Demandes du formulaire de contact : 3 ans après leur envoi, puis supprimées avec les e-mails qui s&apos;y rapportent, y compris ceux reçus dans la boîte de messagerie de contact de l&apos;éditeur ; une demande classée indésirable, 30 jours après ce classement. L&apos;empreinte de l&apos;adresse IP est effacée au bout d&apos;un an. Vous pouvez demander l&apos;effacement plus tôt (article 11).</>,
             <>Adresse IP et navigateur enregistrés dans le journal de sécurité (inscription par lien, actions sensibles de l&apos;équipe) et historique des connexions du service d&apos;authentification : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
             <>Sessions de connexion ouvertes (adresse IP et navigateur de l&apos;appareil, tenus par le service d&apos;authentification) : jusqu&apos;à la déconnexion ou à la suppression du compte.</>,
             <>Journaux techniques du serveur (fonctionnement et erreurs des services, requêtes reçues par la base de données et le service d&apos;authentification, avec l&apos;adresse IP) : 1 an au plus. Compteurs anti-abus (empreinte de l&apos;adresse IP) : 24 heures au plus.</>,
@@ -248,7 +249,7 @@ export default async function PrivacyPage() {
           Dans l&apos;application : <span className="text-fg">Profil › Supprimer mon compte</span>. C&apos;est possible
           aussi pour un compte en attente, refusé, suspendu, banni, ou si la centrale est suspendue, y compris depuis
           l&apos;écran de connexion lorsque la connexion est refusée : l&apos;application vous demande alors l&apos;e-mail et le mot de
-          passe du compte. Sans l&apos;application, écrivez à {contact} depuis l&apos;adresse e-mail du compte : la demande
+          passe du compte. Sans l&apos;application, écrivez {contact.to} en indiquant l&apos;adresse e-mail du compte (l&apos;éditeur vérifie votre identité avant d&apos;agir) : la demande
           est traitée par l&apos;éditeur sous 30 jours au plus. Détails sur la page{" "}
           <Link href="/suppression-compte" className={link}>Supprimer son compte</Link>.
         </p>
@@ -278,7 +279,7 @@ export default async function PrivacyPage() {
           Vous pouvez accéder à vos données, les faire rectifier ou effacer, en demander la limitation ou la portabilité,
           vous opposer à un traitement fondé sur l&apos;intérêt légitime, retirer un accord donné, demander qu&apos;une
           personne réexamine une décision automatique, et définir des directives sur le sort de vos données après votre
-          décès. Adressez-vous à la centrale concernée ou à {contact} : l&apos;éditeur répond pour ses propres
+          décès. Adressez-vous à la centrale concernée ou {contact.to} : l&apos;éditeur répond pour ses propres
           traitements et transmet sans délai les autres demandes à la centrale. Une réponse vous est apportée dans un
           délai d&apos;un mois. Vous pouvez aussi introduire une réclamation auprès de la CNIL (cnil.fr, 3 place de
           Fontenoy, TSA 80715, 75334 Paris Cedex 07).

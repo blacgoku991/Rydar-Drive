@@ -24,6 +24,7 @@ vi.mock("@/lib/legal", async () => {
   };
 });
 vi.mock("@/lib/legal-notice", async () => await import("../../lib/legal-notice"));
+vi.mock("@/components/legal/legal-contact", async () => await import("./legal-contact"));
 vi.mock("@/lib/utils", async () => await import("../../lib/utils"));
 // Mise en page réduite à l'essentiel (le vrai gabarit charge le logo et les liens du pied de page)
 vi.mock("@/components/legal/legal-page", () => ({
@@ -172,7 +173,7 @@ describe("/abonnement-resiliation : reprise des CGV, sans engagement nouveau", (
     expect(t).toContain("Abonnement, résiliation et remboursement");
     expect(t).toContain("article L221-18");
     expect(t).toContain("sans remboursement de la période en cours");
-    expect(t).toContain("remboursée au prorata (article 7)");
+    expect(t).toMatch(/remboursée au prorata \( ?article 7 ?\)/);
     expect(t).toContain("Une course annulée ne porte aucuns frais");
     expect(t).toContain("avec un préavis de 30 jours");
     expect(t).toContain("indemnité forfaitaire pour frais de recouvrement de 40 €");
@@ -223,11 +224,21 @@ describe("/accessibilite : déclaration honnête", () => {
     expect(t).toContain("contact@rydar.example");
   });
 
-  it("sans e-mail renseigné : renvoi aux mentions légales, jamais une adresse inventée", async () => {
+  it("sans e-mail renseigné : formulaire de contact (jamais un renvoi vers des mentions « à compléter »), aucune adresse inventée", async () => {
     legal.info = { ...EMPTY };
+    for (const page of [accessibility.default, cookies.default, subscription.default]) {
+      const html = await render(page);
+      expect(html).not.toContain("mailto:");
+      expect(html).toContain('href="/contact"');
+      expect(flat(text(html))).not.toContain("l'adresse indiquée dans les mentions légales");
+    }
+    expect(flat(text(await render(accessibility.default)))).toMatch(/écrivez à l'éditeur par le +formulaire de contact/);
+  });
+
+  it("avec un e-mail : l'e-mail et le formulaire de contact", async () => {
     const html = await render(accessibility.default);
-    expect(html).not.toContain("mailto:");
-    expect(flat(text(html))).toContain("l'adresse indiquée dans les mentions légales");
+    expect(html).toContain('href="mailto:contact@rydar.example"');
+    expect(html).toContain('href="/contact"');
   });
 });
 

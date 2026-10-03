@@ -128,7 +128,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
               name="q"
               defaultValue={q}
               placeholder="N° de course, client, téléphone, adresse…"
-              aria-label="Rechercher une course"
+              aria-label="Rechercher une course" title="Rechercher une course"
               className="h-10 w-full rounded-lg border border-line-field bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60 focus-visible:ring-2 focus-visible:ring-brand/40"
             />
           </div>

@@ -151,7 +151,7 @@ export function WhatsAppCard({ title, description, row, defaultTemplate, templat
               <span className="block text-[13.5px] font-medium">Envois actifs</span>
               <span className="block text-[12px] text-fg-subtle">Désactivé : les relances partent par l&apos;application.</span>
             </span>
-            <Switch checked={enabled} onCheckedChange={setEnabled} disabled={readOnly} aria-label="Envois WhatsApp actifs" />
+            <Switch checked={enabled} onCheckedChange={setEnabled} disabled={readOnly} aria-label="Envois actifs (WhatsApp)" />
           </label>
           {!readOnly && (
             <div className="flex flex-wrap justify-end gap-2">

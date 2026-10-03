@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { legalContact } from "@/components/legal/legal-contact";
 import { LegalList, LegalPage, LegalSection } from "@/components/legal/legal-page";
 import { ACCESSIBILITY_UPDATED_AT, getLegalInfo } from "@/lib/legal";
 
@@ -21,11 +22,7 @@ const ACCESSIBILITY_STATUS = "non conforme";
 
 export default async function AccessibilityPage() {
   const legal = await getLegalInfo();
-  const contact = legal.email ? (
-    <a href={`mailto:${legal.email}`} className="text-fg underline underline-offset-2">{legal.email}</a>
-  ) : (
-    "l'adresse indiquée dans les mentions légales"
-  );
+  const contact = legalContact(legal.email);
   const link = "text-fg underline underline-offset-2";
   return (
     <LegalPage title="Déclaration d'accessibilité" updatedAt={ACCESSIBILITY_UPDATED_AT}>
@@ -85,7 +82,7 @@ export default async function AccessibilityPage() {
 
       <LegalSection title="Retour d'information et contact">
         <p>
-          Si vous n&apos;arrivez pas à accéder à un contenu ou à un service, écrivez à {contact} : nous vous indiquerons
+          Si vous n&apos;arrivez pas à accéder à un contenu ou à un service, écrivez {contact.to} : nous vous indiquerons
           une alternative accessible ou vous transmettrons le contenu sous une autre forme.
         </p>
       </LegalSection>

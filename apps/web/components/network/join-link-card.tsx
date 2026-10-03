@@ -123,7 +123,7 @@ export function JoinLinkCard({
           <div className={cn("space-y-2", !state.join_enabled && "opacity-60")}>
             <div className="flex items-center gap-2 rounded-xl border border-line-strong bg-ink-850 py-1.5 pl-3 pr-1.5">
               <Link2 className="size-4 shrink-0 text-brand" />
-              <a href={url} target="_blank" rel="noreferrer" className="num min-w-0 flex-1 truncate text-[13px] text-fg hover:text-brand" title={url}>
+              <a href={url} target="_blank" rel="noreferrer" className="num relative min-w-0 flex-1 truncate text-[13px] text-fg hover:text-brand" title={url}>
                 {url.replace(/^https?:\/\//, "")}
                 <NewTabHint />
               </a>

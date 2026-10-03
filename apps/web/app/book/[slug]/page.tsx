@@ -89,7 +89,7 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
         )}
       </header>
 
-      <main id="contenu" className="relative z-10 mx-auto grid max-w-6xl gap-10 px-6 pb-20 pt-6 lg:grid-cols-[1fr_480px] lg:pt-14">
+      <main id="contenu" tabIndex={-1} className="relative z-10 mx-auto grid max-w-6xl gap-10 px-6 pb-20 pt-6 outline-none lg:grid-cols-[1fr_480px] lg:pt-14">
         <div className="lg:pt-10">
           <span className="inline-flex items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.08] px-3 py-1 text-[12px] font-medium text-brand">
             <span aria-hidden className="size-1.5 animate-breathe rounded-full bg-brand" /> Réservation en ligne 24 h/24

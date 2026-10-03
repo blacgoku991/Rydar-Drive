@@ -22,7 +22,7 @@ export function MarketingShell({ children, backdrop = "page" }: { children: Reac
         Aller au contenu
       </a>
       <SiteHeader />
-      <main id="contenu" className="relative overflow-x-clip">
+      <main id="contenu" tabIndex={-1} className="relative overflow-x-clip outline-none">
         {backdrop === "hero" && (
           <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[1100px]">
             <div className="grid-bg absolute inset-0 [mask-image:radial-gradient(ellipse_at_70%_20%,black_15%,transparent_65%)]" />

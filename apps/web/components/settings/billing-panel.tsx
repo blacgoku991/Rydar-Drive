@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { annualFreeMonths } from "./billing-offers";
 
 function Meter({ label, used, max }: { label: string; used: number; max: number | null | undefined }) {
   const pct = max ? Math.min(100, (used / max) * 100) : 0;
@@ -42,6 +43,7 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
     window.location.href = json.url;
   };
   const limits = usage?.limits ?? {};
+  const freeMonths = annualFreeMonths(plans);
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[1fr_1.4fr]">
@@ -99,10 +101,17 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
 
       <div className="flex items-center justify-between">
         <h2 className="text-[15px] font-semibold">Offres Rydar Drive</h2>
-        <div className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[12.5px]">
+        {/* Choix exposé (aria-pressed) et visible autrement que par une nuance de fond : contour lime (WCAG 1.4.11) */}
+        <div role="group" aria-label="Périodicité des prix" className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[12.5px]">
           {(["month", "year"] as const).map((v) => (
-            <button key={v} type="button" onClick={() => setInterval(v)} className={cn("rounded-md px-3 py-1", interval === v ? "bg-ink-600 text-fg" : "text-fg-muted")}>
-              {v === "month" ? "Mensuel" : "Annuel · 2 mois offerts"}
+            <button
+              key={v}
+              type="button"
+              aria-pressed={interval === v}
+              onClick={() => setInterval(v)}
+              className={cn("rounded-md px-3 py-1", interval === v ? "bg-ink-600 text-fg ring-1 ring-brand/60" : "text-fg-muted hover:text-fg")}
+            >
+              {v === "month" ? "Mensuel" : freeMonths ? `Annuel · ${freeMonths} mois offert${freeMonths > 1 ? "s" : ""}` : "Annuel"}
             </button>
           ))}
         </div>
