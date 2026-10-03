@@ -1038,10 +1038,44 @@ describe("Versements prépayés côté A (§10.5, §14.1 n° 19)", () => {
       (await sql(`select count(*)::int as n from public.audit_logs where action = 'network.payout_info_viewed' and entity_id = $1`, [settlement.id]))[0].n;
     const notes = async () => (await notesOf(p.partner.id, "settlement_payout_info")).length;
 
-    // Cinq consultations simultanées, puis cinq autres : dix audits, une seule notification
-    await Promise.all([info(), info(), info(), info(), info()]);
+    // Deux consultations simultanées : la seconde attend la première (règlement verrouillé), puis voit sa notification
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    const begin = async (c: typeof c1) => {
+      await c.query("begin");
+      await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: p.A.ownerId, role: "authenticated" })]);
+      await c.query("set local role authenticated");
+    };
+    try {
+      await begin(c1);
+      await begin(c2);
+      await c1.query("select public.org_network_payout_info($1)", [settlement.id]);
+      const pid = (await c2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+      let settled = false;
+      const second = c2.query("select public.org_network_payout_info($1)", [settlement.id]).finally(() => {
+        settled = true;
+      });
+      second.catch(() => undefined);
+      let waiting = false;
+      for (let i = 0; i < 100 && !waiting && !settled; i++) {
+        const [a] = await sql("select wait_event_type from pg_stat_activity where pid = $1", [pid]);
+        waiting = a?.wait_event_type === "Lock";
+        if (!waiting) await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(waiting).toBe(true);
+      await c1.query("commit");
+      await second;
+      await c2.query("commit");
+    } finally {
+      await c1.query("rollback").catch(() => undefined);
+      await c2.query("rollback").catch(() => undefined);
+      c1.release();
+      c2.release();
+    }
+    expect(await notes()).toBe(1);
+    // Puis cinq autres consultations : sept audits, toujours une seule notification
     for (let i = 0; i < 5; i++) await info();
-    expect(await audits()).toBe(10);
+    expect(await audits()).toBe(7);
     expect(await notes()).toBe(1);
     // 24 h plus tard : de nouveau prévenu, une fois
     await rawUpdate(
@@ -1056,7 +1090,7 @@ describe("Versements prépayés côté A (§10.5, §14.1 n° 19)", () => {
     expect(await info()).toMatchObject({ iban: IBAN_DE, warnings: ["iban_changed", "recent_change"] });
     await info();
     expect(await notes()).toBe(3);
-    expect(await audits()).toBe(14);
+    expect(await audits()).toBe(11);
   });
 
   it("RIB non renseigné : PAYOUT_DETAILS_MISSING ; course à vérifier : ni RIB ni « Versé » (NETWORK_PAYOUT_ON_HOLD) ; reversement : pas de RIB", async () => {
