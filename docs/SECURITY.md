@@ -114,6 +114,12 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
   nocturnes gardées 14 jours, e-mails envoyés par le Postfix du serveur, aucun relais tiers. Tout changement (base chez
   Supabase cloud, copie des sauvegardes hors du serveur, relais SMTP, nouveau prestataire) se reporte d'abord dans ces
   pages ; un nouveau sous-traitant est annoncé aux centrales 30 jours avant (accord de traitement, art. 6).
+- **Mini-sites (clients particuliers)** : le professionnel est la centrale, Rydar lui donne les moyens d'être conforme :
+  bouton « Réserver avec obligation de paiement » (Code de la consommation L221-14, maintenu pour le transport de
+  passagers par L221-2), conditions de la centrale (`booking_sites.legal_mentions` : réservation, annulation, moyens de
+  paiement, médiateur) affichées avant le bouton, simple information sur les données (aucune case de consentement), prix
+  estimé « TTC », aucune promesse affichée qui ne dépende des réglages de la centrale. À relire avant de rouvrir les
+  mini-sites (`booking_sites_enabled()`) ; test `components/legal/legal-pages.test.ts`.
 
 ## Limites des offres
 

@@ -263,6 +263,18 @@ describe("/cookies : inventaire réel du navigateur", () => {
   });
 });
 
+describe("mini-site : commande d'un client particulier", () => {
+  it("bouton de commande explicite (L221-14), conditions de la centrale avant le bouton, information sans case de consentement", () => {
+    const form = flat(source("components/booking/booking-form.tsx"));
+    expect(form).toMatch(/<Button type="submit"[^>]*> Réserver avec obligation de paiement <\/Button>/);
+    const submit = form.indexOf('<Button type="submit"');
+    expect(form.indexOf("{conditions && (")).toBeGreaterThan(-1);
+    expect(form.indexOf("{conditions && (")).toBeLessThan(submit);
+    expect(form.indexOf("Vos coordonnées sont transmises à")).toBeLessThan(submit);
+    expect(form).not.toContain('type="checkbox"');
+  });
+});
+
 describe("typographie des nouvelles pages", () => {
   it("espaces insécables avant « : ; ! ? » et dans les guillemets", async () => {
     for (const page of [subscription.default, accessibility.default, notice.default, cookies.default]) {

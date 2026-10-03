@@ -140,7 +140,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
             <Field
               label="Conditions pour vos clients"
               className="sm:col-span-2"
-              hint="Affichées avant le bouton de réservation. Pour des clients particuliers : conditions de réservation, d'annulation et de paiement, et nom et site web de votre médiateur de la consommation (Code de la consommation, articles L111-1 et L612-1). Rydar ne les rédige pas pour vous."
+              hint="Affichées avant le bouton de réservation. Pour des clients particuliers : conditions de réservation et d'annulation, moyens de paiement acceptés, et nom et site web de votre médiateur de la consommation (Code de la consommation, articles L111-1, L221-14 et L612-1). Rydar ne les rédige pas pour vous."
             >
               <Textarea value={s.legal_mentions ?? ""} onChange={(e) => set("legal_mentions", e.target.value)} disabled={!canEdit} maxLength={2000} />
             </Field>

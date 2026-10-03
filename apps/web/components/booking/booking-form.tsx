@@ -249,7 +249,11 @@ export function BookingForm({
           {error}
         </p>
       )}
-      <Button type="submit" variant="primary" size="lg" loading={pending} className="w-full">Réserver mon chauffeur</Button>
+      {/* Code de la consommation L221-14 (gardé pour le transport de passagers par L221-2, 9° ; directive 2011/83 art. 8.2) :
+          le bouton qui passe la commande dit clairement qu'elle oblige à payer, sinon le client n'est pas engagé */}
+      <Button type="submit" variant="primary" size="lg" loading={pending} className="h-auto min-h-11 w-full whitespace-normal py-2.5 text-center">
+        Réserver avec obligation de paiement
+      </Button>
       <p className="flex items-center justify-center gap-1.5 text-[11.5px] text-fg-subtle"><ShieldCheck aria-hidden className="size-3.5" /> Demande transmise aussitôt à {operator ?? "la centrale"}</p>
     </form>
   );
