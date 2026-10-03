@@ -705,6 +705,10 @@ describe("Annonce des CGV par e-mail (svc_org_terms_notify)", () => {
     const noMail = await org("CGV Sans Adresse");
     await sql(`update public.organization_users set status = 'disabled' where organization_id = $1`, [noMail.id]);
     await sql(`update public.organizations set email = null where id = $1`, [noMail.id]);
+    // Clientes avant la publication de la version ; « recent » : créée après (aucune date d'entrée en vigueur imposée)
+    await sql(`update public.organizations set created_at = '2026-09-01T10:00:00Z' where id = any($1::uuid[])`, [[pending.id, older.id, noMail.id]]);
+    const recent = await org("CGV Cliente Récente");
+    await sql(`update public.organizations set created_at = '2026-10-02T10:00:00Z' where id = $1`, [recent.id]);
 
     const res = await svc("svc_org_terms_notify", [sa, VERSION, LEGAL_ON, APP_URL]);
     expect(res).toMatchObject({ ok: true, code: "NOTIFIED" });
@@ -728,6 +732,9 @@ describe("Annonce des CGV par e-mail (svc_org_terms_notify)", () => {
       `Ce qui change${NBSP}: des frais plateforme par course peuvent s'appliquer aux flottes comme aux centrales à commission, en plus de l'abonnement (articles 3 à 5 des CGV). Toute hausse de ces frais vous sera annoncée au moins 30 jours à l'avance, sauf accord écrit de votre part.`,
     );
     expect(m.body_text).toContain(`dès son acceptation, et au plus tard le ${long(LEGAL_ON)}. Si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`);
+    const [r] = await emailsOf(recent);
+    expect(r.body_text).toContain("Pour votre organisation, cette version s'applique dès son acceptation.");
+    expect(r.body_text).not.toContain("au plus tard");
     expect(m.body_text).toContain("https://app.rydar.example/dashboard");
     expect(m.body_text).toContain("https://app.rydar.example/cgv");
     expect(m.reply_to).toBe("contact@rydar.example");

@@ -447,7 +447,10 @@ begin
 end;
 $$;
 
--- Annonce d'une nouvelle version des CGV (et de l'accord de traitement) à une organisation qui ne l'a pas acceptée
+-- Annonce d'une nouvelle version des CGV (et de l'accord de traitement) à une organisation qui ne l'a pas acceptée.
+-- Organisation cliente AVANT la publication (créée avant le jour de la version, heure de Paris) : la version s'applique
+-- dès son acceptation et au plus tard à p_effective_on, résiliation sans frais possible avant ; organisation plus
+-- récente : dès son acceptation (aucune date imposée).
 create or replace function private.org_terms_email(p_org uuid, p_version text, p_effective_on date, p_url text)
 returns jsonb
 language plpgsql
@@ -458,8 +461,11 @@ declare
   v_ref text := private.platform_reference(p_org);
   v_reply boolean := private.platform_reply_to() is not null;
   v_url text := private.app_origin(p_url);
+  v_before boolean;
   v_parts text[];
 begin
+  select o.created_at < (p_version::date)::timestamp at time zone 'Europe/Paris' into v_before
+  from public.organizations o where o.id = p_org;
   v_parts := array[
     'Bonjour,',
     format('Rydar Drive a publié une nouvelle version de ses conditions générales de vente (CGV) et de son accord de traitement des données : version du %s. Elle concerne votre organisation, référence %s.',
@@ -469,8 +475,10 @@ begin
       when '2026-10-02' then 'Ce qui change : des frais plateforme par course peuvent s''appliquer aux flottes comme aux centrales à commission, en plus de l''abonnement (articles 3 à 5 des CGV). Toute hausse de ces frais vous sera annoncée au moins 30 jours à l''avance, sauf accord écrit de votre part.'
       else 'Les changements sont résumés au début des CGV.'
     end,
-    format('Pour votre organisation, cette version s''applique dès son acceptation, et au plus tard le %s. Si vous ne l''acceptez pas, vous pouvez résilier sans frais avant cette date.',
-      private.fr_long_date(p_effective_on)),
+    case when coalesce(v_before, true)
+      then format('Pour votre organisation, cette version s''applique dès son acceptation, et au plus tard le %s. Si vous ne l''acceptez pas, vous pouvez résilier sans frais avant cette date.',
+        private.fr_long_date(p_effective_on))
+      else 'Pour votre organisation, cette version s''applique dès son acceptation.' end,
     'Le propriétaire ou un administrateur l''accepte depuis le bandeau affiché dans le tableau de bord Rydar Drive.'
       || coalesce(E'\n' || v_url || '/dashboard', ''),
     'Texte complet : page « Conditions générales de vente » du site Rydar Drive.' || coalesce(E'\n' || v_url || '/cgv', ''),
