@@ -278,6 +278,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   NETWORK_RIDE_LOCKED: "Course confiée à un partenaire : retirez-la-lui pour la modifier.",
   NETWORK_RIDE_IN_PROGRESS:
     "Client à bord d'un chauffeur partenaire : annulation impossible. Il termine la course ; s'il ne le peut plus, clôturez-la (« Clôturer la course »), puis contestez-la si besoin.",
+  // Lot 7 : signalement routier pendant une course partenaire (Q5 : position jamais montrée à sa propre flotte)
+  NETWORK_RIDE_REPORT_BLOCKED:
+    "Pas de signalement pendant une course confiée par une autre organisation : votre position n'est pas partagée avec votre flotte pendant cette course.",
   NETWORK_CLOSE_NOT_ALLOWED:
     "Clôture impossible : réservée à une course dont le client est à bord et dont le chauffeur partenaire n'est plus actif ou sans position depuis 30 min. Avant la prise en charge, retirez-la au chauffeur (ou annulez-la si le client est absent).",
   NETWORK_CONTEST_EXPIRED: "Délai dépassé : une course partagée se conteste dans les 7 jours qui suivent sa fin.",
