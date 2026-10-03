@@ -19,6 +19,7 @@
 // private.network_terms (arrondis du SQL : round() de PostgreSQL sur numeric, demi-unité loin de zéro).
 // Mots interdits dans tous les textes du réseau (§7.1) : NETWORK_FORBIDDEN_WORDS.
 import { formatPrice } from "./format";
+import { percentOfCents } from "./platform-fees";
 import type { DriverStatus, OrgStatus, PaymentMethod, RideStatus, RideType, Tone, VehicleCategory } from "./domain";
 import type {
   DispatchModel, DriverBlocker, DriverOffer, Iso, RideFlightFields, Settlement, SettlementBank, SettlementDirection,
@@ -109,20 +110,6 @@ export function networkText(template: string, vars: Record<string, string | null
 // Montants d'une course partagée — miroir de private.network_terms (§10.1, Q1 recommandé)
 // =============================================================================
 
-/**
- * round(prix × % / 100) de PostgreSQL (numeric exact, demi-unité loin de zéro), sans flottant : le % (numeric(5,2) en
- * base, au plus 2 décimales) est ramené en centièmes entiers. Math.round(prix * % / 100) se trompe sur certaines
- * valeurs (3 000 c × 1,15 % = 34,5 → 34 au lieu de 35).
- */
-export function percentOfCents(cents: number, percent: number | string | null | undefined): number {
-  const price = Math.trunc(Number(cents) || 0);
-  const hundredths = Math.round((Number(percent) || 0) * 100);
-  const n = price * hundredths;
-  const sign = n < 0 ? -1 : 1;
-  const abs = Math.abs(n);
-  const rest = abs % 10_000;
-  return sign * ((abs - rest) / 10_000 + (rest * 2 >= 10_000 ? 1 : 0));
-}
 
 /** Champs de la course lus par private.network_terms. */
 export interface NetworkTermsRideInput {

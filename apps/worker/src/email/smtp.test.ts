@@ -132,6 +132,12 @@ describe("mailer — message construit depuis une ligne de la file", () => {
     expect(o.attachments).toBeUndefined();
   });
 
+  it("annonces aux organisations (frais Rydar, CGV) : Auto-Submitted", () => {
+    for (const kind of ["platform_fee_change", "org_terms_update"]) {
+      expect(mailOptions(email({ kind }), from).headers).toEqual({ "Auto-Submitted": "auto-generated" });
+    }
+  });
+
   it("réponse rédigée par le super admin : pas d'Auto-Submitted ; sans reply_to : pas de Reply-To", () => {
     const o = mailOptions(email({ kind: "contact_reply", reply_to: null, to_email: "client@exemple.org" }), from);
     expect(o.headers).toBeUndefined();

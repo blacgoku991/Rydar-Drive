@@ -78,13 +78,21 @@ export const getLegalInfo = cache(async (): Promise<LegalInfo> => {
 });
 
 /**
- * Version des documents légaux (CGU, confidentialité, CGV, accord de traitement) : source unique dans
- * @rydar/shared, que l'app chauffeur compare aussi à la version acceptée. À changer quand leur contenu change de
- * façon importante : centrales, membres et chauffeurs sont alors invités à accepter la nouvelle version.
+ * Versions des documents légaux, source unique dans @rydar/shared. À changer quand leur contenu change de façon
+ * importante :
+ *  - LEGAL_VERSION : CGU + politique de confidentialité, acceptées à titre personnel par chaque membre et chaque
+ *    chauffeur (l'app embarque la valeur et la compare à la version acceptée) ;
+ *  - ORG_LEGAL_VERSION : CGV + accord de traitement, acceptés au nom de l'organisation par le propriétaire ou un
+ *    administrateur (web seul) ; ORG_LEGAL_EFFECTIVE_AT : entrée en vigueur au plus tard pour une organisation qui
+ *    avait accepté une version antérieure.
  */
-export { LEGAL_VERSION } from "@rydar/shared";
+export { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION } from "@rydar/shared";
 
-/** Date de dernière mise à jour affichée sur les pages légales. */
+/** Date de dernière mise à jour affichée sur les pages légales (CGU, mentions légales, cookies, suppression de compte). */
 export const LEGAL_UPDATED_AT = "27 septembre 2026";
+/** CGV (version ORG_LEGAL_VERSION) : frais plateforme par course pour les deux modèles, cumulables avec l'abonnement. */
+export const CGV_UPDATED_AT = "2 octobre 2026";
+/** Accord de traitement : contenu inchangé depuis le 27 septembre 2026 (sa version suit celle des CGV). */
+export const DPA_UPDATED_AT = "27 septembre 2026";
 /** Politique de confidentialité : formulaire de contact ajouté (données, finalité, destinataires, durée). */
 export const PRIVACY_UPDATED_AT = "28 septembre 2026";

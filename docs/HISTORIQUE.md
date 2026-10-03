@@ -287,6 +287,40 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   (décision documentée, SECURITY.md). Tests : 16 dans `fleet-platform-fees.test.ts` (fin côté serveur, prix d'une course
   terminée baissé puis remonté par un dispatcher, réglage pendant la fin de course, flotte → centrale sans règlement,
   menu, temps réel, relance) + `zeroPriceText`.
+- [x] **CGV version 2026-10-02 (frais par course pour tous les modèles + abonnement)** — `/cgv` art. 3 (deux modèles,
+  frais par course possibles dans les deux, réseau partagé = convention distincte), art. 4 (abonnement au montant de
+  l'offre à la souscription, cumulable avec les frais), art. 5 « Frais plateforme » décrit le SQL : flotte = % + fixe
+  sans plafond, fixe seul sans prix, taux figés à la fin de course ; centrale = prélevés, plafonnés au prix, rien sans
+  prix, taux du calcul de la répartition ; changement de taux affiché dans le tableau de bord, jamais sur les frais
+  inscrits ; dus par l'organisation à qui appartient la course (réseau partagé compris). `/tarifs` et `pricing.tsx`
+  (flotte comme centrale), `CGV_UPDATED_AT` ; `CGV_COVERS_FLEET_FEES` et l'avertissement du super admin retirés.
+  Aucune version légale en dur en SQL : aucune migration.
+- [x] **Versions légales séparées** (après revue de la version 2026-10-02, qui faisait tout ré-accepter, chauffeurs
+  compris, après une mise à jour de l'app) — `@rydar/shared` : `LEGAL_VERSION` (CGU + politique de confidentialité, à
+  titre personnel, tout utilisateur) reste `2026-09-27` ; `ORG_LEGAL_VERSION` = `2026-10-02` (CGV + accord de
+  traitement, au nom de l'organisation, owner / admin, web seul) ; `ORG_LEGAL_EFFECTIVE_AT` = `2026-11-05` ;
+  `legalAcceptanceState` (acceptée / mise à jour / jamais), `legalDateLabel`. `acceptOrgTerms` = deux appels
+  idempotents (CGV + accord avec `ORG_LEGAL_VERSION`, CGU + politique avec `LEGAL_VERSION`) ; bandeau de
+  l'organisation en mode « mise à jour » (`components/legal/terms-state.ts`) ; `/admin/legal` sur `ORG_LEGAL_VERSION`
+  (version antérieure acceptée ou aucune). `/confidentialite` revenue au texte du 28 septembre (ligne « organisations
+  partenaires » retirée) ; `/dpa` : version 2026-10-02, contenu inchangé depuis le 27 septembre (`DPA_UPDATED_AT`).
+  `accept_legal_documents` accepte déjà une version par appel (pas de version future) : aucune migration. App
+  chauffeur et `/rejoindre` inchangés.
+- [x] **Frais Rydar : hausses annoncées (migration 006600) et CGV alignées sur le code** — `svc_platform_set_fees` :
+  création et baisse tout de suite, HAUSSE programmée au premier minuit après 30 jours (et pas avant
+  `ORG_LEGAL_EFFECTIVE_AT` sans CGV acceptées) ou tout de suite sur accord écrit noté ; un changement en attente
+  (`platform_fee_changes`), annulable, remplacé par un nouveau réglage (hausse moindre ou plus tardive : date déjà
+  annoncée permise) ; application par le ménage ; garde `organizations_platform_rates_guard` ; e-mails à contenu fixe
+  (`email_outbox` : annonce, accord écrit, annulation, annonce des CGV `svc_org_terms_notify`) ; libellés « Frais Rydar »
+  ou « Encaissements » ; WhatsApp de Rydar refusé pour une flotte. Web : fiche super admin (préavis / accord écrit,
+  annulation, historique), encart et bandeau « changent le JJ/MM/AAAA », alertes selon le modèle, `percentOfCents`.
+  Textes : `/cgv` réécrit d'après le SQL (préambule avec entrée en vigueur au plus tard et résiliation sans frais ;
+  art. 3, 4, 5, 7, 10, 16 ; frais TTC, abonnement HT ; « calculés sur le prix et déduits dans la répartition » au lieu
+  de « prélevés » ; blocage = `private.platform_position` ; facture récapitulative par cycle), version précédente figée
+  sur `/cgv/2026-09-27` (noindex, `proxy.ts` : `/cgv/AAAA-MM-JJ` servi sur les mini-sites), bandeau « mise à jour »
+  définitif, `/tarifs`, e-mails relus (« au moins 30 jours » seulement quand c'est vrai), seuil de blocage toujours
+  affiché, garde-fous du super admin (frais ajoutés, conditions de règlement, moins de 30 jours avant l'entrée en
+  vigueur des CGV). Tests : `tests/db/platform-fee-schedule.test.ts`, `components/legal/cgv-pages.test.ts`.
 - [x] **Lenteur, volet serveur / auth / base (10/2026, migration 006500)** : `proxy.ts` = `getSession()` (cookies,
   rafraîchissement gardé) puis `getClaims(jeton)` pour un jeton ES256/RS256 + kid (vérifié sur place, JWKS) ; jeton
   HS256 : aiguillage sans appel à Auth si le JWKS est vide (pile en HS256 seul, rejeté au rendu), sinon vérifié par

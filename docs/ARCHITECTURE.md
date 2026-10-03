@@ -176,9 +176,9 @@ Depuis l'app (`POST /api/driver/delete-account`) ou, pour une demande reçue par
 
 ### 12. Documents légaux (migration 003900)
 
-`platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). La version en vigueur est `LEGAL_VERSION` (`@rydar/shared`), commune au site et à l'app. Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
+`platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). Deux versions en vigueur (`@rydar/shared`, aucune en base) : `LEGAL_VERSION` pour les CGU et la politique (site et app, qui l'embarque) et `ORG_LEGAL_VERSION` pour les CGV et l'accord de traitement (web seul ; bandeau « mise à jour » pour une organisation qui avait accepté une version antérieure, entrée en vigueur au plus tard `ORG_LEGAL_EFFECTIVE_AT`). Une version des CGV remplacée reste consultable, figée, sur `/cgv/AAAA-MM-JJ` (`app/cgv/2026-09-27`, noindex ; `proxy.ts` la sert aussi sur les mini-sites) ; l'article 5 des CGV et les e-mails de 006600 décrivent exactement le code des frais Rydar (§ 13) : les modifier ensemble. Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
 
-### 13. Frais Rydar (centrales et flottes, migrations 003000, 003100, 006400)
+### 13. Frais Rydar (centrales et flottes, migrations 003000, 003100, 006400, 006600)
 
 Chaque course terminée doit des frais à Rydar (super admin : % du prix + fixe, `organizations.platform_fee_percent` /
 `platform_fee_fixed_cents`), en plus de l'abonnement. Trigger `rides_e_platform_fee` → `private.sync_platform_fee` :
@@ -193,9 +193,21 @@ frais, ou course sans chauffeur : la correction d'un prix suit les taux figés, 
 `/dashboard/rydar/releve`), activé par `private.platform_fees_enabled` (centrale, flotte avec des frais, ou historique ;
 le layout ne lit que le booléen `org_platform_fees_enabled`) ; super admin → `/admin/frais` (centrales et flottes).
 Frais ou modèle changés → `platform.updated` (`rates` / `model`, trigger `organizations_platform_rates_broadcast`) : le
-tableau de bord ouvert se relit sans rechargement. Paiements
+tableau de bord ouvert se relit sans rechargement. **Changement des taux (006600)** : `svc_platform_set_fees` seulement
+(service role, super admin revérifié) — création et baisse tout de suite ; HAUSSE programmée (`platform_fee_changes`,
+un seul changement en attente) au plus tôt au premier minuit (fuseau de l'organisation) après 30 jours, et pas avant
+l'entrée en vigueur des CGV (`ORG_LEGAL_EFFECTIVE_AT`) si l'organisation n'a pas accepté `ORG_LEGAL_VERSION`, ou tout de
+suite sur accord écrit (note) ; annulation `svc_platform_cancel_fee_change` ; application par le ménage
+(`private.apply_platform_fee_changes`, 5 min) ; e-mails aux propriétaires par `email_outbox` (annonce, confirmation,
+annulation ; contenu fixe) ; owner / admin : `account.scheduled_change` ; super admin : `admin_platform_fee_schedule`
+(acceptation des CGV, date au plus tôt, aperçu, historique) ; temps réel `rates_scheduled` / `rates_cancelled`. Garde
+`organizations_platform_rates_guard` : hausse en UPDATE direct par le service role refusée. Annonce des CGV :
+`svc_org_terms_notify` (une fois par organisation et par version, `org_terms_notices`). Paiements
 (`platform_payments`) : déclarés par l'organisation, confirmés par le super admin, soldent les échéances les plus
-anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création de courses refusée après N jours de retard).
+anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création, relance et attribution d'une course sans chauffeur
+refusées après N jours de retard ; suspendu 7 jours au plus par un paiement déclaré qui couvre la somme échue,
+`private.platform_position`). Montants toutes taxes comprises (aucune TVA ajoutée par le code) ; le relevé n'est pas une
+facture (facture récapitulative de chaque cycle : tâche manuelle du propriétaire).
 
 ## Temps réel
 

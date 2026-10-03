@@ -132,8 +132,10 @@ function RecordPaymentDialog({
 }
 
 // ---------------------------------------------------------------------------- avoir / frais ajoutés
-const CREDIT_REASONS = ["Geste commercial", "Erreur de frais", "Course litigieuse remboursée"] as const;
-const CHARGE_REASONS = ["Course non enregistrée", "Correction d'erreur", "Frais oubliés"] as const;
+// CGV art. 5 : l'éditeur inscrit au relevé, avec son motif, un avoir ou la correction d'une erreur de calcul des frais ;
+// aucun autre montant sans l'accord écrit de l'organisation (le code ne le contrôle pas : motif à préciser).
+const CREDIT_REASONS = ["Geste commercial", "Erreur de calcul des frais", "Course litigieuse remboursée"] as const;
+const CHARGE_REASONS = ["Erreur de calcul des frais", "Accord écrit de l'organisation du"] as const;
 
 function AdjustDialog({
   open,
@@ -230,11 +232,17 @@ function AdjustDialog({
               onChange={(e) => setReason(e.target.value)}
               maxLength={500}
               className="min-h-[72px]"
-              placeholder={kind === "credit" ? "Ex. geste commercial pour septembre" : "Ex. course 1692 non enregistrée"}
+              placeholder={kind === "credit" ? "Ex. geste commercial pour septembre" : "Ex. erreur de calcul des frais de la course 1692"}
               aria-invalid={!!errors.reason || undefined}
             />
           </Field>
           <Chips options={kind === "credit" ? CREDIT_REASONS : CHARGE_REASONS} onPick={setReason} />
+          {kind === "charge" && (
+            <p className="text-[12px] leading-relaxed text-fg-muted">
+              CGV, article 5{"\u00a0"}: des frais ajoutés corrigent une erreur de calcul des frais{"\u00a0"}; tout autre montant
+              demande l&apos;accord écrit de l&apos;organisation (date et forme dans le motif).
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Annuler
@@ -355,9 +363,11 @@ function RemindDialog({
                   ? "Vérification…"
                   : waOk
                     ? `Au ${wa.source === "owner" ? "propriétaire" : `numéro de la ${who(account)}`}${wa.name ? ` (${wa.name})` : ""} : ${wa.to_display}. Modèle validé par Meta, sans votre message.`
-                    : wa.reason === "NOT_CONFIGURED"
-                      ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
-                      : `Aucun numéro valide pour le propriétaire ni pour la ${who(account)}.`}
+                    : wa.reason === "FLEET_UNSUPPORTED"
+                      ? "Indisponible pour une flotte : le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte. La relance reste affichée dans son tableau de bord."
+                      : wa.reason === "NOT_CONFIGURED"
+                        ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
+                        : `Aucun numéro valide pour le propriétaire ni pour la ${who(account)}.`}
               </span>
             </span>
             <Switch checked={viaWhatsApp && waOk} onCheckedChange={setViaWhatsApp} disabled={!waOk} aria-label="Envoyer aussi par WhatsApp" />
@@ -494,7 +504,8 @@ export function TermsForm({
           <span className="min-w-0">
             <span className="block text-[13px] font-medium text-fg">Bloquer la création de courses en cas de retard</span>
             <span className="mt-0.5 block text-[12px] leading-snug text-fg-muted">
-              Suspendu tant qu&apos;un paiement déclaré attend votre confirmation&nbsp;; un «&nbsp;Pas reçu&nbsp;» le rétablit.
+              Suspendu 7&nbsp;jours au plus par un paiement déclaré qui couvre la somme échue (comptés depuis la première
+              déclaration des 30 derniers jours)&nbsp;; aucune suspension dans les 7&nbsp;jours qui suivent un «&nbsp;Pas reçu&nbsp;».
             </span>
           </span>
           <Switch checked={block} onCheckedChange={setBlock} aria-label="Blocage en cas de retard" />
@@ -516,7 +527,10 @@ export function TermsForm({
         )}
       </div>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[12px] text-fg-subtle">Les frais déjà enregistrés gardent leur échéance.</p>
+        <p className="text-[12px] text-fg-subtle">
+          Les frais déjà enregistrés gardent leur échéance. Changement en défaveur de l&apos;organisation (délai raccourci,
+          blocage)&nbsp;: seulement avec son accord écrit (CGV, article 5).
+        </p>
         <Button type="submit" variant="primary" size="sm" loading={pending} disabled={!dirty}>
           <Check /> Enregistrer
         </Button>

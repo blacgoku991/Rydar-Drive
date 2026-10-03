@@ -1,13 +1,14 @@
 import {
-  DISPATCH_MODEL_META, ORG_STATUS_META, PRESENCE_META, formatCompactPrice, formatNumber, formatRelative,
-  type AdminPlatformAccount, type DispatchModel, type DriverPresence, type OrgStatus,
+  DISPATCH_MODEL_META, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, ORG_STATUS_META, PRESENCE_META, formatCompactPrice, formatNumber, formatRelative,
+  legalAcceptanceState, localIsoDay, type AdminPlatformAccount, type AdminPlatformFeeSchedule, type DispatchModel, type DriverPresence,
+  type OrgStatus,
 } from "@rydar/shared";
 import { ArrowLeft, ExternalLink, Layers } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { OrganizationPlanForm, OrganizationStatusActions } from "@/components/admin/admin-widgets";
-import { DispatchModelForm } from "@/components/admin/dispatch-model";
+import { DispatchModelForm, type OrgTermsStatus } from "@/components/admin/dispatch-model";
 import { OrganizationAccessCard, type AccessMember } from "@/components/admin/organization-access";
 import { OrgPlatformFeesCard } from "@/components/platform-fees/admin-org-fees-card";
 import { PageBody, StatCard } from "@/components/layout/page-header";
@@ -58,7 +59,9 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   const memberLocksP = membersP.then((r) =>
     memberLoginLocks([...new Set(((r.data ?? []) as { user_id: string | null }[]).map((m) => m.user_id as string).filter(Boolean))]),
   );
-  const [{ data: org }, kpis, plans, subscription, drivers, errors, notifications, members, locks, keys, applications, banned, platform] = await Promise.all([
+  const [
+    { data: org }, kpis, plans, subscription, drivers, errors, notifications, members, locks, keys, applications, banned, platform, feeSchedule, acceptances,
+  ] = await Promise.all([
     // Colonnes réservées au serveur (motif de suspension, limites, relance Rydar : GRANT par colonne, 20260924004300) :
     // lecture seule par le client admin, après requireSuperAdmin
     createAdminClient().from("organizations").select("*").eq("id", id).maybeSingle(),
@@ -75,6 +78,11 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).not("banned_at", "is", null),
     // Frais plateforme dus à Rydar (centrale, flotte avec des frais par course, ou historique)
     db.rpc("admin_platform_account", { p_org: id }),
+    // Frais par course (20260924006600) : hausse annoncée, date d'effet au plus tôt (30 jours, entrée en vigueur des CGV
+    // non acceptées), acceptation de ORG_LEGAL_VERSION, historique
+    db.rpc("admin_platform_fee_schedule", { p_org: id, p_org_legal_version: ORG_LEGAL_VERSION, p_org_legal_effective_on: ORG_LEGAL_EFFECTIVE_AT }),
+    // CGV + accord de traitement acceptés au nom de l'organisation (« dpa » : enregistrés ensemble) : version antérieure ?
+    db.from("legal_acceptances").select("version").eq("organization_id", id).eq("document", "dpa"),
   ]);
   if (!org) notFound();
   const k = (kpis.data ?? {}) as any;
@@ -91,6 +99,16 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
       }) as AccessMember,
   );
   const joinUrl = org.join_code ? `${env.appUrl}/rejoindre/${org.join_code}` : null;
+  const timeZone = (org.timezone as string | null) || "Europe/Paris";
+  const schedule = (feeSchedule.error ? null : (feeSchedule.data ?? null)) as AdminPlatformFeeSchedule | null;
+  // Acceptation de ORG_LEGAL_VERSION : la base fait foi (CGV ET accord de traitement), le registre dit s'il y a une
+  // version antérieure acceptée (« mise à jour » à accepter) ou aucune
+  const registry = acceptances.error ? null : legalAcceptanceState(((acceptances.data ?? []) as { version: string }[]).map((a) => a.version), ORG_LEGAL_VERSION);
+  const accepted = schedule?.terms ? schedule.terms.accepted : registry === "accepted";
+  const terms: OrgTermsStatus | null =
+    registry == null && !schedule?.terms
+      ? null
+      : { state: accepted ? "accepted" : registry === "updated" ? "updated" : "pending", acceptedAt: schedule?.terms?.accepted_at ?? null };
   const platformAccount = ((platform.data ?? null) as AdminPlatformAccount | null)?.account ?? null;
   const showPlatform =
     !!platformAccount &&
@@ -136,11 +154,17 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
             />
             <CardBody className="space-y-5">
               <DispatchModelForm
+                // Remonté (saisie remise aux valeurs en vigueur) quand le modèle, les taux ou la hausse annoncée changent
+                key={`${model}:${org.platform_fee_percent}:${org.platform_fee_fixed_cents}:${schedule?.scheduled?.id ?? ""}`}
                 orgId={id}
                 model={model}
                 feePercent={Number(org.platform_fee_percent ?? 0)}
                 feeFixedCents={Number(org.platform_fee_fixed_cents ?? 0)}
                 joinEnabled={!!org.join_enabled}
+                timeZone={timeZone}
+                schedule={schedule}
+                terms={terms}
+                today={localIsoDay(new Date(), timeZone)}
               />
               {/* Lien d'inscription des chauffeurs : flotte comme centrale (20260924006300) */}
               {(model === "centrale" || org.join_code) && (

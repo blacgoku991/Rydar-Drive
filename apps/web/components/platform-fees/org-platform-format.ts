@@ -1,5 +1,8 @@
 // Frais plateforme (côté centrale ou flotte) : textes et formats purs (utilisables côté serveur comme côté client).
-import { PLATFORM_PAYMENT_METHOD_META, formatPrice, type PlatformAccount, type PlatformPaymentMethod, type PlatformStatement } from "@rydar/shared";
+import {
+  PLATFORM_PAYMENT_METHOD_META, formatDate, formatPrice, isoDayLabel, platformFeeScopeText, type DispatchModel, type PlatformAccount, type PlatformPaymentMethod,
+  type PlatformStatement,
+} from "@rydar/shared";
 
 export const platformMethodLabel = (m: string | null | undefined) => PLATFORM_PAYMENT_METHOD_META[(m ?? "other") as PlatformPaymentMethod]?.label ?? "Autre";
 
@@ -14,15 +17,52 @@ export function price(cents: number, currency = "EUR") {
   return cents < 0 ? `\u2212${formatPrice(-cents, currency)}` : formatPrice(cents, currency);
 }
 
-/** « 5 € par course terminée », « 2 % du prix + 0,50 € par course ». */
-export function feeTermsText(a: Pick<PlatformAccount, "fee_percent" | "fee_fixed_cents" | "currency">) {
+/** « 5 € par course terminée », « 2 % du prix + 0,50 € par course ». `none` : texte sans frais. */
+export function feeTermsText(a: Pick<PlatformAccount, "fee_percent" | "fee_fixed_cents" | "currency">, none = "aucuns frais par course pour l'instant") {
   const pct = Number(a.fee_percent) || 0;
   const fixed = a.fee_fixed_cents || 0;
   const pctText = `${String(pct).replace(".", ",")} % du prix`;
   if (pct > 0 && fixed > 0) return `${pctText} + ${formatPrice(fixed, a.currency)} par course terminée`;
   if (pct > 0) return `${pctText} de chaque course terminée`;
   if (fixed > 0) return `${formatPrice(fixed, a.currency)} par course terminée`;
-  return "aucuns frais par course pour l'instant";
+  return none;
+}
+
+/** Espaces insécables avant « : ; ! ? » et à l'intérieur des guillemets (textes composés, comme private.fr_typo). */
+export const frSpaces = (t: string) => t.replace(/ ([:;!?»])/g, "\u00a0$1").replace(/« /g, "«\u00a0");
+
+/** 30 jours : préavis d'une hausse annoncée (svc_platform_set_fees, CGV art. 5). */
+const NOTICE_MS = 30 * 86_400_000;
+
+/**
+ * Hausse des frais par course annoncée (account.scheduled_change, 20260924006600) : encart « À partir du JJ/MM/AAAA »
+ * de « Frais Rydar » (flotte) / « Encaissements » (centrale), bandeau et alerte. Règle des taux appliqués selon le
+ * modèle (flotte : fin de course ; centrale : calcul de la répartition). null : aucune hausse annoncée.
+ * « au moins 30 jours à l'avance » seulement quand c'est vrai : une hausse annoncée remplacée par une hausse moindre
+ * ou plus tardive garde sa date sans nouveau préavis (CGV art. 5), et sa nouvelle annonce peut être plus proche.
+ */
+export function scheduledFeeChangeText(
+  a: Pick<PlatformAccount, "scheduled_change" | "fee_percent" | "fee_fixed_cents" | "currency">,
+  model: DispatchModel | null | undefined,
+  timeZone = "Europe/Paris",
+): { title: string; next: string; body: string } | null {
+  const c = a.scheduled_change;
+  if (!c) return null;
+  const on = isoDayLabel(c.effective_on);
+  const target = feeTermsText({ fee_percent: c.percent, fee_fixed_cents: c.fixed_cents, currency: a.currency }, "aucuns frais par course");
+  const now = feeTermsText(a, "aucuns frais par course");
+  const next = frSpaces(`À partir du ${on} : ${target} (actuellement : ${now}).`);
+  const fullNotice = Date.parse(c.effective_at) - Date.parse(c.announced_at) >= NOTICE_MS;
+  const announced = fullNotice
+    ? `Annoncé le ${formatDate(c.announced_at, timeZone)}, au moins 30 jours à l'avance`
+    : `Annoncé le ${formatDate(c.announced_at, timeZone)}, en remplacement d'une annonce précédente (frais moins élevés ou date plus tardive)`;
+  return {
+    title: `Vos frais par course changent le ${on}`,
+    next,
+    body: frSpaces(
+      `${next} ${platformFeeScopeText(model ?? "fleet", "date")} ${announced} : si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`,
+    ),
+  };
 }
 
 /** « Facturation mensuelle · à régler au plus tard le 5 du mois suivant ». */

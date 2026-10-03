@@ -3,8 +3,8 @@
 // délai de règlement, blocage des retardataires, plafonds, confirmation automatique, moyens et lien de paiement.
 // Les frais plateforme sont fixés par Rydar (super admin) : lecture seule.
 import {
-  SETTLEMENT_LINK_EXAMPLES, centraleSettingsSchema, formatIban, formatNumber, formatPrice, isValidIban, settlementPaymentLink,
-  settlementRequestMessage, type SettlementMethod,
+  SETTLEMENT_LINK_EXAMPLES, centralePlatformFee, centraleSettingsSchema, formatIban, formatNumber, formatPrice, isValidIban, percentOfCents,
+  settlementPaymentLink, settlementRequestMessage, type SettlementMethod,
 } from "@rydar/shared";
 import { Check, ExternalLink, HandCoins, Landmark, Lock, MessageCircle, Percent, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -151,8 +151,8 @@ export function CentraleSettingsForm({
   const example = useMemo(() => {
     const pct = typeof input.commissionPercent === "number" && Number.isFinite(input.commissionPercent) ? input.commissionPercent : 0;
     const fixed = typeof input.commissionFixedCents === "number" && Number.isFinite(input.commissionFixedCents) ? input.commissionFixedCents : 0;
-    const platform = Math.min(SAMPLE_PRICE, Math.round((SAMPLE_PRICE * platformFee.percent) / 100) + platformFee.fixed_cents);
-    const commission = Math.min(SAMPLE_PRICE - platform, Math.round((SAMPLE_PRICE * pct) / 100) + fixed);
+    const platform = centralePlatformFee(SAMPLE_PRICE, platformFee.percent, platformFee.fixed_cents);
+    const commission = Math.min(SAMPLE_PRICE - platform, percentOfCents(SAMPLE_PRICE, pct) + fixed);
     return { price: SAMPLE_PRICE, platform, commission, driver: SAMPLE_PRICE - platform - commission, pct, fixed };
   }, [input.commissionPercent, input.commissionFixedCents, platformFee.percent, platformFee.fixed_cents]);
 

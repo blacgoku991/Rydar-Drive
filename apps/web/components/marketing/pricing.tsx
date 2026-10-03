@@ -99,12 +99,12 @@ export function PlanCardsSkeleton() {
   );
 }
 
-/** Mention sous les offres : frais plateforme du mode centrale (CGV, articles 3 et 5). */
+/** Mention sous les offres : frais plateforme par course, flotte comme centrale (CGV, articles 3 à 5). */
 export function PlatformFeeNote({ className }: { className?: string }) {
   return (
     <p className={cn("mx-auto max-w-2xl text-center text-[13px] leading-relaxed text-fg-muted", className)}>
       {fr(
-        "Mode centrale à commission : frais plateforme par course terminée, en plus ou à la place de l'abonnement selon les conditions convenues. Rydar n'encaisse pas le prix des courses.",
+        "Flotte ou centrale à commission : des frais plateforme par course terminée, toutes taxes comprises, peuvent s'ajouter à l'abonnement ou le remplacer, selon les conditions convenues avec Rydar. Rydar n'encaisse pas le prix des courses.",
       )}
     </p>
   );
@@ -122,12 +122,12 @@ const FACTS: { icon: LucideIcon; title: string; text: string }[] = [
   {
     icon: Receipt,
     title: "Changements de prix annoncés",
-    text: "Prix hors taxes. Un changement de prix est annoncé au moins 30 jours à l'avance et ne s'applique qu'au renouvellement suivant.",
+    text: "Abonnement hors taxes : un changement de son prix est annoncé au moins 30 jours à l'avance et ne s'applique qu'au renouvellement suivant. Frais par course : toute hausse est annoncée au moins 30 jours avant de s'appliquer, sauf accord écrit de votre part ; vous pouvez résilier sans frais avant.",
   },
   {
     icon: FileText,
     title: "Frais plateforme lisibles",
-    text: "En mode centrale : un pourcentage et/ou un montant fixe par course terminée, dans la limite du prix de la course, avec un relevé exportable en CSV.",
+    text: "Un pourcentage du prix, un montant fixe par course terminée, ou les deux, toutes taxes comprises, selon les conditions convenues avec Rydar. Affichés dans votre tableau de bord, avec un relevé exportable en CSV.",
   },
   {
     icon: Database,

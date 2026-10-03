@@ -122,7 +122,14 @@ export async function remindPlatformCentrale(orgId: string, note?: string | null
   return svc("svc_platform_remind", { p_org: orgId, p_note: cleanNote(note, 300), p_whatsapp: whatsapp === true }, orgId);
 }
 
-export type PlatformWhatsAppTarget = { ready: boolean; to_display: string | null; source: "owner" | "organization" | null; name: string | null; reason: "NOT_CONFIGURED" | "NO_PHONE" | null };
+/** reason « FLEET_UNSUPPORTED » (20260924006600) : flotte — le modèle approuvé par Meta renvoie à « Encaissements ». */
+export type PlatformWhatsAppTarget = {
+  ready: boolean;
+  to_display: string | null;
+  source: "owner" | "organization" | null;
+  name: string | null;
+  reason: "NOT_CONFIGURED" | "NO_PHONE" | "FLEET_UNSUPPORTED" | null;
+};
 
 /** Relance WhatsApp possible pour cette centrale ? (numéro de Rydar relié, téléphone du propriétaire ou de la centrale) */
 export async function platformWhatsAppTarget(orgId: string): Promise<PlatformWhatsAppTarget | null> {

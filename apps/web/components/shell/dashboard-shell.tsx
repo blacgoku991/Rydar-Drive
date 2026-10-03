@@ -10,6 +10,7 @@ import { joinNavLabel } from "@/components/network/join-copy";
 import { OrgPlatformBanner } from "@/components/platform-fees/org-platform-banner";
 import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realtime-provider";
+import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, type CentraleCounts } from "@/components/settlements/counts";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
@@ -104,6 +105,9 @@ function useCentraleCounts(orgId: string, centrale: boolean, initial: CentraleCo
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
+/** Événements « platform.updated » qui changent le layout (entrée « Frais Rydar », bandeau, menus du modèle). */
+const LAYOUT_PLATFORM_ACTIONS = new Set<string>(["rates", "model", "rates_scheduled", "rates_cancelled"]);
+
 function ShellBody({
   children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin, bookingSites, rydarFees,
 }: ShellProps) {
@@ -116,13 +120,26 @@ function ShellBody({
   // Frais dus à Rydar : centrale → carte d'« Encaissements » ; flotte avec des frais → entrée « Frais Rydar »
   const feePaths = platformFeesPaths(centrale.model);
   const fleetFees = !isCentrale && isAdmin && !!rydarFees;
-  // Frais par course (« rates ») ou modèle (« model ») changés par le super admin : le layout relit l'entrée « Frais
-  // Rydar », le bandeau et les menus du modèle, sans rechargement complet (événement rare, identifiants seulement)
-  const ratesTimer = useRef<number | null>(null);
+  // Frais par course changés (« rates »), hausse annoncée ou annulée (« rates_scheduled » / « rates_cancelled » : une
+  // flotte à 0 € voit ou perd l'entrée « Frais Rydar »), modèle changé (« model ») : le layout relit l'entrée « Frais
+  // Rydar », le bandeau et les menus du modèle, sans rechargement complet (événement rare, identifiants seulement),
+  // différé tant que l'onglet est caché. Relu seulement après un tel événement (ni sondage ni reconnexion : les pages
+  // ont leur propre relecture).
+  const layoutPending = useRef(false);
+  const { schedule: scheduleLayout } = useLiveSync(
+    () => {
+      if (!layoutPending.current) return;
+      layoutPending.current = false;
+      router.refresh();
+    },
+    { pollMs: 600_000, maxPollMs: 600_000, debounceMs: 800 },
+  );
   useRealtimeEvent("platform.updated", (e: PlatformEvent) => {
-    if ((e?.action !== "rates" && e?.action !== "model") || (e.organization_id && e.organization_id !== org.id)) return;
-    if (ratesTimer.current) window.clearTimeout(ratesTimer.current);
-    ratesTimer.current = window.setTimeout(() => router.refresh(), 800);
+    if (!e?.action || !LAYOUT_PLATFORM_ACTIONS.has(e.action) || (e.organization_id && e.organization_id !== org.id)) return;
+    // Frais Rydar (entrée de menu, bandeau) : owner / admin seulement ; le modèle change aussi les menus d'un dispatcher
+    if (!isAdmin && e.action !== "model") return;
+    layoutPending.current = true;
+    scheduleLayout();
   });
   // Documents à valider : valeur serveur, relue après chaque dépôt / validation / refus (un incrément local compterait
   // aussi les pièces des candidats, que la page Chauffeurs n'affiche pas) et quand une candidature est traitée

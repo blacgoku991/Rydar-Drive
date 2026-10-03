@@ -4,6 +4,7 @@ import {
   PLATFORM_CYCLE_META,
   formatNumber,
   formatPrice,
+  isoDayLabel,
   platformDueSummary,
   type AdminPlatformAccount,
   type AdminPlatformOverview,
@@ -87,6 +88,15 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
               Référence de virement <span className="mono text-fg">{a.reference}</span> · {feeText} · {PLATFORM_CYCLE_META[a.cycle].label.toLowerCase()},{" "}
               {a.payment_days} j de délai
             </p>
+            {a.scheduled_change && (
+              <p className="mt-1 flex items-center gap-1.5 text-[12.5px] text-amber">
+                <CalendarClock className="size-3.5" /> Hausse programmée le {isoDayLabel(a.scheduled_change.effective_on)}{"\u00a0"}:{" "}
+                {formatPlatformFee(a.scheduled_change.percent, a.scheduled_change.fixed_cents)} par course ·{" "}
+                <Link href={`/admin/organizations/${orgId}`} prefetch={false} className="underline-offset-2 hover:underline">
+                  gérer sur la fiche
+                </Link>
+              </p>
+            )}
             {a.reminded_at && (
               <p className="mt-1 flex items-center gap-1.5 text-[12.5px] text-fg-subtle">
                 <BellRing className="size-3.5" /> Relancée {ago(a.reminded_at)}

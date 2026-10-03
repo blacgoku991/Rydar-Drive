@@ -1,13 +1,15 @@
 "use server";
 import {
-  describeError, dispatchModelSchema, emailSchema, fieldErrors, humanizeError, ORGANIZATION_CREATE_LABELS, organizationCreateSchema,
-  planSchema, type DispatchModelInput, type OrganizationCreateInput,
+  describeError, dispatchModelSchema, emailSchema, fieldErrors, humanizeError, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, ORGANIZATION_CREATE_LABELS,
+  organizationCreateSchema, planSchema, platformFeeSettingSchema, type CancelPlatformFeeChangeResult, type DispatchModelInput,
+  type OrganizationCreateInput, type PlatformScheduledFeeChange, type SetPlatformFeesResult,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { actionError } from "@/lib/errors";
 import { findUserIdByEmail, sendMemberInvitationEmail } from "@/lib/member-invite";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -19,7 +21,28 @@ const note = (v: string | null | undefined) => v?.trim().slice(0, 500) || null;
 /** Ban Auth « définitif » (100 ans) / levée. */
 const BAN_FOREVER = "876000h";
 /** Noms des champs pour les messages d'erreur (« Frais plateforme (%) : maximum 50 »). */
-const FEE_LABELS = { dispatchModel: "Modèle d'exploitation", platformFeePercent: "Frais plateforme (%)", platformFeeFixedCents: "Frais fixes par course" };
+const FEE_LABELS = {
+  dispatchModel: "Modèle d'exploitation",
+  platformFeePercent: "Frais plateforme (%)",
+  platformFeeFixedCents: "Frais fixes par course",
+  effectiveOn: "Date d'effet",
+  consentNote: "Accord écrit",
+  mode: "Application de la hausse",
+};
+
+/**
+ * Paramètres communs de svc_platform_set_fees : la base ne connaît aucune version légale → version des CGV en vigueur
+ * (ORG_LEGAL_VERSION) et leur entrée en vigueur pour les organisations déjà clientes (ORG_LEGAL_EFFECTIVE_AT) ; origine
+ * du site pour les liens des e-mails (contenu fixe, mis en file par la base : le web n'envoie aucun e-mail).
+ */
+const feeTermsParams = () => ({
+  p_org_legal_version: ORG_LEGAL_VERSION,
+  p_org_legal_effective_on: ORG_LEGAL_EFFECTIVE_AT,
+  p_app_url: env.appUrl || null,
+});
+
+/** Champ d'erreur renvoyé par la base (svc_platform_set_fees) → erreur de champ du formulaire. */
+const rpcFieldError = (res: { field?: string; message: string }) => (res.field ? { [res.field]: res.message } : undefined);
 const ACCESS_LABELS = { fullName: "Nom complet", email: "E-mail", role: "Rôle", password: "Mot de passe provisoire" };
 const PLAN_LABELS = {
   code: "Code", name: "Nom", description: "Description", price_monthly_cents: "Prix mensuel", price_yearly_cents: "Prix annuel",
@@ -62,14 +85,24 @@ export async function createOrganization(
   if (error || !org) return { ok: false, error: error?.code === "23505" ? "Ce slug est déjà utilisé." : "Création impossible." };
   const orgId = (org as any).id as string;
 
-  // Modèle d'exploitation + frais plateforme (colonnes réservées au super admin)
-  const { error: modelError } = await admin
-    .from("organizations")
-    .update({ dispatch_model: m.dispatchModel, platform_fee_percent: m.platformFeePercent, platform_fee_fixed_cents: m.platformFeeFixedCents } as never)
-    .eq("id", orgId);
-  if (modelError) {
+  // Modèle d'exploitation + frais par course : réglage INITIAL, appliqué tout de suite (svc_platform_set_fees « initial »,
+  // réservé à une organisation tout juste créée et sans course ; historique et journal d'audit écrits en base). Ensuite,
+  // toute hausse est annoncée au moins 30 jours à l'avance ou appliquée sur accord écrit (fiche de l'organisation).
+  const setup = await admin.rpc("svc_platform_set_fees", {
+    p_org: orgId,
+    p_actor: session.user.id,
+    p_percent: m.platformFeePercent,
+    p_fixed_cents: m.platformFeeFixedCents,
+    p_dispatch_model: m.dispatchModel,
+    p_mode: "initial",
+    ...feeTermsParams(),
+  });
+  const initial = (setup.data ?? null) as SetPlatformFeesResult | null;
+  if (setup.error || !initial?.ok) {
+    // Rien n'a été écrit (refus avant écriture, ou transaction annulée) : la centrale créée est retirée
     await admin.from("organizations").delete().eq("id", orgId);
-    return { ok: false, error: "Modèle d'exploitation impossible à enregistrer." };
+    if (initial && !initial.ok) return { ok: false, error: initial.message, fieldErrors: rpcFieldError(initial) };
+    return { ok: false, error: actionError(setup.error, "Modèle d'exploitation impossible à enregistrer.") };
   }
 
   let ownerId = (await findUserIdByEmail(v.ownerEmail)) ?? undefined;
@@ -115,77 +148,102 @@ export async function createOrganization(
   return { ok: true, id: orgId, ownerInvited, emailSent, passwordIgnored: existingOwner && !!v.ownerPassword };
 }
 
-/**
- * Modèle d'exploitation (flotte / centrale à commission) + frais plateforme d'un compte.
- * Retour au mode flotte : refusé s'il reste des règlements chauffeur ouverts (trigger SQL
- * organizations_dispatch_model_guard). Le lien d'inscription des chauffeurs est conservé dans les deux sens (code, état,
- * validation automatique ; candidatures en attente inchangées, 20260924006300). Passage en centrale : répartition des
- * courses non clôturées (SQL).
- */
-export async function updateDispatchModel(orgId: string, input: z.input<typeof dispatchModelSchema>): Promise<Result> {
-  const session = await requireSuperAdmin();
-  if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
-  const parsed = dispatchModelSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: describeError(parsed.error, FEE_LABELS), fieldErrors: fieldErrors(parsed.error) };
-  const v = parsed.data;
-  const admin = createAdminClient();
-  const { data: before } = await admin
-    .from("organizations")
-    .select("dispatch_model, platform_fee_percent, platform_fee_fixed_cents, join_enabled")
-    .eq("id", orgId)
-    .maybeSingle();
-  if (!before) return { ok: false, error: "Organisation introuvable." };
-  const b = before as { dispatch_model: string; platform_fee_percent: number; platform_fee_fixed_cents: number; join_enabled: boolean };
+/** Message d'un retour au mode flotte refusé (règlements chauffeur encore ouverts). */
+const openSettlements = (n: number) =>
+  `${n} règlement${n > 1 ? "s" : ""} chauffeur encore ouvert${n > 1 ? "s" : ""} (à régler, signalé${n > 1 ? "s" : ""} payé${n > 1 ? "s" : ""} ou contesté${n > 1 ? "s" : ""}) : la centrale doit les solder ou les annuler dans Encaissements avant le retour au mode flotte.`;
 
-  // Retour au mode flotte : refusé tant qu'il reste des règlements chauffeur ouverts (écrans Encaissements /
-  // Commissions et relances réservés au mode centrale : dettes et parts à verser ne seraient plus suivies)
-  const openSettlements = (n: number) =>
-    `${n} règlement${n > 1 ? "s" : ""} chauffeur encore ouvert${n > 1 ? "s" : ""} (à régler, signalé${n > 1 ? "s" : ""} payé${n > 1 ? "s" : ""} ou contesté${n > 1 ? "s" : ""}) : la centrale doit les solder ou les annuler dans Encaissements avant le retour au mode flotte.`;
-  if (b.dispatch_model === "centrale" && v.dispatchModel === "fleet") {
-    const { count, error: countError } = await admin
-      .from("ride_settlements")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", orgId)
-      .in("status", ["due", "declared", "disputed"]);
-    if (countError) return { ok: false, error: "Mise à jour impossible." };
-    if (count) return { ok: false, error: openSettlements(count) };
-  }
-
-  const { error } = await admin
-    .from("organizations")
-    .update({ dispatch_model: v.dispatchModel, platform_fee_percent: v.platformFeePercent, platform_fee_fixed_cents: v.platformFeeFixedCents } as never)
-    .eq("id", orgId);
-  if (error) {
-    // Garde SQL (organizations_dispatch_model_guard) : règlement ouvert entre-temps
-    const open = /SETTLEMENTS_OPEN: (\d+)/.exec(error.message ?? "");
-    if (open) return { ok: false, error: openSettlements(Number(open[1])) };
-    return { ok: false, error: error.code === "23514" ? "Frais plateforme hors limites (0 à 50 %, 0 à 1 000 €)." : "Mise à jour impossible." };
-  }
-
-  const modelChanged = b.dispatch_model !== v.dispatchModel;
-  await audit({
-    organizationId: orgId,
-    actorUserId: session.user.id,
-    actorType: "super_admin",
-    action: modelChanged ? "organization.dispatch_model_changed" : "organization.platform_fee_changed",
-    entityType: "organizations",
-    entityId: orgId,
-    severity: modelChanged ? "warning" : "info",
-    metadata: {
-      before: { dispatch_model: b.dispatch_model, platform_fee_percent: Number(b.platform_fee_percent), platform_fee_fixed_cents: b.platform_fee_fixed_cents },
-      after: { dispatch_model: v.dispatchModel, platform_fee_percent: v.platformFeePercent, platform_fee_fixed_cents: v.platformFeeFixedCents },
-      // Lien d'inscription conservé tel quel lors d'un changement de modèle
-      join_link_enabled: b.join_enabled,
-    },
-  });
+/** Fiche de l'organisation, comptes Frais Rydar et listes relus après un réglage. */
+function revalidateFees(orgId: string) {
   revalidatePath(`/admin/organizations/${orgId}`);
   revalidatePath("/admin/organizations");
   revalidatePath("/admin/centrales");
   // Frais Rydar (centrales ET flottes) : vue d'ensemble et compte relus ; le tableau de bord de l'organisation est
-  // prévenu par la base (trigger organizations_platform_rates_broadcast : « platform.updated », rates / model)
+  // prévenu par la base (« platform.updated » : rates / model par le déclencheur, rates_scheduled / rates_cancelled)
   revalidatePath("/admin/frais");
   revalidatePath(`/admin/frais/${orgId}`);
-  return { ok: true };
+}
+
+export type PlatformFeeSaveResult =
+  | {
+      ok: true;
+      /** SCHEDULED : hausse annoncée ; APPLIED : modèle et / ou taux appliqués ; CANCELLED : annonce annulée ; UNCHANGED */
+      code: Extract<SetPlatformFeesResult, { ok: true }>["code"];
+      /** Résumé écrit par la base (taux, date d'effet, e-mails envoyés) */
+      message: string;
+      scheduledChange: PlatformScheduledFeeChange | null;
+      emailsQueued: number;
+    }
+  | { ok: false; error: string; fieldErrors?: Record<string, string>; minEffectiveOn?: string };
+
+/**
+ * Modèle d'exploitation (flotte / centrale à commission) + frais par course d'une organisation existante, par
+ * svc_platform_set_fees (auteur revérifié, historique, e-mails et journal d'audit écrits en base) :
+ *  - taux absents : changement de modèle seul (taux et hausse annoncée inchangés) ;
+ *  - baisse ou taux inchangés : tout de suite (une hausse annoncée est alors remplacée, donc annulée) ;
+ *  - HAUSSE : annoncée par e-mail au propriétaire, appliquée à sa date d'effet (au plus tôt 30 jours après l'annonce, et
+ *    pas avant l'entrée en vigueur des CGV si l'organisation ne les a pas acceptées) ; ou tout de suite sur « accord
+ *    écrit de l'organisation reçu » (note obligatoire, journalisée).
+ * Retour au mode flotte : refusé s'il reste des règlements chauffeur ouverts (contrôle de la RPC, puis déclencheur
+ * organizations_dispatch_model_guard). Le lien d'inscription des chauffeurs est conservé dans les deux sens
+ * (20260924006300). Passage en centrale : répartition des courses non clôturées (SQL).
+ */
+export async function updateDispatchModel(orgId: string, input: z.input<typeof platformFeeSettingSchema>): Promise<PlatformFeeSaveResult> {
+  const session = await requireSuperAdmin();
+  if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
+  const parsed = platformFeeSettingSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, FEE_LABELS), fieldErrors: fieldErrors(parsed.error) };
+  const v = parsed.data;
+  const { data, error } = await createAdminClient().rpc("svc_platform_set_fees", {
+    p_org: orgId,
+    p_actor: session.user.id,
+    p_percent: v.platformFeePercent,
+    p_fixed_cents: v.platformFeeFixedCents,
+    p_dispatch_model: v.dispatchModel,
+    p_mode: v.mode,
+    p_effective_on: v.mode === "notice" ? v.effectiveOn : null,
+    p_consent_note: v.mode === "consent" ? v.consentNote : null,
+    ...feeTermsParams(),
+  });
+  if (error) {
+    // Garde SQL (organizations_dispatch_model_guard) : règlement ouvert entre-temps
+    const open = /SETTLEMENTS_OPEN: (\d+)/.exec(error.message ?? "");
+    if (open) return { ok: false, error: openSettlements(Number(open[1])), fieldErrors: { dispatchModel: "Règlements chauffeur encore ouverts" } };
+    return { ok: false, error: actionError(error, "Mise à jour impossible.") };
+  }
+  const res = (data ?? null) as SetPlatformFeesResult | null;
+  if (!res) return { ok: false, error: "Mise à jour impossible." };
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: res.code === "SETTLEMENTS_OPEN" && res.count ? openSettlements(res.count) : res.message,
+      fieldErrors: rpcFieldError(res),
+      minEffectiveOn: res.min_effective_on,
+    };
+  }
+  revalidateFees(orgId);
+  return { ok: true, code: res.code, message: res.message, scheduledChange: res.scheduled_change, emailsQueued: res.emails_queued };
+}
+
+/**
+ * Annule la hausse annoncée affichée (`changeId` : un autre changement entre-temps → refus, rien n'est annulé) ; le
+ * propriétaire est prévenu par e-mail (contenu fixe, file email_outbox). Motif facultatif, gardé dans l'historique.
+ */
+export async function cancelPlatformFeeChange(orgId: string, changeId: string, reason?: string | null): Promise<Result<{ message: string }>> {
+  const session = await requireSuperAdmin();
+  if (!uuid.safeParse(orgId).success || !uuid.safeParse(changeId).success) return { ok: false, error: "Changement introuvable." };
+  const { data, error } = await createAdminClient().rpc("svc_platform_cancel_fee_change", {
+    p_org: orgId,
+    p_actor: session.user.id,
+    p_change: changeId,
+    p_note: reason?.trim().slice(0, 300) || null,
+    p_app_url: env.appUrl || null,
+  });
+  if (error) return { ok: false, error: actionError(error, "Annulation impossible.") };
+  const res = (data ?? null) as CancelPlatformFeeChangeResult | null;
+  if (!res) return { ok: false, error: "Annulation impossible." };
+  if (!res.ok) return { ok: false, error: res.message };
+  revalidateFees(orgId);
+  return { ok: true, message: res.message };
 }
 
 const accessSchema = z.object({

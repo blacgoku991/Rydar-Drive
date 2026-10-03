@@ -61,7 +61,8 @@ export const EMAIL_STATUS_META: Record<EmailStatus, { label: string; tone: Tone 
   failed: { label: "Échec", tone: "red" },
 };
 
-export const EMAIL_KINDS = ["contact_notify", "contact_ack", "contact_reply", "test"] as const;
+/** Types de public.email_outbox (dernière contrainte : 20260924006600, annonces aux organisations). */
+export const EMAIL_KINDS = ["contact_notify", "contact_ack", "contact_reply", "test", "platform_fee_change", "org_terms_update"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
 export const EMAIL_KIND_META: Record<EmailKind, { label: string }> = {
@@ -69,6 +70,8 @@ export const EMAIL_KIND_META: Record<EmailKind, { label: string }> = {
   contact_ack: { label: "Accusé de réception" },
   contact_reply: { label: "Réponse" },
   test: { label: "E-mail de test" },
+  platform_fee_change: { label: "Frais Rydar par course" },
+  org_terms_update: { label: "Nouvelles CGV" },
 };
 
 /** Longueurs maximales (contraintes de public.contact_requests et public.email_outbox) : attributs maxLength. */

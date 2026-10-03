@@ -22,6 +22,9 @@ const RULES = [
   "Seuls les paiements que vous confirmez comptent ; le montant reçu peut différer du montant déclaré.",
   "Une baisse de prix après la course ne réduit les frais qu'après votre accord.",
   "Échéance : fin du cycle (mois ou semaine) + délai ; les paiements soldent les frais les plus anciens d'abord.",
+  // Engagements des CGV (art. 5) que le code ne contrôle pas seul : à respecter à la main
+  "CGV : frais toutes taxes comprises, facture récapitulative à envoyer à la fin de chaque cycle (le relevé n'est pas une facture).",
+  "CGV : « Frais ajoutés » seulement pour corriger une erreur de calcul, sinon avec l'accord écrit de l'organisation ; cycle, délai et seuil de blocage changés en sa défaveur seulement avec son accord écrit.",
 ];
 
 export default async function PlatformFeesPage() {

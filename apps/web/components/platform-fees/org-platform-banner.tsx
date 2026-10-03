@@ -3,27 +3,29 @@
 // admin), lu via org_platform_status :
 //  • rouge : montant en retard (non couvert par une déclaration) ou création de courses suspendue — non fermable ;
 //  • ambre : échéance dans moins de 3 jours ;
-//  • bleu discret : relance récente de Rydar, ou paiement déclaré qui couvre le retard (en attente de Rydar).
+//  • bleu discret : paiement déclaré qui couvre le retard (en attente de Rydar), hausse des frais par course annoncée
+//    (« À partir du JJ/MM/AAAA », 20260924006600), relance récente de Rydar.
 // Rafraîchi sur « platform.updated » et toutes les 5 min ; fermable pour la session (sauf rouge).
-import { formatPrice, type OrgPlatformStatus, type PlatformAccount, type PlatformEvent } from "@rydar/shared";
-import { AlertTriangle, BellRing, Clock3, Lock, X } from "lucide-react";
+import { dateTimeFormat, formatPrice, isoDayLabel, type OrgPlatformStatus, type PlatformAccount, type PlatformEvent } from "@rydar/shared";
+import { AlertTriangle, BellRing, CalendarClock, Clock3, Lock, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
-import { ago, isRecentReminder } from "@/components/platform-fees/org-platform-format";
+import { ago, isRecentReminder, scheduledFeeChangeText } from "@/components/platform-fees/org-platform-format";
 import type { PlatformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 type Tone = "red" | "amber" | "blue";
-type BannerState = { tone: Tone; key: string; icon: React.ReactNode; title: string; detail: string };
+/** `cta` : libellé du lien (défaut « Régler ») */
+type BannerState = { tone: Tone; key: string; icon: React.ReactNode; title: string; detail: string; cta?: string };
 
 const SOON_MS = 3 * 24 * 3600_000;
 const HIDE_KEY = "rydar.platform-banner:";
 
 function dayMonth(iso: string, timeZone: string) {
-  return new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone }).format(new Date(iso));
+  return dateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone }).format(new Date(iso));
 }
 
 /** État du bandeau (null : rien à afficher). `label` : « Frais plateforme » (centrale) ou « Frais Rydar » (flotte, comme
@@ -78,6 +80,18 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       icon: <Clock3 />,
       title: `${label} à régler`,
       detail: `${formatPrice(toPay, cur)} à reverser à Rydar au plus tard le ${dayMonth(a.next_due_at, timeZone)}${reminder}.`,
+    };
+  }
+  // Hausse des frais par course annoncée, pas encore appliquée : annonce (fermable pour la session)
+  const upcoming = scheduledFeeChangeText(a, a.dispatch_model, timeZone);
+  if (upcoming && a.scheduled_change) {
+    return {
+      tone: "blue",
+      key: `scheduled:${a.scheduled_change.id}`,
+      icon: <CalendarClock />,
+      title: `${label}\u00a0: changement le ${isoDayLabel(a.scheduled_change.effective_on)}`,
+      detail: upcoming.next,
+      cta: "Voir",
     };
   }
   if (reminded && a.balance_cents > 0) {
@@ -187,7 +201,7 @@ export function OrgPlatformBanner({
         prefetch={false}
         className={cn("inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-[12px] font-medium transition-colors", t.button)}
       >
-        Régler
+        {state.cta ?? "Régler"}
       </Link>
       {dismissible && (
         <button

@@ -151,9 +151,12 @@ describe("proxy.ts : hôte de mini-site sans mini-site servi", () => {
   });
 
   it("chemins jamais réécrits (API, /book, /rejoindre, pages légales) : inchangés", async () => {
-    for (const path of ["/api/book/elite/quote", "/book/elite", "/rejoindre/ABC123", "/cgu"]) {
+    // /cgv/2026-09-27 : version précédente des CGV (page figée), servie comme /cgv
+    for (const path of ["/api/book/elite/quote", "/book/elite", "/rejoindre/ABC123", "/cgu", "/cgv", "/cgv/2026-09-27"]) {
       expect(rewrittenTo(await visit("coupe.exemple-vtc.fr", path))).toBeNull();
     }
+    // Autre chemin sous /cgv : page du mini-site (404 neutre ici), jamais servi comme page légale
+    expect(new URL(rewrittenTo(await visit("coupe.exemple-vtc.fr", "/cgv/autre"))!).pathname).toBe(UNSERVED);
   });
 
   it("hôtes de la plateforme : jamais concernés (aucune résolution)", async () => {

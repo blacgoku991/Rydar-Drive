@@ -23,6 +23,13 @@ function expectFrenchTypography(text: string) {
   expect(text).not.toMatch(/« /);
   expect(text).not.toMatch(/[^\s\u{a0}][:;!?](\s|$)/u);
 }
+/** Types d'e-mails : dernière contrainte email_outbox_kind_check (20260924006600 : annonces aux organisations). */
+function emailKindsInSql(): string[] {
+  const sql = readFileSync(join(__dirname, "../../../supabase/migrations/20260924006600_platform_fee_schedule.sql"), "utf8");
+  const m = /add constraint email_outbox_kind_check\s+check \(kind in \(([^)]*)\)\)/.exec(sql);
+  if (!m) throw new Error("Contrainte email_outbox_kind_check introuvable");
+  return [...m[1]!.matchAll(/'([^']*)'/g)].map((x) => x[1]!);
+}
 const codePoints = (s: string) => Array.from(s).length;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}]/u;
 
@@ -43,7 +50,9 @@ describe("contact : sujets, tailles de flotte, statuts", () => {
     expect([...CONTACT_TOPICS]).toEqual(sqlValues("  topic text not null"));
     expect([...FLEET_SIZES]).toEqual(sqlValues("  fleet_size text"));
     expect([...CONTACT_STATUSES]).toEqual(sqlValues("  status text not null default 'new'"));
-    expect([...EMAIL_KINDS]).toEqual(sqlValues("  kind text not null"));
+    // Types d'origine (20260924005700), puis la dernière contrainte (20260924006600)
+    expect([...EMAIL_KINDS].slice(0, 4)).toEqual(sqlValues("  kind text not null"));
+    expect([...EMAIL_KINDS]).toEqual(emailKindsInSql());
     expect([...EMAIL_STATUSES]).toEqual(sqlValues("  status text not null default 'pending'"));
     expect(Object.keys(CONTACT_TOPIC_META).sort()).toEqual([...CONTACT_TOPICS].sort());
     expect(Object.keys(FLEET_SIZE_META).sort()).toEqual([...FLEET_SIZES].sort());

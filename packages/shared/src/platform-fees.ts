@@ -2,8 +2,8 @@
 // Les règles d'argent sont appliquées en base (migrations 20260924003000_platform_fees, 20260924006400_fleet_platform_fees) :
 // frais dus dès la fin de la course, registre immuable, baisses validées par le super admin,
 // solde = frais comptabilisés − paiements CONFIRMÉS par le super admin. Ce module les présente.
-// Centrale : frais prélevés sur le prix (plafonnés au prix, rien sans prix). Flotte : % du prix (0 sans prix) + fixe,
-// facturés à la flotte, taux figés à la fin de chaque course (fleetPlatformFee).
+// Centrale : frais calculés sur le prix et déduits dans la répartition (plafonnés au prix, rien sans prix). Flotte : % du
+// prix (0 sans prix) + fixe, facturés à la flotte, taux figés à la fin de chaque course (fleetPlatformFee).
 import { z } from "zod";
 import { isValidIban } from "./format";
 import type { Iso, Uuid } from "./types";
@@ -64,6 +64,8 @@ export interface PlatformAccount {
   block_suspended?: boolean;
   reminded_at: Iso | null;
   reminder_note: string | null;
+  /** Hausse des frais par course annoncée, pas encore appliquée (20260924006600) ; null : aucune */
+  scheduled_change?: PlatformScheduledFeeChange | null;
   month: {
     start: Iso;
     fees_cents: number;
@@ -207,6 +209,220 @@ export interface AdminPlatformOverview {
   };
 }
 
+// -----------------------------------------------------------------------------
+// Changements des frais par course (20260924006600) : hausse annoncée au moins 30 jours à l'avance, ou appliquée tout
+// de suite (création, baisse, accord écrit de l'organisation)
+// -----------------------------------------------------------------------------
+export type PlatformFeeChangeMode = "initial" | "decrease" | "notice" | "consent";
+export type PlatformFeeChangeStatus = "scheduled" | "applied" | "cancelled" | "replaced";
+/** Date au plus tôt d'une hausse : 30 jours après l'annonce, entrée en vigueur des CGV non acceptées, ou date déjà annoncée. */
+export type PlatformFeeMinReason = "notice_30_days" | "terms_effective" | "already_announced";
+
+/** private.platform_account.scheduled_change : encart « À partir du JJ/MM/AAAA » (owner / admin). */
+export interface PlatformScheduledFeeChange {
+  id: Uuid;
+  /** Taux à partir de la date d'effet */
+  percent: number;
+  fixed_cents: number;
+  /** Taux au moment de l'annonce */
+  from_percent: number;
+  from_fixed_cents: number;
+  /** Minuit (fuseau de l'organisation) du jour d'effet ; appliqué par le ménage dans les 5 min */
+  effective_at: Iso;
+  /** Jour d'effet « AAAA-MM-JJ » (fuseau de l'organisation) */
+  effective_on: string;
+  announced_at: Iso;
+}
+
+/** Ligne d'historique (super admin, admin_platform_fee_schedule). */
+export interface PlatformFeeChangeRow {
+  id: Uuid;
+  mode: PlatformFeeChangeMode;
+  status: PlatformFeeChangeStatus;
+  from_percent: number;
+  from_fixed_cents: number;
+  percent: number;
+  fixed_cents: number;
+  effective_at: Iso;
+  effective_on: string;
+  consent_note: string | null;
+  terms_version: string | null;
+  terms_accepted: boolean | null;
+  emails_queued: number;
+  created_at: Iso;
+  created_by_name: string | null;
+  applied_at: Iso | null;
+  closed_at: Iso | null;
+  closed_by_name: string | null;
+  close_reason: string | null;
+  emails: { to_email: string; status: "pending" | "sending" | "sent" | "failed"; sent_at: Iso | null; subject: string; created_at: Iso }[];
+}
+
+/** RPC admin_platform_fee_schedule(p_org, p_org_legal_version, p_org_legal_effective_on, p_percent?, p_fixed_cents?). */
+export interface AdminPlatformFeeSchedule {
+  organization_id: Uuid;
+  dispatch_model: "fleet" | "centrale";
+  timezone: string;
+  currency: string;
+  current: { percent: number; fixed_cents: number; terms_text: string };
+  scheduled: PlatformFeeChangeRow | null;
+  /** null : version des CGV non fournie ou invalide */
+  terms: { version: string; accepted: boolean; accepted_at: Iso | null; effective_on: string } | null;
+  /** Date au plus tôt d'une hausse annoncée maintenant (sans tenir compte du changement déjà annoncé) */
+  min_effective_on: string;
+  min_reason: PlatformFeeMinReason;
+  /** Aperçu d'un réglage (p_percent + p_fixed_cents fournis) */
+  preview: {
+    kind: "increase" | "decrease" | "unchanged";
+    same_as_scheduled: boolean;
+    min_effective_on: string | null;
+    min_reason: PlatformFeeMinReason | null;
+    default_effective_on: string | null;
+    terms_text: string;
+  } | null;
+  history: PlatformFeeChangeRow[];
+}
+
+/** RPC svc_platform_set_fees (service role, actions serveur du super admin). */
+export type SetPlatformFeesResult =
+  | {
+      ok: true;
+      code: "SCHEDULED" | "APPLIED" | "CANCELLED" | "UNCHANGED";
+      message: string;
+      dispatch_model: "fleet" | "centrale";
+      fee_percent: number;
+      fee_fixed_cents: number;
+      scheduled_change: PlatformScheduledFeeChange | null;
+      applied_change_id: Uuid | null;
+      replaced_change_id: Uuid | null;
+      emails_queued: number;
+      terms_accepted: boolean | null;
+      min_effective_on: string | null;
+      min_reason: PlatformFeeMinReason | null;
+    }
+  | {
+      ok: false;
+      code:
+        | "INVALID" | "NOT_FOUND" | "ORG_NOT_NEW" | "SETTLEMENTS_OPEN" | "CONSENT_REQUIRED" | "NOTICE_TOO_SHORT"
+        | "TERMS_VERSION_INVALID";
+      message: string;
+      field?: "platformFeePercent" | "platformFeeFixedCents" | "dispatchModel" | "effectiveOn" | "consentNote" | "mode";
+      min_effective_on?: string;
+      min_reason?: PlatformFeeMinReason;
+      terms_accepted?: boolean | null;
+      count?: number;
+    };
+
+/** RPC svc_platform_cancel_fee_change (service role, action serveur du super admin). */
+export type CancelPlatformFeeChangeResult =
+  | { ok: true; code: "CANCELLED"; message: string; emails_queued: number }
+  | { ok: false; code: "NOT_FOUND" | "FEE_CHANGE_NOT_PENDING"; message: string };
+
+/** RPC svc_org_terms_notify : annonce par e-mail des CGV aux organisations qui ne les ont pas acceptées. */
+export type OrgTermsNotifyResult =
+  | {
+      ok: true;
+      code: "NOTIFIED" | "NOTHING_TO_NOTIFY";
+      message: string;
+      /** Organisations prévenues par cet envoi, e-mails mis en file */
+      organizations: number;
+      emails: number;
+      /** Déjà prévenues pour cette version (une seule annonce par organisation et par version) */
+      already_notified: number;
+      /** Sans adresse valide (propriétaire ni organisation) : pas notées, nouvel essai possible */
+      without_email: number;
+      /** Organisations actives ou suspendues qui n'ont pas accepté la version */
+      not_accepted: number;
+    }
+  | { ok: false; code: "TERMS_VERSION_INVALID" | "TERMS_EFFECTIVE_PASSED"; message: string };
+
+/** Taux de frais par course : % du prix et montant fixe (centimes). */
+export type PlatformFeeRates = { percent: number | string; fixed_cents: number };
+
+/** Centièmes de pour cent (numeric(5,2)) : comparaison exacte de deux taux. */
+const feeHundredths = (percent: number | string) => Math.round(Number(((Number(percent) || 0) * 100).toFixed(6)));
+
+/**
+ * Nature d'un nouveau réglage des frais par course (miroir de svc_platform_set_fees) : HAUSSE dès que l'un des deux
+ * taux augmente (y compris 0 → plus de 0, ou % en baisse avec un fixe en hausse), inchangé si les deux sont égaux,
+ * sinon baisse.
+ */
+export function platformFeeChangeKind(current: PlatformFeeRates, next: PlatformFeeRates): "increase" | "decrease" | "unchanged" {
+  const [cp, np] = [feeHundredths(current.percent), feeHundredths(next.percent)];
+  const [cf, nf] = [Math.trunc(Number(current.fixed_cents) || 0), Math.trunc(Number(next.fixed_cents) || 0)];
+  if (np > cp || nf > cf) return "increase";
+  return np === cp && nf === cf ? "unchanged" : "decrease";
+}
+
+/**
+ * Dates d'une hausse annoncée maintenant (miroir de svc_platform_set_fees) : `min` = date d'effet au plus tôt, `reason`
+ * = ce qui la fixe, `defaultOn` = date proposée. Une hausse égale ou moindre que celle déjà annoncée (les deux taux ≤
+ * ceux annoncés) peut garder la date annoncée ; un remplacement garde par défaut la date annoncée quand elle est permise.
+ * Dates « AAAA-MM-JJ » (jour d'effet, minuit dans le fuseau de l'organisation).
+ */
+export function platformFeeNoticeDates(
+  schedule: Pick<AdminPlatformFeeSchedule, "min_effective_on" | "min_reason"> & {
+    scheduled: Pick<PlatformFeeChangeRow, "percent" | "fixed_cents" | "effective_on"> | null;
+  },
+  next: PlatformFeeRates,
+): { min: string; reason: PlatformFeeMinReason; defaultOn: string } {
+  let min = schedule.min_effective_on;
+  let reason = schedule.min_reason;
+  const s = schedule.scheduled;
+  if (s && feeHundredths(next.percent) <= feeHundredths(s.percent) && Number(next.fixed_cents) <= Number(s.fixed_cents) && s.effective_on < min) {
+    min = s.effective_on;
+    reason = "already_announced";
+  }
+  return { min, reason, defaultOn: s && s.effective_on > min ? s.effective_on : min };
+}
+
+/** Ce qui fixe la date d'effet au plus tôt d'une hausse. */
+export const PLATFORM_FEE_MIN_REASON_LABEL: Record<PlatformFeeMinReason, string> = {
+  notice_30_days: "30 jours après l'annonce",
+  terms_effective: "entrée en vigueur des CGV, pas encore acceptées par l'organisation",
+  already_announced: "date déjà annoncée",
+};
+
+export const PLATFORM_FEE_CHANGE_MODE_META: Record<PlatformFeeChangeMode, { label: string }> = {
+  initial: { label: "Création" },
+  decrease: { label: "Baisse" },
+  notice: { label: "Hausse annoncée" },
+  consent: { label: "Hausse sur accord écrit" },
+};
+
+export const PLATFORM_FEE_CHANGE_STATUS_META: Record<PlatformFeeChangeStatus, { label: string; tone: Tone }> = {
+  scheduled: { label: "Programmé", tone: "amber" },
+  applied: { label: "Appliqué", tone: "green" },
+  cancelled: { label: "Annulé", tone: "neutral" },
+  replaced: { label: "Remplacé", tone: "neutral" },
+};
+
+/** « 05/11/2026 » d'une date « AAAA-MM-JJ » (sans fuseau : c'est déjà un jour local). */
+export function isoDayLabel(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : "—";
+}
+
+/** « AAAA-MM-JJ » + n jours (calendrier, sans fuseau). */
+export function addIsoDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Règle des taux APPLIQUÉS aux courses, selon le modèle (inchangée par 20260924006600) : flotte = taux en vigueur à
+ * la fin de la course ; centrale = taux en vigueur au calcul de la répartition (création, puis chaque changement de
+ * prix, de commission ou de mode de paiement, y compris après la course, par correction). `from` : « maintenant » ou
+ * « cette date » (annonce).
+ */
+export function platformFeeScopeText(model: "fleet" | "centrale" | null | undefined, from: "now" | "date"): string {
+  const at = from === "now" ? "à partir de maintenant" : "à partir de cette date";
+  return model === "centrale"
+    ? `Ils s'appliquent aux répartitions du prix calculées ${at}\u00a0: nouvelles courses, et courses dont le prix, la commission ou le mode de paiement est modifié (y compris une course déjà terminée, par une écriture de correction).`
+    : `Ils s'appliquent aux courses terminées ${at}\u00a0; une course déjà terminée garde ses frais.`;
+}
+
 /** RPC admin_platform_account(p_org, p_month) (super admin). */
 export interface AdminPlatformAccount {
   organization: { id: Uuid; name: string; slug: string; status: OrgStatus; dispatch_model: "fleet" | "centrale"; timezone: string; currency: string };
@@ -223,7 +439,10 @@ export interface PlatformEvent {
     /** Frais par course changés par le super admin (20260924006400) */
     | "rates"
     /** Modèle d'exploitation changé par le super admin (20260924006400) : le tableau de bord se relit */
-    | "model";
+    | "model"
+    /** Hausse des frais par course annoncée (date d'effet à venir), ou annonce annulée (20260924006600) */
+    | "rates_scheduled"
+    | "rates_cancelled";
   organization_id: Uuid;
   /** Identifiants seulement : le canal org:{id} est lisible par tous les membres (dispatchers compris) */
   payment_id?: Uuid;
@@ -272,12 +491,38 @@ export const PLATFORM_CYCLE_META: Record<PlatformBillingCycle, { label: string; 
 };
 
 /**
+ * `round(cents * percent / 100)` de PostgreSQL (type numeric : calcul exact, arrondi « demi loin de zéro »), en
+ * entiers : le pourcentage a deux décimales au plus (colonnes numeric(5,2), arrondi au centième comme la base), jamais
+ * de virgule flottante dans le produit (30 € à 1,15 % = 34,5 c → 35 c comme la base ; 3000 × 1,15 / 100 en virgule
+ * flottante donnait 34,499… → 34 c).
+ */
+export function percentOfCents(cents: number, percent: number | string | null | undefined): number {
+  const amount = Math.trunc(Number(cents) || 0);
+  // Centièmes de pour cent : 1,15 % → 115 (toFixed absorbe l'erreur de représentation, ex. 2,675 × 100 = 267,4999…)
+  const hundredths = Math.round(Number(((Number(percent) || 0) * 100).toFixed(6)));
+  const product = amount * hundredths; // entier exact (|produit| < 2^53 pour les montants et taux admis)
+  const abs = Math.abs(product);
+  const rest = abs % 10_000;
+  const rounded = (abs - rest) / 10_000 + (rest >= 5_000 ? 1 : 0);
+  return product < 0 ? -rounded : rounded;
+}
+
+/**
  * Frais Rydar d'une course de FLOTTE (miroir de private.fleet_platform_fee) : % du prix (0 sans prix) + fixe, sans
- * plafond au prix (facturés à la flotte, pas prélevés sur le prix comme en centrale).
+ * plafond au prix (facturés à la flotte, pas déduits du prix comme en centrale). Arrondi identique à la base.
  */
 export function fleetPlatformFee(priceCents: number | null | undefined, percent: number, fixedCents: number): number {
-  const price = Math.max(0, priceCents ?? 0);
-  return Math.min(10_000_000, Math.round((price * (Number(percent) || 0)) / 100) + (fixedCents || 0));
+  const price = Math.max(0, Math.trunc(Number(priceCents) || 0));
+  return Math.min(10_000_000, percentOfCents(price, percent) + (Math.trunc(Number(fixedCents)) || 0));
+}
+
+/**
+ * Frais Rydar d'une course de CENTRALE (miroir de private.compute_ride_split) : % du prix + fixe, jamais plus que le
+ * prix. Arrondi identique à la base.
+ */
+export function centralePlatformFee(priceCents: number, percent: number, fixedCents: number): number {
+  const price = Math.max(0, Math.trunc(Number(priceCents) || 0));
+  return Math.min(price, percentOfCents(price, percent) + (Math.trunc(Number(fixedCents)) || 0));
 }
 
 /** Écriture d'une course terminée en mode flotte (pas de règlement chauffeur ni de répartition). */
@@ -343,6 +588,38 @@ export const platformTermsSchema = z.object({
   blockAfterDays: z.union([z.literal(""), z.null(), z.undefined(), z.coerce.number().int().min(1, "Entre 1 et 90 jours").max(90, "Entre 1 et 90 jours")])
     .transform((v) => (v === "" || v == null ? null : v)),
 });
+
+/**
+ * Super admin : modèle d'exploitation + frais par course d'une organisation existante (svc_platform_set_fees).
+ *  - taux : les deux, ou aucun (changement de modèle seul : taux et changement annoncé inchangés) ;
+ *  - hausse : « notice » (annoncée, date d'effet facultative : par défaut la plus proche permise) ou « consent » (accord
+ *    écrit de l'organisation reçu : appliquée tout de suite, note obligatoire). Baisse : appliquée tout de suite.
+ */
+export const platformFeeSettingSchema = z
+  .object({
+    dispatchModel: z.enum(["fleet", "centrale"], { message: "Modèle d'exploitation inconnu" }),
+    platformFeePercent: z
+      .union([z.null(), z.undefined(), z.coerce.number().min(0, "Entre 0 et 50 %").max(50, "Entre 0 et 50 %")])
+      .transform((v) => (v == null ? null : feeHundredths(v) / 100))
+      .default(null),
+    platformFeeFixedCents: z
+      .union([z.null(), z.undefined(), z.coerce.number().int("Montant invalide").min(0, "Entre 0 et 1 000 €").max(100_000, "Entre 0 et 1 000 €")])
+      .transform((v) => v ?? null)
+      .default(null),
+    mode: z.enum(["notice", "consent"]).default("notice"),
+    // Clés absentes acceptées (zod 4 : une union avec undefined ne rend pas la clé facultative)
+    effectiveOn: isoDay.default(null),
+    consentNote: optionalText(500).default(null),
+  })
+  .superRefine((v, ctx) => {
+    if ((v.platformFeePercent == null) !== (v.platformFeeFixedCents == null)) {
+      ctx.addIssue({ code: "custom", path: [v.platformFeePercent == null ? "platformFeePercent" : "platformFeeFixedCents"], message: "Indiquez les deux taux (0 si aucun)" });
+    }
+    if (v.mode === "consent" && (v.consentNote ?? "").length < 3) {
+      ctx.addIssue({ code: "custom", path: ["consentNote"], message: "Précisez la date et la forme de l'accord écrit (e-mail, courrier…)" });
+    }
+  });
+export type PlatformFeeSettingInput = z.output<typeof platformFeeSettingSchema>;
 
 /** Super admin : coordonnées de paiement de Rydar (IBAN normalisé : majuscules, sans espaces). */
 export const platformBillingSchema = z.object({

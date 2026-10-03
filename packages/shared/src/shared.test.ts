@@ -459,7 +459,7 @@ describe("WhatsApp Business (Meta)", () => {
   });
 });
 
-import { LEGAL_VERSION, legalVersionAccepted } from "./index";
+import { LEGAL_VERSION, legalAcceptanceState, legalDateLabel, legalVersionAccepted } from "./index";
 
 describe("documents légaux : version acceptée (CGU, confidentialité, règles du fil)", () => {
   it("à accepter : jamais acceptés (null, absent, vide) ou version antérieure", () => {
@@ -485,12 +485,39 @@ describe("documents légaux : version acceptée (CGU, confidentialité, règles 
   });
 });
 
+describe("documents légaux : état d'après le registre (bandeaux du tableau de bord, /admin/legal)", () => {
+  it("accepted : version en vigueur parmi les versions acceptées", () => {
+    expect(legalAcceptanceState(["2026-10-02"], "2026-10-02")).toBe("accepted");
+    expect(legalAcceptanceState(["2026-09-27", "2026-10-02", null], "2026-10-02")).toBe("accepted");
+  });
+  it("updated : seulement une version antérieure (bandeau de mise à jour)", () => {
+    expect(legalAcceptanceState(["2026-09-27"], "2026-10-02")).toBe("updated");
+    expect(legalAcceptanceState(["2025-01-01", "2026-09-27", null, "9999-12-31"], "2026-10-02")).toBe("updated");
+  });
+  it("pending : jamais accepté ; une version postérieure ou un texte libre du registre ne compte pas", () => {
+    expect(legalAcceptanceState([], "2026-10-02")).toBe("pending");
+    expect(legalAcceptanceState([null, undefined, ""], "2026-10-02")).toBe("pending");
+    expect(legalAcceptanceState(["2026-10-03", "9999-12-31"], "2026-10-02")).toBe("pending");
+    expect(legalAcceptanceState(["n'importe quoi", "2026-9-27", " 2026-09-27", "0"], "2026-10-02")).toBe("pending");
+  });
+  it("date en toutes lettres (version, entrée en vigueur), « 1er » le premier du mois", () => {
+    expect(legalDateLabel("2026-10-02")).toBe("2 octobre 2026");
+    expect(legalDateLabel("2026-11-05")).toBe("5 novembre 2026");
+    expect(legalDateLabel("2026-11-01")).toBe("1er novembre 2026");
+    expect(legalDateLabel("2026-09-27")).toBe("27 septembre 2026");
+    expect(legalDateLabel("2026-12-31")).toBe("31 décembre 2026");
+    // Pas une date ISO : rendue telle quelle
+    expect(legalDateLabel("bientôt")).toBe("bientôt");
+    expect(legalDateLabel("2026-13-45")).toBe("2026-13-45");
+  });
+});
+
 describe("frais Rydar des flottes (miroir de private.fleet_platform_fee)", () => {
   it("% du prix (0 sans prix) + fixe, sans plafond au prix", async () => {
     const { fleetPlatformFee, isFleetFeeRide } = await import("./platform-fees");
     expect(fleetPlatformFee(5900, 10, 0)).toBe(590);
     expect(fleetPlatformFee(5900, 0, 200)).toBe(200);
-    expect(fleetPlatformFee(100, 5, 200)).toBe(205); // au-dessus du prix : facturés à la flotte, pas prélevés
+    expect(fleetPlatformFee(100, 5, 200)).toBe(205); // au-dessus du prix : facturés à la flotte, sans plafond
     expect(fleetPlatformFee(null, 10, 200)).toBe(200);
     expect(fleetPlatformFee(undefined, 10, 0)).toBe(0);
     expect(fleetPlatformFee(1234, 2.5, 0)).toBe(31);

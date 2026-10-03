@@ -4,6 +4,7 @@ import {
   ORG_STATUS_META,
   formatNumber,
   formatPrice,
+  isoDayLabel,
   type AdminPlatformRow,
   type PlatformAccount,
   type PlatformEntry,
@@ -216,6 +217,12 @@ function OrgFlags({ row }: { row: AdminPlatformRow }) {
       {row.dispatch_model !== "centrale" && (
         <Badge tone="neutral" dot={false} className="h-[18px]">
           Flotte
+        </Badge>
+      )}
+      {row.scheduled_change && (
+        // Hausse des frais par course annoncée, pas encore appliquée
+        <Badge tone="amber" dot={false} className="h-[18px]">
+          Hausse le {isoDayLabel(row.scheduled_change.effective_on)}
         </Badge>
       )}
     </>

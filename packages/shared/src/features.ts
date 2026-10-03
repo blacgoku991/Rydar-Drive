@@ -1,4 +1,4 @@
-import { formatTime } from "./format";
+import { dateTimeFormat, formatTime } from "./format";
 import type {
   ChatMessage, ChatOverview, DocumentState, DriverChatOverview, FleetReportType, FlightStatus, RideAlertKind, RideAlertSeverity,
 } from "./types";
@@ -257,15 +257,36 @@ export const FLEET_CHAT_RULES_POINTS = [
 ] as const;
 
 // -----------------------------------------------------------------------------
-// Documents légaux (CGU, confidentialité, CGV, accord de traitement) : version en vigueur, commune au web (pages
-// légales, acceptation des centrales) et à l'app chauffeur (règles du fil « Chauffeurs » = CGU).
+// Documents légaux : deux versions, dates ISO (AAAA-MM-JJ) comparables comme du texte, jamais dans le futur
+// (accept_legal_documents refuse une version postérieure au lendemain, heure de Paris ; aucune version en base).
+//  - LEGAL_VERSION : CGU + politique de confidentialité, acceptées à titre personnel par TOUT utilisateur (membres du
+//    tableau de bord, chauffeurs : app, /rejoindre, règles du fil « Chauffeurs » = CGU § 8). L'app l'embarque : la
+//    changer = nouvel écran d'acceptation pour chaque chauffeur (après une mise à jour de l'app) et chaque membre.
+//  - ORG_LEGAL_VERSION : CGV + accord de traitement des données, acceptés au nom de l'organisation par le
+//    propriétaire ou un administrateur (bandeau du tableau de bord, /admin/legal). La changer ne touche ni les
+//    chauffeurs, ni les dispatchers, ni l'app (web seul).
 // -----------------------------------------------------------------------------
 
 /**
- * Version des documents légaux : date ISO (AAAA-MM-JJ), comparable comme du texte. À changer quand leur contenu
- * change de façon importante : centrales et chauffeurs sont alors invités à accepter la nouvelle version.
+ * Version des CGU et de la politique de confidentialité (tout utilisateur, app chauffeur comprise). À changer quand
+ * leur contenu change de façon importante : membres et chauffeurs sont alors invités à accepter la nouvelle version.
  */
 export const LEGAL_VERSION = "2026-09-27";
+
+/**
+ * Version des CGV et de l'accord de traitement (au nom de l'organisation, owner / admin). 2026-10-02 : frais
+ * plateforme par course pour les flottes comme pour les centrales, en plus de l'abonnement (CGV art. 3 à 5) ; accord
+ * de traitement inchangé depuis le 27 septembre 2026.
+ */
+export const ORG_LEGAL_VERSION = "2026-10-02";
+
+/**
+ * Entrée en vigueur de ORG_LEGAL_VERSION pour une organisation déjà cliente à sa publication (version antérieure
+ * acceptée) : dès son acceptation, et AU PLUS TARD à cette date ; elle peut résilier sans frais avant (CGV art. 16 :
+ * modification défavorable annoncée au moins 30 jours à l'avance). Date ISO AAAA-MM-JJ, à revoir avec chaque
+ * nouvelle ORG_LEGAL_VERSION.
+ */
+export const ORG_LEGAL_EFFECTIVE_AT = "2026-11-05";
 
 /**
  * Version acceptée ÉGALE à celle en vigueur (comme le web) : une version « postérieure » inscrite dans le registre
@@ -273,6 +294,30 @@ export const LEGAL_VERSION = "2026-09-27";
  */
 export function legalVersionAccepted(accepted: string | null | undefined, current: string = LEGAL_VERSION): boolean {
   return !!accepted && accepted === current;
+}
+
+/**
+ * Acceptation d'un document d'après les versions inscrites au registre (legal_acceptances) :
+ *  - « accepted » : version en vigueur acceptée (égalité, legalVersionAccepted) ;
+ *  - « updated » : seulement une version ANTÉRIEURE (bandeau de mise à jour) ;
+ *  - « pending » : jamais accepté. Une version « postérieure » ou un texte libre du registre ne compte pas.
+ */
+export type LegalAcceptanceState = "accepted" | "updated" | "pending";
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function legalAcceptanceState(versions: readonly (string | null | undefined)[], current: string): LegalAcceptanceState {
+  if (versions.some((v) => legalVersionAccepted(v, current))) return "accepted";
+  return versions.some((v) => !!v && ISO_DATE.test(v) && v < current) ? "updated" : "pending";
+}
+
+/** Date ISO AAAA-MM-JJ (version, entrée en vigueur) en toutes lettres : « 2 octobre 2026 », « 1er novembre 2026 ». */
+export function legalDateLabel(iso: string): string {
+  const date = new Date(`${iso}T12:00:00Z`);
+  if (!ISO_DATE.test(iso) || Number.isNaN(date.getTime())) return iso;
+  return dateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })
+    .format(date)
+    .replace(/^1 /, "1er ");
 }
 
 /** Motif envoyé : motif choisi, précision libre, ou les deux (« Spam ou publicité — lien douteux »), borné à 200. */

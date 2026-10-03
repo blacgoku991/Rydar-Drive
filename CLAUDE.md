@@ -100,12 +100,15 @@ la centrale doit les frais plateforme à Rydar.
   flotte : validé à la main = « trusted », validation auto = reste « new » (plafonné si passage en centrale).
 - Frais plateforme : dus dès la fin de course (même si le règlement chauffeur est annulé/contesté), registre immuable
   `platform_fee_entries` (changement = correction delta ; BAISSE `pending` jusqu'à validation super admin), paiements FIFO.
-  Flottes aussi (006400) : % prix (0 sans prix) + fixe, taux figés fin de course (`private.fleet_fee_basis`), menu « Frais Rydar »
-  (CGV art. 5 à réécrire avant d'en régler : `CGV_COVERS_FLEET_FEES`).
+  Flottes aussi (006400) : % prix (0 sans prix) + fixe, taux figés fin de course (`private.fleet_fee_basis`), menu « Frais Rydar ».
+  Taux par `svc_platform_set_fees` (006600) : HAUSSE programmée ≥ 30 j (et ≥ `ORG_LEGAL_EFFECTIVE_AT` sans CGV acceptées ;
+  e-mail, ménage) ou accord écrit, baisse immédiate, hausse en UPDATE direct refusée ; web : modèle seul = sans taux (taux
+  actuels renvoyés = annonce annulée) ; arrondi `percentOfCents`. CGV art. 5 et e-mails décrivent CE code : les changer ensemble.
 - Temps réel : `realtime.send` topics `org:{id}` (lu par TOUT membre, dispatcher compris : rien qu'un dispatcher ne lirait pas via
   RLS ; `platform.updated` = ids seulement), `driver:{id}`, `fleet:{org}`.
-- Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` idempotente (version `LEGAL_VERSION` de `@rydar/shared`,
-  changer = nouvelle acceptation : bandeaux web + écran app `terms-gate`).
+- Légal : `platform_legal` (éditeur, /admin/legal), `legal_acceptances` idempotente ; versions séparées (`@rydar/shared`) :
+  `LEGAL_VERSION` = CGU + confidentialité, tous (app embarquée → EAS Update) ; `ORG_LEGAL_VERSION` = CGV + DPA, owner/admin,
+  web seul (bandeau « mise à jour », `ORG_LEGAL_EFFECTIVE_AT`) ; version remplacée figée sur `/cgv/AAAA-MM-JJ`.
 - Site vitrine multi-pages, sans « démo » ; formulaire `/contact` (`lib/contact.ts` → `svc_contact_submit`, mig 005700) →
   `/admin/contacts`. Le web n'envoie AUCUN e-mail : il écrit dans `email_outbox` (adresses validées comme en base,
   accusé de réception au contenu fixe) ; le mailer envoie.

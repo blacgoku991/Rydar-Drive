@@ -5,8 +5,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  networkMoneyLine, networkShareExample, networkTerms, percentOfCents, type NetworkTermsGiverInput,
+  networkMoneyLine, networkShareExample, networkTerms, type NetworkTermsGiverInput,
 } from "./network";
+import { percentOfCents } from "./platform-fees";
 
 const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import.meta.url));
 

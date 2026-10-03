@@ -28,18 +28,26 @@ async function fleet(name: string, fees: { percent?: number; fixed?: number } = 
   return org;
 }
 
-/** Réglage des frais par le super admin (action serveur : client service role). */
-const setFees = (org: Org, percent: number, fixed: number) =>
-  as({ role: "service_role" }, (q) =>
-    q(`update public.organizations set platform_fee_percent = $2, platform_fee_fixed_cents = $3 where id = $1`, [org.id, percent, fixed]));
+/** Super admin auteur des réglages (créé une fois). */
+let feeAdmin: Promise<string> | undefined;
+const feeActor = () => (feeAdmin ??= superAdmin());
 
+/**
+ * Réglage des frais (et du modèle) par le super admin : action serveur → svc_platform_set_fees (service role). Ces
+ * tests appliquent les taux tout de suite, sur accord écrit de l'organisation (sans accord, une hausse est annoncée
+ * 30 jours à l'avance, et une hausse écrite directement par le service role est refusée : 20260924006600).
+ */
+async function setFees(org: Org, percent: number | null, fixed: number | null, model: "fleet" | "centrale" | null = null) {
+  const sa = await feeActor();
+  const [row] = await as({ role: "service_role" }, (q) =>
+    q(`select public.svc_platform_set_fees($1, $2, $3, $4, $5, 'consent', null, 'Accord écrit (test)') as r`, [org.id, sa, percent, fixed, model]));
+  expect(row.r.ok, JSON.stringify(row.r)).toBe(true);
+  return row.r as Record<string, any>;
+}
+
+/** Modèle d'exploitation (et frais, si fournis ; sinon taux inchangés). */
 const setModel = (org: Org, model: "fleet" | "centrale", fees?: { percent: number; fixed: number }) =>
-  as({ role: "service_role" }, (q) =>
-    fees
-      ? q(`update public.organizations set dispatch_model = $2, platform_fee_percent = $3, platform_fee_fixed_cents = $4 where id = $1`, [
-          org.id, model, fees.percent, fees.fixed,
-        ])
-      : q(`update public.organizations set dispatch_model = $2 where id = $1`, [org.id, model]));
+  setFees(org, fees?.percent ?? null, fees?.fixed ?? null, model);
 
 async function driverIn(org: Org): Promise<FDriver> {
   const phone = `06${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`;
@@ -517,9 +525,10 @@ describe("Frais Rydar des flottes : tous les chemins de fin de course et de corr
     const ride2 = await createRideAsOwner(org, { price_cents: 5000, payment_method: "cash" });
     await advance(d2, ride2.id, "IN_PROGRESS");
 
-    // Le super admin passe à 10 % + 3 € ; la course se termine avant l'enregistrement : anciens taux (2 €)
+    // Le super admin passe à 10 % + 3 € (accord écrit) ; la course se termine avant l'enregistrement : anciens taux (2 €)
+    const sa = await feeActor();
     await as({ role: "service_role" }, async (q) => {
-      await q(`update public.organizations set platform_fee_percent = 10, platform_fee_fixed_cents = 300 where id = $1`, [org.id]);
+      await q(`select public.svc_platform_set_fees($1, $2, 10, 300, null, 'consent', null, 'Accord écrit (test)')`, [org.id, sa]);
       await continueTo(d, ride.id, "COMPLETED", "IN_PROGRESS"); // autre connexion, sans attendre ce réglage
     });
     expect(await entriesOf(ride.id)).toEqual([{ kind: "ride", amount_cents: 200, status: "posted" }]);

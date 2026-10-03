@@ -6,7 +6,7 @@ Aucun outil non officiel (WhatsApp Web automatisé, applications « clones ») :
 | Qui envoie | À qui | Quand | Modèle |
 |---|---|---|---|
 | La centrale (son numéro WhatsApp Business, par exemple son compte dispatch) | Chauffeurs | Bouton « Relancer » (Encaissements) et relances automatiques des commissions en retard (une par jour, 3 au plus) | `rappel_commission` |
-| Rydar (votre numéro WhatsApp Business) | Propriétaire de la centrale (téléphone du profil, sinon celui de la centrale) | /admin/frais, compte d'une centrale, « Relancer », puis cocher « Envoyer aussi par WhatsApp » | `rappel_frais_plateforme` |
+| Rydar (votre numéro WhatsApp Business) | Propriétaire de la centrale (téléphone du profil, sinon celui de la centrale) ; jamais une flotte (voir le modèle) | /admin/frais, compte d'une centrale, « Relancer », puis cocher « Envoyer aussi par WhatsApp » | `rappel_frais_plateforme` |
 
 ## Canaux (centrale)
 
@@ -39,9 +39,15 @@ Bonjour, les frais plateforme Rydar Drive de {{1}} s'élèvent à {{2}} (échéa
 
 Exemple de variables : `NovaLink`, `182,40 €`, `05/10/2026`.
 
-Flottes (migration 006400) : la relance part de la même façon ; dans leur tableau de bord, les frais sont sous
-« Frais Rydar » (la page Encaissements d'une flotte y renvoie). Pour un texte neutre, faire approuver un modèle du même
-format (3 variables) qui dit « tableau de bord, rubrique Frais Rydar / Encaissements » et l'indiquer dans la carte WhatsApp.
+Flottes : ce modèle renvoie à l'« onglet Encaissements », qu'une flotte n'a pas (ses frais sont sous « Frais Rydar »).
+Depuis la migration 006600, la relance WhatsApp de Rydar est donc **refusée pour une flotte**
+(`WHATSAPP_FLEET_UNSUPPORTED` dans `svc_platform_remind` ; `admin_platform_whatsapp` renvoie `ready: false`,
+`reason: "FLEET_UNSUPPORTED"`, case « Envoyer aussi par WhatsApp » désactivée). La relance d'une flotte s'affiche
+seulement dans son tableau de bord. Pour la rouvrir : faire approuver un modèle neutre du même format (3 variables), par
+exemple « … Détails et paiement : tableau de bord, menu Frais Rydar ou Encaissements. », l'indiquer dans la carte
+WhatsApp, puis retirer ce refus par une nouvelle migration (`svc_platform_remind`, `admin_platform_whatsapp`). Les CGV
+(article 5) ne prévoient la relance WhatsApp de Rydar qu'en modèle centrale à commission : les mettre à jour en même
+temps.
 
 Un modèle portant un autre nom peut être utilisé : il faut alors l'indiquer dans la carte WhatsApp. Il doit garder le **même nombre de variables, dans le même ordre**.
 
