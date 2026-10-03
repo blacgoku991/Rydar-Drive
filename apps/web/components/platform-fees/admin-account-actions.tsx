@@ -355,9 +355,11 @@ function RemindDialog({
                   ? "Vérification…"
                   : waOk
                     ? `Au ${wa.source === "owner" ? "propriétaire" : `numéro de la ${who(account)}`}${wa.name ? ` (${wa.name})` : ""} : ${wa.to_display}. Modèle validé par Meta, sans votre message.`
-                    : wa.reason === "NOT_CONFIGURED"
-                      ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
-                      : `Aucun numéro valide pour le propriétaire ni pour la ${who(account)}.`}
+                    : wa.reason === "FLEET_UNSUPPORTED"
+                      ? "Indisponible pour une flotte : le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte. La relance reste affichée dans son tableau de bord."
+                      : wa.reason === "NOT_CONFIGURED"
+                        ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
+                        : `Aucun numéro valide pour le propriétaire ni pour la ${who(account)}.`}
               </span>
             </span>
             <Switch checked={viaWhatsApp && waOk} onCheckedChange={setViaWhatsApp} disabled={!waOk} aria-label="Envoyer aussi par WhatsApp" />

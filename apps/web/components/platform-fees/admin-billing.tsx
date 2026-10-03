@@ -108,7 +108,7 @@ function BillingDialog({ open, onOpenChange, billing }: { open: boolean; onOpenC
       <DialogContent
         size="md"
         title="Coordonnées de paiement"
-        description="Les centrales les voient sur leur page Encaissements, avec le montant à régler et leur référence."
+        description="Les organisations les voient dans « Encaissements » (centrale) ou « Frais Rydar » (flotte), avec le montant à régler et leur référence."
       >
         <form
           noValidate

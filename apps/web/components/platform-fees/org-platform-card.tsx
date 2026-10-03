@@ -2,14 +2,15 @@
 // Carte « Frais plateforme Rydar » (owner / admin ; tête de la page Encaissements d'une centrale, page « Frais Rydar »
 // d'une flotte) : ce que l'organisation doit reverser à Rydar, l'échéance, les paiements déclarés et reçus, d'où vient
 // l'argent (centrale seulement : une flotte n'a ni commission ni règlement chauffeur), les relances et le blocage
-// éventuel. « J'ai payé » ouvre la déclaration ; seul Rydar confirme la réception.
+// éventuel, la hausse des frais par course annoncée (« À partir du JJ/MM/AAAA », 20260924006600). « J'ai payé » ouvre la
+// déclaration ; seul Rydar confirme la réception.
 import { formatNumber, formatPrice, platformDueSummary, type OrgPlatformAccount, type PlatformAccount } from "@rydar/shared";
-import { BellRing, FileText, Landmark, Lock, Send, TrendingDown } from "lucide-react";
+import { BellRing, CalendarClock, FileText, Landmark, Lock, Send, TrendingDown } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { PlatformPayDialog } from "@/components/platform-fees/org-pay-dialog";
 import { PlatformPaymentHistory } from "@/components/platform-fees/org-payment-history";
-import { ago, cycleText, feeTermsText, isRecentReminder, price } from "@/components/platform-fees/org-platform-format";
+import { ago, cycleText, feeTermsText, isRecentReminder, price, scheduledFeeChangeText } from "@/components/platform-fees/org-platform-format";
 import { CopyButton } from "@/components/platform-fees/org-platform-ui";
 import { toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,7 @@ export function OrgPlatformCard({
   const reminder = isRecentReminder(a, now);
   const mustPay = a.balance_cents > 0 && remaining > 0;
   const fleet = (data.organization.dispatch_model ?? a.dispatch_model) === "fleet";
+  const upcoming = scheduledFeeChangeText(a, fleet ? "fleet" : "centrale", tz);
 
   return (
     <section id="frais-plateforme" aria-labelledby="frais-plateforme-title" className="scroll-mt-6">
@@ -90,6 +92,12 @@ export function OrgPlatformCard({
         {reminder && (
           <Notice tone="blue" icon={<BellRing />} title={`Rydar vous a relancé ${ago(a.reminded_at, now)}`}>
             {a.reminder_note ? <>«&nbsp;{a.reminder_note}&nbsp;»</> : "Merci de régler vos frais plateforme."}
+          </Notice>
+        )}
+        {/* Hausse des frais par course annoncée (au moins 30 jours à l'avance), pas encore appliquée */}
+        {upcoming && (
+          <Notice tone="amber" icon={<CalendarClock />} title={upcoming.title}>
+            {upcoming.body}
           </Notice>
         )}
 

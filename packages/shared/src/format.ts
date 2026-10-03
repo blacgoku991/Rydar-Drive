@@ -109,6 +109,11 @@ function dayKey(d: Date, timeZone: string) {
   return dateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 }
 
+/** Jour local « AAAA-MM-JJ » d'un instant dans un fuseau (formateur mémorisé). */
+export function localIsoDay(date: Date | string = new Date(), timeZone = TZ): string {
+  return dayKey(new Date(date), timeZone);
+}
+
 /** « Aujourd'hui 14:32 », « Demain 06:30 », « Hier 22:10 », « jeu. 25/09 06:30 ». */
 export function formatRideDate(date: Date | string | null | undefined, timeZone = TZ, now = new Date()): string {
   if (!date) return "—";

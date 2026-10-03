@@ -64,7 +64,7 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   « organisations partenaires » retirée, date remise au 28 septembre) ; `/dpa` : version 2026-10-02, contenu inchangé
   depuis le 27 septembre. `ORG_LEGAL_EFFECTIVE_AT` = `2026-11-05` (entrée en vigueur au plus tard pour une
   organisation déjà cliente). Le texte du bandeau « mise à jour » est provisoire (à finaliser avec le préambule).
-- **Frais Rydar : hausses annoncées (migration `20260924006600`, partie SQL faite, web à brancher)** : réglage par
+- **Frais Rydar : hausses annoncées (migration `20260924006600` + web)** : réglage par
   `svc_platform_set_fees` (création : tout de suite ; baisse : tout de suite ; HAUSSE : programmée au plus tôt au premier
   minuit après 30 jours, et pas avant `ORG_LEGAL_EFFECTIVE_AT` si l'organisation n'a pas accepté `ORG_LEGAL_VERSION`, ou
   tout de suite sur « accord écrit reçu » + note), un seul changement en attente (`public.platform_fee_changes`),
@@ -73,10 +73,13 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   `account.scheduled_change` ; super admin : `admin_platform_fee_schedule`. Annonce des CGV : `svc_org_terms_notify`
   (une fois par organisation et par version). Textes « réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») »,
   relance WhatsApp de Rydar refusée pour une flotte (WHATSAPP.md). Garde SQL : une hausse écrite directement par le
-  service role est refusée (`PLATFORM_FEE_NOTICE_REQUIRED`). Reste au web : actions `createOrganization` (p_mode
-  `initial`) / `updateDispatchModel` sur la RPC (formulaire prérempli avec le changement en attente, ou modèle seul sans
-  taux), fiche super admin, encart et bandeau, bouton « Prévenir par e-mail », alerte en direct selon le modèle,
-  actions temps réel `rates_scheduled` / `rates_cancelled` (relecture du layout : menu « Frais Rydar » d'une flotte à 0 €). **Tâche manuelle du propriétaire** : facture
+  service role est refusée (`PLATFORM_FEE_NOTICE_REQUIRED`). Web : `createOrganization` (p_mode `initial`) et
+  `updateDispatchModel` / `cancelPlatformFeeChange` passent par les RPC (taux inchangés = modèle seul, l'annonce reste) ;
+  fiche super admin (acceptation des CGV, hausse programmée + Annuler, « Programmer avec préavis » + date d'effet ou
+  « Accord écrit reçu, appliquer maintenant » + note, confirmation, historique) ; encart « Vos frais par course changent
+  le JJ/MM/AAAA » (« Frais Rydar » / « Encaissements ») et bandeau ; alertes en direct selon le modèle (`rates`,
+  `rates_scheduled`, `rates_cancelled`) ; relectures par `useLiveSync` ; `/admin/legal` « Prévenir par e-mail » ;
+  `fleetPlatformFee` arrondi comme la base (`percentOfCents`). **Tâche manuelle du propriétaire** : facture
   récapitulative des frais de chaque cycle (le relevé n'est pas une facture). Amélioration possible : figer les taux en
   centrale comme en flotte (aujourd'hui : taux du calcul de la répartition, y compris après la course).
 - **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour

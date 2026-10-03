@@ -108,7 +108,11 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
             <DispatchModelPicker value={model} onChange={setModel} disabled={pending} />
             <div className="rounded-xl border border-line bg-white/[0.02] p-4">
               <p className="mb-1 text-[13px] font-medium text-fg">Frais plateforme Rydar</p>
-              <p className="mb-3 text-[12px] text-fg-muted">{feeRule(model)}</p>
+              <p className="mb-1 text-[12px] text-fg-muted">{feeRule(model)}</p>
+              <p className="mb-3 text-[12px] text-fg-muted">
+                Appliqués dès la création. Ensuite, une hausse est annoncée au moins 30{"\u00a0"}jours à l&apos;avance (ou appliquée sur accord écrit de
+                l&apos;organisation), depuis la fiche du rattacheur.
+              </p>
               <FeeFields model={model} percent={feePercent} fixed={feeFixed} onPercent={setFeePercent} onFixed={setFeeFixed} errors={feeErrors} disabled={pending} />
             </div>
           </div>

@@ -1,4 +1,4 @@
-import type { OrgPlatformAccount } from "@rydar/shared";
+import { isoDayLabel, type OrgPlatformAccount } from "@rydar/shared";
 import { Landmark } from "lucide-react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
@@ -19,6 +19,7 @@ const RULES = [
   "Montant : le pourcentage s'applique au prix de la course, les frais fixes sont dus même sans prix.",
   "Taux en vigueur à la fin de la course ; un prix corrigé ensuite ajoute une correction (une baisse attend l'accord de Rydar).",
   "Seuls les paiements confirmés par Rydar font baisser le solde ; ils soldent d'abord les échéances les plus anciennes.",
+  "Toute hausse de ces frais vous est annoncée au moins 30 jours à l'avance (par e-mail et sur cette page), sauf accord écrit de votre part ; une baisse s'applique tout de suite.",
 ];
 
 /**
@@ -89,7 +90,9 @@ export default async function FleetPlatformFeesPage() {
           <>
             {perRide
               ? `En plus de votre abonnement, Rydar facture ${feeTermsText(acc.account)}.`
-              : "Aucun frais par course pour l'instant : seuls les montants déjà enregistrés restent à régler."}{" "}
+              : acc.account.scheduled_change
+                ? `Aucun frais par course pour l'instant\u00a0: un changement est annoncé à partir du ${isoDayLabel(acc.account.scheduled_change.effective_on)} (détail ci-dessous).`
+                : "Aucun frais par course pour l'instant\u00a0: seuls les montants déjà enregistrés restent à régler."}{" "}
             Réglez Rydar puis déclarez votre paiement ici&nbsp;: Rydar confirme sa réception. Vos chauffeurs ne voient jamais ces frais.
           </>
         }

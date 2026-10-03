@@ -190,9 +190,16 @@ describe("Équipe : ajout d'un membre", () => {
 describe("Super admin : propriétaire et accès", () => {
   const org = { name: "Taxis Dupont", slug: "taxis-dupont", email: "contact@taxis-dupont.fr", ownerName: "Paul Dupont", ownerEmail: "contact@taxis-dupont.fr", ownerPassword: "Provisoire-2026" };
 
+  // Réglage initial du modèle et des frais (svc_platform_set_fees « initial ») : accepté
+  const initialFees = (op: Op): Reply => (op.table === "rpc:svc_platform_set_fees" ? { data: { ok: true, code: "UNCHANGED" } } : undefined);
+
   it("création de centrale : propriétaire au compte existant = invitation, jamais rattaché actif", async () => {
     h.handle = (op) =>
-      op.table === "users" ? { data: { id: EXISTING } } : op.table === "organizations" && op.action === "insert" ? { data: { id: ORG } } : undefined;
+      op.table === "users"
+        ? { data: { id: EXISTING } }
+        : op.table === "organizations" && op.action === "insert"
+          ? { data: { id: ORG } }
+          : initialFees(op);
     const res = await adminActions.createOrganization(org);
     expect(res).toMatchObject({ ok: true, id: ORG, ownerInvited: true, emailSent: true, passwordIgnored: true });
     expect(writes("organization_users")[0]?.values).toMatchObject({ user_id: EXISTING, role: "owner", status: "invited" });
@@ -203,7 +210,11 @@ describe("Super admin : propriétaire et accès", () => {
     h.ops.length = 0;
     h.emails.length = 0;
     h.handle = (op) =>
-      op.table === "users" ? { data: { id: OWNER } } : op.table === "organizations" && op.action === "insert" ? { data: { id: ORG } } : undefined;
+      op.table === "users"
+        ? { data: { id: OWNER } }
+        : op.table === "organizations" && op.action === "insert"
+          ? { data: { id: ORG } }
+          : initialFees(op);
     expect(await adminActions.createOrganization(org)).toMatchObject({ ok: true, ownerInvited: false });
     expect(writes("organization_users")[0]?.values).toMatchObject({ user_id: OWNER, status: "active" });
     expect(h.emails).toEqual([]);

@@ -102,6 +102,9 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
   // (diffusion perdue sans coupure du canal)
   const { schedule } = useLiveSync(() => router.refresh(), { pollMs: 15_000, maxPollMs: 120_000, livePollMs: 300_000, debounceMs: 450 });
   useRealtimeEvent("settlement.updated", schedule);
+  // Carte « Frais plateforme » en tête de page (owner / admin) : paiement, relance, frais par course changés, hausse
+  // annoncée ou annulée (« platform.updated », identifiants seulement : la page relue contrôle le rôle)
+  useRealtimeEvent("platform.updated", () => canManage && schedule());
   // Une commission passe « en retard » à son échéance, sans événement : montants « En retard » relus à ce moment-là
   const nextDue = useMemo(() => {
     let next = Infinity;
