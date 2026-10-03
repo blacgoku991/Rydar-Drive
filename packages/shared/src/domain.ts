@@ -258,7 +258,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   WEBHOOK_TEST_RATE_LIMITED: "Trop de tests et de renvois de webhooks en une minute (10 au plus par centrale) : réessayez dans un instant.",
   // Interrupteur plateforme des mini-sites (20260924006200)
   BOOKING_SITES_DISABLED: "Les mini-sites de réservation sont momentanément désactivés par Rydar.",
-  // Réseau partagé (20260924006600 à 20260924007000 ; liste : NETWORK_ERROR_CODES de network.ts)
+  // Réseau partagé (20260924006700 à 20260924007100 ; liste : NETWORK_ERROR_CODES de network.ts)
   NETWORK_DISABLED: "Le réseau partagé est momentanément désactivé par Rydar.",
   NETWORK_SUSPENDED: "Réseau partagé suspendu par Rydar pour votre organisation : contactez Rydar.",
   NETWORK_TERMS_REQUIRED: "Acceptez la convention du réseau partagé pour l'activer.",

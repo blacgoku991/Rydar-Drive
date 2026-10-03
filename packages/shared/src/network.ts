@@ -13,7 +13,8 @@
 //     course partenaire.
 //   • Interrupteur plateforme coupé par défaut (public.shared_network_enabled()) : tant qu'il est coupé, rien ne change.
 //
-// Ce module fixe les formes JSON des RPC réseau (migrations 20260924006600 à 20260924007000), les raisons
+// Ce module fixe les formes JSON des RPC réseau (migrations 20260924006700 à 20260924007100 : schéma 006700, dispatch
+// 006800, argent 006900, accès 007000, administration 007100), les raisons
 // (dispatch, lisibilité, blocages) avec leurs libellés, la version de la convention, et networkTerms() : miroir EXACT de
 // private.network_terms (arrondis du SQL : round() de PostgreSQL sur numeric, demi-unité loin de zéro).
 // Mots interdits dans tous les textes du réseau (§7.1) : NETWORK_FORBIDDEN_WORDS.
@@ -1072,7 +1073,7 @@ export interface DriverNetworkState {
   payout: DriverPayoutInfo;
 }
 
-/** driver_home().network (20260924006800). */
+/** driver_home().network (lot argent, 20260924006900). */
 export interface DriverHomeNetwork {
   owed_cents: number;
   overdue_cents: number;

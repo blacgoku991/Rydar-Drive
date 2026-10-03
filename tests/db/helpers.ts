@@ -234,3 +234,115 @@ export async function createMember(org: Org, role: "owner" | "admin" | "dispatch
 
 /** Date ISO dans n minutes. */
 export const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+
+// -----------------------------------------------------------------------------
+// Réseau partagé (20260924006700) : réglages écrits directement (les RPC d'administration arrivent avec le lot
+// 20260924007100). L'interrupteur est coupé par la migration : un fichier qui l'allume le recoupe dans son afterAll.
+// -----------------------------------------------------------------------------
+
+/** Interrupteur plateforme du réseau partagé. */
+export async function setSharedNetwork(enabled: boolean) {
+  await sql("update public.platform_settings set shared_network_enabled = $1 where id", [enabled]);
+}
+
+/** Version courante de la convention du réseau (platform_settings.network_terms_version). */
+export async function networkTermsVersion(): Promise<string> {
+  const [row] = await sql("select network_terms_version as v from public.platform_settings where id");
+  return row.v as string;
+}
+
+/**
+ * Adhésion d'une organisation, comme après « J'accepte la convention » et les réglages de l'onglet : partage (out :
+ * lien de paiement proposé, frais Rydar de 10 % si l'organisation n'en a pas) et / ou réception (in : assurance
+ * confirmée). Ne valide pas (approveNetwork).
+ */
+export async function enableNetwork(org: Org, dirs: { out?: boolean; in?: boolean }) {
+  const version = await networkTermsVersion();
+  await sql(
+    `insert into public.network_memberships (organization_id, share_out, share_in, terms_version, terms_accepted_at,
+       terms_accepted_by, requested_at, insurance_confirmed_at, insurance_confirmed_by)
+     values ($1, $2, $3, $4, now(), $5, now(), case when $3 then now() end, case when $3 then $5::uuid end)
+     on conflict (organization_id) do update
+       set share_out = excluded.share_out, share_in = excluded.share_in, terms_version = excluded.terms_version,
+           terms_accepted_at = excluded.terms_accepted_at, terms_accepted_by = excluded.terms_accepted_by,
+           insurance_confirmed_at = coalesce(public.network_memberships.insurance_confirmed_at, excluded.insurance_confirmed_at),
+           insurance_confirmed_by = coalesce(public.network_memberships.insurance_confirmed_by, excluded.insurance_confirmed_by)`,
+    [org.id, !!dirs.out, !!dirs.in, version, org.ownerId],
+  );
+  if (dirs.out) {
+    await sql(
+      `update public.organization_settings
+          set settlement_methods = '{link,cash}', settlement_link = coalesce(settlement_link, 'https://pay.example.com/rydar')
+        where organization_id = $1`,
+      [org.id],
+    );
+    await sql(
+      `update public.organizations set platform_fee_percent = 10
+        where id = $1 and platform_fee_percent = 0 and platform_fee_fixed_cents = 0`,
+      [org.id],
+    );
+  }
+}
+
+/** Validation par Rydar : identité de l'organisation complétée, puis instantané (raison sociale, SIRET, n° VTC). */
+export async function approveNetwork(org: Org) {
+  await sql(
+    `update public.organizations
+        set legal_name = coalesce(legal_name, name || ' SAS'), siret = coalesce(siret, '12345678901234'),
+            vtc_registration = coalesce(vtc_registration, 'EVTC075230001')
+      where id = $1`,
+    [org.id],
+  );
+  await sql(
+    `update public.network_memberships m
+        set approved_at = now(), refused_reason = null, approved_legal_name = o.legal_name,
+            approved_siret = o.siret, approved_vtc_registration = o.vtc_registration
+       from public.organizations o
+      where o.id = m.organization_id and m.organization_id = $1`,
+    [org.id],
+  );
+}
+
+/** Chauffeur : conditions du réseau acceptées (version courante), interrupteur activé, autorisé par son organisation. */
+export async function acceptDriverTerms(driver: Pick<Driver, "id">) {
+  const version = await networkTermsVersion();
+  await sql(
+    `insert into public.driver_network_settings (driver_id, organization_id, enabled, accepted_version, accepted_at)
+     select d.id, d.organization_id, true, $2, now() from public.drivers d where d.id = $1
+     on conflict (driver_id) do update set enabled = true, accepted_version = excluded.accepted_version, accepted_at = now()`,
+    [driver.id, version],
+  );
+}
+
+/** Nouvelle app du chauffeur déclarée capable d'afficher les offres réseau (driver_network_ping). */
+export async function pingApp(driver: Pick<Driver, "id">) {
+  await sql(
+    `insert into public.driver_network_settings (driver_id, organization_id, capable_at)
+     select d.id, d.organization_id, now() from public.drivers d where d.id = $1
+     on conflict (driver_id) do update set capable_at = now()`,
+    [driver.id],
+  );
+}
+
+/**
+ * Termes figés d'une course partagée (contrat NetworkTerms de @rydar/shared) : part de A = commission + frais Rydar ;
+ * le chauffeur encaisse à bord (espèces, carte) → il reverse la part de A, sinon A lui verse sa part.
+ */
+export function networkTermsJson(t: { price: number; method?: string; commission?: number; fee: number }) {
+  const method = t.method ?? "card";
+  const commission = t.commission ?? 0;
+  const cut = commission + t.fee;
+  const payout = t.price - cut;
+  const collects = method === "cash" || method === "card";
+  return {
+    price_cents: t.price,
+    payment_method: method,
+    collects,
+    commission_cents: commission,
+    platform_fee_cents: t.fee,
+    giver_cut_cents: cut,
+    driver_payout_cents: payout,
+    direction: collects ? "driver_owes" : "centrale_owes",
+    amount_cents: collects ? cut : payout,
+  };
+}
