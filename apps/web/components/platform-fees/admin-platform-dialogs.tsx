@@ -16,7 +16,7 @@ import {
 import { centsToInput, eurosToCents } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Field, Input, Textarea } from "@/components/ui/input";
+import { Field, Input, Textarea, asFieldControl } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
 import { PLATFORM_METHOD_ICON, formatDay, platformMethodLabel, signedPrice } from "./admin-platform-format";
@@ -44,15 +44,15 @@ export function usePlatformRunner() {
 }
 
 // ---------------------------------------------------------------------------- champs
-/** Montant en euros (« 120 », « 120,50 ») avec le symbole à droite. */
-export function AmountInput({ className, invalid, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
+/** Montant en euros (« 120 », « 120,50 ») avec le symbole à droite ; relié par Field (id, aide, erreur). */
+export const AmountInput = asFieldControl(function AmountInput({ className, invalid, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
   return (
     <div className="relative">
       <Input inputMode="decimal" autoComplete="off" className={cn("num pr-8", className)} aria-invalid={invalid || undefined} {...props} />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-fg-subtle">€</span>
     </div>
   );
-}
+});
 
 /** Motifs fréquents (un clic remplit le champ). */
 export function Chips({ options, onPick }: { options: readonly string[]; onPick: (v: string) => void }) {

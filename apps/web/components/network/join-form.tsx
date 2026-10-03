@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 /** Champs 16 px sur mobile : pas de zoom automatique d'iOS à la saisie. */
 const INPUT = "h-11 text-base sm:text-sm";
@@ -233,7 +234,12 @@ export function JoinForm({
         </div>
         <div data-field="vehicle.category">
           <p className="mb-1.5 text-[12.5px] font-medium text-fg-muted">Catégorie</p>
-          <div role="radiogroup" aria-label="Catégorie du véhicule" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div
+            role="radiogroup"
+            aria-label="Catégorie du véhicule"
+            aria-describedby={err("vehicle.category") ? "join-category-error" : undefined}
+            className="grid grid-cols-2 gap-2 sm:grid-cols-3"
+          >
             {VEHICLE_CATEGORIES.map((c) => (
               <button
                 key={c}
@@ -251,7 +257,11 @@ export function JoinForm({
               </button>
             ))}
           </div>
-          {err("vehicle.category") && <p className="mt-1.5 text-xs text-red">{err("vehicle.category")}</p>}
+          {err("vehicle.category") && (
+            <p id="join-category-error" className="mt-1.5 text-xs text-red">
+              {err("vehicle.category")}
+            </p>
+          )}
         </div>
         <div data-field="vehicle.seats" className="flex items-center justify-between gap-4 rounded-xl border border-line px-3.5 py-2.5">
           <span>
@@ -289,16 +299,26 @@ export function JoinForm({
       <div className="space-y-4">
         <div data-field="acceptTerms">
           <label className={cn("flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 text-[13px] leading-relaxed", err("acceptTerms") ? "border-red/50 bg-red/[0.05]" : "border-line")}>
-            <input type="checkbox" name="acceptTerms" className="mt-0.5 size-[18px] shrink-0 accent-[var(--color-brand)]" aria-invalid={!!err("acceptTerms")} />
+            <input
+              type="checkbox"
+              name="acceptTerms"
+              className="mt-0.5 size-[18px] shrink-0 accent-[var(--color-brand)]"
+              aria-invalid={!!err("acceptTerms")}
+              aria-describedby={err("acceptTerms") ? "join-terms-error" : undefined}
+            />
             <span className="text-fg-muted">
               J&apos;accepte les{" "}
-              <a href="/cgu" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">conditions d&apos;utilisation</a> de Rydar Drive et la
+              <a href="/cgu" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">conditions d&apos;utilisation<NewTabHint /></a> de Rydar Drive et la
               transmission de mes informations à <span className="text-fg">{organizationName}</span> pour l&apos;étude de ma candidature (voir la{" "}
-              <a href="/confidentialite" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">politique de confidentialité</a>). Je certifie
+              <a href="/confidentialite" target="_blank" rel="noopener" className="text-fg underline underline-offset-2">politique de confidentialité<NewTabHint /></a>). Je certifie
               être chauffeur VTC en règle.
             </span>
           </label>
-          {err("acceptTerms") && <p className="mt-1.5 text-xs text-red">{err("acceptTerms")}</p>}
+          {err("acceptTerms") && (
+            <p id="join-terms-error" className="mt-1.5 text-xs text-red">
+              {err("acceptTerms")}
+            </p>
+          )}
         </div>
 
         {error && (

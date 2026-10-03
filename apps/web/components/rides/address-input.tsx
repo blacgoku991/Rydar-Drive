@@ -1,7 +1,7 @@
 "use client";
 import { Building2, MapPin, Plane, TrainFront } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { fieldBase } from "@/components/ui/input";
+import { asFieldControl, fieldBase } from "@/components/ui/input";
 import type { Place } from "@/lib/places";
 import { cn } from "@/lib/utils";
 
@@ -9,7 +9,11 @@ export type PlaceValue = { address: string; lat: number | null; lng: number | nu
 
 const KIND_ICON = { airport: Plane, station: TrainFront, poi: Building2, address: MapPin, city: MapPin };
 
-export function AddressInput({
+/**
+ * Adresse avec suggestions (combobox ARIA : liste, option active annoncée). Nom accessible : `label`, sinon le texte
+ * indicatif ; relié par Field (id, aide ou erreur, état d'erreur) comme un champ ordinaire.
+ */
+export const AddressInput = asFieldControl(function AddressInput({
   value,
   onChange,
   placeholder,
@@ -17,6 +21,10 @@ export function AddressInput({
   invalid,
   autoFocus,
   near,
+  label,
+  id,
+  "aria-describedby": describedBy,
+  "aria-invalid": ariaInvalid,
 }: {
   value: PlaceValue;
   onChange: (v: PlaceValue) => void;
@@ -26,6 +34,11 @@ export function AddressInput({
   autoFocus?: boolean;
   /** Point de référence pour classer les résultats par proximité */
   near?: { lat: number; lng: number } | null;
+  /** Nom accessible (par défaut : le texte indicatif) */
+  label?: string;
+  id?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
 }) {
   const [query, setQuery] = useState(value.address);
   const [results, setResults] = useState<Place[]>([]);
@@ -77,14 +90,19 @@ export function AddressInput({
         )}
       />
       <input
+        id={id}
         className={cn(fieldBase, "h-11 pl-9 pr-9")}
         placeholder={placeholder}
         value={query}
         autoFocus={autoFocus}
-        aria-invalid={invalid}
+        aria-label={label ?? placeholder}
+        aria-describedby={describedBy}
+        aria-invalid={ariaInvalid ?? invalid}
         role="combobox"
+        aria-autocomplete="list"
         aria-expanded={open && results.length > 0}
         aria-controls={listId}
+        aria-activedescendant={open && results.length > 0 ? `${listId}-option-${active}` : undefined}
         autoComplete="off"
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
@@ -111,7 +129,7 @@ export function AddressInput({
         {loading ? (
           <span className="block size-3.5 animate-spin rounded-full border-2 border-fg-subtle border-r-transparent" />
         ) : value.lat != null ? (
-          <span className="block size-1.5 rounded-full bg-green" title="Adresse géolocalisée" />
+          <span className="block size-1.5 rounded-full bg-green" title="Adresse géolocalisée" role="img" aria-label="Adresse géolocalisée" />
         ) : null}
       </span>
       {open && results.length > 0 && (
@@ -121,6 +139,7 @@ export function AddressInput({
             return (
               <li
                 key={`${r.address}-${i}`}
+                id={`${listId}-option-${i}`}
                 role="option"
                 aria-selected={i === active}
                 onMouseDown={(e) => {
@@ -144,4 +163,4 @@ export function AddressInput({
       )}
     </div>
   );
-}
+});

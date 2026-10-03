@@ -124,9 +124,11 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
             <input
+              type="search"
               name="q"
               defaultValue={q}
               placeholder="N° de course, client, téléphone, adresse…"
+              aria-label="Rechercher une course"
               className="h-10 w-full rounded-lg border border-line-strong bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60"
             />
           </div>

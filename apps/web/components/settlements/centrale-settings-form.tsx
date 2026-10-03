@@ -16,10 +16,11 @@ import { centraleIssues } from "@/components/settlements/settings-schema";
 import { centsToInput, eurosToCents } from "@/components/settlements/split-preview";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Field, Input, Textarea } from "@/components/ui/input";
+import { Field, Input, Textarea, asFieldControl } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 export type CentraleSettingsRow = {
   driver_commission_percent: number | null;
@@ -87,15 +88,15 @@ const cents = (v: string) => {
   return c == null ? "" : c;
 };
 
-/** Entrée avec unité à droite (« % », « € », « h »). */
-function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
+/** Entrée avec unité à droite (« % », « € », « h ») ; reliée par Field (id, aide, erreur). */
+const UnitInput = asFieldControl(function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
   return (
     <div className="relative">
       <Input inputMode="decimal" {...props} className={cn("mono pr-10", className)} />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-fg-subtle">{unit}</span>
     </div>
   );
-}
+});
 
 export function CentraleSettingsForm({
   settings,
@@ -316,7 +317,8 @@ export function CentraleSettingsForm({
                   {linkPreview ? (
                     <a href={linkPreview} target="_blank" rel="noopener noreferrer" className="mono mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-blue hover:underline">
                       <span className="truncate">{linkPreview}</span>
-                      <ExternalLink className="size-3.5 shrink-0" />
+                      <ExternalLink aria-hidden className="size-3.5 shrink-0" />
+                      <NewTabHint />
                     </a>
                   ) : (
                     <p className="mt-1 text-[12.5px] text-fg-subtle">{f.link.trim() ? "Lien invalide : il doit commencer par https://" : "Collez le lien de votre compte (Revolut, PayPal, Lydia, Stripe…)."}</p>

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { StatusScreen } from "@/components/auth/status-screen";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Field, Input } from "@/components/ui/input";
 import { getBrowserClient } from "@/lib/supabase/client";
 
 export default function ForgotPasswordPage() {
@@ -26,7 +26,9 @@ export default function ForgotPasswordPage() {
             setSent(true);
           }}
         >
-          <Input name="email" type="email" required placeholder="vous@centrale.fr" className="h-11" />
+          <Field label="Adresse e-mail du compte">
+            <Input name="email" type="email" required autoComplete="email" placeholder="vous@centrale.fr" className="h-11" />
+          </Field>
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={loading}>Envoyer le lien</Button>
           <Link href="/login" className="block text-center text-[12.5px] text-fg-subtle hover:text-fg">Retour à la connexion</Link>
         </form>
