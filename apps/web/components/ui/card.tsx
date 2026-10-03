@@ -11,14 +11,17 @@ export function CardHeader({
   action,
   className,
   icon,
-  as: Heading = "h3",
+  as: Heading = "h2",
 }: {
   title: React.ReactNode;
   description?: React.ReactNode;
   action?: React.ReactNode;
   icon?: React.ReactNode;
   className?: string;
-  /** Niveau du titre : h2 quand la carte suit directement le h1 de la page (pas de saut de niveau), h3 sous un h2 */
+  /**
+   * Niveau du titre : h2 par défaut (carte posée sous le h1 de la page, sans saut de niveau) ; h3 pour une carte placée
+   * sous un titre de section h2.
+   */
   as?: "h2" | "h3";
 }) {
   return (

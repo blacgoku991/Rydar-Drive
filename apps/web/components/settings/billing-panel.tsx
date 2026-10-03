@@ -90,7 +90,7 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
                 <span className="text-fg-muted">{formatDate(i.period_start)}</span>
                 <span className="num font-semibold">{formatPrice(i.amount_due_cents, i.currency)}</span>
                 <Badge tone={i.status === "paid" ? "green" : i.status === "payment_failed" ? "red" : "amber"}>{i.status === "paid" ? "Payée" : i.status === "payment_failed" ? "Échec" : i.status}</Badge>
-                {i.hosted_invoice_url ? <a href={i.hosted_invoice_url} target="_blank" rel="noreferrer" className="text-fg-subtle hover:text-fg"><ExternalLink className="size-4" /></a> : <span className="w-4" />}
+                {i.hosted_invoice_url ? <a href={i.hosted_invoice_url} target="_blank" rel="noreferrer" className="text-fg-subtle hover:text-fg" aria-label={`Ouvrir la facture ${i.number ?? ""} (nouvel onglet)`}><ExternalLink aria-hidden className="size-4" /></a> : <span className="w-4" />}
               </div>
             ))}
           </div>

@@ -79,7 +79,7 @@ export default async function AdminOverview() {
           </Card>
           <Card>
             <CardHeader title="Alertes récentes" description="Avertissements et erreurs de dispatch (7 jours)." />
-            <div className="max-h-[330px] divide-y divide-line overflow-y-auto">
+            <div className="max-h-[330px] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Alertes récentes">
               {(o.recent_errors ?? []).length === 0 && <p className="px-5 py-6 text-[13px] text-fg-subtle">Aucune alerte.</p>}
               {(o.recent_errors ?? []).map((e: any) => (
                 <div key={e.id} className="px-5 py-2.5">

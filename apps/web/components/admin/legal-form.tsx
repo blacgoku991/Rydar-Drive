@@ -72,11 +72,11 @@ export function LegalInfoForm({ initial }: { initial: Values }) {
   return (
     <form onSubmit={submitWith(save)} className="space-y-6">
       <Card>
-        <CardHeader as="h2" icon={<Building2 />} title="Éditeur" description="Mentions légales (LCEN), contact pour les données personnelles, CGU et CGV." />
+        <CardHeader icon={<Building2 />} title="Éditeur" description="Mentions légales (LCEN), contact pour les données personnelles, CGU et CGV." />
         <CardBody>{fields(EDITOR)}</CardBody>
       </Card>
       <Card>
-        <CardHeader as="h2" icon={<Server />} title="Hébergement" description="Hébergeur du site (nom, adresse et téléphone obligatoires dans les mentions légales) et lieu des données." />
+        <CardHeader icon={<Server />} title="Hébergement" description="Hébergeur du site (nom, adresse et téléphone obligatoires dans les mentions légales) et lieu des données." />
         <CardBody>{fields(HOST)}</CardBody>
       </Card>
       <div className="flex justify-end">

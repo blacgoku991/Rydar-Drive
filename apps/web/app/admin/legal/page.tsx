@@ -65,7 +65,6 @@ export default async function AdminLegalPage() {
           <div className="space-y-6">
             <Card className={requiredGaps.length ? "border-amber/40" : undefined}>
               <CardHeader
-                as="h2"
                 icon={requiredGaps.length ? <TriangleAlert className="text-amber" /> : <CircleCheck className="text-brand" />}
                 title={requiredGaps.length ? `Mentions obligatoires manquantes : ${requiredGaps.length}` : "Mentions obligatoires renseignées"}
                 description={
@@ -95,7 +94,6 @@ export default async function AdminLegalPage() {
           <div className="space-y-6">
             <Card>
               <CardHeader
-                as="h2"
                 title="Pages publiques"
                 description={`Versions : CGU et confidentialité ${LEGAL_VERSION} (tout utilisateur) · CGV et accord de traitement ${ORG_LEGAL_VERSION} (organisations).`}
               />
@@ -114,7 +112,6 @@ export default async function AdminLegalPage() {
             </Card>
             <Card>
               <CardHeader
-                as="h2"
                 title="CGV et accord de traitement"
                 description={`${list.length - missing.length} / ${list.length} organisation${list.length > 1 ? "s" : ""} ont accepté la version ${ORG_LEGAL_VERSION}.`}
               />

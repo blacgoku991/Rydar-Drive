@@ -70,13 +70,14 @@
   opacity: 0.35;
 }
 
+/* Un seul passage : la dernière vague s'éteint 4,5 s après l'affichage (mouvement de moins de 5 s, WCAG 2.2.2) */
 @media (prefers-reduced-motion: no-preference) {
   .waveStep {
-    animation: wave 6s ease-in-out infinite;
+    animation: wave 6s ease-in-out 1;
     animation-delay: calc(var(--i, 0) * 0.9s);
   }
   .waveDot {
-    animation: wave-dot 6s ease-in-out infinite;
+    animation: wave-dot 6s ease-in-out 1;
     animation-delay: calc(var(--i, 0) * 0.9s);
   }
 }

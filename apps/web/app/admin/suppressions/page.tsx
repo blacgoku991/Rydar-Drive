@@ -6,6 +6,7 @@ import { requireSuperAdmin } from "@/lib/auth";
 import { getLegalInfo } from "@/lib/legal";
 import { DeletionQueueList, DriverDeletionSearch } from "./deletion-tools";
 import type { DeletionQueue } from "./types";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 export const metadata: Metadata = { title: "Suppressions de comptes" };
 export const dynamic = "force-dynamic";
@@ -37,6 +38,7 @@ export default async function AdminDeletionsPage() {
               Aucune adresse de contact n&apos;est renseignée : la page publique{" "}
               <Link href="/suppression-compte" target="_blank" className="text-fg underline underline-offset-2">
                 Supprimer son compte
+                <NewTabHint />
               </Link>{" "}
               ne peut pas indiquer où écrire. Renseignez le contact « données personnelles » dans{" "}
               <Link href="/admin/legal" className="text-fg underline underline-offset-2">

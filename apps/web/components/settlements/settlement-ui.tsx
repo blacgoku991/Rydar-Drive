@@ -24,6 +24,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { runAction } from "@/lib/run-action";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 // ---------------------------------------------------------------------------- libellés
 export type ConfirmMethod = SettlementMethod | "other";
@@ -219,9 +220,10 @@ export function WhatsAppButton({ href, size = "sm", label = "WhatsApp", iconOnly
   if (!href) return null;
   return (
     <Button asChild variant="outline" size={iconOnly ? (size === "md" ? "icon" : "icon-sm") : size} className={cn("text-green hover:text-green", className)}>
-      <a href={href} target="_blank" rel="noopener noreferrer" title="Réclamer par WhatsApp (message prérempli)" aria-label={iconOnly ? `${label} : réclamer le paiement` : undefined}>
+      <a href={href} target="_blank" rel="noopener noreferrer" title="Réclamer par WhatsApp (message prérempli)" aria-label={iconOnly ? `${label} : réclamer le paiement (nouvel onglet)` : undefined}>
         <MessageCircle />
         {!iconOnly && label}
+        {!iconOnly && <NewTabHint />}
       </a>
     </Button>
   );

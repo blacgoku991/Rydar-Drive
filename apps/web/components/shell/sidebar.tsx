@@ -1,4 +1,5 @@
 "use client";
+import { ORG_ROLE_LABELS, type OrgRole } from "@rydar/shared";
 import {
   BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Mail, Menu, MessageCircle, Radar,
   Route, ScrollText, Settings, ShieldCheck, Sparkles, UserPlus, UserX, Users,
@@ -73,7 +74,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-semibold text-fg">{current.name}</span>
-                <span className="block text-[11px] capitalize text-fg-subtle">{current.role}</span>
+                <span className="block text-[11px] text-fg-subtle">{ORG_ROLE_LABELS[current.role as OrgRole] ?? current.role}</span>
               </span>
               <ChevronsUpDown className="size-4 text-fg-subtle group-hover:text-fg-muted" />
             </DropdownMenuTrigger>

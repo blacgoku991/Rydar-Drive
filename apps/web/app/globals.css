@@ -20,10 +20,10 @@
   --color-ink-500: #272c35;
   --color-ink-400: #3b414c;
 
-  /* Texte */
+  /* Texte (contrastes WCAG AA, ≥ 4,5:1 sur ink-950 à ink-600 : fg-subtle 5,2 à 6,4, fg-muted 6,6 à 8,1) */
   --color-fg: #eef0f3;
   --color-fg-muted: #9ea5b1;
-  --color-fg-subtle: #666d79;
+  --color-fg-subtle: #8b929e;
 
   /* Lignes */
   --color-line: rgb(255 255 255 / 0.065);
@@ -52,15 +52,27 @@
   --shadow-float: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 16px 40px -16px rgb(0 0 0 / 0.7);
   --shadow-glow: 0 0 0 1px rgb(200 240 60 / 0.3), 0 8px 24px -12px rgb(200 240 60 / 0.35);
 
-  --animate-radar: radar-sweep 4s linear infinite;
-  --animate-ping-ring: ping-ring 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
-  --animate-breathe: breathe 2.6s ease-in-out infinite;
+  /* Mouvements décoratifs ou d'état : 5 s au plus, puis immobiles (WCAG 2.2.2, RGAA 13.8 : pas de pause à prévoir) ;
+     seuls les indicateurs de chargement (shimmer, spin) tournent tant que le chargement dure. Rien avec « réduire
+     les animations » (règle globale plus bas). */
+  --animate-radar: radar-sweep 4s linear 1;
+  --animate-ping-ring: ping-ring 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) 2;
+  --animate-breathe: breathe 2.4s ease-in-out 2;
+  --animate-ping: ping 1s cubic-bezier(0, 0, 0.2, 1) 4;
   --animate-shimmer: shimmer 2.2s linear infinite;
   --animate-rise: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 
   @keyframes radar-sweep {
     to {
       transform: rotate(360deg);
+    }
+  }
+  /* Même effet que l'animation « ping » de Tailwind, redéclarée avec --animate-ping (nombre de passages limité) */
+  @keyframes ping {
+    75%,
+    100% {
+      transform: scale(2);
+      opacity: 0;
     }
   }
   @keyframes ping-ring {
@@ -131,6 +143,19 @@
   :focus-visible {
     outline: 2px solid rgb(200 240 60 / 0.7);
     outline-offset: 2px;
+  }
+  /* « Réduire les animations » (réglage du système) : aucune animation ni transition, défilement instantané */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      animation-delay: 0ms !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+    }
   }
   /* Barres de défilement discrètes */
   * {
@@ -320,7 +345,7 @@
   pointer-events: none;
 }
 .rd-car[data-pulse="true"] .rd-car__pulse {
-  animation: rd-pulse 1.8s ease-out infinite;
+  animation: rd-pulse 1.8s ease-out 2;
 }
 .rd-car[data-dim="true"] {
   opacity: 0.4;
@@ -392,7 +417,7 @@
   pointer-events: none;
 }
 .rd-stop[data-searching="true"] .rd-stop__pulse {
-  animation: rd-pulse 2s ease-out infinite;
+  animation: rd-pulse 2s ease-out 2;
 }
 .rd-stop[data-dim="true"] {
   opacity: 0.5;
@@ -457,7 +482,7 @@
   pointer-events: none;
 }
 .rd-report[data-fresh="true"] .rd-report__pulse {
-  animation: rd-pulse 1.8s ease-out infinite;
+  animation: rd-pulse 1.8s ease-out 2;
 }
 .rd-report__label {
   position: absolute;

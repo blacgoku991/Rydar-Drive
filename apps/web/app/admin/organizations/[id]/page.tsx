@@ -17,6 +17,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { NewTabHint } from "@/components/ui/new-tab";
 
 export const metadata: Metadata = { title: "Rattacheur" };
 export const dynamic = "force-dynamic";
@@ -176,7 +177,8 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
                     </p>
                     {joinUrl && org.join_enabled && (
                       <a href={joinUrl} target="_blank" rel="noreferrer" className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate text-brand hover:underline">
-                        <span className="truncate">/rejoindre/{org.join_code}</span> <ExternalLink className="size-3 shrink-0" />
+                        <span className="truncate">/rejoindre/{org.join_code}</span> <ExternalLink aria-hidden className="size-3 shrink-0" />
+                        <NewTabHint />
                       </a>
                     )}
                   </div>
