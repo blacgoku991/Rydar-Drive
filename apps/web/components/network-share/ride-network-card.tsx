@@ -205,9 +205,10 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
           </p>
         )}
 
+        {/* Sous-titres en h3 : le titre de la carte (CardHeader) est un h2, sans saut de niveau */}
         {e && (
           <section aria-label="Contrôles à l'acceptation">
-            <h4 className="text-[12.5px] font-medium text-fg">Contrôles à l&apos;acceptation</h4>
+            <h3 className="text-[12.5px] font-medium text-fg">Contrôles à l&apos;acceptation</h3>
             <p className="text-[11.5px] text-fg-subtle">
               Pièces vérifiées par {e.partner.name}
               {e.checks.verified_at ? ` (dernière vérification ${formatRideDate(e.checks.verified_at, timeZone, new Date(now)).toLowerCase()})` : ""} ; vous pouvez lui demander les justificatifs.
@@ -225,7 +226,7 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
 
         {op && (
           <section aria-label="Organisation du chauffeur" className="rounded-xl border border-line px-3.5 py-3">
-            <h4 className="text-[12.5px] font-medium text-fg">Organisation du chauffeur</h4>
+            <h3 className="text-[12.5px] font-medium text-fg">Organisation du chauffeur</h3>
             <div className="mt-1 divide-y divide-line">
               <Row label="Nom">{op.name}</Row>
               <Row label="Raison sociale">{op.legal_name}</Row>
@@ -257,7 +258,7 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
 
         {data.previous.length > 0 && (
           <section aria-label="Chauffeurs partenaires précédents">
-            <h4 className="text-[12.5px] font-medium text-fg">Chauffeurs partenaires précédents</h4>
+            <h3 className="text-[12.5px] font-medium text-fg">Chauffeurs partenaires précédents</h3>
             <ul className="mt-1 space-y-1 text-[12px] text-fg-muted">
               {data.previous.map((p) => (
                 <li key={p.id}>
