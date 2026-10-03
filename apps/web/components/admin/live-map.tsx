@@ -3,6 +3,7 @@ import { initials, shortAddress, type Coord } from "@rydar/shared";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { PRESENCE_COLOR, ROUTE_COLOR, rideColor } from "@/components/map/map-theme";
+import { MapUnavailable } from "@/components/map/map-unavailable";
 import { carElement, stopElement, updateCar } from "@/components/map/markers";
 import { EMPTY, setData, useMapLibre } from "@/components/map/use-maplibre";
 import { cn } from "@/lib/utils";
@@ -111,7 +112,7 @@ export const LiveMap = forwardRef<LiveMapHandle, Props>(function LiveMap(
   { drivers, waiting, orgs, focus, selectedDriverId, selectedRideId, onSelectDriver, onSelectRide, showLabels, padding, className },
   ref,
 ) {
-  const { containerRef, libRef, mapRef, ready } = useMapLibre({ zoom: 11 });
+  const { containerRef, libRef, mapRef, ready, failed } = useMapLibre({ zoom: 11 });
   const cars = useRef(new Map<string, { marker: MLMarker; el: HTMLDivElement; pos: [number, number]; anim?: number }>());
   const pins = useRef(new Map<string, { marker: MLMarker; el: HTMLDivElement }>());
   const focusMarks = useRef<{ start: MLMarker | null; end: MLMarker | null }>({ start: null, end: null });
@@ -468,6 +469,7 @@ export const LiveMap = forwardRef<LiveMapHandle, Props>(function LiveMap(
   return (
     <div data-labels={showLabels} className={cn("rd-map absolute inset-0 bg-ink-900", className)}>
       <div ref={containerRef} className="size-full" />
+      {failed && <MapUnavailable />}
     </div>
   );
 });

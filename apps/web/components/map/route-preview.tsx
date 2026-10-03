@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { PRESENCE_COLOR, ROUTE_COLOR } from "./map-theme";
+import { MapUnavailable } from "./map-unavailable";
 import { carElement, stopElement, updateCar } from "./markers";
 import { EMPTY, setData, useMapLibre } from "./use-maplibre";
 
@@ -37,7 +38,7 @@ export function RoutePreview({
   interactive?: boolean;
   padding?: number | { top: number; bottom: number; left: number; right: number };
 }) {
-  const { containerRef, libRef, mapRef, ready } = useMapLibre({ interactive, zoom: 11, controls: false });
+  const { containerRef, libRef, mapRef, ready, failed } = useMapLibre({ interactive, zoom: 11, controls: false });
   const markers = useRef<{ start?: MLMarker; end?: MLMarker; cars: Map<string, MLMarker> }>({ cars: new Map() });
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
@@ -140,6 +141,7 @@ export function RoutePreview({
   return (
     <div className={cn("rd-map absolute inset-0 bg-ink-900", onPick && "[&_canvas]:cursor-crosshair", className)}>
       <div ref={containerRef} className="size-full" />
+      {failed && <MapUnavailable />}
     </div>
   );
 }

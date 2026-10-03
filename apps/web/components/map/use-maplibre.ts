@@ -18,6 +18,8 @@ export function useMapLibre({
   const libRef = useRef<MapLib | null>(null);
   const mapRef = useRef<MLMap | null>(null);
   const [ready, setReady] = useState(false);
+  /** Carte impossible à créer (WebGL 2 absent ou désactivé, module introuvable) : message de repli (MapUnavailable) */
+  const [failed, setFailed] = useState(false);
   // Conserve le cadrage quand la carte est recréée (changement de thème)
   const view = useRef<{ center: [number, number]; zoom: number } | null>(null);
 
@@ -25,22 +27,30 @@ export function useMapLibre({
     let disposed = false;
     let ro: ResizeObserver | null = null;
     (async () => {
-      const lib = await import("maplibre-gl");
-      if (disposed || !containerRef.current) return;
-      // Copie versionnée (scripts/copy-maplibre.mjs), gardée un an par le navigateur (next.config.ts)
-      lib.setWorkerUrl(`/vendor/maplibre/${lib.getVersion()}/maplibre-gl-worker.mjs`);
+      let lib: MapLib;
+      let map: MLMap;
+      try {
+        lib = await import("maplibre-gl");
+        if (disposed || !containerRef.current) return;
+        // Copie versionnée (scripts/copy-maplibre.mjs), gardée un an par le navigateur (next.config.ts)
+        lib.setWorkerUrl(`/vendor/maplibre/${lib.getVersion()}/maplibre-gl-worker.mjs`);
+        // Sans WebGL 2, le constructeur lève GPUInitializationError : message de repli au lieu d'une erreur non interceptée
+        map = new lib.Map({
+          container: containerRef.current,
+          style: mapStyle(theme),
+          center: view.current?.center ?? center,
+          zoom: view.current?.zoom ?? zoom,
+          interactive,
+          attributionControl: { compact: true },
+          fadeDuration: 0,
+          dragRotate: false,
+          pitchWithRotate: false,
+        });
+      } catch {
+        if (!disposed) setFailed(true);
+        return;
+      }
       libRef.current = lib;
-      const map = new lib.Map({
-        container: containerRef.current,
-        style: mapStyle(theme),
-        center: view.current?.center ?? center,
-        zoom: view.current?.zoom ?? zoom,
-        interactive,
-        attributionControl: { compact: true },
-        fadeDuration: 0,
-        dragRotate: false,
-        pitchWithRotate: false,
-      });
       map.touchZoomRotate.disableRotation();
       map.on("moveend", () => {
         const c = map.getCenter();
@@ -62,7 +72,7 @@ export function useMapLibre({
     };
   }, [interactive, theme]);
 
-  return { containerRef, libRef, mapRef, ready, hasView: () => view.current != null };
+  return { containerRef, libRef, mapRef, ready, failed, hasView: () => view.current != null };
 }
 
 type GeoJSONSource = import("maplibre-gl").GeoJSONSource;

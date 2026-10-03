@@ -2,11 +2,12 @@
 
 import { Pause, Play } from "lucide-react";
 import dynamic from "next/dynamic";
-import { Component, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Component, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { RadarScene } from "./radar-scene";
 
-// three.js n'est téléchargé que si le navigateur sait afficher la scène (WebGL 2), après l'affichage de la page.
+// three.js n'est téléchargé que si le navigateur sait afficher la scène (WebGL 2), une fois la page chargée et le
+// navigateur au repos (useAfterLoad).
 const GlobeScene = dynamic(() => import("./globe-scene"), { ssr: false });
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
@@ -33,6 +34,37 @@ function webgl2Snapshot() {
   return webgl2;
 }
 const subscribeNever = () => () => {};
+
+/**
+ * true une fois la page chargée et le navigateur au repos (2,5 s au plus après le chargement) : three.js et la
+ * construction de la scène ne retardent ni l'affichage ni les premiers gestes, même sur un téléphone modeste.
+ */
+function useAfterLoad(enabled: boolean) {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!enabled || done) return;
+    let cancel = () => {};
+    const go = () => setDone(true);
+    const schedule = () => {
+      // Safari n'a pas requestIdleCallback : court délai après le chargement
+      const idle = (window as Partial<Window>).requestIdleCallback;
+      if (idle) {
+        const id = idle.call(window, go, { timeout: 2500 });
+        cancel = () => window.cancelIdleCallback(id);
+      } else {
+        const id = window.setTimeout(go, 600);
+        cancel = () => window.clearTimeout(id);
+      }
+    };
+    if (document.readyState === "complete") schedule();
+    else {
+      window.addEventListener("load", schedule, { once: true });
+      cancel = () => window.removeEventListener("load", schedule);
+    }
+    return () => cancel();
+  }, [enabled, done]);
+  return done;
+}
 
 /**
  * Frontière d'erreur du globe : module three.js introuvable (réseau instable, page servie par l'ancienne version
@@ -68,6 +100,7 @@ export function HeroVisual({ label, children, className }: { label: string; chil
   const [ready, setReady] = useState(false);
   const [paused, setPaused] = useState(false);
   const mode = canRender === null ? "pending" : canRender && !failed ? "globe" : "fallback";
+  const loaded = useAfterLoad(mode === "globe");
 
   return (
     <div className={cn("relative aspect-[20/23] w-full sm:aspect-square", className)}>
@@ -103,9 +136,11 @@ export function HeroVisual({ label, children, className }: { label: string; chil
               aria-hidden
               className={cn("absolute inset-0 transition-opacity duration-1000 ease-out motion-reduce:transition-none", ready ? "opacity-100" : "opacity-0")}
             >
-              <GlobeBoundary onError={() => setFailed(true)}>
-                <GlobeScene reducedMotion={reducedMotion || paused} onReady={() => setReady(true)} onFail={() => setFailed(true)} />
-              </GlobeBoundary>
+              {loaded && (
+                <GlobeBoundary onError={() => setFailed(true)}>
+                  <GlobeScene reducedMotion={reducedMotion || paused} onReady={() => setReady(true)} onFail={() => setFailed(true)} />
+                </GlobeBoundary>
+              )}
             </div>
           )}
           {mode === "fallback" && (

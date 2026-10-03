@@ -5,6 +5,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import type { LiveDriver, LiveOffer, LiveReport, LiveRide } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
 import { PRESENCE_COLOR, ROUTE_COLOR, rideColor } from "./map-theme";
+import { MapUnavailable } from "./map-unavailable";
 import { carElement, reportElement, stopElement, updateCar, updateReport } from "./markers";
 import { EMPTY, setData, useMapLibre } from "./use-maplibre";
 
@@ -149,7 +150,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   },
   ref,
 ) {
-  const { containerRef, libRef, mapRef, ready } = useMapLibre({ interactive, zoom: initialZoom, theme });
+  const { containerRef, libRef, mapRef, ready, failed } = useMapLibre({ interactive, zoom: initialZoom, theme });
   const cars = useRef(new Map<string, CarMarker>());
   const stops = useRef(new Map<string, { marker: MLMarker; el: HTMLDivElement }>());
   const ends = useRef(new Map<string, MLMarker>());
@@ -623,6 +624,7 @@ export const FleetMap = forwardRef<FleetMapHandle, Props>(function FleetMap(
   return (
     <div ref={wrapRef} data-labels={showLabels} className={cn("rd-map absolute inset-0 bg-ink-900", className)}>
       <div ref={containerRef} className="size-full" />
+      {failed && <MapUnavailable />}
     </div>
   );
 });

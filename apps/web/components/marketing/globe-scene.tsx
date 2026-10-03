@@ -499,13 +499,16 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     };
 
     // --- Taille, densité de pixels, qualité -------------------------------------
-    let dprCap = 2;
+    // Écran tactile (téléphone, tablette) : densité et nombre de pixels réduits, 30 images/s (voir frame)
+    const touch = window.matchMedia("(pointer: coarse)").matches;
+    let dprCap = touch ? 1.5 : 2;
+    const pixelBudget = touch ? 1_600_000 : 2_600_000;
     const resize = () => {
       const rect = host.getBoundingClientRect();
       const width = Math.max(1, Math.round(rect.width));
       const height = Math.max(1, Math.round(rect.height));
-      // Densité plafonnée : 2 au plus, et ~2,6 millions de pixels dessinés au plus
-      const dpr = Math.min(window.devicePixelRatio || 1, dprCap, Math.sqrt(2_600_000 / (width * height)));
+      // Densité plafonnée (2, ou 1,5 sur écran tactile) et nombre de pixels dessinés plafonné
+      const dpr = Math.min(window.devicePixelRatio || 1, dprCap, Math.sqrt(pixelBudget / (width * height)));
       renderer.setPixelRatio(dpr);
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
@@ -595,14 +598,21 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
       car.u.uAlpha.value = after * cycleFade;
     };
 
-    // Boucle : ne tourne que visible à l'écran, onglet affiché et animations autorisées
+    // Boucle : ne tourne que visible à l'écran, onglet affiché, animations autorisées et page immobile
     let raf = 0;
     let last = 0;
     let clock = 0;
+    let pending = 0;
     let inView = true;
+    let scrolling = false;
+    /** Appareil trop lent même en densité 1 : image figée (comme prefers-reduced-motion) */
+    let frozen = false;
     let firstFrame = true;
     let sampled = 0;
     let slow = 0;
+    /** 30 images/s sur écran tactile : la moitié du travail graphique, sans différence visible sur cette animation lente */
+    const minStep = touch ? 1 / 30 - 0.004 : 0;
+    const slowStep = touch ? 0.05 : 0.035;
     const render = () => {
       renderer.render(scene, camera);
       if (firstFrame) {
@@ -612,17 +622,30 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     };
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
-      const dt = last ? Math.min((now - last) / 1000, 0.1) : 0;
+      pending += last ? Math.min((now - last) / 1000, 0.1) : 0;
       last = now;
+      if (pending < minStep) return;
+      const dt = pending;
+      pending = 0;
       clock += dt;
       try {
-        // Qualité adaptative : si la moitié des 120 premières images dépassent 35 ms, densité de pixels 1
-        if (dt > 0 && sampled < 120) {
+        // Qualité adaptative, sur 45 images : plus de la moitié trop lentes → densité 1, puis, si c'est encore lent,
+        // image figée (la page reste fluide sur les appareils modestes)
+        if (dt > 0 && sampled < 45) {
           sampled++;
-          if (dt > 0.035) slow++;
-          if (sampled === 120 && slow > 60 && dprCap > 1) {
-            dprCap = 1;
-            resize();
+          if (dt > slowStep) slow++;
+          if (sampled === 45 && slow > 22) {
+            sampled = 0;
+            slow = 0;
+            if (dprCap > 1) {
+              dprCap = 1;
+              resize();
+            } else {
+              frozen = true;
+              stop();
+              drawStill();
+              return;
+            }
           }
         }
         update(clock, dt);
@@ -634,6 +657,7 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     const start = () => {
       if (raf) return;
       last = 0;
+      pending = 0;
       raf = requestAnimationFrame(frame);
     };
     const stop = () => {
@@ -644,8 +668,9 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
       update(STILL_T, 0);
       render();
     };
+    const still = () => reducedMotion || frozen;
     const sync = () => {
-      if (!reducedMotion && inView && document.visibilityState === "visible") start();
+      if (!still() && !scrolling && inView && document.visibilityState === "visible") start();
       else stop();
     };
 
@@ -660,7 +685,7 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     const ro = new ResizeObserver(() => {
       try {
         resize();
-        if (reducedMotion) drawStill();
+        if (still()) drawStill();
         else if (!raf) render();
       } catch {
         crash();
@@ -679,6 +704,26 @@ function mountGlobe(host: HTMLDivElement, { reducedMotion, onReady, onFail }: Mo
     teardown.push(() => io.disconnect());
     document.addEventListener("visibilitychange", sync);
     teardown.push(() => document.removeEventListener("visibilitychange", sync));
+    // Pause pendant le défilement : le processeur graphique reste libre pour faire défiler la page sans à-coups
+    let scrollTimer = 0;
+    const onScroll = () => {
+      if (!scrolling) {
+        scrolling = true;
+        stop();
+      }
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(() => {
+        scrolling = false;
+        sync();
+      }, 180);
+    };
+    if (!reducedMotion) {
+      window.addEventListener("scroll", onScroll, { passive: true });
+      teardown.push(() => {
+        window.removeEventListener("scroll", onScroll);
+        window.clearTimeout(scrollTimer);
+      });
+    }
     const onPointer = (e: PointerEvent) => {
       if (e.pointerType !== "mouse") return;
       pointer.tx = (e.clientX / window.innerWidth) * 2 - 1;

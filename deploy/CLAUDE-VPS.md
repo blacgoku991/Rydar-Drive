@@ -128,6 +128,8 @@ Termine par un résumé pour le propriétaire : ce qui fonctionne (adresses), ce
 
 ## Pièges connus
 
+- `deploy/Caddyfile.local` (monté par `docker-compose.override.yml`) REMPLACE le Caddyfile du dépôt : après un `git pull` qui modifie `deploy/Caddyfile`, reporter la modification dans `Caddyfile.local` (garder une copie datée de l'ancien), puis `sudo bash deploy/install.sh` (il redémarre Caddy si le fichier a changé ; à la main : `sudo docker compose restart caddy`, jamais `caddy reload` seul : fichier monté par inode). Contrôle : `docs/DEPLOYMENT.md` § 3, « Exposition du serveur », point 1.
+
 - Supabase : le rôle `postgres` n'est pas super-utilisateur ; les migrations en tiennent compte. Une erreur « must be owner of … » est à signaler, pas à contourner.
 - `DATABASE_URL` : Session pooler, **port 5432** (le worker écoute `LISTEN/NOTIFY`, impossible avec le port 6543 du mode transaction). La connexion directe `db.xxx.supabase.co` est en IPv6, injoignable depuis Docker. `configure.sh` gère tout cela.
 - Supabase auto-hébergé sur ce serveur (base en `127.0.0.1:5432`) : `DATABASE_SSLMODE=disable`, choisi par `configure.sh`, accepté pour une base locale seulement (`docs/DEPLOYMENT.md`, « Connexion chiffrée à la base ») ; le port de la base ne doit jamais être joignable depuis Internet.

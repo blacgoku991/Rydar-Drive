@@ -88,9 +88,23 @@ bash "$ROOT/deploy/migrate.sh"
 echo "→ construction et démarrage (plusieurs minutes la première fois)"
 cd "$ROOT/deploy"
 docker compose up -d --build --remove-orphans
-# Caddyfile monté en volume : relu à chaque mise à jour (sinon ses changements attendraient un redémarrage)
-docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
-  || docker compose restart caddy >/dev/null
+# Caddyfile monté en volume (Caddyfile du dépôt, ou Caddyfile.local par docker-compose.override.yml) : fichier unique,
+# monté par inode au démarrage du conteneur. Un fichier remplacé (git pull, éditeur, fichier reconstruit) n'y est donc
+# pas visible et « caddy reload » relirait l'ancien contenu : contenu différent → redémarrage de Caddy (1 à 2 s),
+# sinon simple rechargement.
+caddy_id="$(docker compose ps -q caddy 2>/dev/null || true)"
+caddy_src=""
+if [ -n "$caddy_id" ]; then
+  caddy_src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/caddy/Caddyfile"}}{{.Source}}{{end}}{{end}}' "$caddy_id" 2>/dev/null || true)"
+fi
+if [ -n "$caddy_src" ] && [ -f "$caddy_src" ] \
+  && [ "$(sha256sum < "$caddy_src")" = "$(docker compose exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null | sha256sum)" ]; then
+  docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
+    || docker compose restart caddy >/dev/null
+else
+  echo "→ Caddyfile modifié : redémarrage de Caddy"
+  docker compose restart caddy >/dev/null
+fi
 docker image prune -f >/dev/null
 docker compose ps
 

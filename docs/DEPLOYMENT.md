@@ -243,7 +243,10 @@ Montage en production (rydardrive.com), hors dépôt :
   (réseau de l'hôte) ;
 - `deploy/docker-compose.override.yml` (non versionné, lu automatiquement par `docker compose`) : rattache le worker au
   réseau Docker `supabase_default` et remplace sa `DATABASE_URL` par `WORKER_DATABASE_URL` (`supavisor:5432`) ; monte
-  aussi `Caddyfile.local` dans Caddy (`api.DOMAIN` → Supabase) ;
+  aussi `Caddyfile.local` dans Caddy (`api.DOMAIN` → Supabase). Ce fichier REMPLACE le Caddyfile du dépôt (copie de
+  `deploy/Caddyfile` + bloc `api.DOMAIN`) : toute modification de `deploy/Caddyfile` (plafonds `request_body`, en-têtes
+  `header_up`) doit y être reportée à la main. `install.sh` redémarre Caddy quand le fichier monté a changé : monté par
+  inode, un fichier remplacé n'est pas vu par le conteneur et `caddy reload` seul relirait l'ancien contenu ;
 - ces fichiers, `deploy/.env` et la configuration de `/opt/supabase` doivent être dans la sauvegarde chiffrée : sans eux,
   une réinstallation repart de zéro.
 
@@ -281,11 +284,13 @@ Durcissements reportés par l'audit. Seul le premier est dans le kit ; les deux 
 dépôt (`/opt/supabase`, `Caddyfile.local`). Contrôles en lecture seule d'abord.
 
 **1. Taille des requêtes (Caddy, dans le kit).** `deploy/Caddyfile` plafonne à 1 Mo le corps de `/api/v1/*` (l'application
-en lit 32 Ko au plus) et du webhook Stripe : au-delà, Caddy répond 413 sans occuper le serveur Node. Si `Caddyfile.local`
-remplace en production le Caddyfile du dépôt au lieu de l'importer (fichier monté sur `/etc/caddy/Caddyfile` :
-`sudo docker inspect` du conteneur `caddy`), y reporter les deux blocs `request_body`. Contrôle :
-`head -c 2000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST --data-binary @- https://DOMAINE/api/v1/rides`
-affiche `413` (`401` : plafond absent).
+en lit 32 Ko au plus) et du webhook Stripe : au-delà, Caddy répond 413 dès que la route lit le corps, sans occuper le
+serveur Node. Si `Caddyfile.local` remplace en production le Caddyfile du dépôt au lieu de l'importer (fichier monté sur
+`/etc/caddy/Caddyfile` : `sudo docker inspect` du conteneur `caddy`), y reporter les deux blocs `request_body`.
+Contrôle de la configuration ACTIVE (un envoi de 2 Mo sur `/api/v1/rides` sans clé répond `401`, plafond présent ou non :
+la clé est refusée avant toute lecture du corps) :
+`cd /opt/rydar/deploy && sudo docker compose exec -T caddy caddy adapt --config /etc/caddy/Caddyfile 2>/dev/null | grep -o '"max_size"' | wc -l`
+affiche `4` (webhook Stripe et API v1, pour le domaine et pour les mini-sites ; `0` : plafonds absents).
 
 **2. Supabase Auth auto-hébergé (`api.DOMAINE`) : limites par adresse IP, inscriptions coupées.** Sans
 `GOTRUE_RATE_LIMIT_HEADER`, Supabase Auth n'applique **aucune** limite par adresse IP (code de supabase/auth : sans

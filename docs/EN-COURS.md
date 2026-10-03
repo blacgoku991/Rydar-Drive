@@ -1,4 +1,4 @@
-# Travail en cours (28/09/2026)
+# Travail en cours (03/10/2026)
 
 Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal » est TERMINÉ : rapport complet dans
 [`docs/AUDIT.md`](AUDIT.md).
@@ -24,6 +24,23 @@ démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissem
 `20260924006200` interrupteur plateforme des mini-sites (coupés), `20260924006300` lien d'inscription des chauffeurs
 pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` index de performance + `chat_counts`,
 `20260924006600` frais Rydar : hausses annoncées 30 jours à l'avance, annonce des CGV, libellés neutres.
+
+## Production au 03/10/2026 (compte rendu du Claude du VPS)
+- Déployé : commit `44acb2d` (migrations jusqu'à `20260924007300`, réseau partagé livré COUPÉ), santé OK, worker
+  `"accountDeletions":"on"`, mailer `"smtpReady":true` ; app : EAS Update production (runtime 1.1.0, iOS + Android) ;
+  stores : iOS 1.1.0 (8) sur TestFlight, Android 1.1.0 (5).
+- Serveur (hors dépôt) : `Caddyfile.local` reconstruit depuis `deploy/Caddyfile` (plafonds `request_body`, en-têtes
+  d'IP réelle) + bloc `api.DOMAINE` ; Supabase Auth `GOTRUE_RATE_LIMIT_HEADER=X-Forwarded-For` et `DISABLE_SIGNUP=true`
+  (DEPLOYMENT § 3) ; Postfix sur 127.0.0.1:25 et 172.18.0.1:25 ; DKIM 1024 bits (TXT de plus de 255 caractères tronqués
+  par le DNS) ; e-mails Auth en français par Postfix ; sauvegarde nocturne chiffrée (restic → Object Storage OVH),
+  configuration comprise, restauration d'essai OK ; seuls 22 / 80 / 443 ouverts, Studio fermé, aucun AAAA.
+- Contrôlé : 797 tests DB, 1 234 unitaires, 19 pages publiques, 10 pages centrale et 17 pages super admin sans erreur.
+- Corrigé ensuite (dépôt) : cartes sans WebGL 2 → message « Carte indisponible » au lieu d'une erreur
+  (`MapUnavailable`, `useMapLibre().failed`) ; globe de l'accueil chargé après le chargement de la page, 30 images/s et
+  densité réduite sur écran tactile, en pause pendant le défilement, figé si l'appareil reste trop lent ; `install.sh`
+  redémarre Caddy si le Caddyfile monté a changé ; contrôle du plafond de 1 Mo corrigé (DEPLOYMENT § 3).
+- RESTE : parcours chauffeur complet en production (lien d'inscription → validation → en ligne → course →
+  encaissement), à refaire dans une nouvelle session sur le VPS ; relecture juridique avant d'activer le réseau partagé.
 
 ## Depuis l'audit
 - **Lenteur (« le site est lent ») — volet serveur** : plus de rafale de préchargements à chaque page (26 → 1 requête
