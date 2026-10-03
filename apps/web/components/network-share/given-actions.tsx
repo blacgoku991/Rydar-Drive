@@ -376,7 +376,7 @@ export function ExcludePartnerDialog({ partner, onClose }: { partner: { id: stri
         title={`Ne plus travailler avec ${partner.name}`}
         description={`Vos courses ne seront plus proposées aux chauffeurs de ${partner.name}, et vous ne recevrez plus les siennes. ${partner.name} n'en est pas informée. Les courses déjà acceptées vont à leur terme ; réversible dans Réglages › Options avancées.`}
       >
-        <div className="mt-2 flex justify-end gap-2">
+        <div className="mt-2 flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Retour</Button>
           <Button variant="danger" loading={pending} onClick={() => run(() => setNetworkPartnerExcluded(partner.id, true), onClose)}>
             <Ban /> Ne plus travailler avec {partner.name}
@@ -436,8 +436,8 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
             </h3>
             {missing ? (
               <p role="status" className="mt-3 rounded-lg border border-line bg-white/[0.03] px-3 py-2.5 text-[12.5px] text-fg-muted">
-                {item.execution.driver_label} n&apos;a pas encore enregistré ses coordonnées bancaires{NB}: appelez-le, ou versez sa part par un
-                autre moyen puis «{NB}Marquer versé{NB}».
+                {item.execution.driver_label} n&apos;a pas encore enregistré ses coordonnées bancaires{NB}: demandez-les-lui, ou versez sa part
+                par un autre moyen, puis «{NB}Marquer versé{NB}».
               </p>
             ) : !info ? (
               <div className="mt-3 space-y-3">

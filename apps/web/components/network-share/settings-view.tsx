@@ -519,10 +519,11 @@ function DriverRow({ d, model, timeZone }: { d: OrgNetworkDriver; model: Dispatc
     );
   return (
     <li className="px-4 py-3">
+      {/* Largeur minimale du nom : sur téléphone, l'action et « Autorisé » passent dessous au lieu d'écraser le texte */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex min-w-[220px] flex-1 items-start gap-3">
           <Avatar name={name} size={30} />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-[13.5px] font-medium">
               <Link href={`/dashboard/drivers/${d.driver.id}`} prefetch={false} className="hover:text-brand">{name}</Link>{" "}
               <span className="mono font-normal text-fg-subtle">#{d.driver.number}</span>

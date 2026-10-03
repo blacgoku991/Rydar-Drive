@@ -68,6 +68,8 @@ const EMPTY: Record<NetworkGivenFilter, { title: string; description: string }> 
   settled: { title: "Aucun règlement terminé", description: "Les règlements reçus, versés ou annulés s'afficheront ici." },
 };
 
+const CLOSED_EMPTY = "Le réseau partagé est fermé : plus aucune course n'est proposée aux organisations partenaires.";
+
 const plural = (n: number, one: string, many: string) => `${formatNumber(n)} ${n > 1 ? many : one}`;
 const NB = " ";
 
@@ -223,7 +225,12 @@ export function GivenView(p: Props) {
           </Card>
         ) : p.items.length === 0 ? (
           <Card>
-            <EmptyState icon={<CheckCheck />} title={EMPTY[p.filter].title} description={EMPTY[p.filter].description} />
+            <EmptyState
+              icon={<CheckCheck />}
+              title={EMPTY[p.filter].title}
+              // Réseau fermé : plus aucune course ne sera proposée (le texte habituel l'annoncerait)
+              description={p.closed && p.filter === "all" ? CLOSED_EMPTY : EMPTY[p.filter].description}
+            />
           </Card>
         ) : (
           <Card className="overflow-hidden">
@@ -372,13 +379,16 @@ function GivenRow({
             {e.contested_at && <Badge tone="red">Course contestée</Badge>}
             {e.driver_disputed_at && <Badge tone="red">Le chauffeur conteste</Badge>}
           </div>
-          {/* Motifs en clair (lisibles au doigt et au clavier) : une ligne chacun, coupée si trop longue */}
-          {toCheck && <p className="truncate text-[11.5px] text-amber" title={suspectText(item)}>{suspectText(item)}</p>}
+          {/* Motifs en clair (lisibles au doigt et au clavier, sans survol) : deux lignes au plus chacun ; le texte entier
+              est dans la fiche course et dans la fenêtre « Valider » */}
+          {toCheck && <p className="line-clamp-2 text-[11.5px] text-amber" title={suspectText(item)}>{suspectText(item)}</p>}
           {e.contested_at && e.contested_reason && (
-            <p className="truncate text-[11.5px] text-fg-muted" title={e.contested_reason}>Contestée{NB}: «{NB}{e.contested_reason}{NB}»</p>
+            <p className="line-clamp-2 text-[11.5px] text-fg-muted [overflow-wrap:anywhere]" title={e.contested_reason}>
+              Contestée{NB}: «{NB}{e.contested_reason}{NB}»
+            </p>
           )}
           {e.driver_disputed_at && (
-            <p className="truncate text-[11.5px] text-fg-muted" title={e.driver_dispute_reason ?? undefined}>
+            <p className="line-clamp-2 text-[11.5px] text-fg-muted [overflow-wrap:anywhere]" title={e.driver_dispute_reason ?? undefined}>
               Le chauffeur conteste{e.driver_dispute_reason ? <>{NB}: «{NB}{e.driver_dispute_reason}{NB}»</> : " ce règlement"}
             </p>
           )}
