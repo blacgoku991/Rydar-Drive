@@ -794,6 +794,27 @@ describe("Planifiée : fenêtre réseau à prise en charge − 2 h (§14.1 n° 1
     expect(share2).toEqual({ status: "open", cycle: 2, opened_stage: "scheduled_geo" });
   });
 
+  it("fenêtre sans partenaire à proximité : raison journalisée une fois, nouvel essai à chaque passage", async () => {
+    const p = await networkPair();
+    const far = north(p.site, 30000);
+    await sql(`update public.driver_locations set lat = $2, lng = $3 where driver_id = $1`, [p.partner.id, far[0], far[1]]);
+    const ride = await rideOf(p, { pickup_at: inMinutes(100) });
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id, 2);
+    let st = await rideState(ride.id);
+    expect(st.ride.network_at).toBeNull();
+    expect(st.events.filter((e) => e.type === "dispatch.network_skipped").map((e) => e.data.reason)).toEqual(["no_partner_nearby"]);
+    // Partenaire revenu à proximité : partage ouvert au passage suivant
+    const near = north(p.site, 800);
+    await sql(`update public.driver_locations set lat = $2, lng = $3, updated_at = now() where driver_id = $1`, [
+      p.partner.id, near[0], near[1],
+    ]);
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.network_at).not.toBeNull();
+    expect(await pendingOffer(ride.id, p.partner.id)).toMatchObject({ mode: "fleet" });
+  });
+
   it("fenêtre après T-lead (course créée 70 min avant) : réseau seulement après les vagues GPS propres", async () => {
     const p = await networkPair();
     const ride = await rideOf(p, { pickup_at: inMinutes(70) });
