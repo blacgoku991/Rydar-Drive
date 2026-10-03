@@ -1686,6 +1686,35 @@ describe("Retraits et chien de garde (§14.1 n° 14)", () => {
     expect(await sql(`select 1 from public.notifications where offer_id = $1`, [offer!.id])).toHaveLength(0);
   });
 
+  it("annulée par A : exécution close « cancelled_by_giver », partenaire prévenu et libéré", async () => {
+    const p = await networkPair();
+    const { ride, execution } = await partnerAccepts(p, p.partner);
+    expect(await callAs(p.A.ownerId, "cancel_ride", [ride.id, "Client absent"])).toMatchObject({ ok: true, code: "CANCELLED" });
+    expect((await executionsOf(ride.id))[0]).toMatchObject({ id: execution.id, end_reason: "cancelled_by_giver" });
+    expect(await shareOf(ride.id)).toMatchObject({ status: "closed", closed_reason: "cancelled" });
+    expect((await notificationsOf(ride.id, p.partner.id)).at(-1)).toMatchObject({ type: "ride_cancelled", title: "COURSE ANNULÉE" });
+    const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
+    expect(d).toEqual({ presence: "available", current_ride_id: null });
+  });
+
+  it("suppression du compte du partenaire : refusée tant qu'il tient une course de A (même B suspendue), message adapté", async () => {
+    const p = await networkPair();
+    const { ride } = await scheduledPartnerAccepts(p, p.partner, 100);
+    const remove = () =>
+      as({ role: "service_role" }, async (q) => (await q("select public.svc_delete_driver_account($1) as r", [p.partner.userId]))[0].r);
+    expect(await remove()).toMatchObject({
+      ok: false, code: "RIDES_ASSIGNED",
+      message: "Vous avez une course confiée par une autre organisation : terminez-la ou demandez à l'organisation qui vous a confié la course de la retirer, puis supprimez votre compte.",
+    });
+    // B suspendue : jamais libérée par ce chemin (« organisation inactive ») — elle l'est par A ou le chien de garde
+    await sql(`update public.organizations set status = 'suspended', suspended_at = now() where id = $1`, [p.B.id]);
+    expect(await remove()).toMatchObject({ ok: false, code: "RIDES_ASSIGNED" });
+    expect((await rideState(ride.id)).ride).toMatchObject({ driver_id: p.partner.id, status: "ACCEPTED", network_at: expect.anything() });
+    await watch();
+    expect((await rideState(ride.id)).ride).toMatchObject({ driver_id: null, status: "SEARCHING_DRIVER" });
+    expect(await remove()).toMatchObject({ ok: true, code: "DELETED" });
+  });
+
   it("« Relancer » pendant le partage : partage clos « redispatch », offres partenaires fermées, ses chauffeurs d'abord", async () => {
     const p = await networkPair();
     const ride = await rideOf(p);

@@ -231,8 +231,8 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
 
 ## Réseau partagé (branche `shared-network`, en cours, interrupteur plateforme coupé)
 - Lots faits : 0 (contrats `packages/shared/src/network.ts`), 2 (schéma, gardes, droits : migration `20260924006700`,
-  non poussée), 3a (dispatch : éligibilité, étape réseau des immédiates et des planifiées, acceptation : migration
-  `20260924006800`, non poussée, à compléter par la partie 3b : retraits, chien de garde, fin de course). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  non poussée), 3 (dispatch, migration `20260924006800`, non poussée : 3a éligibilité, étape réseau des immédiates et
+  des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - **Avant d'écrire 006800** : fusionner la branche principale une fois le chantier CGV (`20260924006600`) fusionné, puis
   partir de ses définitions (« Dernière définition : 20260924006600… », contrôlé par `migrations.test.ts`) :
@@ -249,6 +249,25 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
     planifiée se ferme à T-lead (« window_elapsed ») ; une étape réseau en erreur est isolée (3 erreurs : fin) ;
   - `private.network_blocker` (règles locales §10.7) et son message existent déjà (lot argent : à compléter, pas à
     recréer) ; journaux de A écrits pendant une action d'un partenaire : `private.log_partner_event` (sans identifiant).
+- Règles posées par le lot 3b (retraits, chien de garde, fin de course) :
+  - retirer une course à un partenaire = `private.unassign_network_ride(chauffeur, course, motif)` (removed_by_giver par
+    A via `reassign_ride`, executor_released par B via `ban_driver` / `set_driver_status` / retrait du réseau,
+    executor_unavailable par le chien de garde) : jamais un UPDATE direct de `rides.driver_id` ; course remise en
+    recherche chez A (vagues propres d'abord), notifications du partenaire pour la course supprimées sauf « COURSE
+    RETIRÉE — {A} » ; 3 retraits en 30 jours → `driver_network_settings.excluded_until` (+ audit
+    `network.driver_auto_excluded`) ;
+  - `private.network_watch` tourne à la fin de `private.watch_rides` (worker inchangé) : partenaire ou B indisponible
+    (fiche inactive, B suspendue / archivée / suspendue du réseau, retiré par B) → course rendue, ou alerte
+    `network.executor_unavailable` si le client est à bord ; offres réseau en attente devenues inacceptables fermées ;
+    A suspendue → partenaires prévenus (`network_giver_suspended`) ;
+  - `private.assert_network_creditor(org)` (owner / admin, A suspendue ou archivée comprise) existe : le lot argent la
+    réutilise ; `public.close_network_ride` (owner / admin de A) ;
+  - contrôles de fin (`private.network_completion_checks`, dans `driver_update_ride_status`, AVANT l'écriture du statut)
+    posent `suspect_reasons` et `hold_until` (+72 h si prépayée) : le règlement du lot argent les lit à la fin ;
+  - `private.delete_driver_account` (redéfinie en 006800 : course partenaire = RIDES_ASSIGNED, jamais libérée par ce
+    chemin) : le lot administration part de cette version ;
+  - fin d'une course partagée d'une A **centrale** : 23503 tant que le lot argent n'a pas routé `sync_ride_settlement`
+    (A flotte : sans objet).
 - Règles posées par la revue du lot 2, pour les lots suivants :
   - course tenue par un partenaire : `network_at` ne change qu'avec le chauffeur (retrait, réattribution) ; prix,
     paiement, adresses, heure, catégorie, passagers, **bagages, n° de vol** verrouillés (G6) ; `apply_flight_status`

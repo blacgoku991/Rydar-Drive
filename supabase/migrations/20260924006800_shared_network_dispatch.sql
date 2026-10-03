@@ -3501,6 +3501,276 @@ begin
 end;
 $$;
 
+-- Suppression de compte d'un chauffeur (application, super admin)
+-- Dernière définition : 20260924004800_audit_rgpd.sql. Réseau partagé, seul changement : une course d'une autre
+-- organisation tenue par ce chauffeur refuse toujours la suppression (RIDES_ASSIGNED, message « demandez à
+-- l'organisation qui vous a confié la course de la retirer ») — jamais libérée par ce chemin (« organisation du
+-- chauffeur inactive ») : elle l'est par A (« Retirer ») ou par le chien de garde du réseau. Course propre : inchangé.
+-- (Le lot administration redéfinit cette fonction — effacement des traces réseau : partir de celle-ci.)
+create or replace function private.delete_driver_account(p_driver_id uuid, p_source text, p_actor uuid default null)
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  d public.drivers;
+  q private.account_deletions;
+  r public.rides;
+  v_rides integer;
+  v_release integer;
+  -- Réseau partagé
+  v_partner_rides integer;
+  v_released integer := 0;
+  v_org_active boolean;
+  v_owed_cents bigint := 0;
+  v_owed_count integer := 0;
+  v_debtor_ids integer := 0;
+  v_alias text;
+  v_key text;
+  v_keep boolean;
+  v_files integer;
+  v_vehicle uuid;
+  v_vehicle_action text;
+  v_admin boolean := p_source = 'admin';
+begin
+  if p_source is null or p_source not in ('app', 'admin') then
+    raise exception 'INVALID_SOURCE' using errcode = '22023';
+  end if;
+  select * into d from public.drivers where id = p_driver_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'code', 'NOT_DRIVER', 'message', 'Aucun compte chauffeur associé.');
+  end if;
+
+  -- Déjà supprimé (appel rejoué) : état de la file
+  if d.deleted_at is not null then
+    select * into q from private.account_deletions where driver_id = d.id;
+    if q.id is not null then
+      return jsonb_build_object('ok', true, 'code', 'DELETED', 'already_deleted', true) || private.account_deletion_json(q);
+    end if;
+    return jsonb_build_object('ok', true, 'code', 'DELETED', 'already_deleted', true,
+      'driver_id', d.id, 'organization_id', d.organization_id, 'number', d.number,
+      'storage_prefix', format('%s/%s/', d.organization_id, d.id), 'keep_auth', false,
+      'deletion_id', null, 'done', true, 'pending', false);
+  end if;
+
+  -- Courses attribuées. Centrale suspendue ou archivée : les courses acceptées non commencées seront libérées ;
+  -- les autres (commencées, ou toute course d'une centrale active) bloquent la suppression.
+  select coalesce(o.status = 'active', false) into v_org_active from public.organizations o where o.id = d.organization_id;
+  v_org_active := coalesce(v_org_active, false);
+  -- Réseau partagé : une course d'une autre organisation (confiée à ce chauffeur) n'est jamais libérée ici (elle l'est
+  -- par l'organisation qui l'a confiée, ou par le chien de garde du réseau) : elle refuse toujours la suppression
+  select count(*),
+         count(*) filter (where r0.status = 'ACCEPTED' and not v_org_active and r0.organization_id = d.organization_id),
+         count(*) filter (where r0.organization_id <> d.organization_id)
+    into v_rides, v_release, v_partner_rides
+    from public.rides r0
+   where r0.driver_id = d.id
+     and r0.status in ('ACCEPTED', 'DRIVER_EN_ROUTE', 'DRIVER_ARRIVED', 'PASSENGER_ONBOARD', 'IN_PROGRESS');
+  v_rides := v_rides - v_release;
+  if v_rides > 0
+     or (d.current_ride_id is not null and not exists (
+           select 1 from public.rides x
+            where x.id = d.current_ride_id and x.driver_id = d.id and x.status = 'ACCEPTED' and not v_org_active
+              and x.organization_id = d.organization_id)) then
+    return jsonb_build_object('ok', false, 'code', 'RIDES_ASSIGNED', 'count', greatest(v_rides, 1),
+      'message', case
+        -- Réseau partagé : c'est l'organisation qui a confié la course qui la retire
+        when v_partner_rides > 0 and v_admin
+        then 'Course d''une organisation partenaire attribuée à ce chauffeur : elle doit d''abord être terminée, ou retirée par l''organisation qui l''a confiée.'
+        when v_partner_rides > 0
+        then 'Vous avez une course confiée par une autre organisation : terminez-la ou demandez à l''organisation qui vous a confié la course de la retirer, puis supprimez votre compte.'
+        when v_admin and v_rides > 1
+        then format('%s courses attribuées à ce chauffeur : la centrale doit d''abord les terminer ou les réattribuer.', v_rides)
+        when v_admin then 'Une course attribuée à ce chauffeur : la centrale doit d''abord la terminer ou la réattribuer.'
+        when v_rides > 1
+        then format('Vous avez %s courses attribuées : terminez-les ou demandez à votre centrale de les réattribuer, puis supprimez votre compte.', v_rides)
+        else 'Vous avez une course attribuée : terminez-la ou demandez à votre centrale de la réattribuer, puis supprimez votre compte.' end);
+  end if;
+
+  if v_admin then
+    perform private.set_actor('super_admin', p_actor);
+  else
+    perform private.set_actor('driver', d.id);
+  end if;
+  v_key := 'driver:' || d.id::text;
+  v_alias := format('Chauffeur supprimé (#%s)', d.number);
+  -- Compte conservé s'il sert aussi à gérer une centrale ou la plateforme
+  v_keep := private.keeps_login_account(d.user_id);
+
+  -- Centrale suspendue ou archivée : courses acceptées libérées (plus de dispatch pour elle : « à attribuer »)
+  if v_release > 0 then
+    for r in
+      select * from public.rides x
+       where x.driver_id = d.id and x.status = 'ACCEPTED'
+         -- Réseau partagé : courses de son organisation seulement
+         and x.organization_id = d.organization_id
+       order by x.pickup_at, x.id
+       for update
+    loop
+      update public.ride_assignments
+         set is_active = false, released_at = now(), release_reason = 'driver_deleted'
+       where ride_id = r.id and is_active;
+      perform private.close_pending_offers(r.id, 'closed', 'driver_deleted');
+      update public.rides
+         set status = 'CREATED',
+             driver_id = null,
+             vehicle_id = null,
+             dispatch_wave = 0,
+             dispatch_radius_m = null,
+             dispatch_started_at = null,
+             next_dispatch_at = null,
+             accepted_at = null,
+             driver_en_route_at = null,
+             driver_arrived_at = null,
+             no_driver_at = null
+       where id = r.id;
+      perform private.close_ride_alerts(r.id, 'auto_resolved', null);
+      perform private.log_event(r.organization_id, r.id, 'ride.driver_deleted',
+        format('Course retirée au chauffeur #%s, qui a supprimé son compte (centrale inactive) — à attribuer manuellement', d.number),
+        'timeline', 'warning', jsonb_build_object('previous_driver_id', d.id, 'previous_status', r.status),
+        case when v_admin then 'super_admin' else 'driver' end::public.actor_type,
+        case when v_admin then p_actor else d.id end);
+      v_released := v_released + 1;
+    end loop;
+  end if;
+
+  -- Commissions encore dues à la centrale : empreintes gardées tant que la dette est ouverte (avant l'effacement
+  -- des identifiants), jamais la valeur en clair
+  select o.owed_cents, o.owed_count into v_owed_cents, v_owed_count from private.driver_open_debt(d.id) o;
+  if coalesce(v_owed_count, 0) > 0 then
+    insert into private.debtor_identities (organization_id, driver_id, driver_number, kind, value_hash)
+    select d.organization_id, d.id, d.number, i.kind, i.value_hash
+      from private.driver_identities(d.id, false) i
+     where i.kind in ('phone', 'email', 'vtc_card')
+    on conflict (driver_id, kind, value_hash) do nothing;
+    get diagnostics v_debtor_ids = row_count;
+  end if;
+
+  -- Offres en attente closes (le chauffeur ne peut plus répondre)
+  update public.ride_offers
+     set status = 'closed', closed_reason = 'driver_deleted', responded_at = now()
+   where driver_id = d.id and status = 'pending';
+
+  -- Nom et identification retirés de tout ce qui les a recopiés (avant l'anonymisation : noms encore connus)
+  perform private.scrub_driver_traces(d.id, d.organization_id, d.created_at, d.first_name, d.last_name, d.number, v_alias);
+
+  -- Données personnelles supprimées (les fichiers des justificatifs : dossier purgé via la file)
+  select count(*) into v_files from public.driver_documents x where x.driver_id = d.id;
+  delete from public.driver_documents where driver_id = d.id;
+  delete from public.push_tokens where driver_id = d.id;
+  delete from public.driver_devices where driver_id = d.id;
+  delete from public.driver_locations where driver_id = d.id;
+  delete from public.driver_location_history where driver_id = d.id;
+  delete from public.notifications where driver_id = d.id;
+  delete from public.chat_report_votes where voter_key = v_key;
+  delete from public.chat_reads where reader_key = v_key or thread_key = v_key;
+  delete from public.chat_messages where driver_id = d.id or author_driver_id = d.id;
+
+  -- Véhicule personnel (inscription par lien), utilisé par aucun autre chauffeur
+  if d.vehicle_id is not null and d.joined_via = 'join_link'
+     and not exists (select 1 from public.drivers x where x.vehicle_id = d.vehicle_id and x.id <> d.id) then
+    v_vehicle := d.vehicle_id;
+  end if;
+
+  -- Fiche anonymisée, détachée du compte de connexion ; conservée pour les courses et règlements passés.
+  -- Membre de centrale : ses sessions de gestion ne sont pas coupées (drivers_revoke_sessions).
+  if v_keep then
+    perform set_config('rydar.keep_sessions', d.user_id::text, true);
+  end if;
+  update public.drivers
+     set first_name = 'Chauffeur',
+         last_name = 'supprimé',
+         phone = '',
+         email = null,
+         photo_url = null,
+         vtc_card_number = null,
+         notes = null,
+         application_status = null,
+         application_message = null,
+         application_note = null,
+         suspended_reason = case when v_admin then 'Compte supprimé à la demande du chauffeur' else 'Compte supprimé par le chauffeur' end,
+         -- (motif de bannissement conservé contre la fraude, son nom déjà retiré par scrub_driver_traces)
+         status = 'inactive',
+         presence = 'offline',
+         online_since = null,
+         last_seen_at = null,
+         current_ride_id = null,
+         vehicle_id = null,
+         user_id = null,
+         deleted_at = now()
+   where id = d.id;
+  perform set_config('rydar.keep_sessions', '', true);
+
+  if v_vehicle is not null then
+    if exists (select 1 from public.rides r1 where r1.vehicle_id = v_vehicle)
+       or exists (select 1 from public.ride_assignments a where a.vehicle_id = v_vehicle) then
+      update public.vehicles
+         set plate = 'SUPPR-' || upper(left(replace(v_vehicle::text, '-', ''), 10)),
+             brand = null,
+             model = 'Véhicule supprimé',
+             color = null,
+             year = null,
+             is_active = false
+       where id = v_vehicle;
+      v_vehicle_action := 'anonymized';
+    else
+      delete from public.vehicles where id = v_vehicle;
+      v_vehicle_action := 'deleted';
+    end if;
+  end if;
+
+  -- Compte de connexion (supprimé par la file) : nom et téléphone effacés dès maintenant
+  if d.user_id is not null and not v_keep then
+    update public.users set full_name = null, phone = null, avatar_url = null where id = d.user_id;
+    begin
+      update auth.users
+         set raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) - array['full_name', 'name', 'phone', 'avatar_url']
+       where id = d.user_id;
+    exception when insufficient_privilege or undefined_table or undefined_column then
+      raise warning 'delete_driver_account: métadonnées Auth non effacées (privilèges)';
+    end;
+  end if;
+
+  insert into private.account_deletions (driver_id, organization_id, driver_number, user_id, keep_auth, storage_prefix,
+    source, requested_by, auth_done_at, next_attempt_at)
+  values (d.id, d.organization_id, d.number, d.user_id, v_keep, format('%s/%s/', d.organization_id, d.id),
+    p_source, case when v_admin then p_actor end,
+    case when d.user_id is null or v_keep then now() end,
+    -- traitée aussitôt par l'appelant ; le worker ne la reprend qu'en cas d'échec
+    now() + interval '2 minutes')
+  returning * into q;
+
+  -- Journal d'audit du chauffeur et de son véhicule d'inscription : valeurs personnelles, adresse IP et navigateur
+  -- retirés (l'action reste tracée)
+  perform private.redact_driver_audit(d.id, d.user_id, v_keep, v_vehicle);
+
+  insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+  values (d.organization_id, case when v_admin then 'super_admin' else 'driver' end::public.actor_type,
+    case when v_admin then p_actor end, 'driver.deleted', 'drivers', d.id::text, 'warning',
+    jsonb_build_object('number', d.number, 'source', p_source, 'documents', v_files, 'keep_auth', v_keep,
+      'vehicle', v_vehicle_action, 'deletion_id', q.id, 'rides_released', v_released,
+      'owed_cents', v_owed_cents, 'owed_settlements', v_owed_count, 'debtor_identities', v_debtor_ids));
+
+  perform private.log_event(d.organization_id, null, 'driver.deleted',
+    case when v_admin then format('Compte du chauffeur #%s supprimé à sa demande (traité par Rydar Drive)', d.number)
+         else format('Le chauffeur #%s a supprimé son compte', d.number) end
+    || case when coalesce(v_owed_count, 0) > 0
+            then format(' — reste dû : %s de commissions (%s règlement%s au nom de « %s »)',
+                   private.fmt_eur(least(v_owed_cents, 2147483647)::integer), v_owed_count,
+                   case when v_owed_count > 1 then 's' else '' end, v_alias)
+            else '' end,
+    'system', 'warning',
+    jsonb_build_object('driver_id', d.id, 'source', p_source, 'rides_released', v_released,
+      'owed_cents', v_owed_cents, 'owed_settlements', v_owed_count),
+    case when v_admin then 'super_admin' else 'driver' end::public.actor_type,
+    case when v_admin then p_actor else d.id end);
+
+  return jsonb_build_object('ok', true, 'code', 'DELETED', 'already_deleted', false, 'documents', v_files,
+      'vehicle', v_vehicle_action, 'rides_released', v_released)
+    || private.account_deletion_json(q);
+end;
+$$;
+
 -- =============================================================================
 -- 13. Chien de garde et organisations indisponibles (§9.8, C3, C12)
 -- =============================================================================
