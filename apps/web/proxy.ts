@@ -72,8 +72,14 @@ async function hasSession(supabase: ReturnType<typeof createServerClient>): Prom
 }
 
 const PROTECTED = ["/dashboard", "/admin"];
-/** Pages légales de la plateforme : servies telles quelles sur les mini-sites (liens du mini-site et du bandeau cookies). */
-const LEGAL_PATHS = new Set(["/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte"]);
+/**
+ * Pages légales de la plateforme : servies telles quelles sur les mini-sites (liens du mini-site et du bandeau cookies),
+ * réseau partagé compris (convention et conditions des chauffeurs).
+ */
+const LEGAL_PATHS = new Set([
+  "/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte",
+  "/reseau-partage/conditions", "/reseau-partage/chauffeur",
+]);
 /**
  * Hôte de mini-site sans mini-site servi (désactivé par sa centrale, centrale suspendue, mini-sites coupés par la
  * plateforme, Supabase injoignable) : chemin qu'aucune route ne sert (dossier « _ » privé de l'App Router) → page 404
