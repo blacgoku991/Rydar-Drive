@@ -16,6 +16,12 @@
 	request_body @stripe_webhook {
 		max_size 1MB
 	}
+	# API v1 (clés des centrales) : JSON de quelques Ko (32 Ko lus au plus par l'application, lib/api/v1.ts) ; un
+	# corps plus lourd est refusé (413) par Caddy, sans occuper le serveur Node
+	@api_v1 path /api/v1/*
+	request_body @api_v1 {
+		max_size 1MB
+	}
 	reverse_proxy web:3000 {
 		# IP réelle de la connexion (limitations de débit) ; un client ne choisit pas son IP par en-tête
 		header_up X-Real-IP {remote_host}
@@ -33,9 +39,13 @@ https:// {
 		on_demand
 	}
 	encode zstd gzip
-	# Même plafond ici : la route du webhook répond aussi derrière un hôte de mini-site
+	# Mêmes plafonds ici : le webhook et l'API v1 répondent aussi derrière un hôte de mini-site
 	@stripe_webhook path /api/stripe/webhook
 	request_body @stripe_webhook {
+		max_size 1MB
+	}
+	@api_v1 path /api/v1/*
+	request_body @api_v1 {
 		max_size 1MB
 	}
 	reverse_proxy web:3000 {

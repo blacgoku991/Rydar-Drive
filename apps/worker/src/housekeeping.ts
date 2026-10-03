@@ -1,4 +1,4 @@
-// Ménage périodique (private.housekeeping, dernière définition 20260924006600) : courses planifiées acceptées jamais
+// Ménage périodique (private.housekeeping, dernière définition 20260924007300) : courses planifiées acceptées jamais
 // démarrées clôturées 6 h après l'heure de prise en charge (« rides_expired ») ; baisses de frais Rydar en attente depuis
 // 30 jours acceptées (« platform_reductions_accepted ») ; hausses annoncées appliquées à leur date d'effet, en dernier,
 // si l'e-mail d'annonce est parti 30 jours avant (« platform_fee_changes_applied ») ; durées de conservation annoncées

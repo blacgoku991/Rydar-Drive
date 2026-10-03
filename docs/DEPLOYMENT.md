@@ -54,7 +54,8 @@ Architecture cible :
      aussi pour les liens d'invitation des membres (même réglage).
    - *Rate Limits* : la limite des vérifications de code (*token verifications*, par IP) peut être abaissée ; ne
      baissez pas trop celles des connexions et du rafraîchissement des sessions, car les téléphones des chauffeurs
-     partagent souvent l'adresse IP de leur opérateur.
+     partagent souvent l'adresse IP de leur opérateur. **Auto-hébergé** : sans `GOTRUE_RATE_LIMIT_HEADER`, aucune
+     limite par IP n'existe, et les inscriptions se coupent par `DISABLE_SIGNUP=true` (§ 3, « Exposition du serveur »).
    - **Journal d'audit Auth (conservation)** : Supabase Auth inscrit chaque connexion (nom, e-mail, adresse IP) dans
      `auth.audit_log_entries`. `private.housekeeping` (migration 004800, une fois par heure) en efface les lignes de plus
      d'un an, et la file de suppression (`private.complete_account_deletion`) celles d'un chauffeur dès que son compte de
@@ -273,6 +274,72 @@ Montage en production (rydardrive.com), hors dépôt :
   mais le certificat n'est plus vérifié (ancien mode). Retour : `DATABASE_SSLMODE=verify-full`.
 
 Hors kit VPS : `docker run -e DATABASE_SSLMODE=verify-full -e DATABASE_CA_FILE=/etc/rydar/supabase-ca.crt -v "$PWD/deploy/supabase-ca.crt:/etc/rydar/supabase-ca.crt:ro" …`.
+
+### Exposition du serveur : taille des requêtes, Supabase Auth, IPv6
+
+Durcissements reportés par l'audit. Seul le premier est dans le kit ; les deux autres touchent des fichiers du VPS hors
+dépôt (`/opt/supabase`, `Caddyfile.local`). Contrôles en lecture seule d'abord.
+
+**1. Taille des requêtes (Caddy, dans le kit).** `deploy/Caddyfile` plafonne à 1 Mo le corps de `/api/v1/*` (l'application
+en lit 32 Ko au plus) et du webhook Stripe : au-delà, Caddy répond 413 sans occuper le serveur Node. Si `Caddyfile.local`
+remplace en production le Caddyfile du dépôt au lieu de l'importer (fichier monté sur `/etc/caddy/Caddyfile` :
+`sudo docker inspect` du conteneur `caddy`), y reporter les deux blocs `request_body`. Contrôle :
+`head -c 2000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST --data-binary @- https://DOMAINE/api/v1/rides`
+affiche `413` (`401` : plafond absent).
+
+**2. Supabase Auth auto-hébergé (`api.DOMAINE`) : limites par adresse IP, inscriptions coupées.** Sans
+`GOTRUE_RATE_LIMIT_HEADER`, Supabase Auth n'applique **aucune** limite par adresse IP (code de supabase/auth : sans
+en-tête réglé, « ignore rate limiting ») : connexion et rafraîchissement (`/token`), vérification des codes (`/verify`),
+envois d'e-mails (`/recover`, `/otp`) sont appelables sans fin avec la clé publique, et les limites de Rydar ne
+couvrent que ses propres routes. Caddy **réécrit** `X-Forwarded-For` avec l'adresse de la connexion (aucun
+`trusted_proxies` : vérifié avec Caddy 2.10, la valeur envoyée par un client est remplacée), la passerelle de Supabase
+(Kong ou Envoy) ajoute au plus la sienne à la suite, et Supabase Auth compte par première valeur, donc par adresse
+réelle : `GOTRUE_RATE_LIMIT_HEADER=X-Forwarded-For`. Rydar n'utilise aucune inscription publique (comptes créés par le
+serveur avec la clé de service : `auth.admin.createUser`, `inviteUserByEmail`, non concernés) : `DISABLE_SIGNUP=true`.
+Limites par défaut, par adresse et par 5 minutes : `/token` 150, `/verify` 30, `/recover` et `/otp` 30.
+
+- **Point d'attention** : les appels faits par le serveur web (connexion du tableau de bord et de l'app chauffeur,
+  code « Mot de passe oublié » de l'app, confirmation de suppression de compte, session relue côté serveur) arrivent
+  tous avec l'adresse du VPS et partagent une seule limite pour toute la plateforme (150 connexions ou
+  rafraîchissements et 30 codes par 5 minutes), très au-dessus de l'usage actuel. Des refus répétés
+  (`sudo docker logs --since 1h supabase-auth 2>&1 | grep -c 'rate limit reached'`) imposeraient de relever
+  `GOTRUE_RATE_LIMIT_TOKEN_REFRESH` / `GOTRUE_RATE_LIMIT_VERIFY` (même procédure), ou de faire transmettre par le
+  serveur web l'adresse du client (évolution : en-tête de confiance réservé au réseau Docker, sûr seulement sans
+  IPv6 arrivant par la passerelle Docker, point 3).
+- **Contrôles (lecture seule)** : `grep -rn trusted_proxies /opt/rydar/deploy/ || echo aucun` affiche `aucun` (sinon
+  Caddy garde l'en-tête choisi par le client : ne rien appliquer) ; `sudo docker ps --format '{{.Names}} {{.Ports}}' | grep -E '0\.0\.0\.0:|\[::\]:'`
+  ne doit montrer que Caddy (80, 443). Tout autre port publié sur toutes les adresses (passerelle 8000, Supavisor
+  5432 / 6543…) doit être fermé depuis Internet — Docker contourne ufw — : depuis une autre machine,
+  `curl -m 5 http://IP_DU_VPS:8000/` doit échouer (un client qui joint la passerelle sans Caddy choisit son
+  `X-Forwarded-For`).
+- **Commande** (une ligne : copies `.avant-limites`, projet et fichiers Compose relus sur le conteneur, seul `auth`
+  recréé ; à refaire après une mise à jour de Supabase qui remplace `docker-compose.yml`, sans effet si tout est déjà
+  en place) :
+
+  ```bash
+  read -r p d f < <(sudo docker inspect supabase-auth --format '{{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.project.working_dir"}} {{index .Config.Labels "com.docker.compose.project.config_files"}}') && cd "$d" && { sudo test -e .env.avant-limites || sudo cp .env .env.avant-limites; } && { sudo test -e docker-compose.yml.avant-limites || sudo cp docker-compose.yml docker-compose.yml.avant-limites; } && if sudo grep -q '^DISABLE_SIGNUP=' .env; then sudo sed -i 's/^DISABLE_SIGNUP=.*/DISABLE_SIGNUP=true/' .env; else echo 'DISABLE_SIGNUP=true' | sudo tee -a .env >/dev/null; fi && if ! sudo grep -q 'GOTRUE_RATE_LIMIT_HEADER' docker-compose.yml; then sudo sed -i 's/^\( *\)GOTRUE_DISABLE_SIGNUP:.*/&\n\1GOTRUE_RATE_LIMIT_HEADER: X-Forwarded-For/' docker-compose.yml; fi && sudo docker compose -p "$p" $(printf '%s' "$f" | tr ',' '\n' | sed '/^$/d; s/^/-f /') up -d --no-deps auth
+  ```
+
+- **Vérification** : `sudo docker inspect supabase-auth --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^GOTRUE_(RATE_LIMIT_HEADER|DISABLE_SIGNUP)='`
+  affiche `GOTRUE_DISABLE_SIGNUP=true` et `GOTRUE_RATE_LIMIT_HEADER=X-Forwarded-For` (sinon la ligne n'a pas trouvé où
+  s'insérer : ne rien forcer) ; connexions du tableau de bord et de l'app, « Mot de passe oublié » par code : OK ;
+  `sudo docker logs --since 15m supabase-auth 2>&1 | grep -c 'rate limiting is not applied'` affiche `0`. Retour
+  arrière : recopier les deux fichiers `.avant-limites`, puis la même commande `up -d --no-deps auth`.
+- **Facultatif** (bloc `api.DOMAINE` de `Caddyfile.local`) : fermer les routes d'Auth que Rydar n'appelle jamais et qui
+  envoient des e-mails (quota d'envoi commun à toute la plateforme) :
+  `@auth_inutile path /auth/v1/signup* /auth/v1/otp* /auth/v1/magiclink* /auth/v1/resend*` puis
+  `respond @auth_inutile 404`, avant `reverse_proxy` (`/recover`, `/verify` et `/token` restent nécessaires).
+
+**3. IPv6 derrière Docker (documenté seulement : changement à risque de coupure).** Les réseaux Docker du kit et de
+Supabase sont en IPv4 : une connexion IPv6 aux ports 80 / 443 est reprise par `docker-proxy`, et Caddy voit l'adresse
+de la passerelle Docker (`172.x.0.1`) pour **tous** les clients IPv6 : limites de Rydar et de Supabase Auth communes
+à tous ces clients (un seul abuseur les bloque tous), journaux sans leur adresse réelle. Contrôle :
+`getent ahostsv6 DOMAINE api.DOMAINE` (et un sous-domaine de mini-site) : aucune adresse hors `::ffff:…` = accès IPv4
+seulement, rien à faire (`install.sh` signale déjà un AAAA). Si un AAAA pointe vers le VPS : (a) le plus simple, sans
+toucher au serveur, supprimer les AAAA chez le registraire ; (b) sinon activer l'IPv6 de Docker (`/etc/docker/daemon.json` :
+`"ipv6": true`, `"ip6tables": true`, `"fixed-cidr-v6"` privé `fd…/64` ; `enable_ipv6: true` sur les réseaux Compose
+concernés), ce qui redémarre Docker (coupure de tous les services, Supabase compris) et recrée les réseaux : hors des
+heures de courses, après un essai sur une machine de test.
 
 ### E-mails : formulaire de contact
 
@@ -577,6 +644,9 @@ Tant qu'un point n'est pas vérifié, la phrase correspondante des pages légale
 ## 7. Checklist de mise en production
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
+- [ ] Supabase auto-hébergé : `GOTRUE_RATE_LIMIT_HEADER=X-Forwarded-For`, `DISABLE_SIGNUP=true`, aucun port publié
+      joignable depuis Internet hors Caddy ; `/api/v1/*` au-delà de 1 Mo refusé (413) ; aucun AAAA vers le VPS tant
+      que Docker n'a pas l'IPv6 (§ 3, « Exposition du serveur »)
 - [ ] Auth : code e-mail à 8 chiffres, validité 3600 s (§ 1)
 - [ ] Pushs : `EXPO_ACCESS_TOKEN` renseigné, puis *Enhanced Security for Push Notifications* activée chez Expo (§ 3)
 - [ ] Realtime : *Allow public access* désactivé (canaux privés uniquement)
