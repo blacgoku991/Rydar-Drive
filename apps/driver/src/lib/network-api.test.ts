@@ -166,9 +166,9 @@ describe("RPC réseau : noms et paramètres du contrat", () => {
       code: "PAYOUT_DETAILS_IN_USE", message: "Un versement vous est encore dû : modifiez vos coordonnées bancaires au lieu de les supprimer.",
     });
     h.s.handle = () => raised("DRIVER_BUSY_AT_TIME: chevauchement");
-    await expect(api.accept("o1")).rejects.toMatchObject({ code: "DRIVER_BUSY_AT_TIME", message: "Créneau déjà pris : vous avez une autre course à cette heure-là." });
+    await expect(api.accept("o1")).rejects.toMatchObject({ code: "DRIVER_BUSY_AT_TIME", message: "Créneau déjà pris\u00A0: vous avez une autre course à cette heure-là." });
     expect(refusalText({ code: "OFFER_CHANGED" })).toBe("La course a été modifiée : elle vous sera reproposée si elle est encore disponible.");
-    expect(refusalText({ code: "DRIVER_BUSY_AT_TIME" })).toBe("Créneau déjà pris : vous avez une autre course à cette heure-là.");
+    expect(refusalText({ code: "DRIVER_BUSY_AT_TIME" })).toBe("Créneau déjà pris\u00A0: vous avez une autre course à cette heure-là.");
   });
 
   it("conditions complètes : page publique du serveur web", () => {

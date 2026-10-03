@@ -432,7 +432,8 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       if (ping) networkPingAt.current = now;
       void (ping ? api.networkPing().catch((e: unknown) => {
         if (isMissingRpc(e)) networkUnsupported.current = true;
-        else networkPingAt.current = 0; // réseau : nouvel essai au prochain retour
+        // Serveur injoignable : nouvel essai au prochain retour (refus du serveur, réseau coupé compris : 15 min)
+        else if (!(e instanceof ApiError && e.code)) networkPingAt.current = 0;
       }) : Promise.resolve()).then(() => {
         if (alive && (force || Date.now() - networkReadAt.current >= NETWORK_STATE_MS)) void refreshNetwork();
       });

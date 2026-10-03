@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   clientWindowNote, creditorView, driverNetworkStatus, earningsPartner, forbiddenWordsIn, giverPhone, legacyOffer, legacyRide, maskIban,
   networkHomeBanner, networkTermsContent, networkVisible, offerBlockView, partnerDoneView, partnerItemView, partnerOfferView, payoutFormErrors,
-  rideMoneyView, settleHref, shouldProposeNetworkTerms, voucherView, type AppRide,
+  rideMoneyView, settleHref, shouldProposeNetworkTerms, showVoucher, voucherView, type AppRide,
 } from "./network";
 
 /** Espaces insécables (prix, typographie française) ramenés à des espaces pour comparer les textes. */
@@ -261,6 +261,16 @@ describe("bon de réservation (§7.5) : toutes les courses", () => {
     const v = voucherView(voucher({ booked_by: { name: "Taxi Bleu", legal_name: null, vtc_registration: null, phone: null }, receipt_by: "Taxi Bleu" }), TZ);
     expect(v.lines[0]!.value).toBe("Taxi Bleu");
     expect(plain(v.receipt)).toBe("Reçu ou facture du client : délivré par Taxi Bleu");
+  });
+
+  it("affiché sur toute course une fois le réseau ouvert par Rydar ; interrupteur plateforme coupé : rien de nouveau", () => {
+    const own = partnerRide({ network: null });
+    expect(showVoucher(partnerRide(), null)).toBe(true); // course partenaire : toujours
+    expect(showVoucher(own, state())).toBe(true);
+    expect(showVoucher(own, state({ organization: { id: "b", name: "Flotte Beta", dispatch_model: "fleet", receiving: false } }))).toBe(true);
+    expect(showVoucher(own, null)).toBe(false); // NETWORK_DISABLED, serveur antérieur ou état pas encore lu
+    expect(showVoucher(own, state({}, { ready: false, missing: ["network_off"] }))).toBe(false);
+    expect(showVoucher({ ...own, voucher: null }, state())).toBe(false);
   });
 });
 

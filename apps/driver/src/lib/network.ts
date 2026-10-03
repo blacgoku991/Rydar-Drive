@@ -318,6 +318,16 @@ export function voucherView(v: BookingVoucher, tz?: string): { lines: VoucherLin
   };
 }
 
+/**
+ * Bon affiché : course partenaire, ou toute course dès que Rydar a ouvert le réseau partagé (état réseau lu, sans
+ * `network_off`). Interrupteur plateforme coupé (par défaut) : rien de nouveau dans l'app, même si le serveur envoie un bon.
+ */
+export function showVoucher(r: Pick<AppRide, "voucher" | "network">, s: DriverNetworkState | null | undefined): boolean {
+  if (!r.voucher) return false;
+  if (r.network) return true;
+  return !!s && !(s.readiness?.missing ?? []).includes("network_off");
+}
+
 // =============================================================================
 // Réglage « Courses du réseau partagé » (profil) et conditions
 // =============================================================================

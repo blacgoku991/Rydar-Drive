@@ -22,8 +22,8 @@ import { api } from "@/lib/api";
 import { useAppEvent } from "@/lib/events";
 import { setHighAccuracy } from "@/lib/location";
 import {
-  clientWindowNote, giverPhone, partnerDoneView, partnerPaymentLabel, receiptText, rideMoneyView, settleHref, type AppRide, type LegacyRideContext,
-  type RideMoneyView,
+  clientWindowNote, giverPhone, partnerDoneView, partnerPaymentLabel, receiptText, rideMoneyView, settleHref, showVoucher, type AppRide,
+  type LegacyRideContext, type RideMoneyView,
 } from "@/lib/network";
 import { overdue, overdueHint } from "@/lib/planning";
 import { navUrl, rideTarget, type NavApp, type RideTarget } from "@/lib/ride-target";
@@ -66,7 +66,7 @@ export default function RideScreen() {
   // le verrou peut ne pas être encore actif au démontage — pas d'erreur dans ce cas
   useKeepAwake(undefined, { suppressDeactivateWarnings: true });
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { refresh, home, setOnline } = useDriver();
+  const { refresh, home, setOnline, network } = useDriver();
   const me = useMyPosition();
   const [ride, setRide] = useState<AppRide | null>(null);
   // Course invisible pour ce chauffeur dès l'ouverture (réattribuée, notification ou planning périmés)
@@ -380,8 +380,8 @@ export default function RideScreen() {
               </View>
             </View>
           ) : null}
-          {/* Bon de réservation : toutes les courses (à présenter en cas de contrôle) */}
-          {ride.voucher ? <BookingVoucherCard voucher={ride.voucher} tz={home?.organization.timezone} /> : null}
+          {/* Bon de réservation : toutes les courses une fois le réseau ouvert par Rydar (à présenter en cas de contrôle) */}
+          {ride.voucher && showVoucher(ride, network) ? <BookingVoucherCard voucher={ride.voucher} tz={home?.organization.timezone} /> : null}
         </ScrollView>
       </Sheet>
 

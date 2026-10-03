@@ -52,7 +52,7 @@ export function refusalText(res: { code?: string | null; message?: string | null
 
 /** Libellés partagés écrits pour l'organisation, reformulés pour le chauffeur. */
 const DRIVER_MESSAGES: Record<string, string> = {
-  DRIVER_BUSY_AT_TIME: "Créneau déjà pris : vous avez une autre course à cette heure-là.",
+  DRIVER_BUSY_AT_TIME: "Créneau déjà pris\u00A0: vous avez une autre course à cette heure-là.",
 };
 
 /** Jeton refusé par l'API (expiré pendant la requête, horloge du téléphone en retard). */

@@ -154,7 +154,7 @@ export default function Payout() {
                   ref={ibanRef}
                   label="IBAN"
                   icon="card-outline"
-                  help={configured ? "Saisissez l'IBAN en entier : l'ancien n'est jamais réaffiché." : null}
+                  help={configured ? frTypo("Saisissez l'IBAN en entier : l'ancien n'est jamais réaffiché.") : null}
                   value={form.iban}
                   onChangeText={(v) => set("iban", v)}
                   error={errors.iban}

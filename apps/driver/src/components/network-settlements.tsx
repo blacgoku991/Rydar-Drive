@@ -435,7 +435,7 @@ const styles = StyleSheet.create({
   payMeta: { color: colors.muted, fontSize: type.body, ...mono },
   refRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: space.sm },
   refChip: {
-    flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44, paddingHorizontal: space.md, borderRadius: radius.sm,
+    flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: control.sm, paddingHorizontal: space.md, borderRadius: radius.sm,
     backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.lineStrong,
   },
   refChipText: { color: colors.fg, fontSize: type.body, fontWeight: weight.semibold, letterSpacing: 0.5, ...mono },

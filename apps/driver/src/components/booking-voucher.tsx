@@ -1,6 +1,7 @@
-// Bon de réservation (§7.5, arrêté du 26 mars 2015) : UNE carte sur toutes les courses de l'app, propres et
-// partenaires — organisation qui a pris la réservation, exploitant qui exécute, client (dans sa fenêtre pour une course
-// partenaire), dates et lieu de prise en charge, « Reçu ou facture du client : délivré par {organisation} ».
+// Bon de réservation (§7.5, arrêté du 26 mars 2015) : UNE carte sur toutes les courses de l'app, propres et partenaires,
+// dès que Rydar a ouvert le réseau partagé (lib/network.ts : showVoucher) — organisation qui a pris la réservation,
+// exploitant qui exécute, client (dans sa fenêtre pour une course partenaire), dates et lieu de prise en charge,
+// « Reçu ou facture du client : délivré par {organisation} ».
 // Repliée par défaut (la course d'abord) ; dépliée, elle se présente telle quelle lors d'un contrôle.
 import { Ionicons } from "@expo/vector-icons";
 import type { BookingVoucher } from "@rydar/shared";
