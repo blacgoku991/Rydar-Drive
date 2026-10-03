@@ -634,6 +634,8 @@ export const platformTermsSchema = z.object({
   paymentDays: z.coerce.number().int().min(0, "Entre 0 et 45 jours").max(PLATFORM_PAYMENT_DAYS_MAX, "Entre 0 et 45 jours"),
   blockAfterDays: z.union([z.literal(""), z.null(), z.undefined(), z.coerce.number().int().min(1, "Entre 1 et 90 jours").max(90, "Entre 1 et 90 jours")])
     .transform((v) => (v === "" || v == null ? null : v)),
+  /** Accord écrit de l'organisation : obligatoire pour un changement en sa défaveur (svc_platform_terms, CGV art. 5). */
+  consentNote: z.string().trim().max(500, "500 caractères au plus").nullish().transform((v) => v || null),
 });
 
 /**

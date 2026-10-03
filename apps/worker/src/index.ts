@@ -63,15 +63,26 @@ function single(name: string, fn: () => Promise<unknown>) {
   return job;
 }
 
-/** Toutes les 2 s : vagues d'offres et relances ; un tick lent n'est pas doublé par le suivant (single). */
+/**
+ * Toutes les 2 s : vagues d'offres et relances ; un tick lent n'est pas doublé par le suivant (single). Par lots courts
+ * (une transaction chacun) : les courses d'un lot restent verrouillées le temps du lot, pas de tout le tick (acceptation
+ * et annulation n'attendent plus) ; on enchaîne tant qu'un lot est plein, 1,5 s au plus.
+ */
+const DISPATCH_BATCH = 20;
 const dispatchTick = single("dispatchTick", async () => {
   try {
-    const { rows } = await pool.query<{ r: Record<string, number> }>("select private.dispatch_tick() as r");
-    const r = rows[0]?.r ?? {};
+    const started = Date.now();
+    const total: Record<string, number> = {};
+    for (;;) {
+      const { rows } = await pool.query<{ r: Record<string, number> }>("select private.dispatch_tick($1) as r", [DISPATCH_BATCH]);
+      const r = rows[0]?.r ?? {};
+      for (const [k, v] of Object.entries(r)) total[k] = (total[k] ?? 0) + (Number(v) || 0);
+      if (r.waves || r.escalated) run(processNotifications);
+      if ((r.processed ?? 0) < DISPATCH_BATCH || Date.now() - started > 1_500) break;
+    }
     state.lastTick = Date.now();
     state.ticks++;
-    if (r.waves || r.escalated || r.no_driver) log("info", "dispatch tick", r);
-    if (r.waves || r.escalated) run(processNotifications);
+    if (total.waves || total.escalated || total.no_driver) log("info", "dispatch tick", total);
   } catch (error) {
     state.errors++;
     log("error", "dispatch tick failed", { error: (error as Error).message, ...dbTlsHint(error) });

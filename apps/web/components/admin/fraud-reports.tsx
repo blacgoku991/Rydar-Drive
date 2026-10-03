@@ -235,7 +235,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
                 chauffeur que sa centrale avait déjà banni le reste.
               </p>
             )}
-            <Field label={pending.kind === "lift" ? "Motif de la levée" : "Note interne"} optional>
+            <Field label={pending.kind === "lift" ? "Motif de la levée" : "Note (visible par la centrale)"} optional>
               <Textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -348,7 +348,7 @@ function BanPreview({
       ) : (
         <div className="space-y-1.5">
           <p className="font-medium text-fg">
-            {others.length} fiche{others.length > 1 ? "s" : ""} d&apos;autres centrales partage{others.length > 1 ? "nt" : ""} une identité
+            {others.length} fiche{others.length > 1 ? "s" : ""} à confirmer (autres centrales, ou même véhicule seulement) partage{others.length > 1 ? "nt" : ""} une identité
           </p>
           <p className="text-fg-muted">
             Non cochée : la fiche n&apos;est pas touchée et l&apos;identité partagée reste refusée seulement chez {orgName}.
