@@ -666,6 +666,30 @@ export interface NetworkRideEventData {
   "dispatch.network_error": { errors: number };
 }
 
+/**
+ * Codes de public.accept_ride_offer (offre propre ou réseau, 20260924006800). Ajoutés par le réseau : OFFER_CHANGED
+ * (termes changés depuis l'offre : elle est fermée « terms_changed » et reproposée si la course est encore disponible)
+ * et DRIVER_BUSY_AT_TIME (créneau pris par une course d'une autre organisation que le chauffeur, dans les deux sens ;
+ * aussi public.assign_ride). Offre réseau devenue inéligible (partage, paire, chauffeur) : OFFER_CLOSED.
+ */
+export const ACCEPT_OFFER_CODES = [
+  "ACCEPTED", "OFFER_NOT_FOUND", "RIDE_CANCELLED", "SEARCH_ENDED", "RIDE_ALREADY_ASSIGNED", "OFFER_CHANGED", "OFFER_CLOSED",
+  "OFFER_EXPIRED", "DRIVER_BLOCKED", "DRIVER_BUSY", "DRIVER_BUSY_AT_TIME",
+] as const;
+export type AcceptOfferCode = (typeof ACCEPT_OFFER_CODES)[number];
+
+/**
+ * Réponse de public.accept_ride_offer. DRIVER_BLOCKED d'une offre réseau : reason = NetworkBlocker (règle locale de A
+ * ou de B, offre laissée ouverte) et message avec les noms des organisations (private.network_blocker_message).
+ */
+export interface AcceptOfferResult {
+  ok: boolean;
+  code: AcceptOfferCode;
+  message?: string;
+  reason?: OfferBlocker;
+  ride_id?: Uuid;
+}
+
 /** Actions d'audit (audit_logs.action) du réseau. */
 export type NetworkAuditAction =
   | "platform.shared_network_enabled" | "platform.shared_network_disabled" | "network.approved" | "network.refused" | "network.approval_lost"

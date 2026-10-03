@@ -231,7 +231,8 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
 
 ## Réseau partagé (branche `shared-network`, en cours, interrupteur plateforme coupé)
 - Lots faits : 0 (contrats `packages/shared/src/network.ts`), 2 (schéma, gardes, droits : migration `20260924006700`,
-  non poussée). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  non poussée), 3a (dispatch : éligibilité, étape réseau des immédiates et des planifiées, acceptation : migration
+  `20260924006800`, non poussée, à compléter par la partie 3b : retraits, chien de garde, fin de course). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - **Avant d'écrire 006800** : fusionner la branche principale une fois le chantier CGV (`20260924006600`) fusionné, puis
   partir de ses définitions (« Dernière définition : 20260924006600… », contrôlé par `migrations.test.ts`) :
@@ -241,6 +242,13 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   `legal_acceptances` ni aux fonctions redéfinies par 006700. À la fusion, ajouter les tests de non-régression :
   `private.housekeeping()` renvoie toujours `platform_fee_changes_applied`, `private.platform_account` toujours
   `scheduled_change`.
+- Règles posées par le lot 3a (dispatch) :
+  - une offre réseau ne rend jamais le partenaire « sollicité » (`presence` inchangée, `release_offered_drivers` ignore
+    les offres réseau) : son organisation peut toujours le solliciter ; un partenaire n'a qu'une offre GPS en attente ;
+  - NO_DRIVER_FOUND en phase réseau remet `network_at` à NULL (partage clos « no_driver ») ; la fenêtre réseau d'une
+    planifiée se ferme à T-lead (« window_elapsed ») ; une étape réseau en erreur est isolée (3 erreurs : fin) ;
+  - `private.network_blocker` (règles locales §10.7) et son message existent déjà (lot argent : à compléter, pas à
+    recréer) ; journaux de A écrits pendant une action d'un partenaire : `private.log_partner_event` (sans identifiant).
 - Règles posées par la revue du lot 2, pour les lots suivants :
   - course tenue par un partenaire : `network_at` ne change qu'avec le chauffeur (retrait, réattribution) ; prix,
     paiement, adresses, heure, catégorie, passagers, **bagages, n° de vol** verrouillés (G6) ; `apply_flight_status`
