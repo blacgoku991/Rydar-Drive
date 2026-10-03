@@ -85,26 +85,6 @@ export async function createOrganization(
   if (error || !org) return { ok: false, error: error?.code === "23505" ? "Ce slug est déjà utilisé." : "Création impossible." };
   const orgId = (org as any).id as string;
 
-  // Modèle d'exploitation + frais par course : réglage INITIAL, appliqué tout de suite (svc_platform_set_fees « initial »,
-  // réservé à une organisation tout juste créée et sans course ; historique et journal d'audit écrits en base). Ensuite,
-  // toute hausse est annoncée au moins 30 jours à l'avance ou appliquée sur accord écrit (fiche de l'organisation).
-  const setup = await admin.rpc("svc_platform_set_fees", {
-    p_org: orgId,
-    p_actor: session.user.id,
-    p_percent: m.platformFeePercent,
-    p_fixed_cents: m.platformFeeFixedCents,
-    p_dispatch_model: m.dispatchModel,
-    p_mode: "initial",
-    ...feeTermsParams(),
-  });
-  const initial = (setup.data ?? null) as SetPlatformFeesResult | null;
-  if (setup.error || !initial?.ok) {
-    // Rien n'a été écrit (refus avant écriture, ou transaction annulée) : la centrale créée est retirée
-    await admin.from("organizations").delete().eq("id", orgId);
-    if (initial && !initial.ok) return { ok: false, error: initial.message, fieldErrors: rpcFieldError(initial) };
-    return { ok: false, error: actionError(setup.error, "Modèle d'exploitation impossible à enregistrer.") };
-  }
-
   let ownerId = (await findUserIdByEmail(v.ownerEmail)) ?? undefined;
   const existingOwner = !!ownerId;
   // Compte existant : invitation prouvée par l'adresse, sauf le super admin qui se nomme lui-même
@@ -127,6 +107,30 @@ export async function createOrganization(
     if (!existingOwner) await admin.auth.admin.deleteUser(ownerId).catch(() => null);
     await admin.from("organizations").delete().eq("id", orgId);
     return { ok: false, error: humanizeError(ownerError.message, "Compte propriétaire impossible à rattacher.") };
+  }
+
+  // Modèle d'exploitation + frais par course : réglage INITIAL, appliqué tout de suite (svc_platform_set_fees « initial »,
+  // réservé à une organisation tout juste créée et sans course ; historique et journal d'audit écrits en base), une fois
+  // le propriétaire rattaché : des frais par course lui sont communiqués par e-mail (contenu fixe, file email_outbox ;
+  // propriétaire invité, pas encore actif : adresse de l'organisation). Ensuite, toute hausse est annoncée au moins 30
+  // jours à l'avance ou appliquée sur accord écrit (fiche de l'organisation).
+  const setup = await admin.rpc("svc_platform_set_fees", {
+    p_org: orgId,
+    p_actor: session.user.id,
+    p_percent: m.platformFeePercent,
+    p_fixed_cents: m.platformFeeFixedCents,
+    p_dispatch_model: m.dispatchModel,
+    p_mode: "initial",
+    ...feeTermsParams(),
+  });
+  const initial = (setup.data ?? null) as SetPlatformFeesResult | null;
+  if (setup.error || !initial?.ok) {
+    // Rien n'a été écrit (refus avant écriture, ou transaction annulée) : la centrale créée est retirée, avec le compte
+    // propriétaire créé ici
+    if (!existingOwner) await admin.auth.admin.deleteUser(ownerId).catch(() => null);
+    await admin.from("organizations").delete().eq("id", orgId);
+    if (initial && !initial.ok) return { ok: false, error: initial.message, fieldErrors: rpcFieldError(initial) };
+    return { ok: false, error: actionError(setup.error, "Modèle d'exploitation impossible à enregistrer.") };
   }
   const emailSent = ownerInvited ? await sendMemberInvitationEmail(v.ownerEmail) : false;
   if (planId) {
@@ -181,8 +185,11 @@ export type PlatformFeeSaveResult =
  *  - taux absents : changement de modèle seul (taux et hausse annoncée inchangés) ;
  *  - baisse ou taux inchangés : tout de suite (une hausse annoncée est alors remplacée, donc annulée) ;
  *  - HAUSSE : annoncée par e-mail au propriétaire, appliquée à sa date d'effet (au plus tôt 30 jours après l'annonce, et
- *    pas avant l'entrée en vigueur des CGV si l'organisation ne les a pas acceptées) ; ou tout de suite sur « accord
- *    écrit de l'organisation reçu » (note obligatoire, journalisée).
+ *    pas avant l'entrée en vigueur des CGV si l'organisation ne les a pas acceptées ; refusée si elle ne les a ni
+ *    acceptées ni reçues par e-mail, ou sans adresse e-mail ; jamais appliquée si l'e-mail n'est pas parti 30 jours
+ *    avant) ; ou tout de suite sur « accord écrit de l'organisation reçu » (note obligatoire, journalisée) ;
+ *  - changement de modèle : seulement à la demande de l'organisation ou avec son accord écrit (note obligatoire,
+ *    journalisée, CGV art. 3).
  * Retour au mode flotte : refusé s'il reste des règlements chauffeur ouverts (contrôle de la RPC, puis déclencheur
  * organizations_dispatch_model_guard). Le lien d'inscription des chauffeurs est conservé dans les deux sens
  * (20260924006300). Passage en centrale : répartition des courses non clôturées (SQL).
@@ -201,7 +208,9 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof p
     p_dispatch_model: v.dispatchModel,
     p_mode: v.mode,
     p_effective_on: v.mode === "notice" ? v.effectiveOn : null,
-    p_consent_note: v.mode === "consent" ? v.consentNote : null,
+    // Accord écrit d'une hausse appliquée tout de suite, et demande ou accord écrit de l'organisation pour un changement
+    // de modèle (CGV art. 3) : obligatoire dans ces deux cas (contrôlé par la base), ignoré sinon
+    p_consent_note: v.consentNote,
     ...feeTermsParams(),
   });
   if (error) {

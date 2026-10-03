@@ -109,7 +109,13 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   const terms: OrgTermsStatus | null =
     registry == null && !schedule?.terms
       ? null
-      : { state: accepted ? "accepted" : registry === "updated" ? "updated" : "pending", acceptedAt: schedule?.terms?.accepted_at ?? null };
+      : {
+          state: accepted ? "accepted" : registry === "updated" ? "updated" : "pending",
+          acceptedAt: schedule?.terms?.accepted_at ?? null,
+          // Annonce par e-mail de la version (svc_org_terms_notify) : sans elle ni acceptation, pas de hausse annoncée
+          notifiedAt: schedule?.terms?.notified_at ?? null,
+          notifiedEffectiveOn: schedule?.terms?.notified_effective_on ?? null,
+        };
   const platformAccount = ((platform.data ?? null) as AdminPlatformAccount | null)?.account ?? null;
   const showPlatform =
     !!platformAccount &&

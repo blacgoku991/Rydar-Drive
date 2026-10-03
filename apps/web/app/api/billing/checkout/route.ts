@@ -9,7 +9,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const body = z.object({ planCode: z.string().regex(/^[a-z0-9_]+$/), interval: z.enum(["month", "year"]).default("month") });
 
-/** Crée une session Stripe Checkout pour souscrire / changer d'offre. */
+/**
+ * Crée une session Stripe Checkout pour souscrire / changer d'offre. Prix des offres HORS TAXES (CGV art. 4 : « la TVA au
+ * taux en vigueur s'y ajoute ») : TVA calculée et ajoutée par Stripe Tax (automatic_tax), adresse de facturation et
+ * numéro de TVA intracommunautaire demandés (mentions de la facture, autoliquidation). Stripe Tax pas activé sur le
+ * compte : aucun abonnement sans TVA, message clair (docs/DEPLOYMENT.md § 4).
+ */
 export async function POST(req: Request) {
   const ctx = await getOrgContext();
   if (!ctx || ctx.role !== "owner") return NextResponse.json({ error: "Réservé au propriétaire du compte." }, { status: 403 });
@@ -52,19 +57,38 @@ export async function POST(req: Request) {
     customer = c.id;
     await admin.from("organizations").update({ stripe_customer_id: customer } as never).eq("id", ctx.org.id);
   }
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    customer,
-    line_items: [{ price: priceId, quantity: 1 }],
-    allow_promotion_codes: true,
-    // previous_plan_id : offre rendue à la centrale si l'abonnement se termine (webhook Stripe, jamais « sans offre »)
-    subscription_data: {
-      metadata: { organization_id: ctx.org.id, plan_code: (plan as any).code, ...((org as any).plan_id ? { previous_plan_id: (org as any).plan_id } : {}) },
-    },
-    metadata: { organization_id: ctx.org.id, plan_code: (plan as any).code },
-    success_url: `${env.appUrl}/dashboard/settings?tab=billing&checkout=success`,
-    cancel_url: `${env.appUrl}/dashboard/settings?tab=billing`,
-  });
+  let session: { url: string | null };
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer,
+      line_items: [{ price: priceId, quantity: 1 }],
+      allow_promotion_codes: true,
+      // TVA ajoutée au prix hors taxes (prix Stripe « TVA non comprise »), selon l'adresse de facturation ; numéro de TVA
+      // du client collecté ; client existant : adresse et nom repris de Checkout
+      automatic_tax: { enabled: true },
+      billing_address_collection: "required",
+      tax_id_collection: { enabled: true },
+      customer_update: { address: "auto", name: "auto" },
+      // previous_plan_id : offre rendue à la centrale si l'abonnement se termine (webhook Stripe, jamais « sans offre »)
+      subscription_data: {
+        metadata: { organization_id: ctx.org.id, plan_code: (plan as any).code, ...((org as any).plan_id ? { previous_plan_id: (org as any).plan_id } : {}) },
+      },
+      metadata: { organization_id: ctx.org.id, plan_code: (plan as any).code },
+      success_url: `${env.appUrl}/dashboard/settings?tab=billing&checkout=success`,
+      cancel_url: `${env.appUrl}/dashboard/settings?tab=billing`,
+    });
+  } catch (error) {
+    // Stripe Tax non activé (adresse d'origine, immatriculation), prix sans comportement fiscal… : jamais d'abonnement
+    // sans TVA. Message générique côté client ; détail (sans secret) dans le journal du serveur.
+    const e = error as { type?: string; code?: string; message?: string };
+    const tax = /tax/i.test(`${e.code ?? ""} ${e.message ?? ""}`);
+    console.error("[stripe] Checkout impossible", e.type ?? "", e.code ?? "", tax ? "(TVA)" : "");
+    return NextResponse.json(
+      { error: tax ? "Calcul de la TVA indisponible pour le paiement en ligne : contactez l'équipe Rydar." : "Paiement en ligne indisponible pour le moment : réessayez." },
+      { status: 503 },
+    );
+  }
   await audit({ organizationId: ctx.org.id, actorUserId: ctx.user.id, action: "billing.checkout_started", metadata: { plan: (plan as any).code } });
   return NextResponse.json({ url: session.url });
 }

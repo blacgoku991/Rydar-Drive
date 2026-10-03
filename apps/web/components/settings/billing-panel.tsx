@@ -113,16 +113,22 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
       <div className="grid gap-4 lg:grid-cols-3">
         {plans.map((p) => {
           const current = p.id === currentPlanId;
-          const price = interval === "year" ? p.price_yearly_cents / 12 : p.price_monthly_cents;
+          // Prix EXACT de l'offre, hors taxes (CGV art. 4 : « celui affiché dans l'offre au moment de la souscription » ;
+          // jamais arrondi à l'euro) : mensuel, ou annuel (avec son équivalent mensuel, au centime)
+          const yearly = interval === "year";
           return (
             <div key={p.id} className={cn("surface relative flex flex-col rounded-2xl p-6", p.highlighted && "border-brand/40 shadow-[0_0_0_1px_rgb(200_240_60/0.25),0_30px_80px_-40px_rgb(200_240_60/0.5)]")}>
               {p.highlighted && <span className="absolute -top-2.5 left-6 rounded-full bg-brand px-2.5 py-0.5 text-[11px] font-semibold text-brand-fg">Le plus choisi</span>}
               <p className="text-[15px] font-semibold">{p.name}</p>
               <p className="mt-1 text-[12.5px] text-fg-muted">{p.description}</p>
               <p className="mt-5">
-                <span className="text-[34px] font-semibold tracking-tight">{formatPrice(Math.round(price / 100) * 100)}</span>
-                <span className="text-[13px] text-fg-subtle"> HT / mois</span>
+                <span className="text-[34px] font-semibold tracking-tight">{formatPrice(yearly ? p.price_yearly_cents : p.price_monthly_cents)}</span>
+                <span className="text-[13px] text-fg-subtle"> HT / {yearly ? "an" : "mois"}</span>
               </p>
+              {yearly && p.price_yearly_cents > 0 && (
+                <p className="mt-0.5 text-[12px] text-fg-subtle">soit {formatPrice(Math.round(p.price_yearly_cents / 12))} HT / mois, TVA en sus</p>
+              )}
+              {!yearly && <p className="mt-0.5 text-[12px] text-fg-subtle">TVA en sus</p>}
               <ul className="mt-5 flex-1 space-y-2">
                 {(p.features ?? []).map((f: string) => (
                   <li key={f} className="flex items-start gap-2 text-[13px] text-fg-muted">

@@ -153,13 +153,20 @@ Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domain
   sur `/cgv/2026-09-27`) : l'article 5 décrit exactement le code des deux modèles (flotte : % + fixe facturés à la
   flotte, fixe dû sans prix, sans plafond ; centrale : calculés sur le prix et déduits dans la répartition, plafonnés ;
   frais TTC ; hausse annoncée au moins 30 jours avant ou accord écrit ; blocage de `private.platform_position`). Le
-  modifier avec le code (et les e-mails de 006600). Engagements tenus à la main, sans contrôle du code : modèle changé
-  seulement à la demande de l'organisation, « Frais ajoutés » seulement pour une erreur de calcul (sinon accord écrit),
-  cycle / délai / seuil de blocage changés en sa défaveur seulement avec son accord écrit, facture récapitulative de
-  chaque cycle.
+  modifier avec le code (et les e-mails de 006600). Engagements tenus à la main, sans contrôle du code : « Frais
+  ajoutés » seulement pour une erreur de calcul (sinon accord écrit), cycle / délai / seuil de blocage changés en sa
+  défaveur seulement avec son accord écrit, facture récapitulative de chaque cycle dès sa fin (export « Frais à
+  facturer », `admin_platform_invoice_lines` ; pas de seuil de blocage sans cette facture), remboursement au prorata
+  d'une résiliation pour refus. Contrôlés par la base : changement de modèle seulement avec la demande ou l'accord écrit
+  noté (`svc_platform_set_fees`, `CONSENT_REQUIRED`, journalisé) ; délai de paiement de 45 jours au plus
+  (`organizations_platform_payment_days_guard`) ; baisse sans décision acceptée au bout de 30 jours. Organisation qui
+  n'a jamais accepté les CGV : acceptation exigée (owner / admin) avant sa première course.
 - **Hausse des taux annoncée** (migration 006600) : seulement par `svc_platform_set_fees` (auteur super admin revérifié,
   audit en SQL) ; une hausse s'applique au plus tôt 30 jours après son annonce par e-mail aux propriétaires (et pas avant
-  l'entrée en vigueur des CGV qu'une organisation n'a pas acceptées), sauf accord écrit noté (journal « warning »,
+  l'entrée en vigueur des CGV qu'une organisation n'a pas acceptées, ni avant la date qui lui a été annoncée ; refusée
+  sans CGV acceptées ni annoncées, `TERMS_NOT_NOTIFIED`, ou sans adresse, `NO_EMAIL` ; jamais appliquée si aucun e-mail
+  d'annonce n'est parti 30 jours avant : annulée, journal « warning » ; annonce des CGV refusée à moins de 30 jours,
+  `TERMS_NOTICE_TOO_SHORT` ; e-mails d'annonce gardés 10 ans), sauf accord écrit noté (journal « warning »,
   e-mail de confirmation au propriétaire). Garde `organizations_platform_rates_guard` : une hausse écrite directement
   par le service role ou un client est refusée (`PLATFORM_FEE_NOTICE_REQUIRED`). E-mails à contenu fixe (référence
   issue du slug, jamais le nom saisi par l'organisation), adresses validées comme `email_outbox.to_email`. Tables

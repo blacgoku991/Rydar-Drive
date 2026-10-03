@@ -1,14 +1,16 @@
 // Ménage périodique (private.housekeeping, dernière définition 20260924006600) : courses planifiées acceptées jamais
-// démarrées clôturées 6 h après l'heure de prise en charge (« rides_expired ») ; hausses des frais Rydar annoncées
-// appliquées à leur date d'effet (« platform_fee_changes_applied ») ; durées de conservation annoncées
+// démarrées clôturées 6 h après l'heure de prise en charge (« rides_expired ») ; baisses de frais Rydar en attente depuis
+// 30 jours acceptées (« platform_reductions_accepted ») ; hausses annoncées appliquées à leur date d'effet, en dernier,
+// si l'e-mail d'annonce est parti 30 jours avant (« platform_fee_changes_applied ») ; durées de conservation annoncées
 // par /confidentialite et /dpa. Les purges longues ou hors de nos tables (courses de plus de 10 ans, bannissements de
 // plus de 3 ans, journal d'audit de Supabase Auth de plus d'un an) sont isolées en SQL : un échec revient dans
 // « errors » sans bloquer le reste du ménage et elles sont retentées au passage suivant. Journal en niveau warn dans ce
 // cas, pour qu'une purge qui échoue à chaque passage ne passe pas inaperçue.
 //
-// Au même passage, formulaire de contact (private.purge_contact_data, migration 20260924005700) : demandes de plus de
-// 3 ans, demandes indésirables de plus de 30 jours, e-mails sans demande (e-mails de test) de plus d'un an une fois
-// envoyés ou en échec. Appel séparé qui ne lève jamais d'exception : son échec n'empêche pas le ménage principal.
+// Au même passage, formulaire de contact (private.purge_contact_data, dernière définition 20260924006600) : demandes de
+// plus de 3 ans, demandes indésirables de plus de 30 jours, e-mails sans demande (e-mails de test) de plus d'un an une
+// fois envoyés ou en échec, annonces aux organisations (frais Rydar, CGV) de plus de 10 ans. Appel séparé qui ne lève
+// jamais d'exception : son échec n'empêche pas le ménage principal.
 import { log } from "./config";
 
 export type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;

@@ -55,7 +55,7 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       icon: <AlertTriangle />,
       title: `${label} en retard`,
       detail:
-        `${formatPrice(uncovered, cur)} à reverser à Rydar${a.days_overdue > 0 ? ` depuis ${days(a.days_overdue)}` : ""}` +
+        `${formatPrice(uncovered, cur)} à régler à Rydar${a.days_overdue > 0 ? ` depuis ${days(a.days_overdue)}` : ""}` +
         (left != null && left > 0 ? ` · création de courses suspendue dans ${days(left)} sans règlement` : "") +
         reminder +
         ".",
@@ -79,7 +79,7 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       key: `soon:${a.next_due_at}:${toPay}`,
       icon: <Clock3 />,
       title: `${label} à régler`,
-      detail: `${formatPrice(toPay, cur)} à reverser à Rydar au plus tard le ${dayMonth(a.next_due_at, timeZone)}${reminder}.`,
+      detail: `${formatPrice(toPay, cur)} à régler à Rydar au plus tard le ${dayMonth(a.next_due_at, timeZone)}${reminder}.`,
     };
   }
   // Hausse des frais par course annoncée, pas encore appliquée : annonce (fermable pour la session)

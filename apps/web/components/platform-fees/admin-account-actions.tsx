@@ -451,7 +451,7 @@ export function TermsForm({
       onSubmit={submitWith(() => {
         // Champs vides : erreur sur le champ (un blocage activé sans nombre de jours ne doit pas être enregistré « désactivé »)
         const missing: Errors = {};
-        if (!days.trim()) missing.paymentDays = "Entre 0 et 60 jours";
+        if (!days.trim()) missing.paymentDays = "Entre 0 et 45 jours";
         if (block && !blockDays.trim()) missing.blockAfterDays = "Entre 1 et 90 jours";
         if (Object.keys(missing).length) return setErrors(missing);
         run(() => updatePlatformTerms(orgId, { cycle: value, paymentDays: days, blockAfterDays: block ? blockDays : null }), {
@@ -486,7 +486,12 @@ export function TermsForm({
           })}
         </div>
       </Field>
-      <Field label="Délai de paiement" htmlFor="terms-days" error={errors.paymentDays} hint="Jours accordés après la fin du cycle (0 à 60).">
+      <Field
+        label="Délai de paiement"
+        htmlFor="terms-days"
+        error={errors.paymentDays}
+        hint={"Jours accordés après la fin du cycle (0 à 45\u00a0: la facture récapitulative de chaque cycle est une facture périodique, article L441-10 du Code de commerce)."}
+      >
         <div className="relative max-w-[180px]">
           <Input
             id="terms-days"
@@ -506,6 +511,11 @@ export function TermsForm({
             <span className="mt-0.5 block text-[12px] leading-snug text-fg-muted">
               Suspendu 7&nbsp;jours au plus par un paiement déclaré qui couvre la somme échue (comptés depuis la première
               déclaration des 30 derniers jours)&nbsp;; aucune suspension dans les 7&nbsp;jours qui suivent un «&nbsp;Pas reçu&nbsp;».
+            </span>
+            <span className="mt-1 block text-[12px] leading-snug text-amber">
+              À activer seulement si la facture récapitulative de chaque cycle est envoyée à l&apos;organisation dès la fin du
+              cycle (export «&nbsp;Frais à facturer&nbsp;» ci-dessous) et si elle a accepté les CGV en vigueur&nbsp;: un blocage pour une
+              somme non facturée, ou sur des conditions qu&apos;elle n&apos;a pas acceptées, est contestable.
             </span>
           </span>
           <Switch checked={block} onCheckedChange={setBlock} aria-label="Blocage en cas de retard" />

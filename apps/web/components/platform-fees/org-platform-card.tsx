@@ -1,6 +1,6 @@
 "use client";
 // Carte « Frais plateforme Rydar » (owner / admin ; tête de la page Encaissements d'une centrale, page « Frais Rydar »
-// d'une flotte) : ce que l'organisation doit reverser à Rydar, l'échéance, les paiements déclarés et reçus, d'où vient
+// d'une flotte) : ce que l'organisation doit régler à Rydar, l'échéance, les paiements déclarés et reçus, d'où vient
 // l'argent (centrale seulement : une flotte n'a ni commission ni règlement chauffeur), les relances et le blocage
 // éventuel, la hausse des frais par course annoncée (« À partir du JJ/MM/AAAA », 20260924006600). « J'ai payé » ouvre la
 // déclaration ; seul Rydar confirme la réception.
@@ -66,7 +66,7 @@ export function OrgPlatformCard({
                 Frais plateforme Rydar
               </h2>
               <p className="mt-0.5 text-[12.5px] text-fg-muted">
-                À reverser à Rydar&nbsp;: {feeTermsText(a)}. {cycleText(a)}
+                À régler à Rydar&nbsp;: {feeTermsText(a)}. {cycleText(a)}
                 {a.block_after_days != null
                   ? ` · création de courses suspendue après ${a.block_after_days} jour${a.block_after_days > 1 ? "s" : ""} de retard`
                   : ""}
@@ -108,7 +108,7 @@ export function OrgPlatformCard({
         {/* ------------------------------------------------------------ chiffres */}
         <div className="grid grid-cols-2 gap-x-6 gap-y-5 px-5 py-5 lg:grid-cols-4">
           <Figure
-            label="À reverser à Rydar"
+            label="À régler à Rydar"
             value={formatPrice(Math.max(0, a.balance_cents), cur)}
             valueClass={cn("text-[26px] sm:text-[28px]", toneText[tone])}
             sub={
@@ -216,7 +216,7 @@ const ORIGIN = [
     bar: "bg-green",
     dot: "bg-green",
   },
-  { key: "with_drivers_cents", label: "Encore chez les chauffeurs", hint: "commissions pas encore réglées", bar: "bg-amber", dot: "bg-amber" },
+  { key: "with_drivers_cents", label: "Commissions pas encore reçues", hint: "courses payées au chauffeur : frais dus quand même", bar: "bg-amber", dot: "bg-amber" },
   { key: "waived_by_centrale_cents", label: "Dettes chauffeurs annulées", hint: "restent dues à Rydar", bar: "bg-red", dot: "bg-red" },
 ] as const;
 
@@ -227,7 +227,7 @@ function MoneyOrigin({ a, currency }: { a: PlatformAccount; currency: string }) 
   return (
     <div className="border-t border-line px-5 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h3 className="text-[13.5px] font-semibold tracking-tight">D&apos;où vient cet argent</h3>
+        <h3 className="text-[13.5px] font-semibold tracking-tight">Vos frais selon l&apos;encaissement des courses</h3>
         <p className="text-[12px] text-fg-muted">
           sur <span className="mono text-fg">{formatPrice(total, currency)}</span> de frais de courses depuis le début
         </p>

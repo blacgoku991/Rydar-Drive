@@ -140,8 +140,8 @@ export function PendingReductions({ entries, orgName, timeZone = "Europe/Paris" 
         icon={<TrendingDown />}
         description={
           entries.length
-            ? `Prix corrigé à la baisse après la course : ${formatPrice(-total)} de frais en moins si vous acceptez tout. Tant que vous n'avez pas décidé, les frais initiaux restent dus.`
-            : "Quand une centrale ou une flotte baisse le prix d'une course terminée, la baisse de frais attend votre accord ici."
+            ? `Prix corrigé à la baisse après la course : ${formatPrice(-total)} de frais en moins si vous acceptez tout. Refus seulement si la correction ne correspond pas à la course réellement effectuée et payée, avec un motif (affiché à l'organisation) ; sans décision dans les 30 jours, la baisse est acceptée automatiquement (CGV, article 5).`
+            : "Quand une centrale ou une flotte baisse le prix d'une course terminée, la baisse de frais attend votre décision ici (30 jours au plus, puis acceptée automatiquement)."
         }
         action={entries.length ? <Badge tone="amber">{entries.length} en attente</Badge> : undefined}
       />
@@ -294,7 +294,7 @@ export function CentralesTable({ rows }: { rows: AdminPlatformRow[] }) {
                       "Rien d'échu"
                     )}
                     {r.held_by_centrale_cents > 0 && (
-                      <span className="text-amber"> · {formatPrice(r.held_by_centrale_cents, r.currency)} encaissés non reversés</span>
+                      <span className="text-amber"> · {formatPrice(r.held_by_centrale_cents, r.currency)} encaissés non réglés</span>
                     )}
                   </p>
                   <PendingFlags row={r} />
@@ -324,9 +324,9 @@ export function CentralesTable({ rows }: { rows: AdminPlatformRow[] }) {
               <TH className="text-right">Déclaré</TH>
               <TH
                 className="text-right"
-                title="Frais encaissés par l'organisation (course de flotte, course payée à la centrale ou commission reçue du chauffeur) et pas encore reversés à Rydar"
+                title="Frais encaissés par l'organisation (course de flotte, course payée à la centrale ou commission reçue du chauffeur) et pas encore réglés à Rydar"
               >
-                Encaissé non reversé
+                Encaissé non réglé
               </TH>
               <TH className="text-right">Chez les chauffeurs</TH>
               <TH className="text-right">Frais du mois</TH>
@@ -478,7 +478,7 @@ export function OriginBreakdown({ account: a }: { account: PlatformAccount }) {
         <div className="border-t border-line pt-2">
           <MoneyLine label="Reçu par Rydar" value={formatPrice(a.received_cents, a.currency)} tone="green" />
           <MoneyLine
-            label={a.dispatch_model === "fleet" ? "Encaissé par la flotte, pas encore reversé" : "Encaissé par la centrale, pas encore reversé"}
+            label={a.dispatch_model === "fleet" ? "Encaissé par la flotte, pas encore réglé" : "Encaissé par la centrale, pas encore réglé"}
             hint="Argent déjà entre ses mains"
             value={formatPrice(a.held_by_centrale_cents, a.currency)}
             tone={a.held_by_centrale_cents > 0 ? "amber" : undefined}
