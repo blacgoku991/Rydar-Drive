@@ -125,18 +125,30 @@ export default async function LegalNoticePage() {
       <LegalSection title="Signaler un contenu illicite">
         <p>
           Pour signaler un contenu illicite hébergé par le service (message, signalement de la flotte, texte ou image
-          d&apos;un mini-site), écrivez à {email} en indiquant : la date, l&apos;adresse de la page ou l&apos;écran
-          concerné, la description du contenu, les raisons pour lesquelles vous le jugez illicite et vos coordonnées.
+          d&apos;un mini-site), écrivez à {email} ou utilisez le{" "}
+          <Link href="/contact" className="text-fg underline underline-offset-2">formulaire de contact</Link>, en
+          indiquant :
         </p>
+        <LegalList
+          items={[
+            <>la date, et l&apos;adresse de la page ou l&apos;écran concerné ;</>,
+            <>la description du contenu et les raisons précises pour lesquelles vous le jugez illicite ;</>,
+            <>vos nom et adresse e-mail (facultatifs si le signalement porte sur des contenus d&apos;abus sexuels sur mineurs) ;</>,
+            <>une déclaration confirmant que vous croyez, de bonne foi, que les informations et allégations de votre signalement sont exactes et complètes.</>,
+          ]}
+        />
         <p>
           Dans l&apos;application, un chauffeur peut aussi signaler un message ou masquer les messages de son auteur par
           un appui long : ce signalement est adressé à la centrale, qui modère son fil. Pour un contenu illicite, ou si
           la centrale ne réagit pas, écrivez à l&apos;éditeur à l&apos;adresse ci-dessus.
         </p>
         <p>
-          L&apos;éditeur examine les signalements qu&apos;il reçoit, retire le contenu manifestement illicite ou demande à
-          la centrale concernée de le faire, et informe l&apos;auteur du signalement de la suite donnée, conformément au
-          règlement (UE) 2022/2065 sur les services numériques. Un signalement abusif peut engager la responsabilité de
+          L&apos;éditeur accuse réception du signalement sans délai, l&apos;examine de façon diligente et objective,
+          retire le contenu manifestement illicite ou demande à la centrale concernée de le faire, puis informe
+          l&apos;auteur du signalement de sa décision et des voies de recours possibles (règlement (UE) 2022/2065 sur les
+          services numériques, article 16). Lorsqu&apos;il retire lui-même un contenu ou restreint un compte, il en
+          informe la personne concernée, avec les motifs de sa décision et les voies de recours (article 17) : répondre
+          à l&apos;éditeur pour contester, ou saisir le juge. Un signalement abusif peut engager la responsabilité de
           son auteur.
         </p>
       </LegalSection>

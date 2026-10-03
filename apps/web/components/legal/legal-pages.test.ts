@@ -20,6 +20,7 @@ vi.mock("@/lib/legal", async () => {
     COOKIES_UPDATED_AT: "3 octobre 2026",
     SUBSCRIPTION_TERMS_UPDATED_AT: "3 octobre 2026",
     ACCESSIBILITY_UPDATED_AT: "3 octobre 2026",
+    DPA_UPDATED_AT: "3 octobre 2026",
     getLegalInfo: async () => legal.info,
   };
 });
@@ -41,6 +42,8 @@ const notice = await import("../../app/mentions-legales/page");
 const cookies = await import("../../app/cookies/page");
 const subscription = await import("../../app/abonnement-resiliation/page");
 const accessibility = await import("../../app/accessibilite/page");
+const dpa = await import("../../app/dpa/page");
+const dpaAccepted = await import("../../app/dpa/2026-10-02/page");
 
 const WEB = join(import.meta.dirname, "..", "..");
 const source = (path: string) => readFileSync(join(WEB, path), "utf8");
@@ -313,5 +316,35 @@ describe("typographie des nouvelles pages", () => {
       expect(t).not.toMatch(/ [:;!?»]/);
       expect(t).not.toMatch(/« /);
     }
+  });
+});
+
+// Revue de conformité (R3) : l'accord de traitement accepté sous ORG_LEGAL_VERSION 2026-10-02 a été corrigé le
+// 3 octobre 2026 sans nouvelle version : le texte accepté avant la correction reste consultable (preuve).
+describe("/dpa : texte accepté avant la correction du 3 octobre 2026", () => {
+  it("page figée : version 2026-10-02, texte d'origine (Supabase, Inc. listé), lien vers le texte en vigueur, non indexée", async () => {
+    const html = await render(dpaAccepted.default);
+    const t = flat(text(html));
+    expect(t).toContain("Texte corrigé le 3 octobre 2026.");
+    expect(t).toContain("Version 2026-10-02, commune aux CGV et au présent accord (contenu de l'accord inchangé depuis le 27 septembre 2026)");
+    expect(t).toContain("Supabase, Inc.");
+    expect(html).toContain('href="/dpa"');
+    expect(dpaAccepted.metadata.robots).toEqual({ index: false, follow: true });
+  });
+
+  it("texte en vigueur : lien vers le texte accepté, droit d'opposition, services publics tiers hors des sous-traitants", async () => {
+    const html = await render(dpa.default);
+    const t = flat(text(html));
+    expect(html).toContain('href="/dpa/2026-10-02"');
+    expect(t).toContain("résilier sans frais (article 6)");
+    expect(t).toContain("Hyperknot Software Kft. (Hongrie)");
+    expect(t).toContain("FOSSGIS e.V. (Allemagne)");
+    expect(t).toContain("n'est joignable qu'en local (aucun port public)");
+    // Plus dans le tableau des sous-traitants ultérieurs
+    expect(source("app/dpa/page.tsx")).not.toMatch(/name: "(OpenFreeMap|OSRM|IGN)/);
+  });
+
+  it("servi tel quel sur les mini-sites (proxy.ts : /cgv/AAAA-MM-JJ et /dpa/AAAA-MM-JJ)", () => {
+    expect(source("proxy.ts")).toContain("/^\\/(cgv|dpa)\\/\\d{4}-\\d{2}-\\d{2}$/");
   });
 });

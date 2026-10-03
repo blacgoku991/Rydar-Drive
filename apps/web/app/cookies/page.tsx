@@ -52,12 +52,45 @@ const COOKIES: Line[] = [
   {
     name: "sb-…-auth-token-code-verifier",
     role: "Sécurise le lien de réinitialisation du mot de passe (échange de code PKCE).",
-    duration: "Jusqu'à l'utilisation du lien",
+    duration: "Jusqu'à l'utilisation du lien (400 jours au plus s'il n'est jamais utilisé)",
   },
   {
     name: "rd_org",
     role: "Centrale sélectionnée dans le tableau de bord, pour un compte qui en gère plusieurs. Illisible par les scripts (httpOnly).",
     duration: "Jusqu'à la fermeture du navigateur",
+  },
+];
+
+/**
+ * Application chauffeur : stockage sur le téléphone (art. 82 de la loi Informatique et Libertés : toute lecture ou
+ * écriture sur le terminal, pas seulement les cookies). Sources : apps/driver/src/lib/{supabase,device,notifications,
+ * legal}.ts, apps/driver/app/login.tsx.
+ */
+const APP_STORAGE: Line[] = [
+  {
+    name: "Session de connexion",
+    role: "Rester connecté. Chiffrée dans le stockage de l'application, avec sa clé dans le trousseau sécurisé du système.",
+    duration: "Jusqu'à la déconnexion ou la suppression du compte",
+  },
+  {
+    name: "Identifiant de l'appareil",
+    role: "Relier l'appareil à son jeton de notification, et empêcher qu'un appareil utilisé par un compte banni pour fraude serve à un nouveau compte. Android : identifiant ANDROID_ID lu sur le téléphone ; iPhone : identifiant aléatoire (rydar.installation_id) gardé dans le trousseau.",
+    duration: "Android : celui du téléphone, inchangé après une réinstallation ; iPhone : gardé après une réinstallation de l'application",
+  },
+  {
+    name: "rydar.push.token",
+    role: "Jeton de notification de l'appareil (offres de course, messages), retiré du compte à la déconnexion.",
+    duration: "Jusqu'à la déconnexion ou la désinstallation",
+  },
+  {
+    name: "rydar.driver.lastEmail",
+    role: "Dernière adresse e-mail saisie, pour pré-remplir l'écran de connexion.",
+    duration: "Jusqu'à la désinstallation, ou remplacée à la connexion suivante",
+  },
+  {
+    name: "rydar.driver.legalAccepted.…",
+    role: "Votre « J'accepte » des CGU touché sans réseau, gardé jusqu'à son envoi au serveur.",
+    duration: "Jusqu'à son envoi",
   },
 ];
 
@@ -107,10 +140,19 @@ export default async function CookiesPage() {
         <LegalList
           items={[
             <>Paiement de l&apos;abonnement d&apos;une centrale : la page de paiement est hébergée par Stripe, qui y dépose ses propres cookies (sécurité, prévention de la fraude), régis par sa politique.</>,
-            <>Cartes : les images de carte sont chargées sans cookie depuis le serveur de tuiles (OpenFreeMap par défaut), qui reçoit comme tout serveur web l&apos;adresse IP de votre navigateur.</>,
-            <>Application chauffeur : elle n&apos;utilise pas de cookie. Sa session est chiffrée sur le téléphone, avec une clé gardée dans le trousseau sécurisé du système.</>,
+            <>Cartes du tableau de bord et des mini-sites (après le choix d&apos;un trajet) : les images de carte sont chargées sans cookie depuis le serveur de tuiles OpenFreeMap, exploité par Hyperknot Software Kft. (Hongrie), qui reçoit comme tout serveur web l&apos;adresse IP de votre navigateur (journaux gardés 30 jours au plus selon sa politique).</>,
+            <>Logos et photos des mini-sites et des pages d&apos;inscription : affichés seulement s&apos;ils sont hébergés par Rydar Drive, jamais chargés depuis le site d&apos;un tiers.</>,
           ]}
         />
+      </LegalSection>
+
+      <LegalSection title="Application chauffeur">
+        <p>
+          L&apos;application « Rydar Drive Chauffeur » n&apos;utilise pas de cookie, mais lit ou garde sur le téléphone les
+          éléments ci-dessous. Ils sont nécessaires au service que vous demandez (connexion, réception des courses,
+          sécurité des comptes) : ils ne demandent pas de consentement. Aucun identifiant publicitaire n&apos;est lu.
+        </p>
+        <StorageTable lines={APP_STORAGE} label="Données gardées par l'application chauffeur" />
       </LegalSection>
 
       <LegalSection title="Pourquoi aucun bouton « Tout accepter » ou « Tout refuser »">
@@ -118,7 +160,7 @@ export default async function CookiesPage() {
           Tous les cookies et données ci-dessus sont strictement nécessaires : aucun ne demande votre consentement, il
           n&apos;y a donc rien à accepter ni à refuser. Le bandeau d&apos;information se ferme d&apos;un clic ; il revient
           si vous effacez les données du site. Cette page reste accessible à tout moment par le lien « Cookies » en bas
-          de chaque page.
+          de chaque page du site et dans le menu du tableau de bord.
         </p>
         <p>
           Si l&apos;éditeur ajoutait un jour un traceur soumis à consentement (mesure d&apos;audience non exemptée,

@@ -401,11 +401,11 @@ export function bookingSiteSchemaFor(currentSubdomain: string | null | undefined
       ctx.addIssue({
         code: "custom",
         path: ["legal_mentions"],
-        message: `Pour mettre le mini-site en ligne : vos conditions pour les clients (identité, moyens de paiement, annulation, médiateur), ${BOOKING_SITE_MIN_CONDITIONS} caractères au moins`,
+        message: `Pour mettre le mini-site en ligne : vos conditions pour les clients (identité, moyens de paiement, annulation, médiateur), ${BOOKING_SITE_MIN_CONDITIONS} caractères au moins`,
       });
     }
-    if (!v.phone?.trim()) ctx.addIssue({ code: "custom", path: ["phone"], message: "Pour mettre le mini-site en ligne : téléphone de la centrale" });
-    if (!v.email?.trim()) ctx.addIssue({ code: "custom", path: ["email"], message: "Pour mettre le mini-site en ligne : e-mail de la centrale" });
+    if (!v.phone?.trim()) ctx.addIssue({ code: "custom", path: ["phone"], message: "Pour mettre le mini-site en ligne : téléphone de la centrale" });
+    if (!v.email?.trim()) ctx.addIssue({ code: "custom", path: ["email"], message: "Pour mettre le mini-site en ligne : e-mail de la centrale" });
   });
 }
 

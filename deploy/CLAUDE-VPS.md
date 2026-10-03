@@ -73,6 +73,10 @@ Vérifie avec `getent ahostsv4 DOMAINE`, `dig +short A www.DOMAINE`, `dig +short
 - `sudo docker compose logs --tail 80 worker` : pas d'erreur en boucle.
 - `sudo docker compose logs worker | grep 'rydar worker starting' | tail -1` (dernier démarrage, aucun secret dans cette ligne) : elle contient `"accountDeletions":"on"` (le worker reçoit l'URL Supabase et la clé secret, nécessaires pour terminer les suppressions de compte). Sinon, `docker-compose.yml` n'est pas à jour : `git pull` puis `sudo bash deploy/install.sh`.
 - `sudo bash /opt/rydar/deploy/migrate.sh` : « 0 migration(s) appliquée(s) ».
+- Engagements des pages légales sur le serveur (journaux 1 an au plus dans journald, aucun journal d'accès, copie
+  chiffrée des sauvegardes hors du VPS et restauration testée, boîte de contact purgée à 3 ans) : contrôles et
+  commandes dans `docs/DEPLOYMENT.md` § 6, « Ce que les pages légales affirment du serveur ». Lecture seule d'abord,
+  puis chaque changement expliqué au propriétaire et accepté par lui.
 
 ### 5. E-mails du formulaire de contact (serveur mail du VPS)
 

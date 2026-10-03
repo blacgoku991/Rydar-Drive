@@ -117,7 +117,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
             </Field>
             <Field label="Accroche" className="sm:col-span-2"><Input value={s.tagline ?? ""} onChange={(e) => set("tagline", e.target.value)} disabled={!canEdit} /></Field>
             <Field label="Description" className="sm:col-span-2"><Textarea value={s.description ?? ""} onChange={(e) => set("description", e.target.value)} disabled={!canEdit} /></Field>
-            <Field label="Logo (URL)" optional error={errors.logo_url} hint="Affiché seulement s'il est hébergé par Rydar Drive : une image d'un autre site n'est jamais chargée (elle transmettrait l'adresse IP de vos visiteurs à ce site)."><Input value={s.logo_url ?? ""} onChange={(e) => set("logo_url", e.target.value)} disabled={!canEdit} /></Field>
+            <Field label="Logo (URL)" optional error={errors.logo_url} hint="Affiché seulement s'il est hébergé par Rydar Drive : une image d'un autre site n'est jamais chargée (elle transmettrait l'adresse IP de vos visiteurs à ce site)."><Input value={s.logo_url ?? ""} onChange={(e) => set("logo_url", e.target.value)} disabled={!canEdit} /></Field>
             <Field label="Photo de fond (URL)" optional error={errors.hero_image_url} hint="Même règle que le logo."><Input value={s.hero_image_url ?? ""} onChange={(e) => set("hero_image_url", e.target.value)} disabled={!canEdit} /></Field>
             <Field label="Téléphone" error={errors.phone} hint="Obligatoire pour mettre le mini-site en ligne."><Input value={s.phone ?? ""} onChange={(e) => set("phone", e.target.value)} disabled={!canEdit} /></Field>
             <Field label="E-mail" error={errors.email} hint="Obligatoire pour mettre le mini-site en ligne."><Input value={s.email ?? ""} onChange={(e) => set("email", e.target.value)} disabled={!canEdit} /></Field>
@@ -139,7 +139,7 @@ export function BookingSiteForm({ site, slug, rootDomain, appUrl, token, canEdit
               <span>
                 <span className="block text-[13px]">Afficher le prix avant la réservation (grille tarifaire, montants toutes taxes comprises)</span>
                 <span className="block text-[12px] text-fg-subtle">
-                  Le client réserve à ce prix, « avec obligation de paiement ». Désactivé : il envoie une demande sans prix, que vous lui confirmez.
+                  Le client réserve à ce prix, « avec obligation de paiement ». Désactivé : il envoie une demande sans prix, que vous lui confirmez.
                 </span>
               </span>
               <Switch checked={s.show_price_estimate} onCheckedChange={(v) => set("show_price_estimate", v)} disabled={!canEdit} />

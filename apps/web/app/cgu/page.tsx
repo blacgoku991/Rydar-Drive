@@ -20,7 +20,19 @@ export default async function TermsOfUsePage() {
     <LegalPage title="Conditions générales d'utilisation" updatedAt={LEGAL_UPDATED_AT}>
       <p>
         Les présentes conditions générales d&apos;utilisation (CGU) encadrent l&apos;utilisation des services Rydar
-        Drive, édités par <span className="text-fg">{legal.name}</span> (l&apos;« éditeur ») : le tableau de bord des
+        Drive, édités par{" "}
+        {legal.nameSet ? (
+          <span className="text-fg">{legal.name}</span>
+        ) : (
+          // Raison sociale pas encore renseignée : jamais le nom commercial comme partie au contrat
+          <>
+            la société identifiée dans les{" "}
+            <Link href="/mentions-legales" className={link}>
+              mentions légales
+            </Link>
+          </>
+        )}{" "}
+        (l&apos;« éditeur ») : le tableau de bord des
         centrales, l&apos;application mobile « Rydar Drive Chauffeur », les mini-sites de réservation et l&apos;API.
         Elles s&apos;appliquent à toute personne qui les utilise. Le chauffeur les accepte dans l&apos;application, avec la
         politique de confidentialité, avant de l&apos;utiliser (à l&apos;inscription par le lien d&apos;une centrale ou à sa
