@@ -1706,7 +1706,7 @@ begin
     end if;
     if not private.whatsapp_ready('platform', null) then
       return jsonb_build_object('ok', false, 'code', 'WHATSAPP_NOT_CONFIGURED',
-        'message', 'WhatsApp de Rydar non configuré : renseignez le numéro dans Frais plateforme › WhatsApp.');
+        'message', private.fr_typo('WhatsApp de Rydar non configuré : renseignez le numéro dans Frais plateforme › WhatsApp.'));
     end if;
     v_target := private.platform_whatsapp_target(p_org);
     if v_target ->> 'to' is null then

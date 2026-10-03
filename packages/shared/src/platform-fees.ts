@@ -55,7 +55,7 @@ export interface PlatformAccount {
   with_drivers_cents: number;
   /** Frais de courses dont la centrale a annulé la dette du chauffeur (toujours dus à Rydar) */
   waived_by_centrale_cents: number;
-  /** Encaissé par la centrale et pas encore reversé */
+  /** Encaissé par la centrale et pas encore réglé à Rydar */
   held_by_centrale_cents: number;
   /** Création de courses refusée (retard au-delà du seuil choisi par le super admin) */
   blocked: boolean;

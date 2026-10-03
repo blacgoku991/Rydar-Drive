@@ -63,7 +63,7 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
         <Badge tone={summary.tone}>{summary.text}</Badge>
         {a.held_by_centrale_cents > 0 && (
           <span>
-            <span className="mono text-amber">{formatPrice(a.held_by_centrale_cents, a.currency)}</span> encaissés et pas reversés
+            <span className="mono text-amber">{formatPrice(a.held_by_centrale_cents, a.currency)}</span> encaissés, pas encore réglés à Rydar
           </span>
         )}
         {a.pending_reductions_count > 0 && (

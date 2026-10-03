@@ -395,9 +395,19 @@ Une course avec un numéro de vol est suivie de 24 h avant à 3 h après la pris
 
 ## 4. Stripe
 
-1. Créez un produit par offre (Starter, Pro, Business) avec un prix mensuel et un prix annuel.
-2. Renseignez `stripe_price_monthly_id` et `stripe_price_yearly_id` dans la table `plans`, depuis le SQL editor : `update plans set stripe_price_monthly_id = 'price_…' where code = 'pro';`.
-3. Webhook vers `/api/stripe/webhook`, avec les événements `customer.subscription.created`, `.updated` et `.deleted`, puis `invoice.finalized`, `invoice.paid` et `invoice.payment_failed`.
+1. Créez un produit par offre (Starter, Pro, Business) avec un prix mensuel et un prix annuel, **hors taxes** (« TVA
+   non comprise », comportement fiscal *exclusive*) et égaux aux prix des offres (`plans.price_monthly_cents` /
+   `price_yearly_cents`, affichés sur `/tarifs` et dans l'Abonnement : CGV art. 4, « montant hors taxes affiché dans
+   l'offre au moment de la souscription »).
+2. **Activez Stripe Tax** (Réglages › Taxes : adresse du siège, immatriculation à la TVA en France). Le Checkout
+   (`/api/billing/checkout`) ajoute la TVA au prix hors taxes (`automatic_tax`), demande l'adresse de facturation et le
+   numéro de TVA intracommunautaire du client : sans Stripe Tax activé, il refuse toute souscription (503, « Calcul de
+   la TVA indisponible ») plutôt que de facturer sans TVA. Abonnements créés avant : à mettre à jour dans Stripe.
+3. Renseignez `stripe_price_monthly_id` et `stripe_price_yearly_id` dans la table `plans`, depuis le SQL editor : `update plans set stripe_price_monthly_id = 'price_…' where code = 'pro';`.
+4. Webhook vers `/api/stripe/webhook`, avec les événements `customer.subscription.created`, `.updated` et `.deleted`, puis `invoice.finalized`, `invoice.paid` et `invoice.payment_failed`.
+5. Résiliation pour refus d'une hausse des frais ou d'une modification défavorable des CGV (CGV art. 7) : la part de
+   l'abonnement payée d'avance pour la période restant à courir est remboursée au prorata — remboursement partiel à
+   faire dans Stripe, à la date de résiliation choisie par l'organisation (au plus tard la veille de la date d'effet).
 
 ## 5. Application chauffeur (EAS)
 
@@ -453,8 +463,13 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
     change et la date d'entrée en vigueur au plus tard (`ORG_LEGAL_EFFECTIVE_AT`, au moins 30 jours après la
     publication, CGV art. 16 ; à revoir avec chaque version). Web seul : ni chauffeur, ni dispatcher, ni mise à jour
     de l'app. `/admin/legal` liste les organisations qui ne l'ont pas encore acceptée ; son bouton « Prévenir par
-    e-mail » leur envoie l'annonce (une fois par organisation et par version) : à cliquer dès le déploiement, au moins
-    30 jours avant `ORG_LEGAL_EFFECTIVE_AT` (la page avertit sinon : repoussez d'abord la date). Nouvelle version des
+    e-mail » leur envoie l'annonce (une fois par organisation et par version, principaux changements défavorables
+    compris : `ORG_LEGAL_CHANGES`) : à cliquer dès le déploiement. Il est **bloqué** (et la base refuse l'envoi :
+    `TERMS_NOTICE_TOO_SHORT`) dès qu'il reste moins de 30 jours avant `ORG_LEGAL_EFFECTIVE_AT` (premier minuit, heure
+    de Paris, après maintenant + 30 jours) : repoussez d'abord la date, puis redéployez. Une organisation qui n'a ni
+    accepté ni reçu l'annonce ne peut recevoir aucune hausse annoncée de ses frais (seulement sur accord écrit). Une
+    organisation qui n'a JAMAIS accepté de CGV et n'a encore aucune course doit les accepter avant sa première course
+    (écran plein pour le propriétaire et les administrateurs). Nouvelle version des
     CGV : copier d'abord le texte en vigueur, figé, dans `app/cgv/<ancienne version>/page.tsx` (noindex, comme
     `/cgv/2026-09-27`, servi sur les mini-sites par `proxy.ts`) et mettre à jour le lien « Version précédente », le
     préambule (ce qui change), le bandeau « mise à jour » (`components/legal/terms-banner.tsx`) et le résumé de
@@ -464,16 +479,20 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
   signataire pour les CGV et l'accord de traitement) ;
 - les durées annoncées par `/confidentialite` (§ 9 et § 10), `/suppression-compte` et `/dpa` (§ 11) sont appliquées
   par le code :
-  - `private.housekeeping` (worker, toutes les 5 min ; dernière définition : migration 005900, toute redéfinition
+  - `private.housekeeping` (worker, toutes les 5 min ; dernière définition : migration 006600, toute redéfinition
     part de celle-ci) : historique des positions, et position du chauffeur relevée par une alerte close, 30 jours ;
     messages, signalements de la flotte (copie dans le journal comprise) et signalements de messages 180 jours ;
     notifications (90 jours après l'envoi prévu) et journaux d'API 90 jours ; adresse IP et navigateur du journal
     d'audit 1 an ; journal d'audit de Supabase Auth 1 an (§ 1) ; courses 10 ans après la fin de l'année de la prise
     en charge, quel que soit leur statut ; bannissements 3 ans (`private.purge_expired_bans`) ; empreintes d'un
-    chauffeur supprimé qui devait des commissions, dès que plus rien n'est dû ;
-  - formulaire de contact (`private.purge_contact_data`, worker, toutes les 5 min ; migration 005700) : demandes et
-    leurs e-mails 3 ans, demandes indésirables 30 jours, e-mails sans demande (e-mails de test) 1 an, une fois envoyés
-    ou en échec ;
+    chauffeur supprimé qui devait des commissions, dès que plus rien n'est dû. Au même passage (frais Rydar, CGV
+    art. 5) : baisse de frais en attente depuis 30 jours sans décision du super admin acceptée ; puis, EN DERNIER,
+    hausses annoncées arrivées à leur date d'effet appliquées — ou annulées si aucun e-mail d'annonce n'est parti au
+    moins 30 jours avant ;
+  - formulaire de contact (`private.purge_contact_data`, worker, toutes les 5 min ; dernière définition : migration
+    006600) : demandes et leurs e-mails 3 ans, demandes indésirables 30 jours, e-mails sans demande (e-mails de test)
+    1 an, une fois envoyés ou en échec ; annonces aux organisations (changement des frais Rydar, nouvelle version des
+    CGV : preuve du préavis) 10 ans, avec le registre des frais ;
   - suppression d'un compte chauffeur (`private.delete_driver_account`, migration 004000) : données effacées ou
     anonymisées aussitôt, adresse IP et navigateur de son inscription retirés du journal d'audit, indices en clair
     des empreintes effacés ; bannissements des comptes supprimés depuis 3 ans : `private.purge_deleted_driver_bans`

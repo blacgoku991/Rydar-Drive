@@ -321,6 +321,23 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   définitif, `/tarifs`, e-mails relus (« au moins 30 jours » seulement quand c'est vrai), seuil de blocage toujours
   affiché, garde-fous du super admin (frais ajoutés, conditions de règlement, moins de 30 jours avant l'entrée en
   vigueur des CGV). Tests : `tests/db/platform-fee-schedule.test.ts`, `components/legal/cgv-pages.test.ts`.
+- [x] **CGV : corrections après revue adverse (18 constats, 006600 modifiée avant sa publication)** — préavis réels :
+  annonce des CGV refusée si l'entrée en vigueur annoncée laisse moins de 30 jours (`TERMS_NOTICE_TOO_SHORT`, bouton
+  bloqué, règle unique `private.notice_min_on` / `noticeMinDay`), date reçue gardée par organisation, aucune hausse
+  annoncée sans CGV acceptées ou annoncées (`TERMS_NOT_NOTIFIED`) ni sans adresse (`NO_EMAIL`), hausse jamais
+  appliquée sans e-mail d'annonce PARTI 30 jours avant (annulée, `notice_change_id`) ; clientes d'avant la première
+  annonce : date limite et résiliation dans l'e-mail ; e-mail des frais à la création (propriétaire rattaché d'abord)
+  et acceptation exigée avant la première course (`OrgTermsGate`) ; changement de modèle noté (CGV art. 3) ;
+  principaux changements complets, défavorables compris (`ORG_LEGAL_CHANGES`, préambule, bandeau, e-mail) ; bandeau
+  « en vigueur depuis » après la date ; version précédente « remplacée par celle du 2 octobre » ; résiliation pour
+  refus avec remboursement au prorata (art. 4, 5, 7, 16, FAQ, /tarifs) ; « aucune taxe ne s'y ajoute » (pénalités
+  préservées) ; baisse refusée seulement par décision motivée, acceptée d'office au bout de 30 jours
+  (`private.accept_stale_platform_reductions`) ; ménage : hausses appliquées en dernier (verrou de l'organisation) ;
+  annonces gardées 10 ans (`purge_contact_data`) ; délai de paiement 45 jours au plus (garde, `svc_platform_terms`,
+  `cycleText` au-delà de 28 jours) ; frais à facturer par cycle (`admin_platform_invoice_lines`, export CSV) ; Stripe
+  Tax au Checkout, prix exact dans l'Abonnement ; « à régler à Rydar » au lieu de « à reverser » ; typographie des
+  messages (`private.fr_typo`, `ERROR_MESSAGES`). Écarté : suivi des factures dans l'outil (consigne : pas de seuil de
+  blocage sans facture à chaque cycle), gel des taux en centrale (texte honnête).
 - [x] **Lenteur, volet serveur / auth / base (10/2026, migration 006500)** : `proxy.ts` = `getSession()` (cookies,
   rafraîchissement gardé) puis `getClaims(jeton)` pour un jeton ES256/RS256 + kid (vérifié sur place, JWKS) ; jeton
   HS256 : aiguillage sans appel à Auth si le JWKS est vide (pile en HS256 seul, rejeté au rendu), sinon vérifié par

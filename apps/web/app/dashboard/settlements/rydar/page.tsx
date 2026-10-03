@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: "Relevé des frais plateforme" };
 export const dynamic = "force-dynamic";
 
 /**
- * Relevé mensuel des frais plateforme reversés à Rydar (owner / admin de la centrale ; une flotte a le sien sous
+ * Relevé mensuel des frais plateforme à régler à Rydar (owner / admin de la centrale ; une flotte a le sien sous
  * /dashboard/rydar/releve, même rendu).
  *   ?mois=YYYY-MM  (défaut : mois en cours, fuseau de la centrale)
  */

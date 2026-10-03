@@ -50,7 +50,7 @@ export default async function PlatformFeesPage() {
       <PageHeader
         eyebrow="Plateforme"
         title="Frais plateforme"
-        description="Ce que les centrales et les flottes doivent reverser à Rydar : frais de chaque course terminée, paiements déclarés à confirmer, retards et relances."
+        description="Ce que les centrales et les flottes doivent régler à Rydar : frais de chaque course terminée, paiements déclarés à confirmer, retards et relances."
         actions={
           <Button asChild variant="secondary" size="sm">
             <Link href="/admin/centrales">
@@ -103,7 +103,7 @@ export default async function PlatformFeesPage() {
             <Metric label="Reçu ce mois" value={formatPrice(t.received_month_cents)} tone="green" sub="paiements confirmés" icon={<HandCoins />} />
             <Metric label="Frais générés ce mois" value={formatPrice(t.fees_month_cents)} tone="violet" sub="courses terminées" icon={<TrendingUp />} />
             <Metric
-              label="Encaissé non reversé"
+              label="Encaissé non réglé"
               value={formatPrice(t.held_by_centrales_cents)}
               tone={t.held_by_centrales_cents > 0 ? "amber" : undefined}
               sub="déjà entre les mains des centrales et flottes"
