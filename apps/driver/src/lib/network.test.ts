@@ -377,11 +377,14 @@ describe("accueil : bandeau des courses partenaires", () => {
   });
 
   it("à régler à une organisation ; en retard ; plusieurs organisations", () => {
-    expect(networkHomeBanner(home(), "Flotte Beta")).toMatchObject({ tone: "amber", cta: "Payer", late: false });
-    expect(plain(networkHomeBanner(home(), "Flotte Beta")!.title)).toBe("12,50 € à régler à Taxi Alpha");
-    expect(networkHomeBanner(home({ overdue_cents: 1_250 }), "Flotte Beta")!.late).toBe(true);
+    expect(networkHomeBanner(home(), "Flotte Beta")).toMatchObject({ tone: "amber", cta: "Payer", late: false, sub: "Courses partenaires · Taxi Alpha" });
+    expect(plain(networkHomeBanner(home(), "Flotte Beta")!.title)).toBe("12,50 € à régler");
+    const late = networkHomeBanner(home({ overdue_cents: 1_250 }), "Flotte Beta")!;
+    expect(late.late).toBe(true);
+    expect(plain(late.sub)).toBe("Dont 12,50 € en retard : réglez maintenant");
     const two = home({ owed_cents: 2_000, creditors: [...home().creditors, { id: "c", name: "Taxi Gamma", owed_cents: 750, overdue_cents: 0, blocked: null }] });
-    expect(plain(networkHomeBanner(two, "Flotte Beta")!.title)).toBe("20 € à régler (courses partenaires)");
+    expect(plain(networkHomeBanner(two, "Flotte Beta")!.title)).toBe("20 € à régler");
+    expect(plain(networkHomeBanner(two, "Flotte Beta")!.sub)).toBe("Courses partenaires · 2 organisations");
   });
 
   it("blocage : impayé envers A (ses courses seulement) ou plafond de B", () => {
@@ -394,8 +397,9 @@ describe("accueil : bandeau des courses partenaires", () => {
 
   it("part à recevoir ; rien à signaler ; pas de bloc réseau : rien", () => {
     const payout = networkHomeBanner(home({ owed_cents: 0, payout_due_cents: 3_750, creditors: [{ id: "a", name: "Taxi Alpha", owed_cents: 0, overdue_cents: 0, blocked: null }] }), "B");
-    expect(payout).toMatchObject({ tone: "green", cta: "Voir" });
-    expect(plain(payout!.title)).toBe("37,50 € à recevoir de Taxi Alpha");
+    expect(payout).toMatchObject({ tone: "green", cta: "Voir", sub: "Courses partenaires · Taxi Alpha" });
+    expect(plain(payout!.title)).toBe("37,50 € à recevoir");
+    expect(networkHomeBanner(home({ owed_cents: 0, payout_due_cents: 500, creditors: [] }), "B")!.sub).toBe("Votre part des courses partenaires");
     expect(networkHomeBanner(home({ owed_cents: 0, creditors: [] }), "B")).toBeNull();
     expect(networkHomeBanner(null, "B")).toBeNull();
   });

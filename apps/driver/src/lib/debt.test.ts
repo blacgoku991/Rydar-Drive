@@ -67,7 +67,7 @@ describe("dettes envers les organisations partenaires (réseau partagé)", () =>
   it("courses partenaires seules : chaque organisation listée, empreintes gardées pour chacune", () => {
     const n = openDebtNotice(openDebt(withNetwork(0, [network(1250), network(500, 0, "Taxi Gamma")]))!);
     expect(n.title).toBe(`Courses partenaires : 17,50${NBSP}€ dus`);
-    expect(n.message).toContain(`Courses partenaires : 12,50${NBSP}€ à Taxi Alpha, 5${NBSP}€ à Taxi Gamma.`);
+    expect(n.message).toMatch(/^À régler : 12,50\s€ à Taxi Alpha, 5\s€ à Taxi Gamma\./);
     expect(n.message).toContain("pour chaque organisation concernée");
     expect(n.confirm).toBe(`Les sommes dues aux organisations partenaires (17,50${NBSP}€) restent à régler : 12,50${NBSP}€ à Taxi Alpha, 5${NBSP}€ à Taxi Gamma.`);
   });

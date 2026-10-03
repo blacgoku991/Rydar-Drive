@@ -261,9 +261,9 @@ export default function Profile() {
                       value={network.enabled}
                       disabled={toggling}
                       onValueChange={(next) => void setNetworkEnabled(next)}
-                      trackColor={{ false: colors.surface3, true: colors.brand }}
+                      trackColor={{ false: colors.subtle, true: colors.brand }}
                       thumbColor={colors.fg}
-                      ios_backgroundColor={colors.surface3}
+                      ios_backgroundColor={colors.subtle}
                       accessibilityElementsHidden
                       importantForAccessibility="no"
                     />
@@ -307,14 +307,17 @@ export default function Profile() {
           )}
           {/* Réseau coupé ensuite : coordonnées bancaires encore utiles tant qu'un versement est attendu */}
           {!status && (payout?.configured || (home?.network?.payout_due_cents ?? 0) > 0) && (
-            <Group>
-              <Row
-                icon="card-outline"
-                title="Mes coordonnées bancaires"
-                detail={payout?.configured ? `IBAN ${maskIban(payout.iban_last4)}` : "Pour recevoir vos versements"}
-                onPress={() => router.push("/payout")}
-              />
-            </Group>
+            <>
+              <Text style={styles.section} accessibilityRole="header">{PARTNER_SETTLEMENTS_TITLE}</Text>
+              <Group>
+                <Row
+                  icon="card-outline"
+                  title="Mes coordonnées bancaires"
+                  detail={payout?.configured ? `IBAN ${maskIban(payout.iban_last4)}` : "Pour recevoir vos versements"}
+                  onPress={() => router.push("/payout")}
+                />
+              </Group>
+            </>
           )}
 
           {phone && (

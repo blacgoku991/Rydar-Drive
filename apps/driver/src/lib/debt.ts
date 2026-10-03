@@ -73,7 +73,7 @@ function withNetworkDebt(d: OpenDebt): { title: string; message: string; confirm
   const declared = d.declaredCents + network.reduce((s, n) => s + n.declaredCents, 0);
   const lines = [
     own ? `Commissions : ${formatPrice(d.cents, d.currency)} à ${org}.` : null,
-    `Courses partenaires : ${list}.`,
+    own ? `Courses partenaires : ${list}.` : `À régler : ${list}.`,
     declared > 0 ? `Dont ${formatPrice(declared, d.currency)} signalés payés, en attente de confirmation.` : null,
     "Supprimer votre compte n'efface pas ces sommes : elles restent dues. Tant qu'une somme reste due, des empreintes (hachages) de votre téléphone, de votre e-mail et de votre carte VTC sont conservées pour chaque organisation concernée, puis effacées.",
   ];

@@ -18,6 +18,8 @@ import { colors, control, mono, radius, space, type, weight } from "@/theme";
 
 type Errors = Partial<Record<keyof PayoutForm, string>>;
 
+const CONSULTATION_NOTE = "Seules les organisations qui vous doivent un versement peuvent les consulter, et vous êtes prévenu à chaque consultation.";
+
 export default function Payout() {
   const { network, refreshNetwork, home } = useDriver();
   const insets = useSafeAreaInsets();
@@ -181,6 +183,10 @@ export default function Payout() {
                   inputStyle={mono}
                   onSubmitEditing={() => void save()}
                 />
+                <View style={styles.notice}>
+                  <Ionicons name="shield-checkmark-outline" size={20} color={colors.muted} />
+                  <Text style={styles.noticeText}>{CONSULTATION_NOTE}</Text>
+                </View>
                 {failure && <Notice tone="error" message={failure} />}
                 <View style={styles.actions}>
                   <BigButton title="Enregistrer" icon="checkmark" height={control.lg} loading={busy === "save"} disabled={busy != null} onPress={() => void save()} />
@@ -199,9 +205,7 @@ export default function Payout() {
                 </View>
                 <View style={styles.notice}>
                   <Ionicons name="shield-checkmark-outline" size={20} color={colors.muted} />
-                  <Text style={styles.noticeText}>
-                    {frTypo("Seules les organisations qui vous doivent un versement peuvent les consulter, et vous êtes prévenu à chaque consultation.")}
-                  </Text>
+                  <Text style={styles.noticeText}>{CONSULTATION_NOTE}</Text>
                 </View>
                 {failure && <Notice tone="error" message={failure} />}
                 <View style={styles.actions}>

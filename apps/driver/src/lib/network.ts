@@ -493,8 +493,10 @@ export type BannerView = { tone: BannerTone; icon: BannerIcon; title: string; su
 export function networkHomeBanner(n: DriverHomeNetwork | null | undefined, executor: string | null | undefined, currency = "EUR"): BannerView | null {
   if (!n) return null;
   const creditors = n.creditors ?? [];
+  // Titre court (jamais tronqué) ; l'organisation dans le sous-titre
+  const who = (list: { name: string }[]) =>
+    list.length === 1 ? `Courses partenaires · ${list[0]!.name}` : `Courses partenaires · ${list.length}${NBSP}organisations`;
   const owing = creditors.filter((c) => c.owed_cents > 0);
-  const to = owing.length === 1 ? ` à ${owing[0]!.name}` : owing.length > 1 ? " (courses partenaires)" : "";
   const owed = formatPrice(n.owed_cents, currency);
   const blockedCreditor = creditors.find((c) => c.blocked);
   const executorLimit = (n.readiness?.missing ?? []).includes("blocked:executor_limit");
@@ -504,7 +506,7 @@ export function networkHomeBanner(n: DriverHomeNetwork | null | undefined, execu
       : networkBlockerMessage(blockedCreditor!.blocked!, { giver: blockedCreditor!.name, executor });
     return {
       tone: "red", icon: "lock-closed-outline", alert: true, late: false, cta: "Régler",
-      title: n.owed_cents > 0 ? frTypo(`${owed} à régler${to}`) : m.label,
+      title: n.owed_cents > 0 ? `${owed} à régler` : m.label,
       sub: frTypo(m.message),
     };
   }
@@ -512,16 +514,15 @@ export function networkHomeBanner(n: DriverHomeNetwork | null | undefined, execu
     const late = n.overdue_cents > 0;
     return {
       tone: "amber", icon: "wallet-outline", alert: false, late, cta: "Payer",
-      title: frTypo(`${owed} à régler${to}`),
-      sub: late ? frTypo(`Dont ${formatPrice(n.overdue_cents, currency)} en retard : réglez maintenant`) : "Part des organisations partenaires sur les courses payées à bord",
+      title: `${owed} à régler`,
+      sub: late ? frTypo(`Dont ${formatPrice(n.overdue_cents, currency)} en retard : réglez maintenant`) : who(owing.length > 0 ? owing : creditors),
     };
   }
   if (n.payout_due_cents > 0) {
-    const from = creditors.length === 1 ? ` de ${creditors[0]!.name}` : " (courses partenaires)";
     return {
       tone: "green", icon: "arrow-down-circle-outline", alert: false, late: false, cta: "Voir",
-      title: frTypo(`${formatPrice(n.payout_due_cents, currency)} à recevoir${from}`),
-      sub: "Votre part des courses partenaires déjà payées",
+      title: `${formatPrice(n.payout_due_cents, currency)} à recevoir`,
+      sub: creditors.length > 0 ? who(creditors) : "Votre part des courses partenaires",
     };
   }
   return null;
