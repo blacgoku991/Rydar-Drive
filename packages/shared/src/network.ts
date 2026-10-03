@@ -658,12 +658,84 @@ export const NETWORK_SUSPECT_REASON_META: Record<NetworkSuspectReason, { label: 
 /** Nouvelles valeurs de ride_offers.closed_reason (offres réseau). */
 export type NetworkOfferClosedReason = "terms_changed" | "network_unavailable" | "flight_rescheduled" | "sharing_stopped" | "driver_busy";
 
-/** Événements du journal de A (ride_events.type) propres au réseau. */
-export type NetworkRideEventType = "dispatch.network" | "dispatch.network_skipped" | "dispatch.network_error";
+/**
+ * Retrait d'une course de A au chauffeur partenaire qui la tient, avant la prise en charge (private.unassign_network_ride,
+ * 20260924006800) : A la reprend (« Retirer », public.reassign_ride) ; B la lui retire (public.ban_driver,
+ * public.set_driver_status, retrait du réseau) ; chauffeur ou B indisponibles (chien de garde). Mêmes valeurs dans
+ * ride_network_executions.end_reason et ride_network_shares.closed_reason.
+ */
+export const NETWORK_UNASSIGN_REASONS = ["removed_by_giver", "executor_released", "executor_unavailable"] as const;
+export type NetworkUnassignReason = (typeof NETWORK_UNASSIGN_REASONS)[number];
+
+/** Chien de garde (private.network_watch) : pourquoi le chauffeur partenaire ne peut plus faire la course. */
+export const NETWORK_WATCH_CAUSES = ["driver_inactive", "executor_inactive", "executor_suspended", "driver_withdrawn"] as const;
+export type NetworkWatchCause = (typeof NETWORK_WATCH_CAUSES)[number];
+
+/** public.close_network_ride : clôture permise parce que la fiche ou l'organisation du chauffeur est inactive, ou sans position depuis 30 min. */
+export const NETWORK_CLOSE_CAUSES = ["driver_inactive", "executor_inactive", "no_position"] as const;
+export type NetworkCloseCause = (typeof NETWORK_CLOSE_CAUSES)[number];
+
+/** Événements du journal de A (ride_events.type) propres au réseau. Jamais l'identifiant d'un chauffeur partenaire. */
+export type NetworkRideEventType =
+  | "dispatch.network" | "dispatch.network_skipped" | "dispatch.network_error"
+  | "ride.network_unassigned" | "ride.network_closed" | "network.executor_unavailable";
 export interface NetworkRideEventData {
   "dispatch.network": { partners_nearby: number; stage?: NetworkShareStage; cycle?: number };
   "dispatch.network_skipped": { reason: NetworkSkipReason };
   "dispatch.network_error": { errors: number };
+  /**
+   * Course retirée au partenaire et remise en recherche chez A (niveau warning ; acteur : le membre de A pour
+   * removed_by_giver, le système sinon — jamais un membre de B). note : motif saisi par A.
+   */
+  "ride.network_unassigned": {
+    network: true; reason: NetworkUnassignReason; execution_id: Uuid | null; previous_status: RideStatus; type: RideType;
+    auto: boolean; closed_alerts: number; closed_offers: number; note?: string;
+  };
+  /** Clôturée par A (public.close_network_ride) : « à vérifier » */
+  "ride.network_closed": { network: true; execution_id: Uuid | null; cause: NetworkCloseCause; previous_status: RideStatus };
+  /** Alerte (niveau warning, une fois par exécution) : partenaire indisponible, client à bord — il peut terminer, sinon A clôture */
+  "network.executor_unavailable": { network: true; execution_id: Uuid | null; cause: NetworkWatchCause; status: RideStatus };
+}
+
+/**
+ * public.reassign_ride (« Retirer ») sur une course tenue par un chauffeur partenaire : réponse de même forme que pour un
+ * chauffeur propre, sans l'identifiant du partenaire ; la recherche repart avec les chauffeurs de A (dispatch
+ * automatique coupé : UNASSIGNED, course à attribuer).
+ */
+export interface NetworkReassignResult {
+  ok: true;
+  code: "RELAUNCHED" | "UNASSIGNED";
+  message: string;
+  ride_id: Uuid;
+  previous_driver_id: null;
+  type: RideType;
+  status: RideStatus;
+  notified: number;
+  closed_alerts: number;
+  network: true;
+}
+
+/**
+ * Notifications du chauffeur partenaire propres au réseau (notifications.data ; lignes chez A, lisibles par lui seul),
+ * jamais d'adresse précise. « COURSE RETIRÉE — {A} » (type existant ride_unassigned) : retrait avant la prise en charge
+ * ou course confiée par A à l'un de ses chauffeurs (reassigned_own) ; ses autres notifications de la course (offre,
+ * rappels) sont supprimées.
+ */
+export interface NetworkRideUnassignedNotificationData {
+  type: "ride_unassigned";
+  ride_id: Uuid;
+  network: true;
+  giver: string;
+  reason: NetworkUnassignReason | "reassigned_own";
+}
+
+/** « ORGANISATION SUSPENDUE — {A} » (une fois par suspension ; private.network_watch) : courses acceptées au bout, règlements toujours dus. */
+export interface NetworkGiverSuspendedNotificationData {
+  type: "network_giver_suspended";
+  network: true;
+  giver: string;
+  /** Course acceptée la plus proche, s'il y en a une */
+  ride_id?: Uuid;
 }
 
 /**

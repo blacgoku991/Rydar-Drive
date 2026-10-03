@@ -1,11 +1,13 @@
 // Textes et paramètres du réseau partagé écrits en SQL (dispatch, 20260924006800) = ceux de @rydar/shared : messages
 // de blocage (private.network_blocker_message ↔ NETWORK_BLOCKER_META), raisons de non-partage du journal
-// (private.network_skip_label ↔ NETWORK_SKIP_REASON_LABELS), paramètres fixes de la v1 (NETWORK_PARAMS).
+// (private.network_skip_label ↔ NETWORK_SKIP_REASON_LABELS), paramètres fixes de la v1 (NETWORK_PARAMS), motifs de
+// retrait, causes du chien de garde et de la clôture, raisons « à vérifier ».
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  ACCEPT_OFFER_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_PARAMS, NETWORK_SKIP_REASON_LABELS,
+  ACCEPT_OFFER_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES, NETWORK_EXECUTION_END_REASONS, NETWORK_PARAMS,
+  NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS, NETWORK_SUSPECT_REASONS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
 } from "./network";
 
 const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import.meta.url));
@@ -16,7 +18,8 @@ const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import
  */
 function lastSqlDefinition(signature: string): string {
   let body: string | null = null;
-  const head = signature.includes("(") ? `function ${signature}` : `function ${signature}(`;
+  // « create or replace function » : jamais une ligne de droits (« grant execute on function public.x(uuid) … »)
+  const head = signature.includes("(") ? `create or replace function ${signature}` : `create or replace function ${signature}(`;
   for (const f of readdirSync(MIGRATIONS).filter((x) => x.endsWith(".sql")).sort()) {
     const sql = readFileSync(`${MIGRATIONS}${f}`, "utf8");
     const at = sql.lastIndexOf(head);
@@ -75,5 +78,53 @@ describe("Réseau partagé : paramètres fixes de la v1 (NETWORK_PARAMS) appliqu
     expect(lastSqlDefinition("private.dispatch_tick")).toContain(`v_network_max constant integer := ${NETWORK_PARAMS.maxPerTick};`);
     expect(lastSqlDefinition("private.network_dispatch_failed")).toContain(`if v_errors < ${NETWORK_PARAMS.maxErrors} then`);
     expect(lastSqlDefinition("private.network_open")).toContain(`>= ${NETWORK_PARAMS.maxErrors} then`);
+  });
+});
+
+describe("Réseau partagé : retraits, chien de garde, clôture et contrôles de fin (partie 3b)", () => {
+  /** Valeurs « 'a', 'b' » d'une liste SQL repérée par son début (« in ('… », « array['… »). */
+  const sqlList = (body: string, start: string): string[] => {
+    const at = body.indexOf(start);
+    expect(at, start).toBeGreaterThan(-1);
+    const list = body.slice(at + start.length, body.indexOf(")", at + start.length));
+    return [...list.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+  };
+
+  it("motifs de retrait (private.unassign_network_ride) = NETWORK_UNASSIGN_REASONS, fins d'exécution et clôtures du partage", () => {
+    const body = lastSqlDefinition("private.unassign_network_ride");
+    expect(sqlList(body, "p_reason not in (")).toEqual([...NETWORK_UNASSIGN_REASONS]);
+    for (const reason of NETWORK_UNASSIGN_REASONS) {
+      expect(NETWORK_EXECUTION_END_REASONS).toContain(reason);
+      expect(NETWORK_SHARE_CLOSED_REASONS).toContain(reason);
+    }
+  });
+
+  it("retraits répétés : 3 en 30 jours → exclu 30 jours (NETWORK_PARAMS)", () => {
+    const body = lastSqlDefinition("private.unassign_network_ride");
+    expect(body).toContain(`if v_releases >= ${NETWORK_PARAMS.releasesLimit} then`);
+    expect(body).toContain(`x.ended_at > now() - interval '${NETWORK_PARAMS.releasesWindowDays} days'`);
+    expect(body).toContain(`v_until := now() + interval '${NETWORK_PARAMS.autoExclusionDays} days'`);
+  });
+
+  it("causes du chien de garde et de la clôture = NETWORK_WATCH_CAUSES / NETWORK_CLOSE_CAUSES", () => {
+    const watch = lastSqlDefinition("private.network_watch");
+    const watchCauses = [...watch.slice(watch.indexOf("v_cause := case"), watch.indexOf("end;", watch.indexOf("v_cause := case")))
+      .matchAll(/then '([a-z_]+)'/g)].map((m) => m[1]!);
+    expect(watchCauses).toEqual([...NETWORK_WATCH_CAUSES]);
+    const close = lastSqlDefinition("public.close_network_ride");
+    const closeCauses = [...close.slice(close.indexOf("v_cause := case"), close.indexOf("end;", close.indexOf("v_cause := case")))
+      .matchAll(/then '([a-z_]+)'/g)].map((m) => m[1]!);
+    expect(closeCauses).toEqual([...NETWORK_CLOSE_CAUSES]);
+  });
+
+  it("raisons « à vérifier » posées par les contrôles de fin et la clôture ⊂ NETWORK_SUSPECT_REASONS ; retenue de 72 h", () => {
+    const checks = lastSqlDefinition("private.network_completion_checks");
+    const reasons = [...checks.matchAll(/v_reasons \|\| '([a-z_]+)'::text/g)].map((m) => m[1]!);
+    expect(reasons.sort()).toEqual(["far_from_dropoff", "far_from_pickup", "no_gps", "too_fast"]);
+    const close = lastSqlDefinition("public.close_network_ride");
+    expect(close).toContain("array['closed_by_giver']::text[]");
+    expect([...reasons, "closed_by_giver"].sort()).toEqual([...NETWORK_SUSPECT_REASONS].sort());
+    expect(checks).toContain(`now() + interval '${NETWORK_PARAMS.payoutHoldHours} hours'`);
+    expect(close).toContain(`now() + interval '${NETWORK_PARAMS.payoutHoldHours} hours'`);
   });
 });

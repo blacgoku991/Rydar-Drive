@@ -1,14 +1,15 @@
-// Réseau partagé, lot 3 — dispatch (20260924006800_shared_network_dispatch) : scénarios §14.1 n° 6 à 12 de la
-// spécification (étape réseau des immédiates et des planifiées, éligibilité, acceptation), plus les montants
-// (private.network_terms = networkTerms() de @rydar/shared au centime) et l'isolement des erreurs (C8).
+// Réseau partagé, lot 3 — dispatch (20260924006800_shared_network_dispatch) : scénarios §14.1 n° 6 à 15 de la
+// spécification (étape réseau des immédiates et des planifiées, éligibilité, acceptation ; puis course confiée
+// verrouillée, retraits, chien de garde, clôture et contrôles de fin), plus les montants (private.network_terms =
+// networkTerms() de @rydar/shared au centime) et l'isolement des erreurs (C8).
 // Réglages du réseau écrits directement (helpers de tests/db/helpers.ts) : les RPC d'administration arrivent au lot
 // 20260924007100. L'interrupteur est rouvert avant chaque test et recoupé à la fin du fichier.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { networkTerms, type NetworkTermsGiverInput } from "../../packages/shared/src/network";
 import {
-  acceptDriverTerms, approveNetwork, as, CHAMPS_ELYSEES, createDriver, createMember, createOrg, createRideAsOwner,
-  enableNetwork, inMinutes, insertRideBypass, networkTermsJson, nextWave, north, pingApp, pool, rideState,
+  acceptDriverTerms, approveNetwork, as, CDG, CHAMPS_ELYSEES, createDriver, createMember, createOrg, createRideAsOwner,
+  enableNetwork, expectPgError, inMinutes, insertRideBypass, networkTermsJson, nextWave, north, pingApp, pool, rideState,
   setSharedNetwork, sql, type Driver, type Org,
 } from "./helpers";
 
@@ -1117,6 +1118,656 @@ describe("Erreur dans l'étape réseau (C8)", () => {
       const { rows: [end] } = await client.query(
         `select message, data from public.ride_events where ride_id = $1 and type = 'dispatch.no_driver'`, [ride.id]);
       expect(end.data).toMatchObject({ network: true });
+    } finally {
+      await client.query("rollback").catch(() => undefined);
+      client.release();
+    }
+  });
+});
+
+// =============================================================================
+// Partie 3b — après l'acceptation : verrou, retraits, chien de garde, clôture, contrôles de fin
+// =============================================================================
+const AIRPORT = "Aéroport Paris-Charles de Gaulle, Terminal 2E, 95700 Roissy-en-France";
+const paris = (at: Date, opts: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat("fr-FR", { ...opts, timeZone: "Europe/Paris" }).format(at);
+/** « JJ/MM à HH:MM » à l'heure de Paris, comme les notifications du réseau. */
+const when = (at: string | Date) =>
+  `${paris(new Date(at), { day: "2-digit", month: "2-digit" })} à ${paris(new Date(at), { hour: "2-digit", minute: "2-digit" })}`;
+/** Instant arrondi à la minute (heures recalées par le suivi de vol). */
+const minuteFromNow = (minutes: number) => new Date(Math.ceil((Date.now() + minutes * 60_000) / 60_000) * 60_000);
+
+async function orgName(org: Org): Promise<string> {
+  const [o] = await sql(`select name from public.organizations where id = $1`, [org.id]);
+  return o.name;
+}
+
+/** Planifiée de A (prise en charge dans `minutes`) dans sa fenêtre réseau, acceptée par le partenaire. */
+async function scheduledPartnerAccepts(p: Pair, partner: Driver, minutes = 100, overrides: Record<string, unknown> = {}) {
+  const ride = await rideOf(p, { pickup_at: inMinutes(minutes), ...overrides });
+  await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [ride.id]);
+  await nextWave(ride.id);
+  const offer = await pendingOffer(ride.id, partner.id);
+  expect(offer, "offre réseau planifiée").toBeTruthy();
+  expect(await accept(partner, offer!.id)).toMatchObject({ ok: true, code: "ACCEPTED" });
+  const [execution] = await sql(`select * from public.ride_network_executions where ride_id = $1 and ended_at is null`, [ride.id]);
+  return { ride, execution };
+}
+
+/** Étape déclarée par le chauffeur (application). */
+async function stepAs(driver: Driver, rideId: string, status: string): Promise<Result & { status?: string }> {
+  return as({ sub: driver.userId }, async (q) => (await q("select public.driver_update_ride_status($1, $2) as r", [rideId, status]))[0].r);
+}
+
+/** Position du chauffeur (reçue il y a ageSeconds). */
+async function moveTo(driverId: string, at: [number, number], ageSeconds = 0) {
+  await sql(
+    `update public.driver_locations
+        set lat = $2, lng = $3, recorded_at = now() - make_interval(secs => $4), updated_at = now() - make_interval(secs => $4)
+      where driver_id = $1`,
+    [driverId, at[0], at[1], ageSeconds],
+  );
+}
+
+/** Surveillance du worker (private.watch_rides, chien de garde du réseau compris). */
+async function watch(): Promise<Record<string, any>> {
+  return (await sql("select private.watch_rides() as r"))[0].r;
+}
+
+const executionsOf = (rideId: string) =>
+  sql(`select * from public.ride_network_executions where ride_id = $1 order by accepted_at`, [rideId]);
+const shareOf = async (rideId: string) =>
+  (await sql(`select status, closed_reason, cycle from public.ride_network_shares where ride_id = $1`, [rideId]))[0];
+const notificationsOf = (rideId: string, driverId: string) =>
+  sql(`select type, title, body, data, status from public.notifications where ride_id = $1 and driver_id = $2 order by created_at, id`, [
+    rideId, driverId,
+  ]);
+const callAs = async (who: string, fn: string, args: unknown[]) =>
+  as({ sub: who }, async (q) => (await q(`select public.${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args))[0].r);
+
+// =============================================================================
+// n° 13 — Course confiée verrouillée (G6) ; vol retardé et retrait : permis
+// =============================================================================
+describe("Course confiée verrouillée (§14.1 n° 13)", () => {
+  it("prix, paiement, commission, adresse, heure → NETWORK_RIDE_LOCKED (owner et dispatcher) ; retirée au partenaire : permis", async () => {
+    const p = await networkPair({ model: "centrale" });
+    const { ride } = await partnerAccepts(p, p.partner);
+    const dispatcher = await createMember(p.A, "dispatcher");
+    const edits: Array<[string, string]> = [
+      ["prix", "update public.rides set price_cents = 9000 where id = $1"],
+      ["paiement", "update public.rides set payment_method = 'cash' where id = $1"],
+      ["commission", "update public.rides set commission_cents = 2000 where id = $1"],
+      ["adresse", "update public.rides set pickup_address = '1 Rue de Rivoli, 75001 Paris', pickup_lat = pickup_lat + 0.001 where id = $1"],
+    ];
+    for (const who of [p.A.ownerId, dispatcher]) {
+      for (const [label, text] of edits) {
+        const err = await expectPgError(as({ sub: who }, (q) => q(text, [ride.id])));
+        expect([label, err.code, err.message], label).toEqual([label, "55000", expect.stringContaining("NETWORK_RIDE_LOCKED")]);
+      }
+    }
+    // L'heure (écrite par le serveur) aussi ; un commentaire reste modifiable (visible du partenaire après acceptation)
+    expect((await expectPgError(sql(`update public.rides set pickup_at = pickup_at + interval '10 minutes' where id = $1`, [ride.id]))).code)
+      .toBe("55000");
+    await as({ sub: dispatcher }, (q) => q(`update public.rides set comment = 'Code portail 1234' where id = $1`, [ride.id]));
+
+    // Retirée au partenaire (« Retirer ») : de nouveau modifiable
+    expect(await callAs(p.A.ownerId, "reassign_ride", [ride.id, null, p.partner.id])).toMatchObject({ ok: true, code: "RELAUNCHED" });
+    await as({ sub: dispatcher }, (q) => q(`update public.rides set price_cents = 9000, payment_method = 'cash' where id = $1`, [ride.id]));
+    const [after] = await sql(`select price_cents, payment_method from public.rides where id = $1`, [ride.id]);
+    expect(after).toEqual({ price_cents: 9000, payment_method: "cash" });
+  });
+
+  it("vol retardé d'une course tenue par un partenaire : l'heure suit le vol malgré le verrou, partenaire prévenu", async () => {
+    const p = await networkPair();
+    const pickup = minuteFromNow(100);
+    const { ride } = await scheduledPartnerAccepts(p, p.partner, 100, {
+      pickup_address: AIRPORT, flight_number: "AF 1234", pickup_at: pickup.toISOString(),
+    });
+    const [res] = await sql("select private.apply_flight_status($1, 'delayed', $2, $3) as r", [
+      ride.id, pickup, new Date(pickup.getTime() + 40 * 60_000),
+    ]);
+    expect(res.r).toMatchObject({ ok: true, pickup_changed: true, delay_minutes: 40 });
+    const st = await rideState(ride.id);
+    expect(new Date(st.ride.pickup_at).getTime()).toBe(pickup.getTime() + 40 * 60_000);
+    expect(st.ride).toMatchObject({ driver_id: p.partner.id, status: "ACCEPTED", flight_number: "AF 1234" });
+    const [e] = await executionsOf(ride.id);
+    expect(e.ended_at).toBeNull();
+    const notes = await notificationsOf(ride.id, p.partner.id);
+    expect(notes.find((n) => n.type === "flight_update")).toMatchObject({ title: "VOL RETARDÉ" });
+    // Rappels recalés sur la nouvelle heure (prise en charge à +140 min : rappels 60 et 30 min avant)
+    expect(notes.filter((n) => n.type === "ride_reminder" && n.status === "queued")).toHaveLength(2);
+    // Hors suivi de vol, l'heure reste verrouillée
+    expect((await expectPgError(sql(`update public.rides set pickup_at = pickup_at + interval '5 minutes' where id = $1`, [ride.id]))).code)
+      .toBe("55000");
+  });
+});
+
+// =============================================================================
+// n° 10 (suite) — Vol retardé pendant la fenêtre réseau d'une planifiée (C13)
+// =============================================================================
+describe("Planifiée : vol retardé pendant la fenêtre réseau (§14.1 n° 10, C13)", () => {
+  async function windowOffer(p: Pair, pickup: Date) {
+    const ride = await rideOf(p, { pickup_address: AIRPORT, flight_number: "AF 1234", pickup_at: pickup.toISOString() });
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id);
+    const offer = await pendingOffer(ride.id, p.partner.id);
+    expect(offer, "offre réseau planifiée").toBeTruthy();
+    return { ride, offer: offer! };
+  }
+
+  it("nouvelle fenêtre pas encore ouverte : offres partenaires fermées « flight_rescheduled », partage clos, rouvert ensuite", async () => {
+    const p = await networkPair();
+    const pickup = minuteFromNow(100);
+    const { ride, offer } = await windowOffer(p, pickup);
+    // Retard de 60 min : prise en charge à +160 min, fenêtre réseau dans 40 min
+    const [res] = await sql("select private.apply_flight_status($1, 'delayed', $2, $3) as r", [
+      ride.id, pickup, new Date(pickup.getTime() + 60 * 60_000),
+    ]);
+    expect(res.r).toMatchObject({ ok: true, pickup_changed: true });
+    let st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ network_at: null, dispatch_mode: "fleet", driver_id: null });
+    const [due] = await sql(`select next_dispatch_at <= now() + interval '5 minutes' as soon from public.rides where id = $1`, [ride.id]);
+    expect(due.soon).toBe(true);
+    const [o] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [offer.id]);
+    expect(o).toEqual({ status: "closed", closed_reason: "flight_rescheduled" });
+    expect(await sql(`select 1 from public.notifications where offer_id = $1`, [offer.id])).toHaveLength(0);
+    expect(await shareOf(ride.id)).toMatchObject({ status: "closed", closed_reason: "flight_rescheduled" });
+
+    // Passage suivant avant la nouvelle fenêtre : flotte de A seule
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.network_at).toBeNull();
+    expect(st.offers.filter((x) => x.is_network && x.status === "pending")).toHaveLength(0);
+    // Nouvelle fenêtre atteinte : partage rouvert (cycle 2), le partenaire est de nouveau sollicité
+    await sql(`update public.rides set pickup_at = now() + interval '110 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.network_at).not.toBeNull();
+    expect(await shareOf(ride.id)).toMatchObject({ status: "open", cycle: 2 });
+    expect(await pendingOffer(ride.id, p.partner.id)).toMatchObject({ mode: "fleet" });
+  });
+
+  it("fenêtre toujours ouverte (petit retard) : offres fermées « terms_changed » puis reproposées à la nouvelle heure", async () => {
+    const p = await networkPair();
+    const pickup = minuteFromNow(100);
+    const { ride, offer } = await windowOffer(p, pickup);
+    await sql("select private.apply_flight_status($1, 'delayed', $2, $3)", [ride.id, pickup, new Date(pickup.getTime() + 10 * 60_000)]);
+    const st = await rideState(ride.id);
+    expect(st.ride.network_at).not.toBeNull();
+    const [o] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [offer.id]);
+    expect(o).toEqual({ status: "closed", closed_reason: "terms_changed" });
+    await nextWave(ride.id);
+    const again = await pendingOffer(ride.id, p.partner.id);
+    expect(again).toBeTruthy();
+    expect(again!.id).not.toBe(offer.id);
+    expect(await accept(p.partner, again!.id)).toMatchObject({ ok: true });
+  });
+});
+
+// =============================================================================
+// n° 14 — Retraits, chien de garde, organisations indisponibles, clôture
+// =============================================================================
+describe("Retraits et chien de garde (§14.1 n° 14)", () => {
+  it("bannissement par B : course rendue à A (vague 0), rappels et notifications du partenaire supprimés sauf « COURSE RETIRÉE »", async () => {
+    const p = await networkPair();
+    const [aName, bName] = [await orgName(p.A), await orgName(p.B)];
+    const { ride, execution } = await scheduledPartnerAccepts(p, p.partner, 100);
+    const before = await notificationsOf(ride.id, p.partner.id);
+    expect(before.filter((n) => n.type === "ride_reminder" && n.status === "queued")).toHaveLength(2);
+    const [{ pickup_at: pickupAt }] = await sql(`select pickup_at from public.rides where id = $1`, [ride.id]);
+
+    const res = await callAs(p.B.ownerId, "ban_driver", [p.partner.id, "Fraude constatée", "fraud"]);
+    expect(res).toMatchObject({ ok: true, code: "BANNED", reassigned_rides: 1 });
+
+    const st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({
+      status: "SEARCHING_DRIVER", driver_id: null, driver_org_id: null, vehicle_id: null, network_at: null, dispatch_wave: 0,
+      type: "scheduled", dispatch_mode: "fleet", accepted_at: null,
+    });
+    expect(new Date(st.ride.next_dispatch_at).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+    const [e] = await executionsOf(ride.id);
+    expect(e).toMatchObject({ id: execution.id, end_reason: "executor_released" });
+    expect(await shareOf(ride.id)).toMatchObject({ status: "closed", closed_reason: "executor_released" });
+    const [assignment] = await sql(`select is_active, release_reason from public.ride_assignments where ride_id = $1`, [ride.id]);
+    expect(assignment).toEqual({ is_active: false, release_reason: "executor_released" });
+    // Marqueur « retiré » (termes de l'exécution) : plus jamais sollicité pour cette course
+    const marker = st.offers.find((o) => o.closed_reason === "removed_by_dispatch");
+    expect(marker).toMatchObject({ driver_id: p.partner.id, is_network: true, status: "closed" });
+    expect(marker.network_terms).toEqual(execution.terms);
+    // Notifications du partenaire pour cette course : seulement « COURSE RETIRÉE — {A} », sans adresse
+    expect(await notificationsOf(ride.id, p.partner.id)).toEqual([{
+      type: "ride_unassigned",
+      title: `COURSE RETIRÉE — ${aName}`,
+      body: `${bName} vous a retiré la course de ${aName} du ${when(pickupAt)}.`,
+      data: { type: "ride_unassigned", ride_id: ride.id, network: true, giver: aName, reason: "executor_released" },
+      status: "queued",
+    }]);
+    // Journal de A : ni l'identifiant du partenaire, ni celui du membre de B qui a agi
+    const ev = st.events.find((x) => x.type === "ride.network_unassigned");
+    expect(ev).toMatchObject({
+      actor_type: "system", actor_id: null, level: "warning",
+      message: `${bName} a retiré la course à son chauffeur (Karim T.) — recherche relancée, vos chauffeurs d'abord`,
+    });
+    expect(ev.data).toMatchObject({ network: true, reason: "executor_released", execution_id: execution.id, previous_status: "ACCEPTED" });
+    const journal = JSON.stringify(st.events.map((x) => [x.message, x.data, x.actor_id]));
+    expect(journal).not.toContain(p.partner.id);
+    expect(journal).not.toContain(p.B.ownerId);
+
+    // La recherche repart chez A (flotte de A ; le partage ne rouvre qu'après 15 min) : il n'y est jamais resollicité
+    await nextWave(ride.id);
+    const again = await rideState(ride.id);
+    expect(again.ride.network_at).toBeNull();
+    expect(again.offers.filter((o) => o.driver_id === p.partner.id && o.status === "pending")).toHaveLength(0);
+  });
+
+  it("statut changé par B : course immédiate rendue, relancée chez A au passage suivant, partenaire exclu de cette course", async () => {
+    const p = await networkPair();
+    const { ride } = await partnerAccepts(p, p.partner);
+    const res = await callAs(p.B.ownerId, "set_driver_status", [p.partner.id, "inactive", null]);
+    expect(res).toMatchObject({ ok: true, code: "STATUS_CHANGED", reassigned_rides: 1 });
+    let st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ status: "SEARCHING_DRIVER", driver_id: null, dispatch_wave: 0, type: "instant", dispatch_mode: "geo" });
+    const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
+    expect(d).toEqual({ presence: "offline", current_ride_id: null });
+    expect((await executionsOf(ride.id))[0].end_reason).toBe("executor_released");
+
+    // Passage suivant : vague 1 chez A, ses chauffeurs d'abord
+    const own = await createDriver(p.A, { firstName: "Ahmed", at: north(p.site, 300) });
+    await nextWave(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.dispatch_wave).toBe(1);
+    expect(await pendingOffer(ride.id, own.id)).toBeTruthy();
+    // Réactivé et disponible : jamais resollicité pour cette course
+    await callAs(p.B.ownerId, "set_driver_status", [p.partner.id, "active", null]);
+    await sql(`update public.drivers set presence = 'available' where id = $1`, [p.partner.id]);
+    expect(await candidateIds(ride.id)).not.toContain(p.partner.id);
+  });
+
+  it("3 retraits en 30 jours → exclu du réseau 30 jours (offres fermées, alerte du super admin)", async () => {
+    const p = await networkPair();
+    const later = await rideOf(p, { pickup_at: inMinutes(110) });
+    for (let round = 1; round <= 3; round++) {
+      await sql(`update public.driver_locations set updated_at = now() where driver_id = $1`, [p.partner.id]);
+      const { ride } = await partnerAccepts(p, p.partner);
+      if (round < 3) {
+        // B le suspend puis le réactive
+        expect(await callAs(p.B.ownerId, "set_driver_status", [p.partner.id, "suspended", "Contrôle"])).toMatchObject({ reassigned_rides: 1 });
+        await callAs(p.B.ownerId, "set_driver_status", [p.partner.id, "active", null]);
+        await sql(`update public.drivers set presence = 'available' where id = $1`, [p.partner.id]);
+        const [n] = await sql(`select excluded_until from public.driver_network_settings where driver_id = $1`, [p.partner.id]);
+        expect(n.excluded_until, `retrait ${round}`).toBeNull();
+      } else {
+        // Une offre planifiée en attente ailleurs ; B le retire du réseau, le chien de garde rend la course
+        await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [later.id]);
+        await nextWave(later.id);
+        const pending = await pendingOffer(later.id, p.partner.id);
+        expect(pending, "offre planifiée en attente").toBeTruthy();
+        await sql(`update public.driver_network_settings set org_allowed = false where driver_id = $1`, [p.partner.id]);
+        const w = await watch();
+        expect(w.network.released).toBeGreaterThanOrEqual(1);
+        expect((await executionsOf(ride.id))[0].end_reason).toBe("executor_released");
+        const [o] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [pending!.id]);
+        expect(o).toEqual({ status: "closed", closed_reason: "network_unavailable" });
+      }
+    }
+    const [n] = await sql(
+      `select excluded_until > now() + interval '29 days' and excluded_until < now() + interval '31 days' as ok
+         from public.driver_network_settings where driver_id = $1`,
+      [p.partner.id],
+    );
+    expect(n.ok).toBe(true);
+    const audits = await sql(`select organization_id, actor_type, severity, metadata from public.audit_logs
+                               where action = 'network.driver_auto_excluded' and entity_id = $1`, [p.partner.id]);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ organization_id: p.B.id, actor_type: "system", severity: "warning", metadata: { releases_30d: 3 } });
+    // Autorisé de nouveau par B : toujours exclu (raison de lisibilité « excluded_until »)
+    await sql(`update public.driver_network_settings set org_allowed = true where driver_id = $1`, [p.partner.id]);
+    expect(await driverReason(p.partner.id, (await rideOf(p)).id)).toBe("excluded_until");
+  });
+
+  it("B suspendue : courses non commencées rendues à A par le chien de garde ; client à bord : alerte chez A et le chauffeur termine", async () => {
+    const p = await networkPair();
+    const bName = await orgName(p.B);
+    const samir = await readyPartner(p.B, { firstName: "Samir", at: north(p.site, 900) });
+    const notStarted = await partnerAccepts(p, p.partner);
+    const onboard = await partnerAccepts(p, samir);
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD"]) {
+      await moveTo(samir.id, p.site);
+      expect(await stepAs(samir, onboard.ride.id, s), s).toMatchObject({ ok: true });
+    }
+    await sql(`update public.organizations set status = 'suspended', suspended_at = now() where id = $1`, [p.B.id]);
+    const w = await watch();
+    expect(w.network).toMatchObject({ released: expect.any(Number), alerts: expect.any(Number) });
+    expect(w.network.released).toBeGreaterThanOrEqual(1);
+
+    // Non commencée : rendue à A (« executor_unavailable »)
+    expect((await rideState(notStarted.ride.id)).ride).toMatchObject({ driver_id: null, status: "SEARCHING_DRIVER", network_at: null });
+    expect((await executionsOf(notStarted.ride.id))[0].end_reason).toBe("executor_unavailable");
+    const released = (await rideState(notStarted.ride.id)).events.find((x) => x.type === "ride.network_unassigned");
+    expect(released.message).toBe(`Chauffeur partenaire indisponible (Karim T., ${bName}) — recherche relancée, vos chauffeurs d'abord`);
+    // Client à bord : toujours tenue, une seule alerte chez A
+    await watch();
+    let st = await rideState(onboard.ride.id);
+    expect(st.ride).toMatchObject({ driver_id: samir.id, status: "PASSENGER_ONBOARD" });
+    const alerts = st.events.filter((x) => x.type === "network.executor_unavailable");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      level: "warning", actor_id: null,
+      message: `Chauffeur partenaire indisponible, client à bord (Samir T., ${bName} : organisation suspendue) — il peut terminer la course ; sinon, clôturez-la`,
+    });
+    expect(alerts[0].data).toMatchObject({ network: true, execution_id: onboard.execution.id, cause: "executor_inactive" });
+
+    // Le chauffeur termine malgré la suspension de son organisation (démarrage et fin seulement)
+    expect(await stepAs(samir, onboard.ride.id, "IN_PROGRESS")).toMatchObject({ ok: true, status: "IN_PROGRESS" });
+    expect(await stepAs(samir, onboard.ride.id, "COMPLETED")).toMatchObject({ ok: true, status: "COMPLETED" });
+    st = await rideState(onboard.ride.id);
+    expect(st.ride.status).toBe("COMPLETED");
+    expect((await executionsOf(onboard.ride.id))[0].end_reason).toBe("completed");
+    const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [samir.id]);
+    expect(d).toEqual({ presence: "offline", current_ride_id: null });
+    // Hors de ce cas (course d'une autre étape, autre transition), l'organisation suspendue bloque comme avant
+    const err = await expectPgError(stepAs(samir, notStarted.ride.id, "DRIVER_EN_ROUTE"));
+    expect(err.code).toBe("42501");
+  });
+
+  it("client à bord : B ne peut ni bannir ni suspendre son chauffeur (message sans « annulez-la »), le chauffeur termine", async () => {
+    const p = await networkPair();
+    const { ride } = await partnerAccepts(p, p.partner);
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD"]) {
+      await moveTo(p.partner.id, p.site);
+      expect(await stepAs(p.partner, ride.id, s)).toMatchObject({ ok: true });
+    }
+    expect(await callAs(p.B.ownerId, "set_driver_status", [p.partner.id, "suspended", "Contrôle"])).toEqual({
+      ok: false, code: "DRIVER_ON_RIDE",
+      message: "Client à bord d'une course partenaire : attendez la fin de la course avant de suspendre ce chauffeur.",
+    });
+    expect(await callAs(p.B.ownerId, "ban_driver", [p.partner.id, "Fraude constatée", "fraud"])).toEqual({
+      ok: false, code: "DRIVER_ON_RIDE",
+      message: "Client à bord d'une course partenaire : attendez la fin de la course avant de bannir ce chauffeur.",
+    });
+    // Écriture directe du statut par B : refusée aussi (G7)
+    const err = await expectPgError(as({ sub: p.B.ownerId }, (q) => q(`update public.drivers set status = 'inactive' where id = $1`, [p.partner.id])));
+    expect(err.message).toContain("DRIVER_HAS_NETWORK_OBLIGATIONS");
+    expect((await rideState(ride.id)).ride).toMatchObject({ driver_id: p.partner.id, status: "PASSENGER_ONBOARD" });
+  });
+
+  it("offres réseau en attente devenues inacceptables (B suspendue, interrupteur coupé) : fermées par le chien de garde", async () => {
+    const p = await networkPair();
+    const ride = await rideOf(p, { pickup_at: inMinutes(100) });
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [ride.id]);
+    await nextWave(ride.id);
+    const offer = await pendingOffer(ride.id, p.partner.id);
+    expect(offer).toBeTruthy();
+    // Encore acceptable : rien ne change
+    await watch();
+    expect(await pendingOffer(ride.id, p.partner.id)).toBeTruthy();
+    // B suspendue par Rydar (statut de l'organisation) : offre fermée, notification d'offre supprimée
+    await sql(`update public.organizations set status = 'suspended', suspended_at = now() where id = $1`, [p.B.id]);
+    const w = await watch();
+    expect(w.network.closed_offers).toBeGreaterThanOrEqual(1);
+    const [o] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [offer!.id]);
+    expect(o).toEqual({ status: "closed", closed_reason: "network_unavailable" });
+    expect(await sql(`select 1 from public.notifications where offer_id = $1`, [offer!.id])).toHaveLength(0);
+
+    // Interrupteur coupé : offres en attente fermées au passage suivant
+    const q = await networkPair();
+    const other = await rideOf(q, { pickup_at: inMinutes(100) });
+    await sql(`update public.rides set dispatch_started_at = now() - interval '20 minutes' where id = $1`, [other.id]);
+    await nextWave(other.id);
+    const pending = await pendingOffer(other.id, q.partner.id);
+    expect(pending).toBeTruthy();
+    await setSharedNetwork(false);
+    await watch();
+    const [o2] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [pending!.id]);
+    expect(o2).toEqual({ status: "closed", closed_reason: "network_unavailable" });
+  });
+
+  it("close_network_ride : refusée si le partenaire est actif et localisé (et aux dispatchers), permise sinon", async () => {
+    const p = await networkPair();
+    const samir = await readyPartner(p.B, { firstName: "Samir", at: north(p.site, 900) });
+    const close = (who: string, rideId: string) => callAs(who, "close_network_ride", [rideId]);
+    const first = await partnerAccepts(p, p.partner, { payment_method: "online" });
+    const second = await partnerAccepts(p, samir);
+    for (const [driver, rideId] of [[p.partner, first.ride.id], [samir, second.ride.id]] as const) {
+      for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"]) {
+        await moveTo(driver.id, p.site);
+        expect(await stepAs(driver, rideId, s), s).toMatchObject({ ok: true });
+      }
+    }
+    // Chauffeur actif, position récente : refusée
+    let err = await expectPgError(close(p.A.ownerId, first.ride.id));
+    expect([err.code, err.message]).toEqual(["55000", expect.stringContaining("NETWORK_CLOSE_NOT_ALLOWED")]);
+    // Dispatcher de A, membre de B : refusée (owner / admin de A seulement)
+    const dispatcher = await createMember(p.A, "dispatcher");
+    expect((await expectPgError(close(dispatcher, first.ride.id))).code).toBe("42501");
+    expect((await expectPgError(close(p.B.ownerId, first.ride.id))).code).toBe("42501");
+
+    // Plus de position depuis 35 min : permise, « à vérifier », versement prépayé retenu 72 h
+    await moveTo(p.partner.id, p.site, 35 * 60);
+    expect(await close(p.A.ownerId, first.ride.id)).toEqual({ ok: true, ride_id: first.ride.id, status: "COMPLETED" });
+    const st = await rideState(first.ride.id);
+    expect(st.ride.status).toBe("COMPLETED");
+    const [e] = await executionsOf(first.ride.id);
+    expect(e).toMatchObject({ end_reason: "completed", suspect_reasons: ["closed_by_giver"] });
+    const [hold] = await sql(
+      `select hold_until between now() + interval '71 hours' and now() + interval '73 hours' as ok from public.ride_network_executions where id = $1`,
+      [e.id],
+    );
+    expect(hold.ok).toBe(true);
+    const ev = st.events.find((x) => x.type === "ride.network_closed");
+    expect(ev).toMatchObject({
+      actor_type: "user", actor_id: p.A.ownerId, level: "warning",
+      message: "Course clôturée par l'organisation (chauffeur partenaire Karim T. sans position depuis 30 min) — à vérifier",
+    });
+    const [audit] = await sql(`select organization_id, metadata from public.audit_logs where action = 'network.ride_closed' and entity_id = $1`, [
+      first.ride.id,
+    ]);
+    expect(audit).toMatchObject({ organization_id: p.A.id, metadata: { cause: "no_position", execution_id: e.id } });
+    const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
+    expect(d).toEqual({ presence: "available", current_ride_id: null });
+
+    // Second partenaire localisé : refusée, puis permise quand son organisation est suspendue ; payée à bord : sans retenue
+    err = await expectPgError(close(p.A.ownerId, second.ride.id));
+    expect(err.code).toBe("55000");
+    await sql(`update public.organizations set status = 'suspended', suspended_at = now() where id = $1`, [p.B.id]);
+    expect(await close(p.A.ownerId, second.ride.id)).toMatchObject({ ok: true, status: "COMPLETED" });
+    const [e2] = await executionsOf(second.ride.id);
+    expect(e2).toMatchObject({ end_reason: "completed", suspect_reasons: ["closed_by_giver"], hold_until: null });
+    const [s2] = await sql(`select presence from public.drivers where id = $1`, [samir.id]);
+    expect(s2.presence).toBe("offline");
+
+    // Course propre de A : jamais
+    const own = await createDriver(p.A, { firstName: "Ahmed", at: north(p.site, 300) });
+    const mine = await rideOf(p);
+    expect(await accept(own, (await pendingOffer(mine.id, own.id))!.id)).toMatchObject({ ok: true });
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD"]) await stepAs(own, mine.id, s);
+    expect((await expectPgError(close(p.A.ownerId, mine.id))).code).toBe("55000");
+  });
+
+  it("A suspendue : courses acceptées au bout, partenaires prévenus une fois", async () => {
+    const p = await networkPair();
+    const aName = await orgName(p.A);
+    const { ride } = await scheduledPartnerAccepts(p, p.partner, 100);
+    await sql(`update public.organizations set status = 'suspended', suspended_at = now() where id = $1`, [p.A.id]);
+    await watch();
+    await watch();
+    const notes = await sql(
+      `select ride_id, title, body, data, priority from public.notifications where driver_id = $1 and type = 'network_giver_suspended'`,
+      [p.partner.id],
+    );
+    expect(notes).toEqual([{
+      ride_id: ride.id,
+      title: `ORGANISATION SUSPENDUE — ${aName}`,
+      body: `${aName} est suspendue : vos courses déjà acceptées restent à faire, vos règlements avec elle restent dus ou attendus.`,
+      data: { type: "network_giver_suspended", network: true, giver: aName, ride_id: ride.id },
+      priority: "normal",
+    }]);
+    expect((await rideState(ride.id)).ride).toMatchObject({ driver_id: p.partner.id, status: "ACCEPTED" });
+  });
+
+  it("« Retirer » (A) : nouvelle recherche lancée tout de suite, ses chauffeurs d'abord ; partenaire prévenu, jamais resollicité", async () => {
+    const p = await networkPair();
+    const [aName, bName] = [await orgName(p.A), await orgName(p.B)];
+    const samir = await readyPartner(p.B, { firstName: "Samir", at: north(p.site, 900) });
+    const { ride, execution } = await partnerAccepts(p, p.partner);
+    const [{ pickup_at: pickupAt }] = await sql(`select pickup_at from public.rides where id = $1`, [ride.id]);
+    // Autre chauffeur affiché à l'écran : refus
+    expect(await callAs(p.A.ownerId, "reassign_ride", [ride.id, null, samir.id])).toMatchObject({ ok: false, code: "DRIVER_CHANGED" });
+
+    const res = await callAs(p.A.ownerId, "reassign_ride", [ride.id, "Client injoignable", p.partner.id]);
+    expect(res).toMatchObject({
+      ok: true, code: "RELAUNCHED", previous_driver_id: null, type: "instant", status: "SEARCHING_DRIVER", notified: 0, network: true,
+    });
+    let st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ driver_id: null, network_at: null, dispatch_wave: 1, status: "SEARCHING_DRIVER" });
+    expect((await executionsOf(ride.id))[0]).toMatchObject({ id: execution.id, end_reason: "removed_by_giver" });
+    expect(await shareOf(ride.id)).toMatchObject({ status: "closed", closed_reason: "removed_by_giver" });
+    expect(await notificationsOf(ride.id, p.partner.id)).toEqual([{
+      type: "ride_unassigned",
+      title: `COURSE RETIRÉE — ${aName}`,
+      body: `${aName} a repris la course du ${when(pickupAt)} : elle ne figure plus dans votre planning.`,
+      data: { type: "ride_unassigned", ride_id: ride.id, network: true, giver: aName, reason: "removed_by_giver" },
+      status: "queued",
+    }]);
+    const ev = st.events.find((x) => x.type === "ride.network_unassigned");
+    expect(ev).toMatchObject({
+      actor_type: "user", actor_id: p.A.ownerId,
+      message: `Course retirée au chauffeur partenaire Karim T. (${bName}) : Client injoignable — recherche relancée, vos chauffeurs d'abord`,
+    });
+    expect(ev.data).toMatchObject({ reason: "removed_by_giver", note: "Client injoignable", type: "instant", auto: true });
+    expect(JSON.stringify(st.events.map((x) => [x.message, x.data, x.actor_id]))).not.toContain(p.partner.id);
+    const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
+    expect(d).toEqual({ presence: "available", current_ride_id: null });
+
+    // Après les vagues propres : partage rouvert (cycle 2) avec Samir, jamais avec Karim
+    await toNetworkStage(ride.id);
+    st = await rideState(ride.id);
+    expect(st.ride.network_at).not.toBeNull();
+    expect(await shareOf(ride.id)).toMatchObject({ status: "open", cycle: 2 });
+    expect(await pendingOffer(ride.id, samir.id)).toBeTruthy();
+    expect(await pendingOffer(ride.id, p.partner.id)).toBeUndefined();
+  });
+
+  it("attribuée à un chauffeur de A : partenaire libéré « reassigned_own », partage clos, journal sans son identifiant", async () => {
+    const p = await networkPair();
+    const aName = await orgName(p.A);
+    const { ride } = await partnerAccepts(p, p.partner);
+    const [{ pickup_at: pickupAt }] = await sql(`select pickup_at from public.rides where id = $1`, [ride.id]);
+    const own = await createDriver(p.A, { firstName: "Ahmed", at: north(p.site, 300) });
+    expect(await callAs(p.A.ownerId, "assign_ride", [ride.id, own.id])).toMatchObject({ ok: true, code: "ASSIGNED" });
+    const st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ driver_id: own.id, driver_org_id: p.A.id, network_at: null, status: "ACCEPTED" });
+    expect((await executionsOf(ride.id))[0].end_reason).toBe("reassigned_own");
+    expect(await shareOf(ride.id)).toMatchObject({ status: "closed", closed_reason: "reassigned_own" });
+    expect(await notificationsOf(ride.id, p.partner.id)).toEqual([{
+      type: "ride_unassigned",
+      title: `COURSE RETIRÉE — ${aName}`,
+      body: `${aName} a confié la course du ${when(pickupAt)} à l'un de ses chauffeurs : elle ne figure plus dans votre planning.`,
+      data: { type: "ride_unassigned", ride_id: ride.id, network: true, giver: aName, reason: "reassigned_own" },
+      status: "queued",
+    }]);
+    const ev = st.events.find((x) => x.type === "ride.assigned_manually");
+    expect(ev.data).toMatchObject({ driver_id: own.id, previous_driver_id: null, network: true, previous_status: "ACCEPTED" });
+    expect(JSON.stringify(st.events.map((x) => [x.message, x.data, x.actor_id]))).not.toContain(p.partner.id);
+    const [d] = await sql(`select presence, current_ride_id from public.drivers where id = $1`, [p.partner.id]);
+    expect(d).toEqual({ presence: "available", current_ride_id: null });
+
+    // Pendant la recherche réseau (offre partenaire en attente) : partage clos « reassigned_own », offres fermées
+    const next = await rideOf(p);
+    await toNetworkStage(next.id);
+    const offer = await pendingOffer(next.id, p.partner.id);
+    expect(offer).toBeTruthy();
+    const other = await createDriver(p.A, { firstName: "Yanis", at: north(p.site, 400) });
+    expect(await callAs(p.A.ownerId, "assign_ride", [next.id, other.id])).toMatchObject({ ok: true, code: "ASSIGNED" });
+    expect((await rideState(next.id)).ride.network_at).toBeNull();
+    expect(await shareOf(next.id)).toMatchObject({ status: "closed", closed_reason: "reassigned_own" });
+    const [o] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [offer!.id]);
+    expect(o).toEqual({ status: "closed", closed_reason: "manual_assignment" });
+    expect(await sql(`select 1 from public.notifications where offer_id = $1`, [offer!.id])).toHaveLength(0);
+  });
+
+  it("« Relancer » pendant le partage : partage clos « redispatch », offres partenaires fermées, ses chauffeurs d'abord", async () => {
+    const p = await networkPair();
+    const ride = await rideOf(p);
+    await toNetworkStage(ride.id);
+    const offer = await pendingOffer(ride.id, p.partner.id);
+    expect(offer).toBeTruthy();
+    // La recherche continue en phase réseau : une relance est possible (statut OFFERED, sans chauffeur)
+    expect(await callAs(p.A.ownerId, "redispatch_ride", [ride.id])).toMatchObject({ ok: true, code: "RELAUNCHED" });
+    const st = await rideState(ride.id);
+    expect(st.ride).toMatchObject({ network_at: null, dispatch_wave: 1 });
+    expect(await shareOf(ride.id)).toMatchObject({ status: "closed", closed_reason: "redispatch" });
+    const [o] = await sql(`select status, closed_reason from public.ride_offers where id = $1`, [offer!.id]);
+    expect(o).toEqual({ status: "expired", closed_reason: "redispatch" });
+    expect(await sql(`select 1 from public.notifications where offer_id = $1`, [offer!.id])).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// n° 15 — Contrôles de fin : course « à vérifier », jamais de refus
+// =============================================================================
+describe("Contrôles de fin de course (§14.1 n° 15)", () => {
+  it("arrivé loin du départ, sans GPS à la fin, durée trop courte → à vérifier ; prépayée : versement retenu 72 h", async () => {
+    const p = await networkPair();
+    const { ride } = await partnerAccepts(p, p.partner, { payment_method: "online", estimated_duration_s: 3600 });
+    expect(await stepAs(p.partner, ride.id, "DRIVER_EN_ROUTE")).toMatchObject({ ok: true });
+    await moveTo(p.partner.id, north(p.site, 2000));
+    expect(await stepAs(p.partner, ride.id, "DRIVER_ARRIVED")).toMatchObject({ ok: true, status: "DRIVER_ARRIVED" });
+    expect((await executionsOf(ride.id))[0].suspect_reasons).toEqual(["far_from_pickup"]);
+    expect(await stepAs(p.partner, ride.id, "PASSENGER_ONBOARD")).toMatchObject({ ok: true });
+    expect(await stepAs(p.partner, ride.id, "IN_PROGRESS")).toMatchObject({ ok: true });
+    // Dernière position il y a 10 min, fin 1 s après le départ (durée estimée 1 h)
+    await moveTo(p.partner.id, p.site, 600);
+    expect(await stepAs(p.partner, ride.id, "COMPLETED")).toMatchObject({ ok: true, status: "COMPLETED" });
+    const [e] = await executionsOf(ride.id);
+    expect(e).toMatchObject({ end_reason: "completed", suspect_reasons: ["far_from_pickup", "no_gps", "too_fast"] });
+    const [hold] = await sql(
+      `select e.hold_until between r.completed_at + interval '71 hours' and r.completed_at + interval '73 hours' as ok
+         from public.ride_network_executions e join public.rides r on r.id = e.ride_id where e.id = $1`,
+      [e.id],
+    );
+    expect(hold.ok).toBe(true);
+    // Journal de A : étapes du partenaire sans son identifiant
+    const steps = (await rideState(ride.id)).events.filter((x) => x.type.startsWith("ride.") && x.actor_type === "driver");
+    expect(steps.map((x) => x.type)).toEqual(["ride.driver_en_route", "ride.driver_arrived", "ride.passenger_onboard", "ride.in_progress", "ride.completed"]);
+    expect(steps.every((x) => x.actor_id === null)).toBe(true);
+  });
+
+  it("course propre : rien à vérifier ; terminée loin de l'arrivée : far_from_dropoff ; payée à bord : jamais de retenue", async () => {
+    const p = await networkPair();
+    const clean = await partnerAccepts(p, p.partner);
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"]) {
+      await moveTo(p.partner.id, north(p.site, 100));
+      expect(await stepAs(p.partner, clean.ride.id, s)).toMatchObject({ ok: true });
+    }
+    await moveTo(p.partner.id, north(CDG, 300));
+    expect(await stepAs(p.partner, clean.ride.id, "COMPLETED")).toMatchObject({ ok: true });
+    expect((await executionsOf(clean.ride.id))[0]).toMatchObject({ end_reason: "completed", suspect_reasons: [], hold_until: null });
+
+    await moveTo(p.partner.id, north(p.site, 800));
+    const far = await partnerAccepts(p, p.partner);
+    for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"]) {
+      await moveTo(p.partner.id, north(p.site, 100));
+      await stepAs(p.partner, far.ride.id, s);
+    }
+    expect(await stepAs(p.partner, far.ride.id, "COMPLETED")).toMatchObject({ ok: true });
+    expect((await executionsOf(far.ride.id))[0]).toMatchObject({ suspect_reasons: ["far_from_dropoff"], hold_until: null });
+  });
+
+  it("contrôles en erreur : l'étape passe quand même", async () => {
+    const p = await networkPair();
+    const { ride } = await partnerAccepts(p, p.partner);
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(`create or replace function private.network_completion_checks(r public.rides, p_status public.ride_status)
+          returns text[] language plpgsql set search_path = '' as $$ begin raise exception 'panne simulée'; end; $$`);
+      await client.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub: p.partner.userId, role: "authenticated" })]);
+      await client.query("set local role authenticated");
+      for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED"]) {
+        const { rows: [r] } = await client.query("select public.driver_update_ride_status($1, $2) as r", [ride.id, s]);
+        expect(r.r, s).toMatchObject({ ok: true, status: s });
+      }
     } finally {
       await client.query("rollback").catch(() => undefined);
       client.release();
