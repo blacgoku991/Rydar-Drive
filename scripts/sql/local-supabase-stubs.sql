@@ -79,7 +79,13 @@ create table if not exists auth.identities (
 create table if not exists auth.sessions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  -- Colonnes de Supabase Auth lues par le ménage (purge des sessions inactives, 20260924007300) ; refreshed_at sans fuseau
+  updated_at timestamptz default now(),
+  refreshed_at timestamp,
+  user_agent text,
+  ip inet,
+  not_after timestamptz
 );
 
 create table if not exists auth.refresh_tokens (

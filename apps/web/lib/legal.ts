@@ -104,7 +104,9 @@ export const CGV_UPDATED_AT = "2 octobre 2026";
 export const DPA_UPDATED_AT = "3 octobre 2026";
 /**
  * Politique de confidentialité : 3 octobre 2026, hébergement réel, sauvegardes, journaux techniques, bases légales
- * (WhatsApp, mini-site), batterie, champs obligatoires. Corrections d'information, sans nouvelle LEGAL_VERSION.
+ * (WhatsApp, mini-site), batterie, champs obligatoires ; durées plus courtes appliquées par le ménage (20260924007300 :
+ * sessions de connexion 400 jours sans utilisation, dernière adresse IP d'une clé d'API 90 jours). Corrections
+ * d'information, sans nouvelle LEGAL_VERSION.
  */
 export const PRIVACY_UPDATED_AT = "3 octobre 2026";
 /** Mentions légales : point de contact du règlement sur les services numériques, hébergement des données. */
