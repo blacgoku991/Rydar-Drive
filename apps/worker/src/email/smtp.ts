@@ -164,8 +164,11 @@ export class SendTimeoutError extends Error {
   readonly code = "ESENDTIMEOUT";
 }
 
-/** Types écrits automatiquement (pas la réponse rédigée par le super admin) : en-tête Auto-Submitted (RFC 3834). */
-const AUTOMATIC_KINDS = new Set(["contact_notify", "contact_ack", "test"]);
+/**
+ * Types écrits automatiquement (pas la réponse rédigée par le super admin) : en-tête Auto-Submitted (RFC 3834). Annonces
+ * aux organisations (20260924006600) : changement des frais Rydar par course, nouvelle version des CGV.
+ */
+const AUTOMATIC_KINDS = new Set(["contact_notify", "contact_ack", "test", "platform_fee_change", "org_terms_update"]);
 
 /**
  * Message nodemailer d'une ligne de la file : texte brut UTF-8, un seul destinataire (enveloppe explicite, jamais

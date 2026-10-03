@@ -22,7 +22,8 @@ Depuis : `20260924005700` formulaire de contact (demandes, file d'e-mails), `202
 la file si le serveur mail est injoignable, relance à son retour), `20260924005900` clôture des planifiées jamais
 démarrées, `20260924006000` webhooks sortants, `20260924006100` leur durcissement après revue adverse,
 `20260924006200` interrupteur plateforme des mini-sites (coupés), `20260924006300` lien d'inscription des chauffeurs
-pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` index de performance + `chat_counts`.
+pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` index de performance + `chat_counts`,
+`20260924006600` frais Rydar : hausses annoncées 30 jours à l'avance, annonce des CGV, libellés neutres.
 
 ## Depuis l'audit
 - **Lenteur (« le site est lent ») — volet serveur** : plus de rafale de préchargements à chaque page (26 → 1 requête
@@ -63,6 +64,19 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   « organisations partenaires » retirée, date remise au 28 septembre) ; `/dpa` : version 2026-10-02, contenu inchangé
   depuis le 27 septembre. `ORG_LEGAL_EFFECTIVE_AT` = `2026-11-05` (entrée en vigueur au plus tard pour une
   organisation déjà cliente). Le texte du bandeau « mise à jour » est provisoire (à finaliser avec le préambule).
+- **Frais Rydar : hausses annoncées (migration `20260924006600`, partie SQL faite, web à brancher)** : réglage par
+  `svc_platform_set_fees` (création : tout de suite ; baisse : tout de suite ; HAUSSE : programmée au plus tôt au premier
+  minuit après 30 jours, et pas avant `ORG_LEGAL_EFFECTIVE_AT` si l'organisation n'a pas accepté `ORG_LEGAL_VERSION`, ou
+  tout de suite sur « accord écrit reçu » + note), un seul changement en attente (`public.platform_fee_changes`),
+  annulable (`svc_platform_cancel_fee_change`), appliqué par le ménage (5 min) ; e-mails aux propriétaires par
+  `email_outbox` (annonce, confirmation d'accord écrit, annulation ; contenu fixe) ; owner / admin :
+  `account.scheduled_change` ; super admin : `admin_platform_fee_schedule`. Annonce des CGV : `svc_org_terms_notify`
+  (une fois par organisation et par version). Textes « réglez vos frais Rydar (menu « Frais Rydar » ou « Encaissements ») »,
+  relance WhatsApp de Rydar refusée pour une flotte (WHATSAPP.md). Reste au web : actions `createOrganization` /
+  `updateDispatchModel` sur la RPC (formulaire prérempli avec le changement en attente), fiche super admin, encart et
+  bandeau, bouton « Prévenir par e-mail », alerte en direct selon le modèle. **Tâche manuelle du propriétaire** : facture
+  récapitulative des frais de chaque cycle (le relevé n'est pas une facture). Amélioration possible : figer les taux en
+  centrale comme en flotte (aujourd'hui : taux du calcul de la répartition, y compris après la course).
 - **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour
   de l'app)** : centre de commande « En direct » : positions GPS regroupées (au plus un rendu par seconde, rien onglet
   caché), carte mise à jour seulement pour ce qui change (tracés et rayon redessinés si une position utile ou la course

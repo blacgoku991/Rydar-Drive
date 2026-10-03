@@ -64,6 +64,8 @@ export interface PlatformAccount {
   block_suspended?: boolean;
   reminded_at: Iso | null;
   reminder_note: string | null;
+  /** Hausse des frais par course annoncée, pas encore appliquée (20260924006600) ; null : aucune */
+  scheduled_change?: PlatformScheduledFeeChange | null;
   month: {
     start: Iso;
     fees_cents: number;
@@ -207,6 +209,110 @@ export interface AdminPlatformOverview {
   };
 }
 
+// -----------------------------------------------------------------------------
+// Changements des frais par course (20260924006600) : hausse annoncée au moins 30 jours à l'avance, ou appliquée tout
+// de suite (création, baisse, accord écrit de l'organisation)
+// -----------------------------------------------------------------------------
+export type PlatformFeeChangeMode = "initial" | "decrease" | "notice" | "consent";
+export type PlatformFeeChangeStatus = "scheduled" | "applied" | "cancelled" | "replaced";
+/** Date au plus tôt d'une hausse : 30 jours après l'annonce, entrée en vigueur des CGV non acceptées, ou date déjà annoncée. */
+export type PlatformFeeMinReason = "notice_30_days" | "terms_effective" | "already_announced";
+
+/** private.platform_account.scheduled_change : encart « À partir du JJ/MM/AAAA » (owner / admin). */
+export interface PlatformScheduledFeeChange {
+  id: Uuid;
+  /** Taux à partir de la date d'effet */
+  percent: number;
+  fixed_cents: number;
+  /** Taux au moment de l'annonce */
+  from_percent: number;
+  from_fixed_cents: number;
+  /** Minuit (fuseau de l'organisation) du jour d'effet ; appliqué par le ménage dans les 5 min */
+  effective_at: Iso;
+  /** Jour d'effet « AAAA-MM-JJ » (fuseau de l'organisation) */
+  effective_on: string;
+  announced_at: Iso;
+}
+
+/** Ligne d'historique (super admin, admin_platform_fee_schedule). */
+export interface PlatformFeeChangeRow {
+  id: Uuid;
+  mode: PlatformFeeChangeMode;
+  status: PlatformFeeChangeStatus;
+  from_percent: number;
+  from_fixed_cents: number;
+  percent: number;
+  fixed_cents: number;
+  effective_at: Iso;
+  effective_on: string;
+  consent_note: string | null;
+  terms_version: string | null;
+  terms_accepted: boolean | null;
+  emails_queued: number;
+  created_at: Iso;
+  created_by_name: string | null;
+  applied_at: Iso | null;
+  closed_at: Iso | null;
+  closed_by_name: string | null;
+  close_reason: string | null;
+  emails: { to_email: string; status: "pending" | "sending" | "sent" | "failed"; sent_at: Iso | null; subject: string; created_at: Iso }[];
+}
+
+/** RPC admin_platform_fee_schedule(p_org, p_org_legal_version, p_org_legal_effective_on, p_percent?, p_fixed_cents?). */
+export interface AdminPlatformFeeSchedule {
+  organization_id: Uuid;
+  dispatch_model: "fleet" | "centrale";
+  timezone: string;
+  currency: string;
+  current: { percent: number; fixed_cents: number; terms_text: string };
+  scheduled: PlatformFeeChangeRow | null;
+  /** null : version des CGV non fournie ou invalide */
+  terms: { version: string; accepted: boolean; accepted_at: Iso | null; effective_on: string } | null;
+  /** Date au plus tôt d'une hausse annoncée maintenant (sans tenir compte du changement déjà annoncé) */
+  min_effective_on: string;
+  min_reason: PlatformFeeMinReason;
+  /** Aperçu d'un réglage (p_percent + p_fixed_cents fournis) */
+  preview: {
+    kind: "increase" | "decrease" | "unchanged";
+    same_as_scheduled: boolean;
+    min_effective_on: string | null;
+    min_reason: PlatformFeeMinReason | null;
+    default_effective_on: string | null;
+    terms_text: string;
+  } | null;
+  history: PlatformFeeChangeRow[];
+}
+
+/** RPC svc_platform_set_fees (service role, actions serveur du super admin). */
+export type SetPlatformFeesResult =
+  | {
+      ok: true;
+      code: "SCHEDULED" | "APPLIED" | "CANCELLED" | "UNCHANGED";
+      message: string;
+      dispatch_model: "fleet" | "centrale";
+      fee_percent: number;
+      fee_fixed_cents: number;
+      scheduled_change: PlatformScheduledFeeChange | null;
+      applied_change_id: Uuid | null;
+      replaced_change_id: Uuid | null;
+      emails_queued: number;
+      terms_accepted: boolean | null;
+      min_effective_on: string | null;
+      min_reason: PlatformFeeMinReason | null;
+    }
+  | {
+      ok: false;
+      code:
+        | "INVALID" | "NOT_FOUND" | "ORG_NOT_NEW" | "SETTLEMENTS_OPEN" | "CONSENT_REQUIRED" | "NOTICE_TOO_SHORT"
+        | "TERMS_VERSION_INVALID";
+      message: string;
+      field?: "platformFeePercent" | "platformFeeFixedCents" | "dispatchModel" | "effectiveOn" | "consentNote" | "mode";
+      min_effective_on?: string;
+      min_reason?: PlatformFeeMinReason;
+      terms_accepted?: boolean | null;
+      count?: number;
+    };
+
 /** RPC admin_platform_account(p_org, p_month) (super admin). */
 export interface AdminPlatformAccount {
   organization: { id: Uuid; name: string; slug: string; status: OrgStatus; dispatch_model: "fleet" | "centrale"; timezone: string; currency: string };
@@ -223,7 +329,10 @@ export interface PlatformEvent {
     /** Frais par course changés par le super admin (20260924006400) */
     | "rates"
     /** Modèle d'exploitation changé par le super admin (20260924006400) : le tableau de bord se relit */
-    | "model";
+    | "model"
+    /** Hausse des frais par course annoncée (date d'effet à venir), ou annonce annulée (20260924006600) */
+    | "rates_scheduled"
+    | "rates_cancelled";
   organization_id: Uuid;
   /** Identifiants seulement : le canal org:{id} est lisible par tous les membres (dispatchers compris) */
   payment_id?: Uuid;
