@@ -64,11 +64,14 @@ describe("textes des bandeaux", () => {
 
   it("organisation, mise à jour : ce qui change, version, entrée en vigueur au plus tard, résiliation sans frais", () => {
     const html = render(createElement(TermsBanner, { orgName: "Elite VTC", updated: true }));
-    expect(html).toContain("Nouvelles conditions générales de vente (version du 2 octobre 2026) :");
-    expect(html).toContain("aux flottes comme aux centrales");
-    expect(html).toContain("(articles 3 à 5)");
-    expect(html).toContain("au plus tard le 5 novembre 2026 ;");
+    // Espaces insécables avant « : » et « ; » (comme le préambule des CGV)
+    expect(html).toContain("Nouvelles conditions générales de vente (version du 2 octobre 2026)\u00a0:");
+    expect(html).toContain("aux flottes comme aux centrales à commission");
+    expect(html).toContain("(articles 3 à 5)\u00a0;");
+    expect(html).toContain("toute hausse de ces frais vous est annoncée au moins 30\u00a0jours");
+    expect(html).toContain("au plus tard le 5 novembre 2026\u00a0;");
     expect(html).toContain("résilier sans frais avant cette date");
+    expect(html).toContain(">Lire les nouvelles CGV</a>");
     expect(html).toContain('<span class="text-fg">Elite VTC</span>, la nouvelle version des ');
     for (const href of ["/cgv", "/dpa", "/cgu", "/confidentialite"]) expect(html).toContain(`href="${href}"`);
   });

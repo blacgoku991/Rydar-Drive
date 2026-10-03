@@ -62,17 +62,23 @@ function AcceptBanner({
 
 /**
  * Ce qui change dans la version ORG_LEGAL_VERSION des CGV et sa date d'entrée en vigueur pour une organisation qui
- * avait accepté une version antérieure (texte provisoire, à finaliser avec le préambule des CGV).
+ * avait accepté une version antérieure : même contenu que le préambule des CGV (app/cgv/page.tsx), à revoir avec chaque
+ * nouvelle ORG_LEGAL_VERSION.
  */
 function OrgTermsUpdateNotice() {
   return (
     <>
       <span className="font-medium text-fg">
-        Nouvelles conditions générales de vente (version du {legalDateLabel(ORG_LEGAL_VERSION)}) :
+        Nouvelles conditions générales de vente (version du {legalDateLabel(ORG_LEGAL_VERSION)})&nbsp;:
       </span>{" "}
-      des frais plateforme par course peuvent s&apos;appliquer aux flottes comme aux centrales, en plus de l&apos;abonnement
-      (articles 3 à 5). Pour votre organisation, elles s&apos;appliquent dès votre acceptation, et au plus tard le{" "}
-      {legalDateLabel(ORG_LEGAL_EFFECTIVE_AT)} ; vous pouvez résilier sans frais avant cette date.
+      des frais plateforme par course peuvent s&apos;appliquer aux flottes comme aux centrales à commission, en plus de
+      l&apos;abonnement (articles 3 à 5)&nbsp;; toute hausse de ces frais vous est annoncée au moins 30&nbsp;jours à
+      l&apos;avance, sauf accord écrit de votre part. Pour votre organisation, elles s&apos;appliquent dès votre
+      acceptation, et au plus tard le {legalDateLabel(ORG_LEGAL_EFFECTIVE_AT)}&nbsp;; vous pouvez résilier sans frais
+      avant cette date.{" "}
+      <a href="/cgv" target="_blank" rel="noopener" className={link}>
+        Lire les nouvelles CGV
+      </a>
     </>
   );
 }
