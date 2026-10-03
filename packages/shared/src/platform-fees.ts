@@ -2,8 +2,8 @@
 // Les règles d'argent sont appliquées en base (migrations 20260924003000_platform_fees, 20260924006400_fleet_platform_fees) :
 // frais dus dès la fin de la course, registre immuable, baisses validées par le super admin,
 // solde = frais comptabilisés − paiements CONFIRMÉS par le super admin. Ce module les présente.
-// Centrale : frais prélevés sur le prix (plafonnés au prix, rien sans prix). Flotte : % du prix (0 sans prix) + fixe,
-// facturés à la flotte, taux figés à la fin de chaque course (fleetPlatformFee).
+// Centrale : frais calculés sur le prix et déduits dans la répartition (plafonnés au prix, rien sans prix). Flotte : % du
+// prix (0 sans prix) + fixe, facturés à la flotte, taux figés à la fin de chaque course (fleetPlatformFee).
 import { z } from "zod";
 import { isValidIban } from "./format";
 import type { Iso, Uuid } from "./types";

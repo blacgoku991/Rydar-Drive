@@ -452,7 +452,13 @@ traitement des données) et `/suppression-compte` lisent l'identité de l'édite
     politique). Une organisation qui avait accepté une version antérieure voit un bandeau « mise à jour » : ce qui
     change et la date d'entrée en vigueur au plus tard (`ORG_LEGAL_EFFECTIVE_AT`, au moins 30 jours après la
     publication, CGV art. 16 ; à revoir avec chaque version). Web seul : ni chauffeur, ni dispatcher, ni mise à jour
-    de l'app. `/admin/legal` liste les organisations qui ne l'ont pas encore acceptée ;
+    de l'app. `/admin/legal` liste les organisations qui ne l'ont pas encore acceptée ; son bouton « Prévenir par
+    e-mail » leur envoie l'annonce (une fois par organisation et par version) : à cliquer dès le déploiement, au moins
+    30 jours avant `ORG_LEGAL_EFFECTIVE_AT` (la page avertit sinon : repoussez d'abord la date). Nouvelle version des
+    CGV : copier d'abord le texte en vigueur, figé, dans `app/cgv/<ancienne version>/page.tsx` (noindex, comme
+    `/cgv/2026-09-27`, servi sur les mini-sites par `proxy.ts`) et mettre à jour le lien « Version précédente », le
+    préambule (ce qui change), le bandeau « mise à jour » (`components/legal/terms-banner.tsx`) et le résumé de
+    l'e-mail (`private.org_terms_email`, nouvelle migration) ;
 - les preuves d'acceptation (`legal_acceptances`) sont en ajout seul : ni modification ni suppression, même en
   service role, et jamais purgées. Un compte supprimé laisse la preuve, détachée du compte (avec l'e-mail du
   signataire pour les CGV et l'accord de traitement) ;

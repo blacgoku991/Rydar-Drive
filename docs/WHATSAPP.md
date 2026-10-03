@@ -45,7 +45,9 @@ Depuis la migration 006600, la relance WhatsApp de Rydar est donc **refusée pou
 `reason: "FLEET_UNSUPPORTED"`, case « Envoyer aussi par WhatsApp » désactivée). La relance d'une flotte s'affiche
 seulement dans son tableau de bord. Pour la rouvrir : faire approuver un modèle neutre du même format (3 variables), par
 exemple « … Détails et paiement : tableau de bord, menu Frais Rydar ou Encaissements. », l'indiquer dans la carte
-WhatsApp, puis retirer ce refus par une nouvelle migration (`svc_platform_remind`, `admin_platform_whatsapp`).
+WhatsApp, puis retirer ce refus par une nouvelle migration (`svc_platform_remind`, `admin_platform_whatsapp`). Les CGV
+(article 5) ne prévoient la relance WhatsApp de Rydar qu'en modèle centrale à commission : les mettre à jour en même
+temps.
 
 Un modèle portant un autre nom peut être utilisé : il faut alors l'indiquer dans la carte WhatsApp. Il doit garder le **même nombre de variables, dans le même ordre**.
 

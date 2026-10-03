@@ -47,23 +47,37 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   « Frais Rydar » pour une flotte, relance du super admin au nom de « la flotte », signal « courses sans prix » juste
   pour une flotte (part en % perdue seulement), tests de tous les chemins (fin côté serveur, prix corrigé par un
   dispatcher, réglage pendant la fin de course, flotte → centrale sans règlement).
-  CGV, `/tarifs` et `pricing.tsx` mis à jour (version 2026-10-02, entrée suivante). **Reste AVANT d'activer des frais
-  sur une flotte** (propriétaire) : (1) la flotte a accepté la version 2026-10-02 (`/admin/legal`) — sinon l'art. 16 des
-  CGV qu'elle a acceptées impose 30 jours d'annonce pour une modification défavorable ; (2) modèle WhatsApp neutre à
-  faire approuver (WHATSAPP.md). Ensuite seulement : régler les frais de chaque flotte (ex. 2 €) — seules les courses
-  terminées après le réglage sont facturées.
-- **CGV version 2026-10-02** (validée par le propriétaire) : frais plateforme par course pour les DEUX modèles (art. 3 et
-  5 : flotte = % + fixe sans plafond, fixe seul sans prix ; centrale = prélevés, plafonnés au prix), cumulables avec
-  l'abonnement (art. 4 : montant de l'offre à la souscription, aucun prix en dur) ; réseau partagé = option régie par une
-  convention distincte (une phrase, frais dus « y compris » avec l'option). Avertissement `CGV_COVERS_FLEET_FEES`
-  retiré. Aucune migration.
-  **Versions légales séparées** : `ORG_LEGAL_VERSION` = `2026-10-02` (CGV + accord de traitement, au nom de
-  l'organisation : seuls owner / admin ré-acceptent, bandeau « mise à jour » si une version antérieure avait été
-  acceptée, `/admin/legal`) ; `LEGAL_VERSION` reste `2026-09-27` (CGU + politique de confidentialité : aucun chauffeur
-  ni dispatcher n'a rien à ré-accepter, AUCUNE mise à jour de l'app). Politique de confidentialité inchangée (ligne
-  « organisations partenaires » retirée, date remise au 28 septembre) ; `/dpa` : version 2026-10-02, contenu inchangé
-  depuis le 27 septembre. `ORG_LEGAL_EFFECTIVE_AT` = `2026-11-05` (entrée en vigueur au plus tard pour une
-  organisation déjà cliente). Le texte du bandeau « mise à jour » est provisoire (à finaliser avec le préambule).
+  Réglage des frais d'une flotte : voir « Frais Rydar : hausses annoncées » et « CGV » ci-dessous (une hausse, y compris
+  0 → 2 €, est programmée au moins 30 jours après son annonce et pas avant le 5 novembre 2026 sans CGV acceptées, ou
+  appliquée sur accord écrit).
+- **CGV version 2026-10-02 = `ORG_LEGAL_VERSION`** (frais par course pour les flottes comme pour les centrales, en plus de
+  l'abonnement ; décisions du propriétaire du 03/10) : texte réécrit pour dire exactement ce que fait le code (relu
+  contre le SQL de 003000, 004400, 006400 et 006600). Préambule : ce qui change, entrée en vigueur dès l'acceptation et
+  au plus tard le 5 novembre 2026 (`ORG_LEGAL_EFFECTIVE_AT`) pour une centrale déjà cliente, aucune hausse avant sans
+  accord écrit, résiliation sans frais ; art. 3 (flotte : « la centrale organise avec le logiciel », conditions
+  convenues avec l'éditeur, modèle changé seulement à la demande de la centrale ou avec son accord écrit) ; art. 4
+  (abonnement HT + TVA, préavis de 30 jours sur SON prix) ; art. 5 (frais TTC ; flotte = % + fixe sans plafond ; centrale
+  = calculés sur le prix et déduits dans la répartition, plafonnés ; taux appliqués : fin de course en flotte, calcul de
+  la répartition en centrale y compris après la course ; changement de modèle ; création et baisse immédiates, hausse
+  annoncée 30 jours avant ou accord écrit, annulée / réduite / reportée sans nouveau délai ; résiliation sans frais ;
+  avoir ou correction d'une erreur de calcul, rien d'autre sans accord écrit ; facture récapitulative par cycle, le
+  relevé n'en est pas une ; blocage exactement comme `private.platform_position` ; relances selon le modèle) ; art. 7
+  (résiliation sans préavis avant une hausse), art. 10 (coordonnées à jour), art. 16 (version précédente consultable).
+  Version précédente figée sur `/cgv/2026-09-27` (noindex, servie aussi sur les mini-sites). Bandeau « mise à jour »
+  définitif. `/tarifs` : préavis de l'abonnement ET des frais par course, frais TTC, « selon les conditions convenues
+  avec Rydar ». Versions séparées : `LEGAL_VERSION` reste `2026-09-27` (CGU + confidentialité : aucun chauffeur ni
+  dispatcher n'a rien à ré-accepter, aucune mise à jour de l'app) ; `/dpa` : version d'ensemble 2026-10-02, contenu
+  inchangé depuis le 27 septembre.
+  **À faire par le propriétaire** : (1) déployer puis cliquer « Prévenir par e-mail » (`/admin/legal`) AU PLUS TARD le
+  5 octobre 2026 (30 jours avant le 5 novembre, CGV art. 16) ; sinon repousser `ORG_LEGAL_EFFECTIVE_AT`
+  (`packages/shared/src/features.ts`) avant de publier ; (2) facture récapitulative des frais de chaque cycle (tâche
+  manuelle : montants TTC, TVA détaillée, échéance et mentions de pénalités) ; (3) Stripe : prix des offres réglés pour
+  facturer HT + TVA (Stripe Tax ou prix TTC) ; (4) engagements tenus à la main (le code ne les contrôle pas) : modèle
+  changé seulement à la demande de l'organisation, « Frais ajoutés » seulement pour une erreur de calcul (sinon accord
+  écrit), cycle / délai / seuil de blocage changés en sa défaveur seulement avec son accord écrit ; (5) modèle WhatsApp
+  neutre à faire approuver pour relancer aussi les flottes (WHATSAPP.md ; l'art. 5 ne prévoit WhatsApp qu'en centrale) ;
+  (6) relecture par un juriste. Amélioration possible : figer les taux en centrale comme en flotte (aujourd'hui : taux
+  du calcul de la répartition, y compris après la course).
 - **Frais Rydar : hausses annoncées (migration `20260924006600` + web)** : réglage par
   `svc_platform_set_fees` (création : tout de suite ; baisse : tout de suite ; HAUSSE : programmée au plus tôt au premier
   minuit après 30 jours, et pas avant `ORG_LEGAL_EFFECTIVE_AT` si l'organisation n'a pas accepté `ORG_LEGAL_VERSION`, ou
@@ -79,9 +93,9 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   « Accord écrit reçu, appliquer maintenant » + note, confirmation, historique) ; encart « Vos frais par course changent
   le JJ/MM/AAAA » (« Frais Rydar » / « Encaissements ») et bandeau ; alertes en direct selon le modèle (`rates`,
   `rates_scheduled`, `rates_cancelled`) ; relectures par `useLiveSync` ; `/admin/legal` « Prévenir par e-mail » ;
-  `fleetPlatformFee` arrondi comme la base (`percentOfCents`). **Tâche manuelle du propriétaire** : facture
-  récapitulative des frais de chaque cycle (le relevé n'est pas une facture). Amélioration possible : figer les taux en
-  centrale comme en flotte (aujourd'hui : taux du calcul de la répartition, y compris après la course).
+  `fleetPlatformFee` arrondi comme la base (`percentOfCents`). E-mails relus avec les CGV : « au moins 30 jours à
+  l'avance » seulement quand c'est vrai (hausse moindre gardant la date déjà annoncée : « ne dépasse pas celui annoncé
+  précédemment »), même règle dans l'encart ; seuil de blocage toujours affiché dans la carte des frais.
 - **Lenteur ressentie, volet navigateur / temps réel / pages lourdes (10/2026, web seul, AUCUNE migration ni mise à jour
   de l'app)** : centre de commande « En direct » : positions GPS regroupées (au plus un rendu par seconde, rien onglet
   caché), carte mise à jour seulement pour ce qui change (tracés et rayon redessinés si une position utile ou la course

@@ -504,7 +504,8 @@ export function TermsForm({
           <span className="min-w-0">
             <span className="block text-[13px] font-medium text-fg">Bloquer la création de courses en cas de retard</span>
             <span className="mt-0.5 block text-[12px] leading-snug text-fg-muted">
-              Suspendu tant qu&apos;un paiement déclaré attend votre confirmation&nbsp;; un «&nbsp;Pas reçu&nbsp;» le rétablit.
+              Suspendu 7&nbsp;jours au plus par un paiement déclaré qui couvre la somme échue (comptés depuis la première
+              déclaration des 30 derniers jours)&nbsp;; aucune suspension dans les 7&nbsp;jours qui suivent un «&nbsp;Pas reçu&nbsp;».
             </span>
           </span>
           <Switch checked={block} onCheckedChange={setBlock} aria-label="Blocage en cas de retard" />
@@ -526,7 +527,10 @@ export function TermsForm({
         )}
       </div>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[12px] text-fg-subtle">Les frais déjà enregistrés gardent leur échéance.</p>
+        <p className="text-[12px] text-fg-subtle">
+          Les frais déjà enregistrés gardent leur échéance. Changement en défaveur de l&apos;organisation (délai raccourci,
+          blocage)&nbsp;: seulement avec son accord écrit (CGV, article 5).
+        </p>
         <Button type="submit" variant="primary" size="sm" loading={pending} disabled={!dirty}>
           <Check /> Enregistrer
         </Button>

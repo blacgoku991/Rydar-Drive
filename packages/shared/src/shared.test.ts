@@ -517,7 +517,7 @@ describe("frais Rydar des flottes (miroir de private.fleet_platform_fee)", () =>
     const { fleetPlatformFee, isFleetFeeRide } = await import("./platform-fees");
     expect(fleetPlatformFee(5900, 10, 0)).toBe(590);
     expect(fleetPlatformFee(5900, 0, 200)).toBe(200);
-    expect(fleetPlatformFee(100, 5, 200)).toBe(205); // au-dessus du prix : facturés à la flotte, pas prélevés
+    expect(fleetPlatformFee(100, 5, 200)).toBe(205); // au-dessus du prix : facturés à la flotte, sans plafond
     expect(fleetPlatformFee(null, 10, 200)).toBe(200);
     expect(fleetPlatformFee(undefined, 10, 0)).toBe(0);
     expect(fleetPlatformFee(1234, 2.5, 0)).toBe(31);

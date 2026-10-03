@@ -306,6 +306,21 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
   partenaires » retirée) ; `/dpa` : version 2026-10-02, contenu inchangé depuis le 27 septembre (`DPA_UPDATED_AT`).
   `accept_legal_documents` accepte déjà une version par appel (pas de version future) : aucune migration. App
   chauffeur et `/rejoindre` inchangés.
+- [x] **Frais Rydar : hausses annoncées (migration 006600) et CGV alignées sur le code** — `svc_platform_set_fees` :
+  création et baisse tout de suite, HAUSSE programmée au premier minuit après 30 jours (et pas avant
+  `ORG_LEGAL_EFFECTIVE_AT` sans CGV acceptées) ou tout de suite sur accord écrit noté ; un changement en attente
+  (`platform_fee_changes`), annulable, remplacé par un nouveau réglage (hausse moindre ou plus tardive : date déjà
+  annoncée permise) ; application par le ménage ; garde `organizations_platform_rates_guard` ; e-mails à contenu fixe
+  (`email_outbox` : annonce, accord écrit, annulation, annonce des CGV `svc_org_terms_notify`) ; libellés « Frais Rydar »
+  ou « Encaissements » ; WhatsApp de Rydar refusé pour une flotte. Web : fiche super admin (préavis / accord écrit,
+  annulation, historique), encart et bandeau « changent le JJ/MM/AAAA », alertes selon le modèle, `percentOfCents`.
+  Textes : `/cgv` réécrit d'après le SQL (préambule avec entrée en vigueur au plus tard et résiliation sans frais ;
+  art. 3, 4, 5, 7, 10, 16 ; frais TTC, abonnement HT ; « calculés sur le prix et déduits dans la répartition » au lieu
+  de « prélevés » ; blocage = `private.platform_position` ; facture récapitulative par cycle), version précédente figée
+  sur `/cgv/2026-09-27` (noindex, `proxy.ts` : `/cgv/AAAA-MM-JJ` servi sur les mini-sites), bandeau « mise à jour »
+  définitif, `/tarifs`, e-mails relus (« au moins 30 jours » seulement quand c'est vrai), seuil de blocage toujours
+  affiché, garde-fous du super admin (frais ajoutés, conditions de règlement, moins de 30 jours avant l'entrée en
+  vigueur des CGV). Tests : `tests/db/platform-fee-schedule.test.ts`, `components/legal/cgv-pages.test.ts`.
 - [x] **Lenteur, volet serveur / auth / base (10/2026, migration 006500)** : `proxy.ts` = `getSession()` (cookies,
   rafraîchissement gardé) puis `getClaims(jeton)` pour un jeton ES256/RS256 + kid (vérifié sur place, JWKS) ; jeton
   HS256 : aiguillage sans appel à Auth si le JWKS est vide (pile en HS256 seul, rejeté au rendu), sinon vérifié par
