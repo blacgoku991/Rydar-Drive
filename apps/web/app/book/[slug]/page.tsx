@@ -73,7 +73,8 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-center gap-3">
-          {site.logo_url ? <img src={site.logo_url} alt={site.title ?? org.name} className="h-9 w-auto" /> : <span className="grid size-9 place-items-center rounded-xl text-[15px] font-bold" style={{ background: brand, color: readableOn(brand) }}>{(site.title ?? org.name).slice(0, 1)}</span>}
+          {/* Nom écrit juste à côté : logo décoratif (pas de double lecture) */}
+          {site.logo_url ? <img src={site.logo_url} alt="" className="h-9 w-auto" /> : <span aria-hidden className="grid size-9 place-items-center rounded-xl text-[15px] font-bold" style={{ background: brand, color: readableOn(brand) }}>{(site.title ?? org.name).slice(0, 1)}</span>}
           <span className="text-[16px] font-semibold tracking-tight">{site.title ?? org.name}</span>
         </div>
         {site.phone && (

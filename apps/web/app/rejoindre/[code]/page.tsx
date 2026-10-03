@@ -95,9 +95,10 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
         <header className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             {org.logo_url ? (
-              <img src={org.logo_url} alt={org.name} className="h-10 w-auto max-w-[140px] rounded-lg object-contain" />
+              // Nom de la centrale écrit juste à côté : logo décoratif (pas de double lecture)
+              <img src={org.logo_url} alt="" className="h-10 w-auto max-w-[140px] rounded-lg object-contain" />
             ) : (
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl text-[17px] font-bold" style={{ background: brand, color: readableOn(brand) }}>
+              <span aria-hidden className="grid size-10 shrink-0 place-items-center rounded-xl text-[17px] font-bold" style={{ background: brand, color: readableOn(brand) }}>
                 {org.name.slice(0, 1).toUpperCase()}
               </span>
             )}

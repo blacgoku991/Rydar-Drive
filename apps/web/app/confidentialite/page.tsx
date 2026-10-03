@@ -196,8 +196,9 @@ export default async function PrivacyPage() {
           Les données sont hébergées dans l&apos;Union européenne, sur le serveur de l&apos;éditeur, qui porte le site, la
           base de données, les fichiers, les sauvegardes et le serveur d&apos;envoi des e-mails (hébergeur et lieu : voir
           les <Link href="/mentions-legales" className={link}>mentions légales</Link>). Certains prestataires sont situés aux États-Unis
-          (notifications et mises à jour de l&apos;application, cartes de l&apos;application, WhatsApp, et selon la
-          configuration adresses, itinéraires et suivi des vols) : ces transferts sont encadrés par le Data Privacy
+          ou y transfèrent des données (notifications et mises à jour de l&apos;application, cartes de l&apos;application,
+          WhatsApp, paiement des abonnements des centrales, et selon la configuration adresses, itinéraires et suivi des
+          vols) : ces transferts sont encadrés par le Data Privacy
           Framework UE–États-Unis ou par les clauses contractuelles types de la Commission européenne.
         </p>
       </LegalSection>

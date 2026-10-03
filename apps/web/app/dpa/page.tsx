@@ -89,8 +89,8 @@ export default async function DataProcessingPage() {
       name: "Stripe Payments Europe, Ltd",
       service: "Paiement des abonnements des centrales",
       data: "Coordonnées de facturation de la centrale (aucune donnée des chauffeurs ni des clients)",
-      place: "Irlande (Union européenne)",
-      safeguards: "RGPD",
+      place: "Irlande (Union européenne) ; États-Unis pour sa maison mère Stripe, Inc.",
+      safeguards: "RGPD ; Data Privacy Framework et clauses contractuelles types pour les États-Unis",
     },
     {
       name: "Meta Platforms Ireland Ltd (WhatsApp Business)",
