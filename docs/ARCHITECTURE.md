@@ -176,7 +176,7 @@ Depuis l'app (`POST /api/driver/delete-account`) ou, pour une demande reçue par
 
 ### 12. Documents légaux (migration 003900)
 
-`platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). Deux versions en vigueur (`@rydar/shared`, aucune en base) : `LEGAL_VERSION` pour les CGU et la politique (site et app, qui l'embarque) et `ORG_LEGAL_VERSION` pour les CGV et l'accord de traitement (web seul ; bandeau « mise à jour » pour une organisation qui avait accepté une version antérieure, entrée en vigueur au plus tard `ORG_LEGAL_EFFECTIVE_AT`). Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
+`platform_legal` porte l'identité de l'éditeur (pages publiques, `public_legal_info()`, saisie dans `/admin/legal`). `legal_acceptances` garde les preuves en ajout seul : CGU et politique de confidentialité acceptées par chaque chauffeur (inscription par lien, écran de l'app) et chaque membre (bandeau du tableau de bord) ; CGV et accord de traitement au nom de la centrale (owner / admin). Deux versions en vigueur (`@rydar/shared`, aucune en base) : `LEGAL_VERSION` pour les CGU et la politique (site et app, qui l'embarque) et `ORG_LEGAL_VERSION` pour les CGV et l'accord de traitement (web seul ; bandeau « mise à jour » pour une organisation qui avait accepté une version antérieure, entrée en vigueur au plus tard `ORG_LEGAL_EFFECTIVE_AT`). Une version des CGV remplacée reste consultable, figée, sur `/cgv/AAAA-MM-JJ` (`app/cgv/2026-09-27`, noindex ; `proxy.ts` la sert aussi sur les mini-sites) ; l'article 5 des CGV et les e-mails de 006600 décrivent exactement le code des frais Rydar (§ 13) : les modifier ensemble. Les durées de conservation annoncées sont appliquées par `private.housekeeping` (docs/DEPLOYMENT.md § 6).
 
 ### 13. Frais Rydar (centrales et flottes, migrations 003000, 003100, 006400, 006600)
 
@@ -204,7 +204,10 @@ annulation ; contenu fixe) ; owner / admin : `account.scheduled_change` ; super 
 `organizations_platform_rates_guard` : hausse en UPDATE direct par le service role refusée. Annonce des CGV :
 `svc_org_terms_notify` (une fois par organisation et par version, `org_terms_notices`). Paiements
 (`platform_payments`) : déclarés par l'organisation, confirmés par le super admin, soldent les échéances les plus
-anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création de courses refusée après N jours de retard).
+anciennes ; levier facultatif `PLATFORM_FEES_OVERDUE` (création, relance et attribution d'une course sans chauffeur
+refusées après N jours de retard ; suspendu 7 jours au plus par un paiement déclaré qui couvre la somme échue,
+`private.platform_position`). Montants toutes taxes comprises (aucune TVA ajoutée par le code) ; le relevé n'est pas une
+facture (facture récapitulative de chaque cycle : tâche manuelle du propriétaire).
 
 ## Temps réel
 
