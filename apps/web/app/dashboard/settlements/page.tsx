@@ -1,8 +1,10 @@
 import { DISPATCH_MODEL_META, type OrgPlatformAccount, type OrgSettlementFilter, type OrgSettlementOverview, type OrgSettlements } from "@rydar/shared";
-import { HandCoins, Landmark, Settings2 } from "lucide-react";
+import { ArrowLeftRight, ChevronRight, HandCoins, Landmark, Settings2 } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
+import { networkMenuShown, partnerSettlementsLine } from "@/components/network-share/access";
+import { networkShareHref } from "@/components/network-share/paths";
 import { OrgPlatformCard } from "@/components/platform-fees/org-platform-card";
 import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { SETTLEMENT_MAX, SETTLEMENT_PAGE, compactOpen, sortOpen } from "@/components/settlements/settlement-list";
@@ -11,8 +13,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { networkAccess } from "@/lib/shared-network";
 
 export const metadata: Metadata = { title: "Encaissements" };
+const NB = " ";
 export const dynamic = "force-dynamic";
 
 const FILTERS: OrgSettlementFilter[] = ["open", "declared", "overdue", "disputed", "to_pay", "paid", "waived", "all"];
@@ -63,14 +67,20 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
   // « À traiter » (tous chauffeurs) sert aussi aux compteurs et messages WhatsApp : lu une fois (500 au plus), envoyé au
   // navigateur en version compacte ; seules les lignes affichées (100 par défaut, « Afficher plus ») sont complètes.
   // Frais plateforme dus à Rydar : owner / admin seulement (un dispatcher ne voit pas la carte).
-  const [overview, open, filtered, platform] = await Promise.all([
+  // Règlements des chauffeurs PARTENAIRES (réseau partagé) : jamais listés ici (onglet « Réseau partagé ») ; un renvoi
+  // les signale quand il en reste d'ouverts (même lecture que la mise en page : cache React, aucun appel de plus)
+  const [overview, open, filtered, platform, network] = await Promise.all([
     ctx.supabase.rpc("org_settlement_overview", { p_org: orgId }),
     ctx.supabase.rpc("org_settlements", { p_org: orgId, p_filter: "open", p_driver: null, p_limit: 500, p_before: null }),
     filter === "open" && !driver
       ? Promise.resolve(null)
       : ctx.supabase.rpc("org_settlements", { p_org: orgId, p_filter: filter, p_driver: driver, p_limit: limit, p_before: null }),
     canManage ? ctx.supabase.rpc("org_platform_account", { p_org: orgId }) : Promise.resolve(null),
+    networkAccess(ctx.supabase, orgId),
   ]);
+  const partnerGiven = network?.summary?.given ?? null;
+  const partnerLine = networkMenuShown(network) ? partnerSettlementsLine(partnerGiven, network?.summary?.currency || "EUR") : null;
+  const partnerHref = networkShareHref({ tab: "confiees", filter: partnerGiven?.to_confirm_count ? "to_confirm" : null });
   const platformData = (platform?.data ?? null) as OrgPlatformAccount | null;
   const serverNow = Date.now();
   const openItems = ((open.data as OrgSettlements | null)?.items ?? []);
@@ -107,6 +117,20 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
         ) : platformData?.enabled ? (
           <OrgPlatformCard data={platformData} serverNow={serverNow} />
         ) : null}
+        {partnerLine && (
+          <Link
+            href={partnerHref}
+            prefetch={false}
+            className="surface flex items-center gap-3 rounded-xl px-4 py-3 transition-colors hover:border-line-strong"
+          >
+            <ArrowLeftRight className="size-4 shrink-0 text-violet" aria-hidden />
+            <span className="min-w-0 flex-1 text-[13px] text-fg-muted">
+              <span className="font-medium text-fg">Chauffeurs partenaires{NB}:</span> {partnerLine}
+              <span className="text-fg-subtle"> · à régler dans Réseau partagé</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-fg-subtle" aria-hidden />
+          </Link>
+        )}
         {failed ? (
           <Card>
             <EmptyState icon={<HandCoins />} title="Encaissements indisponibles" description="La lecture des règlements a échoué. Réessayez dans un instant." />

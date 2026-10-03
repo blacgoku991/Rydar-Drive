@@ -54,10 +54,12 @@ type Props = {
   now: number;
   timeout: number;
   alert?: LiveAlert;
+  /** Réseau partagé (A) : « Réseau · Flotte B » (course tenue par un partenaire) ou « proposée au réseau partagé » */
+  networkLabel?: string | null;
 };
 
 /** Ligne de course : heure, trajet, statut en clair, prix — plus le vol suivi et l'alerte de suivi s'il y en a. */
-function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, alert }: Props) {
+function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, alert, networkLabel }: Props) {
   const status = ride.status as RideStatus;
   const meta = RIDE_STATUS_META[status] ?? { label: status, tone: "neutral" as const };
   const searching = SEARCHING.has(status);
@@ -71,9 +73,14 @@ function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, a
 
   let detail: string | null = null;
   if (searching) {
-    detail = geo
-      ? `${offers} offre${offers > 1 ? "s" : ""} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])}`
-      : `proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`;
+    detail = networkLabel
+      ? networkLabel
+      : geo
+        ? `${offers} offre${offers > 1 ? "s" : ""} · rayon ${formatDistance(ride.dispatch_radius_m ?? DEFAULT_DISPATCH_RADII_M[0])}`
+        : `proposée à la flotte · ${offers} chauffeur${offers > 1 ? "s" : ""}`;
+  } else if (networkLabel) {
+    // Chauffeur partenaire : son organisation, jamais de marqueur ni de position (v1)
+    detail = networkLabel;
   } else if (driver) {
     detail = `${driver.first_name} ${driver.last_name.charAt(0)}. · ${driver.vehicle?.plate ?? ""}`;
   } else if (status === "NO_DRIVER_FOUND") {
@@ -115,7 +122,7 @@ function RideRowView({ ride, driver, offers, selected, onSelect, now, timeout, a
             <span className={cn("size-1.5 shrink-0 rounded-full", toneDot[meta.tone], searching && "animate-breathe")} />
             <span className="shrink-0 font-medium">{meta.label}</span>
             {detail && (
-              <span className="truncate text-fg-subtle">
+              <span className={cn("truncate", networkLabel ? "text-violet" : "text-fg-subtle")}>
                 · {detail}
                 {countdown && <WaveCountdown at={countdown} fallbackNow={now} />}
               </span>
@@ -161,5 +168,6 @@ export const RideRow = memo(
     a.onSelect === b.onSelect &&
     a.now === b.now &&
     a.timeout === b.timeout &&
-    a.alert === b.alert,
+    a.alert === b.alert &&
+    a.networkLabel === b.networkLabel,
 );

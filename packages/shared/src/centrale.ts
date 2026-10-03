@@ -168,6 +168,45 @@ const cents = (max: number) => z.coerce.number().int().min(0).max(max);
 const optionalCents = (max: number) =>
   z.union([z.literal(""), z.null(), z.undefined(), cents(max)]).transform((v) => (v === "" || v == null ? null : v));
 
+/**
+ * Moyens de paiement proposés aux chauffeurs (organization_settings.settlement_methods, _link, _instructions,
+ * _payee_name, _iban, _bic) : UNE seule définition pour « Commission & encaissement » (centrale) et la carte
+ * « Encaissement » du réseau partagé (flotte).
+ */
+const settlementPaymentShape = {
+  methods: z.array(z.enum(["link", "transfer", "cash", "other"])).min(1, "Choisissez au moins un moyen de paiement").max(4),
+  link: z.union([z.literal(""), z.null(), z.undefined(), z.string().trim().max(500, "Lien : 500 caractères au maximum").regex(/^https:\/\/\S+$/, "Lien https:// requis")])
+    .transform((v) => (v ? v : null)),
+  instructions: z.string().trim().max(500, "Instructions : 500 caractères au maximum").optional().transform((v) => (v ? v : null)),
+  // Virement : coordonnées bancaires (facultatives hors virement)
+  payeeName: z.string().nullish().transform((v) => v?.trim() || null)
+    .refine((v) => v == null || (v.length >= 2 && v.length <= 120), "Bénéficiaire : entre 2 et 120 caractères"),
+  iban: z.string().nullish().transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
+    .refine((v) => v == null || isValidIban(v), "IBAN invalide (vérifiez les chiffres)"),
+  bic: z.string().nullish().transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
+    .refine((v) => v == null || /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(v), "BIC invalide (8 ou 11 caractères)"),
+};
+
+/** Moyen coché mais non renseigné : refusé (le chauffeur ne le verrait pas). */
+function refineSettlementPayment(
+  v: { methods: SettlementMethod[]; link: string | null; iban: string | null; instructions: string | null },
+  ctx: z.RefinementCtx,
+) {
+  if (v.methods.includes("link") && !v.link) {
+    ctx.addIssue({ code: "custom", path: ["link"], message: "Ajoutez votre lien de paiement (ou retirez « Lien de paiement »)" });
+  }
+  if (v.methods.includes("transfer") && !v.iban) {
+    ctx.addIssue({ code: "custom", path: ["iban"], message: "Ajoutez votre IBAN (ou retirez « Virement »)" });
+  }
+  if (v.methods.includes("other") && !v.instructions) {
+    ctx.addIssue({ code: "custom", path: ["instructions"], message: "Décrivez l'autre moyen de paiement (ou retirez « Autre moyen »)" });
+  }
+}
+
+/** Moyens de paiement seuls : carte « Encaissement » d'une flotte dans « Réseau partagé ». */
+export const settlementPaymentSchema = z.object(settlementPaymentShape).superRefine(refineSettlementPayment);
+export type SettlementPaymentInput = z.input<typeof settlementPaymentSchema>;
+
 /** Réglages « Commission & encaissement » de la centrale (organization_settings). */
 export const centraleSettingsSchema = z
   .object({
@@ -180,29 +219,9 @@ export const centraleSettingsSchema = z
     newDriverMaxPriceCents: optionalCents(10_000_000),
     trustAfterRides: z.union([z.literal(""), z.null(), z.undefined(), z.coerce.number().int().min(1).max(1000)])
       .transform((v) => (v === "" || v == null ? null : v)),
-    methods: z.array(z.enum(["link", "transfer", "cash", "other"])).min(1, "Choisissez au moins un moyen de paiement").max(4),
-    link: z.union([z.literal(""), z.null(), z.undefined(), z.string().trim().max(500).regex(/^https:\/\/\S+$/, "Lien https:// requis")])
-      .transform((v) => (v ? v : null)),
-    instructions: z.string().trim().max(500).optional().transform((v) => (v ? v : null)),
-    // Virement : coordonnées bancaires (facultatives hors virement)
-    payeeName: z.string().nullish().transform((v) => v?.trim() || null)
-      .refine((v) => v == null || (v.length >= 2 && v.length <= 120), "Bénéficiaire : entre 2 et 120 caractères"),
-    iban: z.string().nullish().transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
-      .refine((v) => v == null || isValidIban(v), "IBAN invalide (vérifiez les chiffres)"),
-    bic: z.string().nullish().transform((v) => (v ?? "").replace(/\s+/g, "").toUpperCase() || null)
-      .refine((v) => v == null || /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(v), "BIC invalide (8 ou 11 caractères)"),
+    ...settlementPaymentShape,
   })
-  .superRefine((v, ctx) => {
-    if (v.methods.includes("link") && !v.link) {
-      ctx.addIssue({ code: "custom", path: ["link"], message: "Ajoutez votre lien de paiement (ou retirez « Lien de paiement »)" });
-    }
-    if (v.methods.includes("transfer") && !v.iban) {
-      ctx.addIssue({ code: "custom", path: ["iban"], message: "Ajoutez votre IBAN (ou retirez « Virement »)" });
-    }
-    if (v.methods.includes("other") && !v.instructions) {
-      ctx.addIssue({ code: "custom", path: ["instructions"], message: "Décrivez l'autre moyen de paiement (ou retirez « Autre moyen »)" });
-    }
-  });
+  .superRefine(refineSettlementPayment);
 
 /** Super admin : modèle d'exploitation + frais plateforme d'un compte. */
 export const dispatchModelSchema = z.object({

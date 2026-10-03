@@ -1,7 +1,10 @@
 // Compteurs de la navigation (serveur : mise en page ; client : après un événement temps réel).
 // Requêtes « head » (aucune ligne transférée), RLS de l'utilisateur connecté. Candidatures : flotte comme centrale
-// (« Inscriptions » / « Réseau ») ; règlements : mode centrale seulement.
+// (« Inscriptions » / « Réseau ») ; règlements : mode centrale seulement, règlements PROPRES (les lignes du réseau
+// partagé, network_driver_org_id non NULL, sont comptées par la pastille « Réseau partagé »).
+import type { OrgNetworkSummary } from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { networkNavState, type NetworkNavState } from "@/components/network-share/nav";
 
 export type CentraleCounts = {
   /** Commissions signalées payées par les chauffeurs, à confirmer (« Reçu » / « Pas reçu ») */
@@ -21,7 +24,8 @@ export async function fetchCentraleCounts(
 ): Promise<CentraleCounts> {
   const now = new Date().toISOString();
   const withSettlements = opts.settlements ?? true;
-  const settlements = () => supabase.from("ride_settlements").select("id", { count: "exact", head: true }).eq("organization_id", orgId);
+  const settlements = () =>
+    supabase.from("ride_settlements").select("id", { count: "exact", head: true }).eq("organization_id", orgId).is("network_driver_org_id", null);
   const none = Promise.resolve({ count: 0 });
   const [declared, late, disputed, applications] = await Promise.all([
     withSettlements ? settlements().eq("status", "declared") : none,
@@ -41,4 +45,13 @@ export async function fetchCentraleCounts(
     overdue: (late.count ?? 0) + (disputed.count ?? 0),
     applications: applications.count ?? 0,
   };
+}
+
+/**
+ * Pastille « Réseau partagé » (à confirmer + en retard + à vérifier) : org_network_summary, appelé seulement quand le
+ * réseau est ouvert (le menu n'existe pas sinon). null si la lecture échoue (pastille inchangée).
+ */
+export async function fetchNetworkNav(supabase: SupabaseClient, orgId: string): Promise<NetworkNavState | null> {
+  const { data, error } = await supabase.rpc("org_network_summary", { p_org: orgId });
+  return error ? null : networkNavState(data as OrgNetworkSummary | null);
 }

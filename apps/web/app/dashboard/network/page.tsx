@@ -17,12 +17,16 @@ import { ReconsiderButton } from "@/components/network/reconsider-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { networkMenuShown } from "@/components/network-share/access";
+import { networkAccess } from "@/lib/shared-network";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
   const ctx = await requireOrg();
-  return { title: joinNavLabel(ctx.org.dispatch_model) };
+  // « Inscriptions » pour les deux modèles quand le menu montre « Réseau partagé » (réseau ouvert, ou fermé avec des
+  // sommes en cours), comme le menu
+  return { title: joinNavLabel(ctx.org.dispatch_model, networkMenuShown(await networkAccess(ctx.supabase, ctx.org.id))) };
 }
 
 type Ctx = Awaited<ReturnType<typeof requireOrg>>;
@@ -163,7 +167,7 @@ export default async function NetworkPage() {
       <NetworkLive model={model} />
       <PageHeader
         eyebrow={DISPATCH_MODEL_META[model].label}
-        title={joinNavLabel(model)}
+        title={joinNavLabel(model, networkMenuShown(await networkAccess(ctx.supabase, ctx.org.id)))}
         description={
           centrale
             ? "Recrutez des chauffeurs indépendants avec votre lien, validez les candidatures et écartez définitivement les fraudeurs."

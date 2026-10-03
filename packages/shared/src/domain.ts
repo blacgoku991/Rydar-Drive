@@ -288,6 +288,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "Ce chauffeur a une course ou un règlement en cours avec une organisation partenaire : archivez-le au lieu de le supprimer.",
   PAYOUT_DETAILS_INVALID: "Coordonnées bancaires invalides : vérifiez le titulaire, l'IBAN et le BIC.",
   PAYOUT_DETAILS_IN_USE: "Un versement vous est encore dû : modifiez vos coordonnées bancaires au lieu de les supprimer.",
+  PAYOUT_DETAILS_MISSING:
+    "Le chauffeur n'a pas encore enregistré ses coordonnées bancaires : demandez-les-lui, ou versez sa part par un autre moyen, puis « Marquer versé ».",
   // Frais Rydar : hausses annoncées, accord écrit, annonce des CGV, relance WhatsApp d'une flotte, délai de paiement
   // (20260924006600) — espaces insécables avant « : » et dans les guillemets
   PLATFORM_FEE_NOTICE_REQUIRED:

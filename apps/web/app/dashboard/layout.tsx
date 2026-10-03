@@ -1,4 +1,8 @@
 import { localIsoDay, type SettlementMethod } from "@rydar/shared";
+import { networkMenuShown } from "@/components/network-share/access";
+import { networkNavState } from "@/components/network-share/nav";
+import { networkTermsDue, shareOutRequested } from "@/components/network-share/readiness";
+import { NetworkTermsBanner } from "@/components/network-share/terms-banner";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
 import { OrgTermsGate, TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
@@ -8,12 +12,17 @@ import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT } from "@/lib/legal";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
+import { networkAccess } from "@/lib/shared-network";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireOrg();
   const centrale = ctx.org.dispatch_model === "centrale";
   const admin = isAdminRole(ctx.role);
-  const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees] = await Promise.all([
+  // Réseau partagé : interrupteur plateforme, puis le résumé de l'organisation (pastille du menu, bandeau « nouvelle
+  // convention ») — réseau ouvert, ou fermé par Rydar avec des sommes en cours (organisation déjà membre) ; jamais
+  // membre et réseau coupé : rien d'autre que l'interrupteur et l'adhésion. En parallèle des autres lectures.
+  const network = networkAccess(ctx.supabase, ctx.org.id);
+  const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees, networkInfo] = await Promise.all([
     ctx.supabase
       .from("rides")
       .select("id", { count: "exact", head: true })
@@ -59,8 +68,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // Flotte : frais Rydar par course réglés par le super admin (ou historique) → entrée « Frais Rydar » (owner / admin).
     // Le seul booléen (org_platform_fees_enabled) : le compte complet n'est calculé que par le bandeau et la page
     !centrale && admin ? ctx.supabase.rpc("org_platform_fees_enabled", { p_org: ctx.org.id }) : Promise.resolve(null),
+    network,
   ]);
-  // Un seul bandeau à la fois : celui de la centrale (owner / admin, CGU et politique comprises) d'abord
+  // Un seul bandeau à la fois : celui de la centrale (owner / admin, CGU et politique comprises) d'abord, puis les CGU
+  // à titre personnel, puis la nouvelle convention du réseau partagé (owner / admin)
   const termsBanner = termsBannerChoice({
     admin,
     orgVersions: terms && !terms.error ? ((terms.data ?? []) as { version: string }[]).map((a) => a.version) : null,
@@ -74,6 +85,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
   // Date d'entrée en vigueur au plus tard des CGV atteinte (heure de Paris, comme la base) : bandeau « en vigueur depuis »
   const termsEffectivePassed = localIsoDay(new Date(), "Europe/Paris") >= ORG_LEGAL_EFFECTIVE_AT;
+  // Réseau ouvert : menu (pastille à 0 si le résumé est illisible) ; nouvelle convention à accepter (owner / admin).
+  // Réseau fermé par Rydar : menu seulement tant que des sommes ou des courses sont en cours, aucun bandeau
+  const networkOpen = networkInfo?.mode === "open";
+  const networkTerms = admin && networkOpen ? networkTermsDue(networkInfo.summary?.readiness) : null;
   const cs = (centraleSettings?.data ?? null) as {
     settlement_link: string | null;
     settlement_instructions: string | null;
@@ -103,18 +118,29 @@ export default async function DashboardLayout({ children }: { children: React.Re
         methods: cs?.settlement_methods ?? [],
         bank: cs?.settlement_iban ? { payeeName: cs.settlement_payee_name || ctx.org.name, iban: cs.settlement_iban, bic: cs.settlement_bic } : null,
         blockUnpaid: cs?.block_unpaid ?? true,
+        network: networkOpen ? { shareOut: shareOutRequested(networkInfo.summary?.readiness) } : null,
       }}
       centraleCounts={centraleCounts}
       topBanner={
+        // Acceptation des CGV exigée (OrgTermsGate à la place de la page) : aucun bandeau
         gate ? null : termsBanner?.kind === "org" ? (
           <TermsBanner orgName={ctx.org.name} updated={termsBanner.updated} effectivePassed={termsEffectivePassed} />
         ) : termsBanner?.kind === "user" ? (
           <UserTermsBanner />
+        ) : networkTerms ? (
+          <NetworkTermsBanner
+            orgName={ctx.org.name}
+            version={networkTerms.version}
+            graceUntil={networkTerms.graceUntil}
+            expired={networkTerms.expired}
+            timeZone={ctx.org.timezone || "Europe/Paris"}
+          />
         ) : null
       }
       superAdmin={ctx.profile.is_super_admin === true}
       bookingSites={bookingSites}
       rydarFees={fleetFees?.data === true}
+      sharedNetwork={networkMenuShown(networkInfo) ? networkNavState(networkInfo?.summary) : null}
     >
       {gate ? <OrgTermsGate orgName={ctx.org.name} /> : children}
     </DashboardShell>

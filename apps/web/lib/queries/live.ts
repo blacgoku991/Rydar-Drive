@@ -1,5 +1,8 @@
 import "server-only";
-import type { FleetReportType, FlightMode, FlightStatus, OrgKpis, RideAlertData, RideAlertKind, RideAlertResolution, RideAlertSeverity, RideAlertStatus } from "@rydar/shared";
+import type {
+  FleetReportType, FlightMode, FlightStatus, NetworkPartnerNames, OrgKpis, OrgNetworkActivity, RideAlertData, RideAlertKind, RideAlertResolution,
+  RideAlertSeverity, RideAlertStatus,
+} from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type LiveDriver = {
@@ -15,6 +18,11 @@ export type LiveDriver = {
   online_since: string | null;
   vehicle: { brand: string | null; model: string; plate: string; color: string | null; category: string; seats: number } | null;
   location: { lat: number; lng: number; heading: number | null; speed_mps: number | null; updated_at: string } | null;
+  /**
+   * Réseau partagé, organisation du chauffeur (B) : course partenaire en cours pour l'organisation `network_giver`
+   * (« En course partenaire (Taxi A) ») — position jamais montrée ni gardée pendant ce temps (Q5).
+   */
+  network_giver?: string | null;
 };
 
 export type LiveRide = {
@@ -61,6 +69,15 @@ export type LiveRide = {
   flight_checked_at?: string | null;
   /** Heure demandée par le client, conservée au premier décalage automatique (sinon null). */
   pickup_at_original?: string | null;
+  /**
+   * Réseau partagé (20260924006700), organisation qui confie la course (A) : organisation du chauffeur (instantané ;
+   * une autre que la sienne = chauffeur partenaire) et proposition au réseau en cours. Diffusion « ride.updated » d'une
+   * course tenue par un partenaire : driver_id masqué (null), network: true.
+   */
+  driver_org_id?: string | null;
+  network_at?: string | null;
+  network?: boolean;
+  network_execution_id?: string | null;
 };
 
 export type LiveOffer = {
@@ -114,13 +131,15 @@ export type LiveSnapshot = {
   reports: LiveReport[];
   kpis: OrgKpis | null;
   serverTime: string;
+  /** Réseau partagé : noms validés des organisations partenaires (« Réseau · Flotte B »), lus seulement si utiles */
+  partners?: Record<string, string>;
 };
 
 // (une seule chaîne littérale : supabase-js en déduit le type des lignes)
 // Sans route_polyline (jusqu'à 20 000 caractères par course) : la carte ne trace le parcours que de la course
 // sélectionnée (chargé à la demande, GET /api/dashboard/rides/[id]?route=1) ou des courses client à bord (ci-dessous).
 const RIDE_FIELDS =
-  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, estimated_distance_m, estimated_duration_s, payment_method, accepted_at, created_at, updated_at, flight_mode, flight_status, flight_scheduled_arrival, flight_estimated_arrival, flight_actual_arrival, flight_delay_minutes, flight_terminal, flight_origin, flight_checked_at, pickup_at_original";
+  "id, number, type, status, source, dispatch_mode, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, customer_name, customer_phone, passengers, luggage, vehicle_category, price_cents, driver_id, dispatch_wave, dispatch_radius_m, next_dispatch_at, flight_number, estimated_distance_m, estimated_duration_s, payment_method, accepted_at, created_at, updated_at, flight_mode, flight_status, flight_scheduled_arrival, flight_estimated_arrival, flight_actual_arrival, flight_delay_minutes, flight_terminal, flight_origin, flight_checked_at, pickup_at_original, driver_org_id, network_at";
 const ON_BOARD_STATUSES = ["PASSENGER_ONBOARD", "IN_PROGRESS"];
 export const ALERT_FIELDS = "id, ride_id, driver_id, kind, severity, message, data, status, resolution, muted_until, created_at, updated_at";
 const REPORT_FIELDS = "id, report_type, body, lat, lng, expires_at, confirmations, dismissals, author_name, author_type, author_driver_id, created_at";
@@ -236,19 +255,48 @@ export async function getLiveSnapshot(supabase: SupabaseClient, orgId: string): 
   // Client à bord : tracé connu (null = aucun) ; sinon la clé reste absente (« à charger »)
   for (const r of rideRows) if (ON_BOARD_STATUSES.includes(r.status)) r.route_polyline = routes.get(r.id) ?? null;
   const openIds = rideRows.filter((r) => ["SEARCHING_DRIVER", "OFFERED"].includes(r.status)).map((r) => r.id);
-  const offers = openIds.length ? await pendingOffers(supabase, openIds) : [];
+  const driverRows = ((must(drivers, "chauffeurs") ?? []) as any[]).map((d) => ({
+    ...d,
+    vehicle: Array.isArray(d.vehicle) ? (d.vehicle[0] ?? null) : d.vehicle,
+    location: Array.isArray(d.location) ? (d.location[0] ?? null) : d.location,
+  })) as LiveDriver[];
+  const [offers, network] = await Promise.all([openIds.length ? pendingOffers(supabase, openIds) : Promise.resolve([]), liveNetwork(supabase, orgId, rideRows, driverRows)]);
 
   return {
-    drivers: ((must(drivers, "chauffeurs") ?? []) as any[]).map((d) => ({
-      ...d,
-      vehicle: Array.isArray(d.vehicle) ? (d.vehicle[0] ?? null) : d.vehicle,
-      location: Array.isArray(d.location) ? (d.location[0] ?? null) : d.location,
-    })) as LiveDriver[],
+    drivers: driverRows,
     rides: rideRows,
     offers,
     alerts: (must(alerts, "alertes") ?? []) as LiveAlert[],
     reports: ((must(reports, "signalements") ?? []) as LiveReport[]).filter((r) => r.lat != null && r.lng != null),
     kpis,
     serverTime: new Date().toISOString(),
+    ...(network.partners ? { partners: network.partners } : {}),
   };
+}
+
+/**
+ * Réseau partagé, lu SEULEMENT s'il sert (jamais pour une organisation qui n'y a pas touché ; échec = rien d'affiché) :
+ * - A : course tenue par le chauffeur d'une autre organisation → noms des partenaires (« Réseau · Flotte B ») ;
+ * - B : chauffeur dont la course en cours n'est pas l'une des siennes → course partenaire (org_network_activity) :
+ *   « En course partenaire (Taxi A) », position retirée (Q5 ; la base la masque déjà).
+ */
+async function liveNetwork(supabase: SupabaseClient, orgId: string, rides: LiveRide[], drivers: LiveDriver[]): Promise<{ partners: Record<string, string> | null }> {
+  const partnerRide = rides.some((r) => r.driver_id && r.driver_org_id && r.driver_org_id !== orgId);
+  const own = new Set(rides.map((r) => r.id));
+  const foreign = drivers.some((d) => d.current_ride_id && !own.has(d.current_ride_id));
+  if (!partnerRide && !foreign) return { partners: null };
+  const [names, activity] = await Promise.all([
+    partnerRide ? supabase.rpc("network_partner_names", { p_org: orgId }) : Promise.resolve(null),
+    foreign ? supabase.rpc("org_network_activity", { p_org: orgId }) : Promise.resolve(null),
+  ]);
+  const onRide = ((activity && !activity.error ? (activity.data as OrgNetworkActivity | null) : null)?.on_ride ?? []);
+  if (onRide.length) {
+    const giverOf = new Map(onRide.map((r) => [r.driver.id, r.giver.name]));
+    for (const d of drivers) {
+      const giver = giverOf.get(d.id);
+      if (giver) Object.assign(d, { network_giver: giver, location: null });
+    }
+  }
+  const partners = names && !names.error ? ((names.data ?? null) as NetworkPartnerNames | null) : null;
+  return { partners: partners && typeof partners === "object" ? partners : null };
 }

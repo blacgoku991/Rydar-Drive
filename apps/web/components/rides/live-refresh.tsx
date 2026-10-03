@@ -24,8 +24,9 @@ export function LiveRefresh({
 }) {
   const router = useRouter();
   const { schedule } = useLiveSync(() => router.refresh(), { pollMs, maxPollMs, debounceMs: 400 });
-  // liste fixe (règle des hooks) ; « settlement.updated » : règlement de la course (mode centrale)
-  for (const ev of ["ride.updated", "ride.event", "offer.updated", "driver.updated", "ride.alert", "settlement.updated"]) {
+  // liste fixe (règle des hooks) ; « settlement.updated » : règlement de la course (mode centrale) ;
+  // « network.updated » : partage de la course au réseau (org:{A} → { ride_id })
+  for (const ev of ["ride.updated", "ride.event", "offer.updated", "driver.updated", "ride.alert", "settlement.updated", "network.updated"]) {
     useRealtimeEvent(ev, (p: any) => {
       if (!events.includes(ev)) return;
       if (driverId) {

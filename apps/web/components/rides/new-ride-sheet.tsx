@@ -397,7 +397,11 @@ export function NewRideSheet({
                 <Field className="col-span-2" error={errors.customerEmail}>
                   <Input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="E-mail du client (facultatif)" type="email" aria-label="E-mail du client" />
                 </Field>
-                <Field className="col-span-2">
+                <Field
+                  className="col-span-2"
+                  // Réseau partagé (partage demandé) : le commentaire suit la course chez un chauffeur partenaire (S18)
+                  hint={org?.network?.shareOut ? "Visible par un chauffeur partenaire si la course part au réseau partagé." : undefined}
+                >
                   <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Note pour le chauffeur : pancarte, siège bébé…" aria-label="Commentaire" className="min-h-[64px]" />
                 </Field>
               </section>

@@ -9,6 +9,8 @@ export type State = {
   alerts: Record<string, LiveAlert>;
   reports: Record<string, LiveReport>;
   kpis: OrgKpis | null;
+  /** Réseau partagé : noms des organisations partenaires déjà lus (« Réseau · Flotte B ») */
+  partners?: Record<string, string>;
 };
 export type Action =
   | { type: "snapshot"; snapshot: LiveSnapshot }
@@ -23,6 +25,11 @@ export type Action =
   | { type: "report-update"; payload: FleetReportUpdate };
 
 const byId = <T extends { id: string }>(list: T[]) => Object.fromEntries(list.map((x) => [x.id, x]));
+const omit = <T,>(rec: Record<string, T>, id: string): Record<string, T> => {
+  const next = { ...rec };
+  delete next[id];
+  return next;
+};
 const sameTrip = (a: LiveRide, b: LiveRide) =>
   a.pickup_lat === b.pickup_lat && a.pickup_lng === b.pickup_lng && a.dropoff_lat === b.dropoff_lat && a.dropoff_lng === b.dropoff_lng;
 /** Client à bord : le trajet est tracé sur la carte même sans sélection. */
@@ -47,6 +54,7 @@ export function reducer(state: State, action: Action): State {
         reports: byId(action.snapshot.reports ?? []),
         // Indicateurs indisponibles (lecture en échec) : on garde les derniers connus
         kpis: action.snapshot.kpis ?? state.kpis,
+        ...(state.partners || action.snapshot.partners ? { partners: { ...state.partners, ...action.snapshot.partners } } : {}),
       };
     }
     case "kpis":
@@ -56,7 +64,8 @@ export function reducer(state: State, action: Action): State {
       let drivers: Record<string, LiveDriver> | null = null;
       for (const p of action.payloads) {
         const d = (drivers ?? state.drivers)[p.driver_id];
-        if (!d) continue;
+        // Chauffeur en course partenaire : aucune position montrée (Q5 ; la base n'en diffuse pas)
+        if (!d || d.network_giver) continue;
         // Position plus ancienne que celle connue (instantané relu entre-temps) : ignorée
         if (d.location && p.updated_at && Date.parse(p.updated_at) < Date.parse(d.location.updated_at)) continue;
         drivers ??= { ...state.drivers };
@@ -68,13 +77,32 @@ export function reducer(state: State, action: Action): State {
       const p = action.payload;
       const d = state.drivers[p.id];
       if (!d) return state;
-      return { ...state, drivers: { ...state.drivers, [d.id]: { ...d, presence: p.presence, status: p.status, current_ride_id: p.current_ride_id } } };
+      // Réseau partagé (B) : course partenaire en cours → « En course partenaire ({A}) », position retirée (Q5)
+      const partner = p.network === true;
+      const next: LiveDriver = {
+        ...d,
+        presence: p.presence,
+        status: p.status,
+        current_ride_id: p.current_ride_id,
+        network_giver: partner ? (p.network_giver ?? d.network_giver ?? null) : null,
+        ...(partner ? { location: null } : {}),
+      };
+      return { ...state, drivers: { ...state.drivers, [d.id]: next } };
     }
     case "ride": {
       const p = { ...action.payload };
       const prev = state.rides[p.id];
       // Le tracé n'est diffusé qu'à la création / modification : sinon on garde l'existant (ou il reste à charger)
       if (p.route_polyline == null && (prev || p.op !== "insert")) delete p.route_polyline;
+      // Réseau partagé (A) : chauffeur partenaire diffusé sans identifiant (driver_id null, network: true) ; son
+      // organisation vient de l'instantané. Sans drapeau : chauffeur propre ou aucun, plus de partenaire.
+      if (!("driver_org_id" in p)) {
+        if (p.network === true) p.driver_org_id = prev?.driver_org_id ?? null;
+        else if ("driver_id" in p) {
+          p.network = false;
+          p.driver_org_id = p.driver_id && prev && p.driver_id === prev.driver_id ? (prev.driver_org_id ?? null) : null;
+        }
+      }
       return { ...state, rides: { ...state.rides, [p.id]: { ...(prev ?? {}), ...p } as LiveRide } };
     }
     case "route": {
@@ -84,6 +112,9 @@ export function reducer(state: State, action: Action): State {
     }
     case "offer": {
       const p = action.payload;
+      // Offre à un chauffeur partenaire (réseau partagé, `network: true`, sans chauffeur ni distance) : jamais gardée,
+      // comme dans l'instantané (RLS) — compteur des partenaires dans le bloc réseau de la course.
+      if (p?.network === true || !p?.driver_id) return state.offers[p?.id] ? { ...state, offers: omit(state.offers, p.id) } : state;
       const offers = { ...state.offers };
       if (p.status === "pending") offers[p.id] = { ...(offers[p.id] ?? {}), ...p };
       else delete offers[p.id];

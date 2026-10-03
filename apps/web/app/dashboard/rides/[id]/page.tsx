@@ -1,9 +1,9 @@
 import {
   DRIVER_STATUS_META, OFFER_STATUS_META, PAYMENT_METHOD_LABELS, RIDE_SOURCE_LABELS, VEHICLE_CATEGORY_META, canAssign, canCancel, canRedispatch,
   formatDistance, formatDuration, formatPhone, formatPrice, formatTime, haversine,
-  type DriverStatus, type OfferStatus, type PaymentMethod, type RideSource, type RideStatus, type VehicleCategory,
+  type DriverStatus, type OfferStatus, type OrgNetworkRide, type PaymentMethod, type RideSource, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowLeft, BellRing, Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, BellRing, Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -16,11 +16,13 @@ import { RideMap } from "@/components/rides/ride-map";
 import { RideProgress } from "@/components/rides/ride-progress";
 import { RideTimeline, type TimelineEvent } from "@/components/rides/ride-timeline";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
+import { RideNetworkCard } from "@/components/network-share/ride-network-card";
+import { networkLockMessage, partnerOrgOf, partnerTag, proposedToNetwork, rideTouchesNetwork } from "@/components/network-share/ride-network";
 import { RideMoneyCard, type RideMoneyRide, type SettlementRow } from "@/components/settlements/ride-money";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/misc";
-import { requireOrg } from "@/lib/auth";
+import { isAdminRole, requireOrg } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import type { LiveDriver, LiveOffer, LiveRide } from "@/lib/queries/live";
 
@@ -83,12 +85,26 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
       : Promise.resolve({ data: null }),
   ]);
   if (!ride) notFound();
-  // Chauffeur de la course même s'il n'est plus actif (suspendu, désactivé) : la liste ci-dessus ne garde que les
-  // actifs ; lu seulement dans ce cas (rare)
-  const rideDriver =
-    ride.driver_id && !((drivers.data ?? []) as { id: string }[]).some((d) => d.id === ride.driver_id)
-      ? await ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("id", ride.driver_id).eq("organization_id", ctx.org.id).maybeSingle()
-      : { data: null };
+  // Réseau partagé : course tenue par le chauffeur d'une autre organisation, proposée au réseau, ou passée par lui
+  // (journal). Jamais lu pour une course qui n'a pas touché le réseau (interrupteur coupé : rien ne change).
+  const partnerOrg = partnerOrgOf(ride, ctx.org.id);
+  const networkTouched = rideTouchesNetwork(ride, ctx.org.id, ((events.data ?? []) as { type: string }[]).map((e) => e.type));
+  const [network, rideDriver] = await Promise.all([
+    networkTouched ? ctx.supabase.rpc("org_network_ride", { p_ride: id }) : Promise.resolve(null),
+    // Chauffeur de la course même s'il n'est plus actif (suspendu, désactivé) : la liste ci-dessus ne garde que les
+    // actifs ; lu seulement dans ce cas (rare). Chauffeur partenaire : fiche illisible ici (bloc « Réseau partagé »)
+    ride.driver_id && !partnerOrg && !((drivers.data ?? []) as { id: string }[]).some((d) => d.id === ride.driver_id)
+      ? ctx.supabase.from("drivers").select(DRIVER_COLUMNS).eq("id", ride.driver_id).eq("organization_id", ctx.org.id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+  const networkData = (network && !network.error ? (network.data ?? null) : null) as OrgNetworkRide | null;
+  const networkFailed = !!network?.error;
+  // Course non proposée (sans prix, sans part chauffeur, aucun partenaire proche…) : dernier motif du journal
+  const networkSkipped =
+    ((events.data ?? []) as { type: string; message: string }[]).findLast((e) => e.type === "dispatch.network_skipped")?.message ?? null;
+  const partnerExecution = partnerOrg ? (networkData?.execution ?? null) : null;
+  const partnerName = partnerExecution?.partner.name ?? (partnerOrg && networkData?.operator ? networkData.operator.name : null);
+  const networkLock = networkLockMessage(ride, ctx.org.id);
 
   const driverRows = [...((drivers.data ?? []) as any[])];
   if (rideDriver.data && !driverRows.some((d) => d.id === ride.driver_id)) driverRows.push(rideDriver.data);
@@ -101,7 +117,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const offerRows = (offers.data ?? []) as any[];
   const involved = new Set<string>([...offerRows.filter((o) => o.status === "pending").map((o) => o.driver_id), ...(ride.driver_id ? [ride.driver_id] : [])]);
   const mapDrivers = allDrivers.filter((d) => involved.has(d.id));
-  const driver = ride.driver_id ? byId.get(ride.driver_id) : undefined;
+  const driver = ride.driver_id && !partnerOrg ? byId.get(ride.driver_id) : undefined;
   const status = ride.status as RideStatus;
   const driverStuck = !!driver && driver.status !== "active" && DRIVER_STUCK.has(status);
   const tz = ctx.org.timezone;
@@ -122,7 +138,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
     <>
       <LiveRefresh
         rideId={id}
-        events={["ride.updated", "ride.event", "offer.updated", "ride.alert", "settlement.updated"]}
+        events={["ride.updated", "ride.event", "offer.updated", "ride.alert", "settlement.updated", "network.updated"]}
         maxPollMs={CLOSED.has(status) ? 60_000 : 30_000}
       />
       <div className="border-b border-line">
@@ -138,6 +154,13 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               <RideTypeTag type={ride.type} />
               {ride.flight_number && <FlightChip ride={ride} timeZone={tz} className="h-[22px] rounded-full px-2 text-[11.5px]" />}
               <Badge tone="neutral" dot={false}>{RIDE_SOURCE_LABELS[ride.source as RideSource]}</Badge>
+              {partnerOrg ? (
+                <Badge tone="violet" dot={false}>
+                  <ArrowLeftRight className="size-3" /> {partnerTag(partnerName)}
+                </Badge>
+              ) : proposedToNetwork(ride) ? (
+                <Badge tone="violet">Proposée au réseau partagé</Badge>
+              ) : null}
             </div>
             <p className="mt-2 text-[14px] text-fg-muted">
               <PickupTime ride={ride} timeZone={tz} withDate /> · {ride.customer_name}
@@ -151,6 +174,12 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               canRedispatch={canRedispatch(status) && !ride.driver_id}
               canAssign={canAssign(status) || status === "DRIVER_EN_ROUTE" || status === "DRIVER_ARRIVED"}
               assignLabel={ride.driver_id ? "Réattribuer" : "Attribuer"}
+              // Attribution manuelle : vos chauffeurs seulement ; un chauffeur partenaire est prévenu du retrait
+              assignDescription={
+                partnerOrg
+                  ? `Le chauffeur partenaire${partnerName ? ` (${partnerName})` : ""} est prévenu que la course lui est retirée ; votre chauffeur reçoit immédiatement une notification.`
+                  : undefined
+              }
               drivers={assignable}
             />
           </div>
@@ -205,6 +234,30 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               </div>
             </div>
           </Card>
+
+          {networkTouched && (
+            <RideNetworkCard
+              ride={{
+                id: ride.id,
+                number: ride.number,
+                type: ride.type,
+                status,
+                pickup_at: ride.pickup_at,
+                completed_at: ride.completed_at ?? null,
+                pickup_address: ride.pickup_address,
+                dropoff_address: ride.dropoff_address,
+                customer_name: ride.customer_name,
+                currency: ride.currency ?? "EUR",
+                driver_id: ride.driver_id ?? null,
+              }}
+              data={networkData}
+              failed={networkFailed}
+              skipped={networkSkipped}
+              canManage={isAdminRole(ctx.role)}
+              timeZone={tz}
+              serverNow={Date.now()}
+            />
+          )}
 
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
@@ -269,13 +322,25 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                       </p>
                     )}
                   </div>
+                ) : partnerOrg ? (
+                  <div className="space-y-1.5">
+                    <p className="text-[15px] font-semibold">
+                      {partnerExecution?.driver_label ?? "Chauffeur partenaire"}
+                      {partnerName && <span className="font-normal text-violet"> · {partnerName}</span>}
+                    </p>
+                    <p className="text-[12.5px] text-fg-muted">
+                      Chauffeur d&apos;une organisation partenaire (réseau partagé) : contact, véhicule et contrôles dans le bloc « Réseau partagé ».
+                    </p>
+                  </div>
                 ) : (
                   <p className="text-[13px] text-fg-muted">
                     {ride.driver_id
                       ? "Fiche du chauffeur indisponible."
                       : status === "NO_DRIVER_FOUND"
                         ? "Aucun chauffeur n'a accepté. Relancez le dispatch ou attribuez manuellement."
-                        : "Le dispatch est en cours — le premier chauffeur qui accepte obtient la course."}
+                        : proposedToNetwork(ride)
+                          ? "Aucun de vos chauffeurs n'a accepté : la course est proposée aux chauffeurs partenaires proches. Vos chauffeurs restent prioritaires."
+                          : "Le dispatch est en cours — le premier chauffeur qui accepte obtient la course."}
                   </p>
                 )}
               </CardBody>
@@ -285,7 +350,9 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
           <Card>
             <CardHeader title="Offres envoyées" description="Chauffeurs notifiés, distance au départ et réponse." />
             <div className="divide-y divide-line">
-              {offerRows.length === 0 && <p className="px-5 py-6 text-[13px] text-fg-subtle">Aucune offre envoyée pour le moment.</p>}
+              {offerRows.length === 0 && !networkData?.share?.partners_offered && (
+                <p className="px-5 py-6 text-[13px] text-fg-subtle">Aucune offre envoyée pour le moment.</p>
+              )}
               {offerRows.map((o) => {
                 const d = byId.get(o.driver_id);
                 const meta = OFFER_STATUS_META[o.status as OfferStatus];
@@ -305,6 +372,18 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                   </div>
                 );
               })}
+              {/* Réseau partagé : compteur seulement (jamais qui, chez les partenaires, a été sollicité) */}
+              {!!networkData?.share?.partners_offered && (
+                <div className="flex items-center gap-4 px-5 py-3">
+                  <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-violet/10 text-violet">
+                    <ArrowLeftRight className="size-3.5" />
+                  </span>
+                  <p className="min-w-0 flex-1 text-[13px] text-fg-muted">
+                    {networkData.share.partners_offered} chauffeur{networkData.share.partners_offered > 1 ? "s" : ""} partenaire
+                    {networkData.share.partners_offered > 1 ? "s" : ""} sollicité{networkData.share.partners_offered > 1 ? "s" : ""} (réseau partagé)
+                  </p>
+                </div>
+              )}
             </div>
           </Card>
         </div>
@@ -342,6 +421,7 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
               settlement={(settlement.data ?? null) as SettlementRow | null}
               driverName={driver?.first_name ?? null}
               serverNow={Date.now()}
+              network={partnerOrg ? { lock: networkLock, terms: partnerExecution?.terms ?? null } : null}
             />
           )}
         </div>

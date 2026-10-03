@@ -265,7 +265,7 @@ export function useRemindDriver(onChanged?: () => void) {
 const DISPUTE_REASONS = ["Rien reçu sur le compte", "Montant incomplet", "Référence introuvable", "Espèces non remises"];
 const WAIVE_REASONS = ["Geste commercial", "Course litigieuse", "Client parti sans payer", "Erreur de prix"];
 
-function Chips({ options, onPick }: { options: string[]; onPick: (v: string) => void }) {
+export function Chips({ options, onPick }: { options: string[]; onPick: (v: string) => void }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {options.map((o) => (
