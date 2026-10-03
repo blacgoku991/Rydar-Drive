@@ -8,6 +8,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { NETWORK_RIDES_FILTER, networkRidesOrFilter, partnerOrgOf, rideListNetworkCell } from "@/components/network-share/ride-network";
+import { ActiveFilterIntoView } from "@/components/rides/active-filter-into-view";
 import { NewRideButton } from "@/components/rides/new-ride-button";
 import { RouteGlyph } from "@/components/rides/route-glyph";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
@@ -118,6 +119,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                 href={href(f.key)}
                 // Pages dynamiques : un préchargement ne contient aucune donnée (voir la barre latérale)
                 prefetch={false}
+                aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex shrink-0 items-center gap-2 border-b-2 px-3 pb-3 pt-1 text-[13px] font-medium transition-colors",
                   active ? "border-brand text-fg" : "border-transparent text-fg-muted hover:text-fg",
@@ -132,6 +134,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
               </Link>
             );
           })}
+          <ActiveFilterIntoView activeKey={filter} />
         </div>
       </PageHeader>
       <PageBody>
@@ -166,60 +169,67 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
                 </tr>
               </THead>
               <tbody>
-                {rides.map((r: any) => (
-                  <TR key={r.id} className="group relative">
-                    <TD>
-                      <Link href={`/dashboard/rides/${r.id}`} prefetch={false} className="absolute inset-0 z-0" aria-label={`Course ${r.number}`} />
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-semibold tabular-nums text-fg">#{r.number}</span>
-                        <RideTypeTag type={r.type} />
-                      </div>
-                      <span className="text-[11.5px] text-fg-subtle">{RIDE_SOURCE_LABELS[r.source as RideSource]}</span>
-                    </TD>
-                    <TD className="whitespace-nowrap text-[13px] text-fg-muted">{formatRideDate(r.pickup_at, ctx.org.timezone)}</TD>
-                    <TD className={centrale ? "max-w-[300px]" : "max-w-[380px]"}>
-                      <div className="flex items-center gap-3">
-                        <RouteGlyph polyline={r.route_polyline} from={{ lat: r.pickup_lat, lng: r.pickup_lng }} to={{ lat: r.dropoff_lat, lng: r.dropoff_lng }} />
-                        <div className="min-w-0">
-                          <p className="truncate text-[13px] text-fg">{shortAddress(r.pickup_address)}</p>
-                          <p className="truncate text-[12px] text-fg-subtle">→ {shortAddress(r.dropoff_address)}{r.estimated_distance_m ? ` · ${formatDistance(r.estimated_distance_m)}` : ""}</p>
+                {rides.map((r: any) => {
+                  const net = rideListNetworkCell(r, ctx.org.id, partners);
+                  return (
+                    <TR key={r.id} className="group relative">
+                      <TD>
+                        <Link href={`/dashboard/rides/${r.id}`} prefetch={false} className="absolute inset-0 z-0" aria-label={`Course ${r.number}`} />
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-semibold tabular-nums text-fg">#{r.number}</span>
+                          <RideTypeTag type={r.type} />
                         </div>
-                      </div>
-                    </TD>
-                    <TD className={centrale ? "max-w-[180px]" : "max-w-[220px]"}>
-                      <p className="truncate text-[13px]">{r.customer_name}</p>
-                      <p className="text-[12px] text-fg-subtle">{VEHICLE_CATEGORY_META[r.vehicle_category as VehicleCategory]?.label}</p>
-                    </TD>
-                    <TD className="text-[13px]">
-                      {rideListNetworkCell(r, ctx.org.id, partners) ? (
-                        // Réseau partagé : organisation du chauffeur partenaire, jamais sa fiche
-                        <span className="inline-flex items-center gap-1.5 text-violet">
-                          <ArrowLeftRight className="size-3.5 shrink-0" /> {rideListNetworkCell(r, ctx.org.id, partners)}
-                        </span>
-                      ) : r.driver ? (
-                        <span>
-                          {r.driver.first_name} {r.driver.last_name?.charAt(0)}. <span className="num text-fg-subtle">#{r.driver.number}</span>
-                        </span>
-                      ) : (
-                        <span className="text-fg-subtle">—</span>
-                      )}
-                    </TD>
-                    <TD className="text-right text-[14px] font-semibold tabular-nums">
-                      {formatPrice(r.price_cents)}
-                      {centrale && r.driver_payout_cents != null && (
-                        <span className="block whitespace-nowrap text-[11.5px] font-normal text-fg-subtle">
-                          <span className="mono text-brand">{formatPrice(r.driver_payout_cents)}</span> chauffeur
-                        </span>
-                      )}
-                      {centrale && r.price_cents == null && <span className="block whitespace-nowrap text-[11.5px] font-normal text-amber">prix à fixer</span>}
-                    </TD>
+                        <span className="text-[11.5px] text-fg-subtle">{RIDE_SOURCE_LABELS[r.source as RideSource]}</span>
+                      </TD>
+                      <TD className="whitespace-nowrap text-[13px] text-fg-muted">{formatRideDate(r.pickup_at, ctx.org.timezone)}</TD>
+                      <TD className={centrale ? "max-w-[300px]" : "max-w-[380px]"}>
+                        <div className="flex items-center gap-3">
+                          <RouteGlyph polyline={r.route_polyline} from={{ lat: r.pickup_lat, lng: r.pickup_lng }} to={{ lat: r.dropoff_lat, lng: r.dropoff_lng }} />
+                          <div className="min-w-0">
+                            <p className="truncate text-[13px] text-fg">{shortAddress(r.pickup_address)}</p>
+                            <p className="truncate text-[12px] text-fg-subtle">→ {shortAddress(r.dropoff_address)}{r.estimated_distance_m ? ` · ${formatDistance(r.estimated_distance_m)}` : ""}</p>
+                          </div>
+                        </div>
+                      </TD>
+                      <TD className={centrale ? "max-w-[180px]" : "max-w-[220px]"}>
+                        <p className="truncate text-[13px]">{r.customer_name}</p>
+                        <p className="text-[12px] text-fg-subtle">{VEHICLE_CATEGORY_META[r.vehicle_category as VehicleCategory]?.label}</p>
+                      </TD>
+                      <TD className="text-[13px]">
+                        {net ? (
+                          // Réseau partagé : organisation du chauffeur partenaire, jamais sa fiche
+                          <span className="flex min-w-0 items-start gap-1.5 text-violet">
+                            <ArrowLeftRight className="mt-[3px] size-3.5 shrink-0" />
+                            <span className="min-w-0">
+                              <span className="block max-w-[150px] truncate whitespace-nowrap">{net.title}</span>
+                              {net.sub && <span className="block whitespace-nowrap text-[12px] text-fg-subtle">{net.sub}</span>}
+                            </span>
+                          </span>
+                        ) : r.driver ? (
+                          <span>
+                            {r.driver.first_name} {r.driver.last_name?.charAt(0)}. <span className="num text-fg-subtle">#{r.driver.number}</span>
+                          </span>
+                        ) : (
+                          <span className="text-fg-subtle">—</span>
+                        )}
+                      </TD>
+                      <TD className="text-right text-[14px] font-semibold tabular-nums">
+                        {formatPrice(r.price_cents)}
+                        {centrale && r.driver_payout_cents != null && (
+                          <span className="block whitespace-nowrap text-[11.5px] font-normal text-fg-subtle">
+                            <span className="mono text-brand">{formatPrice(r.driver_payout_cents)}</span> chauffeur
+                          </span>
+                        )}
+                        {centrale && r.price_cents == null && <span className="block whitespace-nowrap text-[11.5px] font-normal text-amber">prix à fixer</span>}
+                      </TD>
 
-                    <TD>
-                      <RideStatusBadge status={r.status} />
-                      {centrale && settlementOf(r) && <SettlementLine s={settlementOf(r)!} now={now} partner={!!partnerOrgOf(r, ctx.org.id)} />}
-                    </TD>
-                  </TR>
-                ))}
+                      <TD>
+                        <RideStatusBadge status={r.status} />
+                        {centrale && settlementOf(r) && <SettlementLine s={settlementOf(r)!} now={now} partner={!!partnerOrgOf(r, ctx.org.id)} />}
+                      </TD>
+                    </TR>
+                  );
+                })}
               </tbody>
             </Table>
           )}

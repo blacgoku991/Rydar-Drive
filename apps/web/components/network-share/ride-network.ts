@@ -206,9 +206,16 @@ export function networkRidesOrFilter(orgId: string): string | null {
   return UUID.test(orgId) ? `network_at.not.is.null,driver_org_id.neq.${orgId}` : null;
 }
 
-/** Colonne « Chauffeur » de la liste : « Réseau · Flotte B » (partenaire), « Proposée au réseau », sinon null. */
-export function rideListNetworkCell(ride: NetworkRideColumns, orgId: string, partners: Record<string, string> | null | undefined): string | null {
+/**
+ * Colonne « Chauffeur » de la liste (colonne étroite, deux lignes) : organisation du chauffeur partenaire + « Réseau
+ * partagé », « Proposée au réseau » pendant la recherche, sinon null (course propre : cellule habituelle).
+ */
+export function rideListNetworkCell(
+  ride: NetworkRideColumns,
+  orgId: string,
+  partners: Record<string, string> | null | undefined,
+): { title: string; sub: string | null } | null {
   const other = partnerOrgOf(ride, orgId);
-  if (other) return partnerTag(partners?.[other]);
-  return proposedToNetwork(ride) ? "Proposée au réseau" : null;
+  if (other) return { title: partners?.[other] || "Chauffeur partenaire", sub: "Réseau partagé" };
+  return proposedToNetwork(ride) ? { title: "Proposée au réseau", sub: null } : null;
 }

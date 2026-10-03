@@ -345,7 +345,7 @@ export function RideMoneyCard({
         icon={<HandCoins />}
         description={
           network
-            ? "Montants acceptés par le chauffeur partenaire ; règlement dans le bloc « Réseau partagé »."
+            ? "Montants acceptés par le chauffeur partenaire\u00a0; règlement dans le bloc «\u00a0Réseau partagé\u00a0»."
             : priced
               ? "Part chauffeur affichée dans son offre ; règlement créé à la fin de la course."
               : "Prix à fixer : la répartition se calcule dès que le prix est connu."
@@ -362,7 +362,7 @@ export function RideMoneyCard({
         {lock && <LockNotice message={lock} />}
         <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-line sm:grid-cols-4">
           <Figure label="Prix" cents={f.price} currency={currency} />
-          <Figure label={network ? "Chauffeur partenaire" : "Chauffeur"} cents={f.driver} currency={currency} tone="brand" />
+          <Figure label="Chauffeur" cents={f.driver} currency={currency} tone="brand" />
           <Figure
             label="Commission"
             cents={f.commission}

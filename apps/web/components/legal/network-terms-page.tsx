@@ -11,16 +11,19 @@ export async function NetworkTermsDocument({ doc, related }: { doc: NetworkLegal
   const legal = await getLegalInfo();
   const vars = {
     version: NETWORK_TERMS_VERSION,
-    editor: legal.name,
+    // Raison sociale pas encore renseignée (/admin/legal) : jamais « Rydar Drive (Rydar Drive) »
+    editor: legal.nameSet ? legal.name : "voir les mentions légales",
     contact: legal.email || "l'adresse indiquée dans les mentions légales",
   };
-  const t = (s: string) => networkText(s, vars);
+  // Typographie française : espace insécable avant « : ; ! ? » et à l'intérieur des guillemets (jamais un « » » seul
+  // en début de ligne)
+  const t = (s: string) => networkText(s, vars).replace(/ ([:;!?»])/g, "\u00a0$1").replace(/« /g, "«\u00a0");
   const link = "text-fg underline underline-offset-2";
   return (
     <LegalPage title={doc.title} updatedAt={NETWORK_TERMS_UPDATED_AT}>
       {!NETWORK_TERMS_REVIEWED && (
         <p role="note" className="rounded-xl border border-amber/30 bg-amber/[0.07] px-4 py-3 text-[13.5px] leading-relaxed text-amber">
-          {NETWORK_TERMS_REVIEW_NOTICE}
+          {t(NETWORK_TERMS_REVIEW_NOTICE)}
         </p>
       )}
       {doc.intro.map((p) => (

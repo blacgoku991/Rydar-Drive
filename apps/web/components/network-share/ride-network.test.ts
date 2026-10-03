@@ -173,9 +173,12 @@ describe("liste des courses", () => {
   });
 
   it("colonne Chauffeur : « Réseau · Flotte B », « Proposée au réseau », sinon rien (chauffeur propre)", () => {
-    expect(rideListNetworkCell(partner, ORG_A, { [ORG_B]: "Flotte B" })).toBe("Réseau · Flotte B");
-    expect(rideListNetworkCell({ ...partner, status: "COMPLETED" }, ORG_A, null)).toBe("Réseau partagé");
-    expect(rideListNetworkCell({ ...own, driver_id: null, driver_org_id: null, network_at: "2026-09-20T08:55:00Z", status: "OFFERED" }, ORG_A, null)).toBe("Proposée au réseau");
+    expect(rideListNetworkCell(partner, ORG_A, { [ORG_B]: "Flotte B" })).toEqual({ title: "Flotte B", sub: "Réseau partagé" });
+    expect(rideListNetworkCell({ ...partner, status: "COMPLETED" }, ORG_A, null)).toEqual({ title: "Chauffeur partenaire", sub: "Réseau partagé" });
+    expect(rideListNetworkCell({ ...own, driver_id: null, driver_org_id: null, network_at: "2026-09-20T08:55:00Z", status: "OFFERED" }, ORG_A, null)).toEqual({
+      title: "Proposée au réseau",
+      sub: null,
+    });
     expect(rideListNetworkCell(own, ORG_A, null)).toBeNull();
   });
 });

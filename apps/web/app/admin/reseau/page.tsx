@@ -193,7 +193,7 @@ export default async function AdminNetworkPage() {
                       </TD>
                       <TD className="text-[12.5px]">
                         <Badge tone={APPROVAL_META[o.approval].tone}>{APPROVAL_META[o.approval].label}</Badge>
-                        <p className="mt-1 text-[11.5px] text-fg-subtle">{o.terms_ok ? `Convention ${o.terms_version}` : "Convention à accepter"}</p>
+                        <p className="mt-1 whitespace-nowrap text-[11.5px] text-fg-subtle">{o.terms_ok ? `Convention ${o.terms_version}` : "Convention à accepter"}</p>
                       </TD>
                       <TD className="whitespace-nowrap text-[12.5px]">{feeLabel(o)}</TD>
                       <TD className="min-w-[220px] text-[12px] text-fg-muted">

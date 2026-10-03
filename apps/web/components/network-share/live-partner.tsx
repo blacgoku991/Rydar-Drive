@@ -31,7 +31,7 @@ export function LivePartnerCard({ rideId, version, label }: { rideId: string; ve
   return (
     <div className="rounded-xl border border-violet/25 bg-violet/[0.05] px-3.5 py-3">
       <p className="flex items-center gap-1.5 text-[12px] font-medium text-violet">
-        <ArrowLeftRight className="size-3.5" /> {label}
+        <ArrowLeftRight className="size-3.5" /> {label.charAt(0).toUpperCase() + label.slice(1)}
       </p>
       {!current ? (
         <div className="skeleton mt-2 h-9 rounded-lg" aria-hidden />

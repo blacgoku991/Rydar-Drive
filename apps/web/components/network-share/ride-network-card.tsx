@@ -5,7 +5,7 @@
 // de l'organisation du chauffeur, lectures des coordonnées du client. Actions : Retirer (la recherche repart, vos
 // chauffeurs d'abord), Clôturer la course (partenaire empêché de la terminer). Jamais d'identifiant d'un partenaire
 // non retenu.
-import { formatPhone, formatPrice, formatRideDate, type NetworkGivenItem, type OrgNetworkRide } from "@rydar/shared";
+import { NETWORK_EXECUTION_END_LABELS, formatPhone, formatPrice, formatRideDate, type NetworkGivenItem, type OrgNetworkRide } from "@rydar/shared";
 import { ArrowLeftRight, CheckCheck, Mail, Phone, ShieldAlert, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -81,10 +81,15 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
   return (
     <Card className="border-violet/25">
       <CardHeader
-        title="Réseau partagé"
+        // Badge dans la ligne du titre (il passe dessous sur téléphone, sans écraser la description)
+        title={
+          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+            Réseau partagé
+            {share && <Badge tone={share.tone}>{share.label}</Badge>}
+          </span>
+        }
         icon={<ArrowLeftRight className="text-violet" />}
         description={share?.detail ?? "Course passée par le réseau partagé."}
-        action={share ? <Badge tone={share.tone}>{share.label}</Badge> : undefined}
       />
       <CardBody className="space-y-5">
         {e && (
@@ -173,7 +178,8 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
                 {held ? "Règlement créé à la fin de la course." : e.end_reason === "completed" ? "Aucun montant à régler pour cette course." : "Course non réalisée par le partenaire : aucun règlement."}
               </p>
             )}
-            {item && <GivenActions item={item} can={can} />}
+            {/* Mêmes actions, alignées à droite, que la liste « Courses confiées » */}
+            {item && <GivenActions item={item} can={can} className="justify-end" />}
           </section>
         )}
 
@@ -256,7 +262,8 @@ export function RideNetworkCard({ ride, data, failed, skipped, canManage, timeZo
               {data.previous.map((p) => (
                 <li key={p.id}>
                   {p.driver_label} <span className="text-violet">· {p.partner.name}</span>
-                  {p.ended_at ? ` · ${formatRideDate(p.ended_at, timeZone, new Date(now)).toLowerCase()}` : ""}
+                  {p.end_reason ? ` · ${NETWORK_EXECUTION_END_LABELS[p.end_reason] ?? ""}` : ""}
+                  {p.ended_at ? ` ${formatRideDate(p.ended_at, timeZone, new Date(now)).toLowerCase()}` : ""}
                 </li>
               ))}
             </ul>
