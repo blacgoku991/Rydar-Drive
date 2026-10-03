@@ -143,8 +143,16 @@ async function removePartner(rideId: string, p: Pair, reason: string) {
   });
 }
 
-/** Ligne de règlement réseau (lot argent 006900) : écrite directement. */
+/**
+ * Ligne de règlement réseau : créée par le lot argent (20260924006900, private.sync_network_settlement) quand la course
+ * passe COMPLETED — reprise telle quelle (mêmes termes : TERMS) ; écrite directement si la course n'est pas terminée.
+ */
 async function networkSettlement(rideId: string, p: Pair, executionId: string, status = "due") {
+  const [made] = await sql(`select id from public.ride_settlements where ride_id = $1 and network_execution_id = $2`, [rideId, executionId]);
+  if (made) {
+    if (status !== "due") await sql(`update public.ride_settlements set status = $2 where id = $1`, [made.id, status]);
+    return made.id as string;
+  }
   const [s] = await sql(
     `insert into public.ride_settlements (organization_id, ride_id, driver_id, driver_label, direction, amount_cents,
        price_cents, commission_cents, platform_fee_cents, driver_payout_cents, payment_method, reference, due_at,
@@ -1154,12 +1162,13 @@ describe("Policies : aucune lecture croisée entre organisations", () => {
     const mine = await as({ sub: p.partner.userId }, async (q) => ({
       rides: await q(`select id from public.rides where id = $1`, [r.id]),
       offers: await q(`select id, status, is_network from public.ride_offers where ride_id = $1`, [r.id]),
-      notifications: await q(`select id from public.notifications where ride_id = $1`, [r.id]),
+      notifications: await q(`select type from public.notifications where ride_id = $1 order by type`, [r.id]),
       settlements: await q(`select id from public.ride_settlements where ride_id = $1`, [r.id]),
     }));
     expect(mine.rides).toEqual([]);
     expect(mine.offers).toEqual([expect.objectContaining({ status: "accepted", is_network: true })]);
-    expect(mine.notifications).toHaveLength(1);
+    // Ses notifications de la course : la sienne (test) et « À RÉGLER À {A} » du règlement réseau (lot argent, 006900)
+    expect(mine.notifications).toEqual([{ type: "settlement_due" }, { type: "test" }]);
     expect(mine.settlements).toEqual([]);
     for (const stmt of [`select network_terms from public.ride_offers`, `select * from public.ride_offers`]) {
       expect((await expectPgError(as({ sub: p.partner.userId }, (q) => q(stmt)))).code, stmt).toBe("42501");

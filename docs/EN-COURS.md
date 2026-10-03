@@ -257,7 +257,8 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
 ## Réseau partagé (branche `shared-network`, en cours, interrupteur plateforme coupé)
 - Lots faits : 0 (contrats `packages/shared/src/network.ts`), 2 (schéma, gardes, droits : migration `20260924006700`,
   non poussée), 3 (dispatch, migration `20260924006800`, non poussée : 3a éligibilité, étape réseau des immédiates et
-  des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
+  des planifiées, acceptation ; 3b retraits, chien de garde, clôture, contrôles de fin), 4a (argent côté chauffeur,
+  migration `20260924006900`, non poussée ; la partie 4b la complète). **Numéros réservés** : 006700 schéma, 006800 dispatch, 006900 argent, 007000 accès, 007100
   administration ; prochaine migration hors réseau : **007200** (numéro unique : `migrations.test.ts`, `deploy/migrate.sh`).
 - Écrans faits (lots 8 et 9, fusionnés après la CGV finale) : web = onglet `/dashboard/reseau-partage`, fiche course,
   liste, En direct, alertes, `/suspended/reseau-partage`, `/admin/reseau` + carte de la fiche organisation, pages
@@ -303,6 +304,20 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
     chemin) : le lot administration part de cette version ;
   - fin d'une course partagée d'une A **centrale** : 23503 tant que le lot argent n'a pas routé `sync_ride_settlement`
     (A flotte : sans objet).
+- Règles posées par le lot 4a (argent, côté chauffeur) :
+  - fin d'une course partagée : `private.sync_ride_settlement` envoie d'abord vers `private.sync_network_settlement`
+    (termes figés de l'exécution « completed », jamais les colonnes vivantes) : ligne `driver_id` NULL, `network_*`,
+    « Prénom I. · {B} », « R{n°} », échéance délai de A ≥ 48 h (reversement) ou 7 jours et après la retenue
+    (versement) ; empreinte du RIB posée sur l'exécution ; jamais `maybe_promote_driver` ;
+  - diffusion : org:{A} = `settlement_json` (bloc « network » des lignes réseau) ; driver:{network_driver_id} =
+    `{action, network: true, item}` (`private.network_settlement_item`, un montant par sens) ; jamais org:{B} ;
+  - RPC chauffeur indépendantes de l'interrupteur : `driver_network_settlements`, `driver_declare_network_payment`
+    (moyens de p_org seulement, lignes d'une autre organisation → FORBIDDEN_TENANT), `driver_dispute_network_settlement`
+    (une fois par ligne, `NETWORK_DISPUTE_REASON_INVALID`), `driver_payout_info` / `driver_set_payout_details` /
+    `driver_delete_payout_details` (IBAN masqué, `PAYOUT_DETAILS_IN_USE`) ;
+  - `private.network_driver_readiness(chauffeur)` (lisibilité complète, contrat NetworkDriverReadiness) : les RPC de
+    lisibilité des lots 5 et 6 l'enveloppent ; `driver_home().network` et `driver_earnings` (net par course aux termes
+    figés, communes seulement pour une course partenaire) : clés ajoutées seulement quand il y a du réseau.
 - Règles posées par la revue du lot 3 :
   - client à bord d'un partenaire (PASSENGER_ONBOARD, IN_PROGRESS) : `cancel_ride` refusé à tous sauf système / super
     admin (`NETWORK_RIDE_IN_PROGRESS` ; `private.cancel_ride_internal` redéfinie en 006800, le lot suivant qui la touche

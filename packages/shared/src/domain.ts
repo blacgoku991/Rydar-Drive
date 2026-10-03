@@ -282,6 +282,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   NETWORK_CONSENT_REQUIRED: "Activez « Courses du réseau partagé » et acceptez ses conditions dans votre profil.",
   NETWORK_PAYOUT_ON_HOLD: "Versement retenu : course à vérifier (validez-la, ou attendez 72 h après sa fin).",
   NETWORK_DISPUTE_NOT_ALLOWED: "Contestation impossible pour ce règlement (déjà contesté, ou rien à contester).",
+  NETWORK_DISPUTE_REASON_INVALID: "Expliquez votre contestation en quelques mots (5 à 300 caractères).",
   OFFER_CHANGED: "La course a été modifiée : elle vous sera reproposée si elle est encore disponible.",
   DRIVER_BUSY_AT_TIME: "Créneau déjà pris : une autre course de ce chauffeur chevauche celle-ci.",
   DRIVER_HAS_NETWORK_OBLIGATIONS:

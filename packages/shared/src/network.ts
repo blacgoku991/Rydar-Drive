@@ -1025,10 +1025,17 @@ export interface DriverNetworkSettlementItem {
   driver_dispute_reason: string | null;
   /** « Je conteste » encore possible (une fois par ligne) */
   can_dispute: boolean;
-  /** Communes seulement (adresse exacte non conservée dans les règlements) */
+  /**
+   * Communes seulement (adresse exacte non conservée dans les règlements) : pickup = « 75008 Paris » ou « 75008 »
+   * (private.address_area), dropoff = commune, sinon code postal ; « — » si l'adresse n'en contient pas.
+   */
   ride: { number: number; pickup: string; dropoff: string; completed_at: Iso | null };
 }
 
+/**
+ * « settlement.updated » sur driver:{network_driver_id} (private.broadcast_settlement) ; jamais sur org:{B}. « updated » :
+ * contestation du chauffeur (« Je conteste ») ou autre changement sans changement d'état.
+ */
 export interface DriverNetworkSettlementEvent {
   action: "created" | "updated" | "declared" | "paid" | "disputed" | "waived" | "reopened";
   network: true;
@@ -1049,6 +1056,7 @@ export interface NetworkSettlementTotals {
 
 /** Une organisation créancière ou débitrice du chauffeur (moyens de paiement de CETTE organisation). */
 export interface DriverNetworkCreditor {
+  /** phone : tant qu'une ligne est ouverte ou a changé ces 48 dernières heures (§11.1), sinon null */
   organization: { id: Uuid; name: string; phone: string | null };
   currency: string;
   /** Délai de A, au moins 48 h */
@@ -1813,7 +1821,9 @@ export const NETWORK_ERROR_CODES = [
   "NETWORK_VTC_REGISTRATION_REQUIRED", "NETWORK_PAYMENT_METHODS_REQUIRED", "NETWORK_INSURANCE_REQUIRED",
   "NETWORK_RIDE_LOCKED", "NETWORK_RIDE_IN_PROGRESS", "NETWORK_CLOSE_NOT_ALLOWED", "NETWORK_CONTEST_EXPIRED",
   "NETWORK_SETTLEMENT_ACTION_FORBIDDEN",
-  "NETWORK_CONSENT_REQUIRED", "NETWORK_PAYOUT_ON_HOLD", "NETWORK_DISPUTE_NOT_ALLOWED", "OFFER_CHANGED",
+  "NETWORK_CONSENT_REQUIRED", "NETWORK_PAYOUT_ON_HOLD", "NETWORK_DISPUTE_NOT_ALLOWED",
+  // Lot argent (4a) : « Je conteste » sans motif de 5 à 300 caractères (driver_dispute_network_settlement)
+  "NETWORK_DISPUTE_REASON_INVALID", "OFFER_CHANGED",
   "DRIVER_BUSY_AT_TIME", "DRIVER_HAS_NETWORK_OBLIGATIONS", "PAYOUT_DETAILS_INVALID", "PAYOUT_DETAILS_IN_USE",
   // Ajout web (revue) : org_network_payout_info, chauffeur sans coordonnées bancaires (RIB facultatif)
   "PAYOUT_DETAILS_MISSING",

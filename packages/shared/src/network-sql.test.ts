@@ -1,14 +1,16 @@
-// Textes et paramètres du réseau partagé écrits en SQL (dispatch, 20260924006800) = ceux de @rydar/shared : messages
-// de blocage (private.network_blocker_message ↔ NETWORK_BLOCKER_META), raisons de non-partage du journal
-// (private.network_skip_label ↔ NETWORK_SKIP_REASON_LABELS), paramètres fixes de la v1 (NETWORK_PARAMS), motifs de
-// retrait, causes du chien de garde et de la clôture, raisons « à vérifier ».
+// Textes et paramètres du réseau partagé écrits en SQL (dispatch 20260924006800, argent 20260924006900) = ceux de
+// @rydar/shared : messages de blocage (private.network_blocker_message ↔ NETWORK_BLOCKER_META), raisons de non-partage du
+// journal (private.network_skip_label ↔ NETWORK_SKIP_REASON_LABELS), paramètres fixes de la v1 (NETWORK_PARAMS), motifs
+// de retrait, causes du chien de garde et de la clôture, raisons « à vérifier » ; argent : clés d'un règlement partenaire
+// (DriverNetworkSettlementItem), noms des paramètres des RPC du chauffeur (NetworkRpcs), lisibilité du chauffeur.
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  ACCEPT_OFFER_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES, NETWORK_EXECUTION_END_REASONS,
-  NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS, NETWORK_SHARE_CLOSED_REASONS, NETWORK_SKIP_REASON_LABELS, NETWORK_SUSPECT_REASONS,
-  NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES, type NetworkOfferNotificationData,
+  ACCEPT_OFFER_CODES, DRIVER_NETWORK_READINESS_CODES, NETWORK_BLOCKER_META, NETWORK_BLOCKERS, NETWORK_CLOSE_CAUSES,
+  NETWORK_EXECUTION_END_REASONS, NETWORK_OFFER_NOTIFICATION_KEYS, NETWORK_PARAMS, NETWORK_SHARE_CLOSED_REASONS,
+  NETWORK_SKIP_REASON_LABELS, NETWORK_SUSPECT_REASONS, NETWORK_UNASSIGN_REASONS, NETWORK_WATCH_CAUSES,
+  type DriverNetworkSettlementItem, type NetworkOfferNotificationData, type NetworkRpcs,
 } from "./network";
 
 const MIGRATIONS = fileURLToPath(new URL("../../../supabase/migrations/", import.meta.url));
@@ -159,5 +161,67 @@ describe("Réseau partagé : retraits, chien de garde, clôture et contrôles de
     expect([...reasons, "closed_by_giver"].sort()).toEqual([...NETWORK_SUSPECT_REASONS].sort());
     expect(checks).toContain(`now() + interval '${NETWORK_PARAMS.payoutHoldHours} hours'`);
     expect(close).toContain(`now() + interval '${NETWORK_PARAMS.payoutHoldHours} hours'`);
+  });
+});
+
+describe("Réseau partagé, argent (partie 4a) : SQL = contrats de @rydar/shared", () => {
+  it("private.network_settlement_item : clés = DriverNetworkSettlementItem (un montant par sens, jamais commission ni frais)", () => {
+    const body = lastSqlDefinition("private.network_settlement_item");
+    const top = body.slice(body.indexOf("jsonb_build_object("), body.indexOf("'ride', jsonb_build_object("));
+    const keys = [...top.matchAll(/^\s*'([a-z_]+)',/gm)].map((m) => m[1]!).concat("ride");
+    const sample = {
+      id: "s", ride_id: "r", reference: "R1783", direction: "driver_owes", amount_cents: 1250, price_cents: 5000,
+      driver_part_cents: 3750, giver_part_cents: 1250, currency: "EUR", payment_method: "cash", status: "due", overdue: false,
+      on_hold: false, hold_until: null, due_at: "2026-10-05T10:00:00Z", declared_at: null, declared_method: null, settled_at: null,
+      settled_method: null, disputed_at: null, driver_disputed_at: null, driver_dispute_reason: null, can_dispute: false,
+      ride: { number: 1783, pickup: "75008 Paris", dropoff: "Roissy-en-France", completed_at: null },
+    } satisfies DriverNetworkSettlementItem;
+    expect(keys.sort()).toEqual(Object.keys(sample).sort());
+    const ride = body.slice(body.indexOf("'ride', jsonb_build_object(") + "'ride', jsonb_build_object(".length);
+    expect([...ride.matchAll(/^\s*'([a-z_]+)',/gm)].map((m) => m[1]!).sort()).toEqual(Object.keys(sample.ride).sort());
+    expect(body).not.toMatch(/'(commission_cents|platform_fee_cents)'/);
+    // Diffusion au chauffeur : son élément, jamais settlement_json ; jamais l'organisation du chauffeur
+    const broadcast = lastSqlDefinition("private.broadcast_settlement");
+    expect(broadcast).toContain("jsonb_build_object('action', p_action, 'network', true, 'item', private.network_settlement_item(x))");
+    expect(broadcast).toContain("'driver:' || x.network_driver_id::text");
+    expect(broadcast).not.toContain("network_driver_org_id::text");
+  });
+
+  it("RPC du chauffeur (argent) : noms des paramètres = NetworkRpcs (appel de l'app : apps/driver/src/lib/api.ts)", () => {
+    type Args<K extends keyof NetworkRpcs> = Record<keyof NetworkRpcs[K]["args"], true>;
+    const contract = {
+      driver_payout_info: {} satisfies Args<"driver_payout_info">,
+      driver_set_payout_details: { p_payee: true, p_iban: true, p_bic: true } satisfies Args<"driver_set_payout_details">,
+      driver_delete_payout_details: {} satisfies Args<"driver_delete_payout_details">,
+      driver_network_settlements: {} satisfies Args<"driver_network_settlements">,
+      driver_declare_network_payment: { p_org: true, p_ids: true, p_method: true, p_note: true } satisfies Args<"driver_declare_network_payment">,
+      driver_dispute_network_settlement: { p_id: true, p_reason: true } satisfies Args<"driver_dispute_network_settlement">,
+    };
+    for (const [fn, args] of Object.entries(contract)) {
+      const body = lastSqlDefinition(`public.${fn}`);
+      const signature = body.slice(body.indexOf("(") + 1, body.indexOf("\nreturns")).replace(/\)\s*$/, "");
+      const params = signature.trim() === "" ? [] : signature.split(",").map((x) => x.trim().split(/\s+/)[0]!);
+      expect(params, fn).toEqual(Object.keys(args));
+      // Portée : le chauffeur connecté seulement
+      expect(body, fn).toContain("private.current_driver_id()");
+    }
+  });
+
+  it("échéances : reversement au moins 48 h (délai de A), versement sous 7 jours (NETWORK_PARAMS)", () => {
+    expect(lastSqlDefinition("private.network_grace_hours")).toContain(`, 24), ${NETWORK_PARAMS.minDriverGraceHours});`);
+    expect(lastSqlDefinition("private.sync_network_settlement")).toContain(`now() + interval '${NETWORK_PARAMS.payoutDays} days'`);
+  });
+
+  it("lisibilité du chauffeur (private.network_driver_readiness) : codes de DRIVER_NETWORK_READINESS_CODES, dans le même ordre", () => {
+    const body = lastSqlDefinition("private.network_driver_readiness");
+    const codes: string[] = [];
+    for (const m of body.matchAll(/v_missing \|\| '([a-z_:]+)'::text|foreach v_type in array array\[([^\]]+)\]/g)) {
+      if (m[1]) codes.push(m[1]);
+      else codes.push(...[...m[2]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!));
+    }
+    const expected = DRIVER_NETWORK_READINESS_CODES.filter((c) => c !== "terms_grace");
+    expect(codes).toEqual([...expected]);
+    expect(body).toContain("v_warnings := v_warnings || 'terms_grace'::text");
+    expect(body).toContain(`interval '${NETWORK_PARAMS.appCapableDays} days'`);
   });
 });
