@@ -328,6 +328,7 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     const mails = await emailsOf(o);
     expect(mails).toHaveLength(2);
     expect(mails[1].body_text).toContain(`Ce message remplace l'annonce précédente (changement prévu le ${ddmmyyyy(MIN_30)}).`);
+    expect(mails[1].body_text).toContain("Ce changement vous est annoncé au moins 30 jours à l'avance.");
     // Une seule ligne en attente, même en écriture directe (index unique)
     expect((await expectPgError(sql(
       `insert into public.platform_fee_changes (organization_id, mode, status, from_percent, from_fixed_cents, to_percent, to_fixed_cents, effective_at)
@@ -341,6 +342,14 @@ describe("Hausse des frais par course : annoncée au moins 30 jours à l'avance"
     expect(await setFees(o, sa, { fixed: 400, on: soon })).toMatchObject({ ok: false, code: "NOTICE_TOO_SHORT", min_effective_on: MIN_30 });
     const smaller = await setFees(o, sa, { fixed: 250 });
     expect(smaller).toMatchObject({ ok: true, code: "SCHEDULED", min_effective_on: soon, min_reason: "already_announced", scheduled_change: { fixed_cents: 250, effective_on: soon } });
+    // Annonce à moins de 30 jours (hausse moindre à la date déjà annoncée) : l'e-mail ne prétend pas « 30 jours »
+    const smallerMail = (await emailsOf(o)).at(-1)!;
+    expect(smallerMail.subject).toBe(`Rydar Drive${NBSP}: vos frais par course changent le ${ddmmyyyy(soon)}`);
+    expect(smallerMail.body_text).not.toContain("au moins 30 jours");
+    expect(smallerMail.body_text).toContain(
+      `Ce changement ne dépasse pas celui annoncé précédemment et ne s'applique pas plus tôt${NBSP}: il ne demande donc pas de nouveau préavis (article 5 des CGV). Si vous ne l'acceptez pas, vous pouvez résilier avant cette date, sans frais.`,
+    );
+    expectFrenchTypography(smallerMail.body_text);
     expect(await setFees(o, sa, { fixed: 250, on: addDays(soon, -1) })).toMatchObject({ ok: false, code: "NOTICE_TOO_SHORT", min_effective_on: soon });
 
     // Réglage égal aux taux actuels : annule l'annonce (« un nouveau réglage la remplace »), sans changer les taux
@@ -533,7 +542,7 @@ describe("E-mails d'annonce : destinataires, contenu fixe, idempotence", () => {
     await setFees(o, sa, { percent: 3 });
     const [m] = await emailsOf(o);
     expect(m.body_text).toContain(
-      `Les nouveaux frais s'appliquent aux répartitions du prix calculées à partir de cette date${NBSP}: courses créées à partir de cette date, et courses dont le prix, la commission ou le mode de paiement est modifié à partir de cette date (y compris une course déjà terminée, par une écriture de correction).`,
+      `Les nouveaux frais s'appliquent aux répartitions du prix calculées à partir de cette date${NBSP}: courses créées à partir de cette date, et courses dont le prix, la commission ou le mode de paiement est saisi ou modifié à partir de cette date (y compris une course déjà terminée, par une écriture de correction).`,
     );
     expect(m.body_text).toContain("https://app.rydar.example/dashboard/settlements");
   });
@@ -709,6 +718,10 @@ describe("Annonce des CGV par e-mail (svc_org_terms_notify)", () => {
     await sql(`update public.organizations set created_at = '2026-09-01T10:00:00Z' where id = any($1::uuid[])`, [[pending.id, older.id, noMail.id]]);
     const recent = await org("CGV Cliente Récente");
     await sql(`update public.organizations set created_at = '2026-10-02T10:00:00Z' where id = $1`, [recent.id]);
+    // Créée après la date de la version mais avant sa mise en ligne : elle avait accepté la version d'alors
+    const recentOld = await org("CGV Cliente Avant Mise En Ligne");
+    await sql(`update public.organizations set created_at = '2026-10-02T10:00:00Z' where id = $1`, [recentOld.id]);
+    await acceptTerms(recentOld, "2026-09-27");
 
     const res = await svc("svc_org_terms_notify", [sa, VERSION, LEGAL_ON, APP_URL]);
     expect(res).toMatchObject({ ok: true, code: "NOTIFIED" });
@@ -729,12 +742,15 @@ describe("Annonce des CGV par e-mail (svc_org_terms_notify)", () => {
     expect(m.subject).toBe(`Rydar Drive${NBSP}: nouvelles conditions générales de vente (version du 2 octobre 2026)`);
     expect(m.body_text).toContain("version du 2 octobre 2026");
     expect(m.body_text).toContain(
-      `Ce qui change${NBSP}: des frais plateforme par course peuvent s'appliquer aux flottes comme aux centrales à commission, en plus de l'abonnement (articles 3 à 5 des CGV). Toute hausse de ces frais vous sera annoncée au moins 30 jours à l'avance, sauf accord écrit de votre part.`,
+      `Ce qui change${NBSP}: des frais plateforme par course peuvent s'appliquer aux flottes comme aux centrales à commission, en plus de l'abonnement (articles 3 à 5 des CGV)${NBSP}; ces frais s'entendent toutes taxes comprises. Toute hausse de ces frais vous sera annoncée au moins 30 jours à l'avance, sauf accord écrit de votre part. L'accord de traitement des données ne change pas.`,
     );
     expect(m.body_text).toContain(`dès son acceptation, et au plus tard le ${long(LEGAL_ON)}. Si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`);
     const [r] = await emailsOf(recent);
     expect(r.body_text).toContain("Pour votre organisation, cette version s'applique dès son acceptation.");
     expect(r.body_text).not.toContain("au plus tard");
+    const [ro] = await emailsOf(recentOld);
+    expect(ro.body_text).toContain(`dès son acceptation, et au plus tard le ${long(LEGAL_ON)}. Si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`);
+    expect(m.body_text).toContain(`Texte complet, avec un lien vers la version précédente${NBSP}: page «${NBSP}Conditions générales de vente${NBSP}» du site Rydar Drive.`);
     expect(m.body_text).toContain("https://app.rydar.example/dashboard");
     expect(m.body_text).toContain("https://app.rydar.example/cgv");
     expect(m.reply_to).toBe("contact@rydar.example");

@@ -389,6 +389,10 @@ declare
   v_to text := private.platform_fee_terms_text(p_to_percent, p_to_fixed);
   v_reply boolean := private.platform_reply_to() is not null;
   v_url text := private.app_origin(p_url);
+  -- Annonce faite au moins 30 jours avant la date d'effet ? Sinon (seul cas possible : remplacement d'une hausse déjà
+  -- annoncée par une hausse moindre ou plus tardive, svc_platform_set_fees « already_announced »), l'e-mail ne dit pas
+  -- « au moins 30 jours à l'avance » (CGV art. 5 : réduite ou reportée sans nouveau délai).
+  v_full_notice boolean := p_kind = 'notice' and p_on >= private.platform_fee_min_effective_on(p_org, null, null);
   v_links text;
   v_footer text;
   v_subject text;
@@ -410,11 +414,14 @@ begin
       format('Frais actuels : %s.', v_from) || E'\n' || format('À partir du %s : %s.', to_char(p_on, 'DD/MM/YYYY'), v_to),
       case when v_fleet
         then 'Les nouveaux frais s''appliquent aux courses terminées à partir de cette date. Une course terminée avant garde ses frais.'
-        else 'Les nouveaux frais s''appliquent aux répartitions du prix calculées à partir de cette date : courses créées à partir de cette date, et courses dont le prix, la commission ou le mode de paiement est modifié à partir de cette date (y compris une course déjà terminée, par une écriture de correction).'
+        else 'Les nouveaux frais s''appliquent aux répartitions du prix calculées à partir de cette date : courses créées à partir de cette date, et courses dont le prix, la commission ou le mode de paiement est saisi ou modifié à partir de cette date (y compris une course déjà terminée, par une écriture de correction).'
       end,
-      'Ce changement vous est annoncé au moins 30 jours à l''avance. Si vous ne l''acceptez pas, vous pouvez résilier avant cette date, sans frais.',
       case when p_replaced_on is not null
         then format('Ce message remplace l''annonce précédente (changement prévu le %s).', to_char(p_replaced_on, 'DD/MM/YYYY')) end,
+      case when v_full_notice
+        then 'Ce changement vous est annoncé au moins 30 jours à l''avance. Si vous ne l''acceptez pas, vous pouvez résilier avant cette date, sans frais.'
+        else 'Ce changement ne dépasse pas celui annoncé précédemment et ne s''applique pas plus tôt : il ne demande donc pas de nouveau préavis (article 5 des CGV). Si vous ne l''acceptez pas, vous pouvez résilier avant cette date, sans frais.'
+      end,
       v_links, v_footer, 'L''équipe Rydar Drive'];
   elsif p_kind = 'consent' then
     v_subject := 'Rydar Drive : vos frais par course ont changé';
@@ -425,7 +432,7 @@ begin
       format('Anciens frais : %s.', v_from) || E'\n' || format('Nouveaux frais : %s.', v_to),
       case when v_fleet
         then 'Les nouveaux frais s''appliquent aux courses terminées à partir de maintenant. Une course déjà terminée garde ses frais.'
-        else 'Les nouveaux frais s''appliquent aux répartitions du prix calculées à partir de maintenant : nouvelles courses, et courses dont le prix, la commission ou le mode de paiement est modifié (y compris une course déjà terminée, par une écriture de correction).'
+        else 'Les nouveaux frais s''appliquent aux répartitions du prix calculées à partir de maintenant : nouvelles courses, et courses dont le prix, la commission ou le mode de paiement est saisi ou modifié (y compris une course déjà terminée, par une écriture de correction).'
       end,
       case when p_replaced_on is not null
         then format('Ce changement remplace celui qui était annoncé pour le %s.', to_char(p_replaced_on, 'DD/MM/YYYY')) end,
@@ -448,9 +455,10 @@ end;
 $$;
 
 -- Annonce d'une nouvelle version des CGV (et de l'accord de traitement) à une organisation qui ne l'a pas acceptée.
--- Organisation cliente AVANT la publication (créée avant le jour de la version, heure de Paris) : la version s'applique
--- dès son acceptation et au plus tard à p_effective_on, résiliation sans frais possible avant ; organisation plus
--- récente : dès son acceptation (aucune date imposée).
+-- Organisation déjà cliente (créée avant le jour de la version, heure de Paris, ou qui avait accepté une version
+-- antérieure — créée entre la date de la version et sa mise en ligne) : la version s'applique dès son acceptation et
+-- au plus tard à p_effective_on, résiliation sans frais possible avant (préambule des CGV) ; sinon : dès son
+-- acceptation (aucune date imposée).
 create or replace function private.org_terms_email(p_org uuid, p_version text, p_effective_on date, p_url text)
 returns jsonb
 language plpgsql
@@ -464,15 +472,19 @@ declare
   v_before boolean;
   v_parts text[];
 begin
-  select o.created_at < (p_version::date)::timestamp at time zone 'Europe/Paris' into v_before
+  select o.created_at < (p_version::date)::timestamp at time zone 'Europe/Paris'
+         or exists (select 1 from public.legal_acceptances a
+                     where a.organization_id = p_org and a.document in ('cgv', 'dpa')
+                       and a.version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' and a.version < p_version)
+    into v_before
   from public.organizations o where o.id = p_org;
   v_parts := array[
     'Bonjour,',
-    format('Rydar Drive a publié une nouvelle version de ses conditions générales de vente (CGV) et de son accord de traitement des données : version du %s. Elle concerne votre organisation, référence %s.',
+    format('Rydar Drive a publié une nouvelle version de ses conditions générales de vente (CGV), à accepter avec son accord de traitement des données : version du %s. Elle concerne votre organisation, référence %s.',
       private.fr_long_date(p_version::date), v_ref),
     -- Résumé propre à chaque version (contenu fixe)
     case p_version
-      when '2026-10-02' then 'Ce qui change : des frais plateforme par course peuvent s''appliquer aux flottes comme aux centrales à commission, en plus de l''abonnement (articles 3 à 5 des CGV). Toute hausse de ces frais vous sera annoncée au moins 30 jours à l''avance, sauf accord écrit de votre part.'
+      when '2026-10-02' then 'Ce qui change : des frais plateforme par course peuvent s''appliquer aux flottes comme aux centrales à commission, en plus de l''abonnement (articles 3 à 5 des CGV) ; ces frais s''entendent toutes taxes comprises. Toute hausse de ces frais vous sera annoncée au moins 30 jours à l''avance, sauf accord écrit de votre part. L''accord de traitement des données ne change pas.'
       else 'Les changements sont résumés au début des CGV.'
     end,
     case when coalesce(v_before, true)
@@ -481,7 +493,8 @@ begin
       else 'Pour votre organisation, cette version s''applique dès son acceptation.' end,
     'Le propriétaire ou un administrateur l''accepte depuis le bandeau affiché dans le tableau de bord Rydar Drive.'
       || coalesce(E'\n' || v_url || '/dashboard', ''),
-    'Texte complet : page « Conditions générales de vente » du site Rydar Drive.' || coalesce(E'\n' || v_url || '/cgv', ''),
+    'Texte complet, avec un lien vers la version précédente : page « Conditions générales de vente » du site Rydar Drive.'
+      || coalesce(E'\n' || v_url || '/cgv', ''),
     'Message automatique de Rydar Drive. '
       || case when v_reply then 'Une question ? Répondez à cet e-mail.'
               else 'Une question ? Écrivez-nous depuis la page Contact du site Rydar Drive.' || coalesce(E'\n' || v_url || '/contact', '') end,

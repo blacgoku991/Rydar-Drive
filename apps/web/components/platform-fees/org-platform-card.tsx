@@ -66,7 +66,11 @@ export function OrgPlatformCard({
                 Frais plateforme Rydar
               </h2>
               <p className="mt-0.5 text-[12.5px] text-fg-muted">
-                À reverser à Rydar : {feeTermsText(a)}. {cycleText(a)}.
+                À reverser à Rydar&nbsp;: {feeTermsText(a)}. {cycleText(a)}
+                {a.block_after_days != null
+                  ? ` · création de courses suspendue après ${a.block_after_days} jour${a.block_after_days > 1 ? "s" : ""} de retard`
+                  : ""}
+                .
               </p>
             </div>
           </div>

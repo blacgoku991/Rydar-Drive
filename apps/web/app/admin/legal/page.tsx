@@ -1,4 +1,4 @@
-import { formatDate, legalAcceptanceState, localIsoDay, type LegalAcceptanceState } from "@rydar/shared";
+import { formatDate, legalAcceptanceState, legalDateLabel, localIsoDay, type LegalAcceptanceState } from "@rydar/shared";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalInfoForm } from "@/components/admin/legal-form";
@@ -42,6 +42,9 @@ export default async function AdminLegalPage() {
   const toNotify = missing.filter((o) => !notified.has(o.id)).length;
   // L'annonce dit « au plus tard le … » : plus envoyée une fois cette date atteinte (heure de Paris, comme la base)
   const effectivePassed = localIsoDay(new Date(), "Europe/Paris") >= ORG_LEGAL_EFFECTIVE_AT;
+  // CGV art. 16 : une modification défavorable est annoncée au moins 30 jours avant son entrée en vigueur. Annoncée
+  // aujourd'hui, elle laisserait moins de 30 jours (ORG_LEGAL_EFFECTIVE_AT à repousser avant d'envoyer).
+  const shortNotice = !effectivePassed && localIsoDay(new Date(Date.now() + 30 * 86_400_000), "Europe/Paris") >= ORG_LEGAL_EFFECTIVE_AT;
 
   return (
     <>
@@ -83,7 +86,14 @@ export default async function AdminLegalPage() {
                         ? "Entrée en vigueur atteinte\u00a0: l'annonce par e-mail n'est plus envoyée."
                         : `${missing.length - toNotify} prévenue${missing.length - toNotify > 1 ? "s" : ""} par e-mail sur ${missing.length} en attente.`}
                     </p>
-                    <OrgTermsNotifyButton toNotify={toNotify} effectivePassed={effectivePassed} />
+                    {shortNotice && (
+                      <p className="text-amber">
+                        Moins de 30 jours avant le {legalDateLabel(ORG_LEGAL_EFFECTIVE_AT)}{"\u00a0"}: l&apos;article 16 des CGV
+                        demande d&apos;annoncer une modification défavorable au moins 30 jours avant son entrée en vigueur.
+                        Repoussez d&apos;abord la date (ORG_LEGAL_EFFECTIVE_AT, @rydar/shared) puis redéployez.
+                      </p>
+                    )}
+                    <OrgTermsNotifyButton toNotify={toNotify} effectivePassed={effectivePassed} shortNotice={shortNotice} />
                   </div>
                 )}
                 {missing.length === 0 ? (

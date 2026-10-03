@@ -14,7 +14,7 @@ export const metadata: Metadata = marketingMetadata({
   path: "/tarifs",
   title: "Tarifs du logiciel de dispatch VTC",
   description: fr(
-    "Abonnement mensuel ou annuel, prix hors taxes, renouvellement arrêté quand vous voulez depuis le tableau de bord. Selon l'offre : frais plateforme par course terminée, flotte comme centrale.",
+    "Abonnement mensuel ou annuel, prix hors taxes, renouvellement arrêté quand vous voulez depuis le tableau de bord. Selon les conditions convenues avec Rydar : frais plateforme par course terminée (TTC), flotte comme centrale.",
   ),
 });
 

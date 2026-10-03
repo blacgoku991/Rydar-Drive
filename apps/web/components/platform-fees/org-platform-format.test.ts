@@ -59,6 +59,17 @@ describe("hausse des frais par course annoncée (encart « Frais Rydar » / « E
     expect(scheduledFeeChangeText({ ...account, scheduled_change: null }, "fleet")).toBeNull();
   });
 
+  it("hausse annoncée remplacée par une hausse moindre à la date déjà annoncée : jamais « au moins 30 jours » si c'est faux", () => {
+    // Annonce du 20/10 pour le 05/11 (16 jours) : seulement possible en remplacement d'une hausse plus forte déjà annoncée
+    const replaced = { ...account, scheduled_change: { ...account.scheduled_change, announced_at: "2026-10-20T08:00:00Z" } };
+    const body = nb(scheduledFeeChangeText(replaced, "fleet", "Europe/Paris")!.body);
+    expect(body).not.toContain("au moins 30 jours");
+    expect(body).toContain("Annoncé le 20/10/2026, en remplacement d'une annonce précédente (frais moins élevés ou date plus tardive) : si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.");
+    // Exactement 30 jours avant la date d'effet (minuit) : « au moins 30 jours »
+    const exact = { ...account, scheduled_change: { ...account.scheduled_change, announced_at: "2026-10-05T23:00:00Z" } };
+    expect(nb(scheduledFeeChangeText(exact, "fleet", "Europe/Paris")!.body)).toContain("au moins 30 jours à l'avance");
+  });
+
   it("règle des taux appliqués selon le modèle : flotte = fin de course ; centrale = calcul de la répartition", () => {
     expect(nb(scheduledFeeChangeText(account, "fleet")!.body)).toContain("aux courses terminées à partir de cette date ; une course déjà terminée garde ses frais.");
     const centrale = nb(scheduledFeeChangeText({ ...account, fee_percent: 5 }, "centrale")!.body);

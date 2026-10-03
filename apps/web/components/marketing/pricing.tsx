@@ -104,7 +104,7 @@ export function PlatformFeeNote({ className }: { className?: string }) {
   return (
     <p className={cn("mx-auto max-w-2xl text-center text-[13px] leading-relaxed text-fg-muted", className)}>
       {fr(
-        "Flotte ou centrale à commission : des frais plateforme par course terminée peuvent s'ajouter à l'abonnement ou le remplacer, selon l'offre ou les conditions convenues. Rydar n'encaisse pas le prix des courses.",
+        "Flotte ou centrale à commission : des frais plateforme par course terminée, toutes taxes comprises, peuvent s'ajouter à l'abonnement ou le remplacer, selon les conditions convenues avec Rydar. Rydar n'encaisse pas le prix des courses.",
       )}
     </p>
   );
@@ -122,12 +122,12 @@ const FACTS: { icon: LucideIcon; title: string; text: string }[] = [
   {
     icon: Receipt,
     title: "Changements de prix annoncés",
-    text: "Prix hors taxes. Un changement de prix est annoncé au moins 30 jours à l'avance et ne s'applique qu'au renouvellement suivant.",
+    text: "Abonnement hors taxes : un changement de son prix est annoncé au moins 30 jours à l'avance et ne s'applique qu'au renouvellement suivant. Frais par course : toute hausse est annoncée au moins 30 jours avant de s'appliquer, sauf accord écrit de votre part ; vous pouvez résilier sans frais avant.",
   },
   {
     icon: FileText,
     title: "Frais plateforme lisibles",
-    text: "Un pourcentage du prix et/ou un montant fixe par course terminée, affichés dans votre tableau de bord, avec un relevé exportable en CSV.",
+    text: "Un pourcentage du prix, un montant fixe par course terminée, ou les deux, toutes taxes comprises, selon les conditions convenues avec Rydar. Affichés dans votre tableau de bord, avec un relevé exportable en CSV.",
   },
   {
     icon: Database,

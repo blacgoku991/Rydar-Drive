@@ -132,8 +132,10 @@ function RecordPaymentDialog({
 }
 
 // ---------------------------------------------------------------------------- avoir / frais ajoutés
-const CREDIT_REASONS = ["Geste commercial", "Erreur de frais", "Course litigieuse remboursée"] as const;
-const CHARGE_REASONS = ["Course non enregistrée", "Correction d'erreur", "Frais oubliés"] as const;
+// CGV art. 5 : l'éditeur inscrit au relevé, avec son motif, un avoir ou la correction d'une erreur de calcul des frais ;
+// aucun autre montant sans l'accord écrit de l'organisation (le code ne le contrôle pas : motif à préciser).
+const CREDIT_REASONS = ["Geste commercial", "Erreur de calcul des frais", "Course litigieuse remboursée"] as const;
+const CHARGE_REASONS = ["Erreur de calcul des frais", "Accord écrit de l'organisation du"] as const;
 
 function AdjustDialog({
   open,
@@ -230,11 +232,17 @@ function AdjustDialog({
               onChange={(e) => setReason(e.target.value)}
               maxLength={500}
               className="min-h-[72px]"
-              placeholder={kind === "credit" ? "Ex. geste commercial pour septembre" : "Ex. course 1692 non enregistrée"}
+              placeholder={kind === "credit" ? "Ex. geste commercial pour septembre" : "Ex. erreur de calcul des frais de la course 1692"}
               aria-invalid={!!errors.reason || undefined}
             />
           </Field>
           <Chips options={kind === "credit" ? CREDIT_REASONS : CHARGE_REASONS} onPick={setReason} />
+          {kind === "charge" && (
+            <p className="text-[12px] leading-relaxed text-fg-muted">
+              CGV, article 5{"\u00a0"}: des frais ajoutés corrigent une erreur de calcul des frais{"\u00a0"}; tout autre montant
+              demande l&apos;accord écrit de l&apos;organisation (date et forme dans le motif).
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Annuler

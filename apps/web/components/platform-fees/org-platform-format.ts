@@ -31,10 +31,15 @@ export function feeTermsText(a: Pick<PlatformAccount, "fee_percent" | "fee_fixed
 /** Espaces insécables avant « : ; ! ? » et à l'intérieur des guillemets (textes composés, comme private.fr_typo). */
 export const frSpaces = (t: string) => t.replace(/ ([:;!?»])/g, "\u00a0$1").replace(/« /g, "«\u00a0");
 
+/** 30 jours : préavis d'une hausse annoncée (svc_platform_set_fees, CGV art. 5). */
+const NOTICE_MS = 30 * 86_400_000;
+
 /**
  * Hausse des frais par course annoncée (account.scheduled_change, 20260924006600) : encart « À partir du JJ/MM/AAAA »
  * de « Frais Rydar » (flotte) / « Encaissements » (centrale), bandeau et alerte. Règle des taux appliqués selon le
  * modèle (flotte : fin de course ; centrale : calcul de la répartition). null : aucune hausse annoncée.
+ * « au moins 30 jours à l'avance » seulement quand c'est vrai : une hausse annoncée remplacée par une hausse moindre
+ * ou plus tardive garde sa date sans nouveau préavis (CGV art. 5), et sa nouvelle annonce peut être plus proche.
  */
 export function scheduledFeeChangeText(
   a: Pick<PlatformAccount, "scheduled_change" | "fee_percent" | "fee_fixed_cents" | "currency">,
@@ -47,11 +52,15 @@ export function scheduledFeeChangeText(
   const target = feeTermsText({ fee_percent: c.percent, fee_fixed_cents: c.fixed_cents, currency: a.currency }, "aucuns frais par course");
   const now = feeTermsText(a, "aucuns frais par course");
   const next = frSpaces(`À partir du ${on} : ${target} (actuellement : ${now}).`);
+  const fullNotice = Date.parse(c.effective_at) - Date.parse(c.announced_at) >= NOTICE_MS;
+  const announced = fullNotice
+    ? `Annoncé le ${formatDate(c.announced_at, timeZone)}, au moins 30 jours à l'avance`
+    : `Annoncé le ${formatDate(c.announced_at, timeZone)}, en remplacement d'une annonce précédente (frais moins élevés ou date plus tardive)`;
   return {
     title: `Vos frais par course changent le ${on}`,
     next,
     body: frSpaces(
-      `${next} ${platformFeeScopeText(model ?? "fleet", "date")} Annoncé le ${formatDate(c.announced_at, timeZone)}, au moins 30 jours à l'avance : si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`,
+      `${next} ${platformFeeScopeText(model ?? "fleet", "date")} ${announced} : si vous ne l'acceptez pas, vous pouvez résilier sans frais avant cette date.`,
     ),
   };
 }
