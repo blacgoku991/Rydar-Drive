@@ -13,6 +13,7 @@ export function AdminShell({
   platformToReview = 0,
   deletionsToReview = 0,
   contactsToReview = 0,
+  networkToReview = 0,
   centraleName = null,
 }: {
   children: React.ReactNode;
@@ -28,6 +29,8 @@ export function AdminShell({
   deletionsToReview?: number;
   /** Nouvelles demandes du formulaire de contact, pas encore ouvertes (pastille « Demandes de contact ») */
   contactsToReview?: number;
+  /** Réseau partagé : organisations à valider (demandes, validations perdues) — pastille « Réseau partagé » */
+  networkToReview?: number;
   /** Super admin aussi membre d'une ou plusieurs centrales : lien vers son espace centrale (/dashboard) */
   centraleName?: string | null;
 }) {
@@ -62,6 +65,14 @@ export function AdminShell({
           badge: platformToReview,
           badgeTone: "amber",
           badgeLabel: `${platformToReview} élément${platformToReview > 1 ? "s" : ""} à confirmer (paiements, baisses de frais)`,
+        },
+        {
+          href: "/admin/reseau",
+          label: "Réseau partagé",
+          icon: "share",
+          badge: networkToReview,
+          badgeTone: "amber",
+          badgeLabel: `${networkToReview} organisation${networkToReview > 1 ? "s" : ""} à valider pour le réseau partagé`,
         },
         { href: "/admin/plans", label: "Offres & limites", icon: "card" },
         { href: "/admin/legal", label: "Informations légales", icon: "scroll" },

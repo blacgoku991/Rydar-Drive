@@ -1,6 +1,6 @@
 import {
   DISPATCH_MODEL_META, ORG_STATUS_META, PRESENCE_META, formatCompactPrice, formatNumber, formatRelative,
-  type AdminPlatformAccount, type DispatchModel, type DriverPresence, type OrgStatus,
+  type AdminPlatformAccount, type DispatchModel, type DriverPresence, type NetworkMembership, type OrgStatus,
 } from "@rydar/shared";
 import { ArrowLeft, ExternalLink, Layers } from "lucide-react";
 import type { Metadata } from "next";
@@ -8,6 +8,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { OrganizationPlanForm, OrganizationStatusActions } from "@/components/admin/admin-widgets";
 import { DispatchModelForm } from "@/components/admin/dispatch-model";
+import { OrgNetworkCard } from "@/components/admin/org-network-card";
 import { OrganizationAccessCard, type AccessMember } from "@/components/admin/organization-access";
 import { OrgPlatformFeesCard } from "@/components/platform-fees/admin-org-fees-card";
 import { PageBody, StatCard } from "@/components/layout/page-header";
@@ -15,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { sharedNetworkEnabled } from "@/lib/shared-network";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = { title: "Rattacheur" };
@@ -58,7 +60,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   const memberLocksP = membersP.then((r) =>
     memberLoginLocks([...new Set(((r.data ?? []) as { user_id: string | null }[]).map((m) => m.user_id as string).filter(Boolean))]),
   );
-  const [{ data: org }, kpis, plans, subscription, drivers, errors, notifications, members, locks, keys, applications, banned, platform] = await Promise.all([
+  const [{ data: org }, kpis, plans, subscription, drivers, errors, notifications, members, locks, keys, applications, banned, platform, networkOn, networkRow] = await Promise.all([
     // Colonnes réservées au serveur (motif de suspension, limites, relance Rydar : GRANT par colonne, 20260924004300) :
     // lecture seule par le client admin, après requireSuperAdmin
     createAdminClient().from("organizations").select("*").eq("id", id).maybeSingle(),
@@ -75,6 +77,9 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     db.from("drivers").select("id", { count: "exact", head: true }).eq("organization_id", id).not("banned_at", "is", null),
     // Frais plateforme dus à Rydar (centrale, flotte avec des frais par course, ou historique)
     db.rpc("admin_platform_account", { p_org: id }),
+    // Réseau partagé : interrupteur de la plateforme et participation de l'organisation (RLS super admin)
+    sharedNetworkEnabled(),
+    db.from("network_memberships").select("*").eq("organization_id", id).maybeSingle(),
   ]);
   if (!org) notFound();
   const k = (kpis.data ?? {}) as any;
@@ -171,6 +176,16 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
           <div className="min-w-0 space-y-6">
             <OrganizationAccessCard orgId={id} orgName={org.name} members={accessMembers} />
             {showPlatform && platformAccount && <OrgPlatformFeesCard orgId={id} account={platformAccount} timeZone={org.timezone ?? "Europe/Paris"} />}
+            {/* Réseau partagé : réseau ouvert, ou organisation qui y a déjà participé (réglages conservés) */}
+            {(networkOn || networkRow.data) && (
+              <OrgNetworkCard
+                orgId={id}
+                membership={(networkRow.error ? null : (networkRow.data ?? null)) as NetworkMembership | null}
+                enabled={networkOn}
+                timeZone={org.timezone ?? "Europe/Paris"}
+                currency={org.currency ?? "EUR"}
+              />
+            )}
           </div>
         </div>
 
