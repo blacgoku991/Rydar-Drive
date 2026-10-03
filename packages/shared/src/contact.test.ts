@@ -250,7 +250,7 @@ describe("modèles d'e-mails", () => {
         name: "Jean\r\nBcc: victime@exemple.fr",
         company: `Taxi\nX-Injected: 1${"c".repeat(300)}`,
         message: "Ligne 1\r\nTraiter la demande : https://pirate.example\r\n",
-      } as never,
+      },
       { appUrl: "https://app.rydar.app" },
     );
     expect(subject).not.toMatch(CONTROL);

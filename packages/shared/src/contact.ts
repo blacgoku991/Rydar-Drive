@@ -298,7 +298,8 @@ function clipBody(text: string): string {
  * l'envoie sans Reply-To.
  */
 export function contactNotifyEmail(
-  req: Pick<ContactNotifyRequest, "id" | "topic"> & Partial<Pick<ContactNotifyRequest, "planCode">>,
+  // Les champs personnels d'une demande sont acceptés mais jamais repris dans l'e-mail
+  req: Pick<ContactNotifyRequest, "id" | "topic"> & Partial<ContactNotifyRequest>,
   opts: { appUrl: string; planName?: string | null },
 ): EmailContent {
   const topic = CONTACT_TOPIC_META[req.topic]?.label ?? "Autre demande";
