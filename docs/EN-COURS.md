@@ -33,6 +33,18 @@ décider (justificatifs refusés, candidats refusés, signataire, fiche archivé
 nommer le prestataire de la boîte de contact ; à l'ouverture : nouvelle version des textes à chaque changement.
 Contrôles : typecheck OK, 1 249 tests unitaires, 809 tests DB, build web OK (/, /services, /faq régénérées toutes les
 5 min), export Android OK, migrations + seed sur base neuve OK (29 chauffeurs, 3 organisations).
+Contrôle final (relecture adverse) : seed corrigé (son bannissement « commissions impayées » signalé à Rydar était
+refusé par `PLATFORM_REPORT_CATEGORY` : plus aucun signalement « open », contrôle de la CI en échec → motif de fraude) ;
+e-mail d'interdiction envoyé à l'adresse du COMPTE d'abord (celle qu'annoncent les CGU, art. 11, et l'app), réexamen
+« par une personne de l'éditeur » (jamais « une autre personne »), accord du participe ; accusé de réception d'une
+demande sans prix = « demande de réservation » ; RLS sur `private.platform_whatsapp_refusals` ; textes : CGV (frais
+« ne l'encaisse pas » au lieu de « n'en reçoit aucune part », garantie sans la part due à un manquement de l'éditeur,
+obligation d'accepter une course = contrat de la centrale, webhooks « notamment »), confidentialité (accusé de réception
+aussi pour une demande sans prix), DPA art. 4 (journal des alertes du super admin nominatif), registre (supervision =
+sous-traitance), STORES (phrases à changer avant d'ouvrir le réseau), SECURITY (ne jamais retarder l'archivage).
+Toujours à la charge du propriétaire : remplir `/admin/legal` AVANT de déployer 007400 (sinon toute organisation sans
+CGV acceptées, « Démo App Review » comprise, reste bloquée sur l'écran d'acceptation) ; « L'accord de traitement des
+données ne change pas » (`ORG_LEGAL_CHANGES`, affiché sur /cgv) est inexact depuis les corrections des 3 et 4 octobre.
 
 ## Migrations de ce lot
 `20260924004300` (droits) à `20260924005600` (offres chauffeur) : 004300 droits, 004400 argent, 004500 dispatch,

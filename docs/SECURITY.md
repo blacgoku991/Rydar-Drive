@@ -139,19 +139,21 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 - **Coordonnées des clients** : téléphone, e-mail et précisions effacés 3 ans après la fin de l'année de la course
   (ménage quotidien `customer_contacts`) ; nom, trajet et montants gardés 10 ans.
 - **Fin du contrat d'une centrale** (CGV, art. 8 ; DPA, art. 11) : suppression promise sous 30 jours, mais **aucun outil
-  de purge n'existe encore**. À construire AVANT la première fin de contrat d'une centrale cliente : RPC super admin
-  `svc_purge_archived_org` (organisation archivée depuis 30 jours au moins ; chauffeurs et candidats par
-  `private.delete_driver_account` ; coordonnées des clients et précisions effacées des courses qui portent des frais
-  plateforme — registre en `on delete restrict` —, autres courses supprimées ; messages, positions, mini-site,
-  adhésions ; fiche, registre des frais, paiements et preuves gardés ; audit). D'ici là, n'archiver aucune centrale
-  cliente en fin de contrat.
+  de purge n'existe encore**. À construire de préférence AVANT l'ouverture, et au plus tard avant la première fin de
+  contrat d'une centrale cliente : RPC super admin `svc_purge_archived_org` (organisation archivée depuis 30 jours au
+  moins ; chauffeurs et candidats par `private.delete_driver_account` ; coordonnées des clients et précisions effacées
+  des courses qui portent des frais plateforme — registre en `on delete restrict` —, autres courses supprimées ;
+  messages, positions, mini-site, adhésions ; fiche, registre des frais, paiements et preuves gardés ; audit). Ne jamais
+  retarder l'archivage d'une centrale en fin de contrat pour attendre l'outil : l'archivage à la fin du contrat et la
+  suppression sous 30 jours sont promis aux centrales (CGV, art. 8) et exigés du sous-traitant (RGPD, art. 28.3.g).
 - **Mini-sites (clients particuliers)** : le professionnel est la centrale, Rydar lui donne les moyens d'être conforme :
   bouton « Réserver avec obligation de paiement » (Code de la consommation L221-14, maintenu pour le transport de
   passagers par L221-2), conditions de la centrale (`booking_sites.legal_mentions` : réservation, annulation, moyens de
   paiement, médiateur) affichées avant le bouton, simple information sur les données (aucune case de consentement), prix
   estimé « TTC », aucune promesse affichée qui ne dépende des réglages de la centrale. Mise en ligne et réservation
   refusées sans raison sociale, SIRET, adresse et n° VTC de la centrale (`bookingOperatorGaps`) ; avec un prix,
-  e-mail obligatoire et accusé de réception à contenu fixe (`svc_booking_receipt`, 3 par adresse et par 24 h) ;
+  e-mail obligatoire ; accusé de réception à contenu fixe dès qu'un e-mail est saisi (« demande de réservation » sans
+  prix ; `svc_booking_receipt`, 3 par adresse et par 24 h) ;
   pas de droit de rétractation (L221-2) rappelé. À relire avant de rouvrir les mini-sites (`booking_sites_enabled()`) ;
   le site vitrine affiche l'indisponibilité tant qu'ils sont coupés ; test `components/legal/legal-pages.test.ts`.
 

@@ -103,8 +103,8 @@ export default async function PrivacyPage() {
         <p>
           Nom, téléphone, e-mail (facultatif, sauf pour une réservation avec prix sur le mini-site), adresses de départ
           et d&apos;arrivée, date et heure, nombre de passagers et de bagages, numéro de vol éventuel, précisions, prix et
-          mode de paiement. Une réservation avec prix faite sur le mini-site reçoit, à cette adresse e-mail, un accusé
-          de réception envoyé pour le compte de la centrale. Vous les saisissez sur le mini-site
+          mode de paiement. Une réservation ou une demande faite sur le mini-site avec une adresse e-mail reçoit, à cette
+          adresse, un accusé de réception envoyé pour le compte de la centrale. Vous les saisissez sur le mini-site
           de la centrale, ou la centrale les enregistre (téléphone, son propre site par l&apos;API). Aucun compte client
           n&apos;est créé. Ces données sont transmises à la centrale nommée sur le mini-site, qui organise la course : aucune case à
           cocher ne vous est demandée pour cela. L&apos;adresse IP de l&apos;appareil qui envoie une réservation sert, sous
@@ -135,7 +135,7 @@ export default async function PrivacyPage() {
             <>Relancer par WhatsApp le propriétaire d&apos;une centrale à commission pour les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur (conditions générales de vente). Le propriétaire peut s&apos;y opposer en écrivant à l&apos;éditeur, qui le note.</>,
             <>Assurer la sécurité et prévenir la fraude : bannissement d&apos;un chauffeur par la centrale, pour le motif qu&apos;elle consigne ; interdiction sur toute la plateforme par l&apos;éditeur, réservée à une fraude constatée (usurpation d&apos;identité, document faux ou falsifié, fausse déclaration) : intérêt légitime de la centrale et de l&apos;éditeur. Une dette ou un différend avec une centrale n&apos;est jamais communiqué aux autres centrales. Le motif décrit un manquement aux règles, jamais une infraction pénale supposée.</>,
             <>Garder, après la suppression d&apos;un compte, les empreintes d&apos;un chauffeur qui doit encore des commissions à la centrale, pour lui permettre de recouvrer sa créance et de savoir qu&apos;une nouvelle candidature vient de lui : intérêt légitime de la centrale (article 6.1.f du RGPD), l&apos;éditeur agissant pour son compte. Ces empreintes ne sont pas effacées à votre demande tant que la somme reste due (article 17.3.e du RGPD).</>,
-            <>Envoyer l&apos;accusé de réception d&apos;une réservation avec prix faite sur le mini-site : exécution du contrat entre le client et la centrale, l&apos;éditeur agissant pour son compte.</>,
+            <>Envoyer l&apos;accusé de réception d&apos;une réservation ou d&apos;une demande faite sur le mini-site : exécution du contrat entre le client et la centrale ou, pour une demande sans prix, mesures précontractuelles prises à sa demande, l&apos;éditeur agissant pour le compte de la centrale.</>,
             <>Gérer les comptes des centrales, les abonnements et les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur, et obligations comptables.</>,
             <>Répondre à une demande envoyée par le formulaire de contact et en accuser réception : mesures précontractuelles prises à votre demande, et intérêt légitime de l&apos;éditeur à répondre aux personnes qui le contactent.</>,
             <>Traiter les signalements de contenus illicites et répondre aux autorités : obligation légale.</>,

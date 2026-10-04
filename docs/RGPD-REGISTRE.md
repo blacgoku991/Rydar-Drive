@@ -17,7 +17,6 @@ des données : non désigné (voir § 4).
 | Sécurité de la plateforme | Journaux, limites anti-abus, journal d'audit, sessions | Intérêt légitime (6.1.f) | Utilisateurs : adresse IP (empreinte pour les limites), navigateur, actions | Éditeur ; hébergeur | IP et navigateur : 1 an ; compteurs : 24 h ; journaux techniques : 1 an au plus ; sessions : 400 jours sans usage |
 | Lutte contre la fraude entre centrales | Interdiction sur toute la plateforme après fraude constatée | Intérêt légitime (6.1.f) | Chauffeurs et candidats : signalement, empreintes (AIPD, partie A) | Éditeur ; centrale qui signale | 3 ans après le bannissement |
 | Site vitrine et formulaire de contact | Répondre aux demandes | Mesures précontractuelles, intérêt légitime | Visiteurs : nom, e-mail, message, société, téléphone ; empreinte HMAC de l'IP | Éditeur ; prestataire de la boîte de contact (à nommer) | 3 ans (indésirable : 30 jours) ; empreinte IP : 1 an |
-| Supervision du service | Détecter les pannes du dispatch et les positions qui n'arrivent plus | Intérêt légitime (6.1.f) | Chauffeurs : position sans nom ni coordonnées (numéro de fiche) | Super admin | Données des centrales (voir § 2) |
 
 ## 2. Traitements faits pour le compte des centrales (registre du sous-traitant)
 
@@ -26,7 +25,9 @@ Pour chaque centrale cliente (responsable de traitement, coordonnées dans sa fi
 - **Catégories de traitements** : réception des réservations (tableau de bord, API, mini-site), dispatch selon la
   position des chauffeurs, suivi des courses, guidage, messagerie et signalements, documents des chauffeurs,
   candidatures par lien, gains, commissions et règlements, relances (application, WhatsApp de la centrale), accusés de
-  réception des réservations du mini-site, webhooks vers ses systèmes, statistiques.
+  réception des réservations du mini-site, webhooks vers ses systèmes, statistiques ; supervision technique du
+  service par l'éditeur (carte des chauffeurs en ligne sans nom, journal des alertes et erreurs du dispatch : DPA,
+  article 4), faite pour le compte des centrales et non comme responsable.
 - **Données** : DPA, article 2.
 - **Sous-traitants ultérieurs** : DPA, article 6 (hébergeur du serveur et stockage objet des sauvegardes, Expo, Apple,
   Google, Meta, Mapbox ou Google si choisis, fournisseurs de données de vol si activés). Conditions de traitement des

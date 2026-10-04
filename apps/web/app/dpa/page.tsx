@@ -177,8 +177,10 @@ export default async function DataProcessingPage() {
         <p>
           Pour la supervision technique du service (pannes du dispatch, positions qui n&apos;arrivent plus, courses sans
           chauffeur), l&apos;éditeur affiche dans son espace d&apos;administration un état en direct des centrales et une carte
-          des chauffeurs en ligne, sans nom ni coordonnées des chauffeurs ni des clients. Son accès nominatif aux données
-          d&apos;une centrale est limité au support qu&apos;elle demande, à la sécurité et au traitement des signalements.
+          des chauffeurs en ligne, sans nom ni coordonnées des chauffeurs ni des clients, ainsi que le journal des alertes
+          et des erreurs du dispatch des 7 derniers jours, dont les messages peuvent nommer un chauffeur et indiquer les
+          adresses d&apos;une course restée sans chauffeur. Pour le reste, son accès nominatif aux données d&apos;une centrale
+          est limité au support qu&apos;elle demande, à la sécurité et au traitement des signalements.
         </p>
       </LegalSection>
 

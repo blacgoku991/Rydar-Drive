@@ -211,7 +211,7 @@ export default async function TermsOfUsePage() {
 
       <LegalSection title="13. Responsabilité">
         <p>
-          L&apos;application est mise gratuitement à la disposition du chauffeur. L&apos;éditeur répond des dommages directs
+          L&apos;éditeur met gratuitement l&apos;application à la disposition du chauffeur. Il répond des dommages directs
           causés par un manquement prouvé à ses obligations. Il ne répond pas :
         </p>
         <LegalList

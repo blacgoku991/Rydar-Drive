@@ -59,7 +59,7 @@ export default async function AdminOverview() {
             <p className="font-medium text-amber">Informations légales de l&apos;éditeur à compléter</p>
             <p className="mt-1 text-fg-muted">
               {editorMissing &&
-                "Sans raison sociale, siège et immatriculation, aucune centrale ne peut accepter les CGV ni l'accord de traitement, exigés avant ses courses. "}
+                "Sans raison sociale, siège et immatriculation, aucune centrale ne peut accepter les CGV ni l'accord de traitement\u00a0: le propriétaire et les administrateurs d'une organisation qui ne les a jamais acceptés restent bloqués sur l'écran d'acceptation. "}
               {legalGaps > 0 &&
                 `${legalGaps} mention${legalGaps > 1 ? "s" : ""} obligatoire${legalGaps > 1 ? "s" : ""} manquante${legalGaps > 1 ? "s" : ""}\u00a0: les mentions légales affichent «\u00a0à compléter\u00a0». `}
               <Link href="/admin/legal" className="text-fg underline underline-offset-2">

@@ -268,7 +268,10 @@ Position exacte et Nom (finalité : Fonctionnalités de l'appli ; destinataire :
 course) ; mettre à jour App Privacy ; ajouter à la description : « Si votre centrale participe au réseau partagé, les
 courses d'une centrale partenaire peuvent vous être proposées : elle voit alors votre prénom, votre véhicule et votre
 position pendant la course. » Compléter aussi `/confidentialite` et `/dpa` (données transmises, coordonnées bancaires
-du chauffeur, durées) après la relecture de la convention par un avocat.
+du chauffeur, durées) après la relecture de la convention par un avocat, ainsi que les phrases devenues inexactes une
+fois le réseau ouvert : `/cgu` article 6 (« Qui la voit » : ajouter l'organisation partenaire pendant sa course), FAQ
+« Où sont hébergées les données ? » (données « rapprochées » des autres centrales seulement contre la fraude) et page
+Services (« données cloisonnées »).
 
 Nouvelle version des CGU ou de la politique de confidentialité (`LEGAL_VERSION`, `packages/shared/src/features.ts`) :
 l'app embarque cette valeur, donc une mise à jour à distance est nécessaire pour que les chauffeurs voient l'écran
