@@ -454,6 +454,8 @@ export async function setOrganizationMemberStatus(orgId: string, memberId: strin
 type SvcBanResult = {
   ok: boolean; code: string; message?: string; user_ids?: string[]; drivers?: number; identities?: number;
   identities_skipped?: number; extended?: number; skipped_drivers?: number; kept_user_ids?: string[];
+  /** Décisions envoyées par e-mail (une par adresse ; 20260924007400) */
+  emails?: number;
 };
 
 async function reportContext(reportId: string) {
@@ -504,17 +506,20 @@ export async function fraudReportMatches(reportId: string): Promise<Result<{ pre
 }
 
 /**
- * « Bannir de toute la plateforme » : identités refusées dans toutes les centrales ; chauffeur signalé et fiches de sa
- * centrale suspendus ; fiches d'AUTRES centrales seulement si confirmées (extendDriverIds, cf. fraudReportMatches) ;
- * comptes bannis (Auth), sauf ceux qui gèrent aussi une centrale (fiche bannie, connexion conservée).
+ * « Bannir de toute la plateforme » (fraude ou faux document seulement : PLATFORM_BAN_CATEGORY) : identités refusées
+ * dans toutes les centrales ; chauffeur signalé et fiches de sa centrale suspendus ; fiches d'AUTRES centrales seulement
+ * si confirmées (extendDriverIds, cf. fraudReportMatches) ; comptes bannis (Auth), sauf ceux qui gèrent aussi une
+ * centrale (fiche bannie, connexion conservée). Faits retenus obligatoires : ils sont envoyés par e-mail à chaque
+ * chauffeur touché avec la décision et les recours (svc_platform_ban, règlement (UE) 2022/2065, art. 17).
  */
 export async function platformBanReport(
   reportId: string,
   reviewNote?: string,
   extendDriverIds: string[] = [],
-): Promise<Result<{ drivers: number; identities: number; identitiesSkipped: number; extended: number; message: string }>> {
+): Promise<Result<{ drivers: number; identities: number; identitiesSkipped: number; extended: number; emails: number; message: string }>> {
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(reportId).success) return { ok: false, error: "Signalement inconnu." };
+  if ((note(reviewNote) ?? "").length < 10) return { ok: false, error: "Indiquez les faits retenus : ils sont envoyés au chauffeur avec la décision." };
   const extend = z.array(uuid).max(500).safeParse(extendDriverIds);
   if (!extend.success) return { ok: false, error: "Sélection de fiches invalide." };
   const admin = createAdminClient();
@@ -539,13 +544,13 @@ export async function platformBanReport(
     metadata: {
       driver: report?.driver_label, category: report?.category, drivers: res.drivers ?? 0, identities: res.identities ?? 0,
       identities_skipped: res.identities_skipped ?? 0, extended: res.extended ?? 0, skipped_drivers: res.skipped_drivers ?? 0,
-      auth_banned: authBanned, auth_kept: (res.kept_user_ids ?? []).length, user_ids: userIds, note: note(reviewNote),
+      auth_banned: authBanned, auth_kept: (res.kept_user_ids ?? []).length, user_ids: userIds, note: note(reviewNote), emails: res.emails ?? 0,
     },
   });
   revalidatePath("/admin/centrales");
   return {
     ok: true, drivers: res.drivers ?? 0, identities: res.identities ?? 0, identitiesSkipped: res.identities_skipped ?? 0,
-    extended: res.extended ?? 0, message: res.message ?? "Banni de toute la plateforme.",
+    extended: res.extended ?? 0, emails: res.emails ?? 0, message: res.message ?? "Banni de toute la plateforme.",
   };
 }
 

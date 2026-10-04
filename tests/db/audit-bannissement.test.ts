@@ -85,7 +85,8 @@ describe("Téléphone : même numéro, autre écriture (sql-rpc-argent#2, flux-c
     const other = await centrale("Ban Téléphone Ailleurs");
     const digits = uniquePhone();
     const sami = await driverIn(org, { phone: digits.replace(/(\d{2})(?=\d)/g, "$1 ") });
-    const ban = await rpc(org.ownerId, "ban_driver", [sami.id, "Commissions jamais réglées", "unpaid", true, false]);
+    // Signalement à Rydar : fraude ou faux document seulement (20260924007400)
+    const ban = await rpc(org.ownerId, "ban_driver", [sami.id, "Faux paiements déclarés", "fraud", true, false]);
     expect(ban).toMatchObject({ ok: true, code: "BANNED" });
 
     const plate = uniquePlate();

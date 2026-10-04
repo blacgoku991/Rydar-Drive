@@ -910,6 +910,18 @@ begin
 end;
 $$;
 
+-- Démo locale : conditions acceptées par les propriétaires des centrales de démonstration (CGV et accord de traitement
+-- au nom de la centrale, CGU et politique à titre personnel). Sans cela, l'écran « Conditions à accepter » bloque leur
+-- tableau de bord, et l'acceptation est refusée tant que /admin/legal n'identifie pas l'éditeur (LEGAL_EDITOR_MISSING,
+-- 20260924007400). Versions : ORG_LEGAL_VERSION et LEGAL_VERSION (@rydar/shared).
+insert into public.legal_acceptances (user_id, organization_id, document, version, source)
+select m.user_id, m.organization_id, d.document, d.version, 'web'
+from public.organization_users m
+cross join (values ('cgv', '2026-10-02'), ('dpa', '2026-10-02'), ('cgu', '2026-09-27'), ('privacy', '2026-09-27')) as d (document, version)
+where m.role = 'owner'
+  and m.organization_id in ('10000000-0000-4000-a000-00000000000a', '10000000-0000-4000-a000-00000000000b', '10000000-0000-4000-a000-00000000000c')
+on conflict do nothing;
+
 select
   (select count(*) from public.organizations) as organizations,
   (select count(*) from public.drivers) as drivers,

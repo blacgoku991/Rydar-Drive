@@ -22,6 +22,17 @@ export const DRIVER_DENIED: Record<DriverLoginDenied, string> = {
 };
 
 /**
+ * Interdiction sur toute la plateforme (svc_platform_ban, ban_scope « platform ») : décision de l'éditeur, jamais
+ * présentée comme celle de la centrale ; motifs et recours envoyés par e-mail (règlement (UE) 2022/2065, art. 17).
+ * Code inchangé (« BANNED ») : l'application affiche ce message.
+ */
+export const DRIVER_BANNED_BY_PLATFORM =
+  "Accès refusé : ce compte a été interdit sur Rydar Drive par l'éditeur. Les motifs et les voies de recours ont été envoyés à votre adresse e-mail ; pour contester, écrivez à l'éditeur depuis la page Contact du site Rydar Drive.";
+/** Connexion bloquée sans motif sur la fiche (ancien verrou du compte) : message neutre, aucune décision attribuée. */
+export const DRIVER_LOCKED_UNEXPLAINED =
+  "Accès refusé : ce compte est bloqué. Contactez votre centrale, ou l'éditeur depuis la page Contact du site Rydar Drive.";
+
+/**
  * Fenêtre et clé du compteur « essais de mot de passe par adresse » (anti brute force) : UN seul compteur pour la
  * connexion (/api/auth/driver-login) et la suppression du compte (/api/driver/delete-account), sinon chaque route
  * ajouterait son propre budget d'essais.
@@ -50,6 +61,8 @@ type DriverRow = {
   status: string;
   application_status: string | null;
   banned_at: string | null;
+  /** « org » : banni par la centrale ; « platform » : interdit sur toute la plateforme par l'éditeur */
+  ban_scope: string | null;
   /** Compte supprimé par le chauffeur (fiche anonyme conservée pour la comptabilité) */
   deleted_at: string | null;
   organization: { status: string } | { status: string }[] | null;
@@ -64,7 +77,7 @@ export async function driverAccountDecision(userId: string): Promise<DriverAccou
   const deny = (code: DriverLoginDenied): DriverAccountCheck => ({ ok: false, status: 403, code, error: DRIVER_DENIED[code] });
   const { data: row, error: rowError } = await createAdminClient()
     .from("drivers")
-    .select("id, status, application_status, banned_at, deleted_at, organization:organizations(status)")
+    .select("id, status, application_status, banned_at, ban_scope, deleted_at, organization:organizations(status)")
     .eq("user_id", userId)
     .maybeSingle();
   if (rowError) return { ok: false, status: 503, code: "UNAVAILABLE", error: "Connexion impossible pour le moment. Réessayez." };
@@ -74,7 +87,9 @@ export async function driverAccountDecision(userId: string): Promise<DriverAccou
   if (driver.deleted_at) return deny("INACTIVE");
   const org = Array.isArray(driver.organization) ? driver.organization[0] : driver.organization;
 
-  if (driver.banned_at) return deny("BANNED");
+  if (driver.banned_at) {
+    return driver.ban_scope === "platform" ? { ok: false, status: 403, code: "BANNED", error: DRIVER_BANNED_BY_PLATFORM } : deny("BANNED");
+  }
   if (org?.status !== "active") return deny("ORGANIZATION_SUSPENDED");
   if (driver.application_status === "pending" && (driver.status === "inactive" || driver.status === "active")) return { ok: true, state: "pending" };
   if (driver.application_status === "rejected") return deny("REJECTED");

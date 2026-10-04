@@ -406,7 +406,8 @@ describe("Bannissement définitif", () => {
 
     const dispatcher = await createMember(org, "dispatcher");
     expect((await expectPgError(rpc(dispatcher, "ban_driver", [d.id, "Arnaque", "fraud", false, false]))).code).toBe("42501");
-    const res = await rpc(org.ownerId, "ban_driver", [d.id, "Commission jamais payée", "unpaid", true, false]);
+    // Signalement à Rydar : fraude ou faux document seulement (20260924007400)
+    const res = await rpc(org.ownerId, "ban_driver", [d.id, "Faux paiements déclarés", "fraud", true, false]);
     expect(res).toMatchObject({ ok: true, code: "BANNED" });
     expect(res.identities).toBeGreaterThanOrEqual(3);
 
@@ -436,7 +437,7 @@ describe("Bannissement définitif", () => {
 
     // Signalement plateforme : identités hachées uniquement
     const [report] = await sql(`select * from public.fraud_reports where driver_id = $1`, [d.id]);
-    expect(report).toMatchObject({ status: "open", category: "unpaid" });
+    expect(report).toMatchObject({ status: "open", category: "fraud" });
     expect(JSON.stringify(report.identities)).not.toContain(digits.slice(-6));
 
     // Lecture : admins de la centrale seulement
@@ -527,7 +528,7 @@ describe("Bannissement définitif", () => {
   it("signalement classé par le super admin seulement (acteur revérifié en SQL)", async () => {
     const org = await centrale("Centrale Classement");
     const d = await driverIn(org, { phone: uniquePhone() });
-    const reportId = (await rpc(org.ownerId, "ban_driver", [d.id, "Comportement", "behavior", true, false])).report_id as string;
+    const reportId = (await rpc(org.ownerId, "ban_driver", [d.id, "Faux document", "documents", true, false])).report_id as string;
     expect(reportId).toBeTruthy();
     expect((await expectPgError(svc("svc_platform_dismiss_report", [reportId, org.ownerId, null]))).code).toBe("42501");
     expect((await expectPgError(svc("svc_platform_dismiss_report", [reportId, null, null]))).code).toBe("42501");

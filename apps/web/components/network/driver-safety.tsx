@@ -1,6 +1,8 @@
 "use client";
 // Fiche chauffeur : niveau de confiance (mode centrale) et bannissement définitif (flotte et centrale).
-import { BAN_CATEGORY_META, TRUST_LEVEL_META, banDriverSchema, fieldErrors, type BanCategory, type TrustLevel } from "@rydar/shared";
+import {
+  BAN_CATEGORY_META, TRUST_LEVEL_META, banDriverSchema, fieldErrors, isPlatformBanCategory, type BanCategory, type TrustLevel,
+} from "@rydar/shared";
 import { Check, Flag, ShieldBan, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -83,6 +85,8 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
   const [vehicle, setVehicle] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [blocker, setBlocker] = useState<string | null>(null);
+  /** Une dette, un comportement ou un autre motif reste propre à la centrale : rien n'est transmis à Rydar */
+  const reportable = isPlatformBanCategory(category);
 
   const reset = () => {
     setReason("");
@@ -96,7 +100,8 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
   const submit = () =>
     start(() => runAction(async () => {
       setBlocker(null);
-      const input = { reason, category, reportToPlatform: report, banVehicle: vehicle };
+      // Signalement à Rydar : fraude ou faux document seulement (ban_driver : PLATFORM_REPORT_CATEGORY)
+      const input = { reason, category, reportToPlatform: report && reportable, banVehicle: vehicle };
       const parsed = banDriverSchema.safeParse(input);
       if (!parsed.success) return void setErrors(fieldErrors(parsed.error));
       setErrors({});
@@ -147,7 +152,11 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
                 ))}
               </div>
             </div>
-            <Field label="Motif" error={errors.reason} hint="Visible par votre équipe et, en cas de signalement, par Rydar.">
+            <Field
+              label="Motif"
+              error={errors.reason}
+              hint="Décrivez le manquement constaté (faux document, course fictive, commission impayée…), jamais une infraction supposée ni un jugement sur la personne. Visible par votre équipe et, en cas de signalement, par Rydar."
+            >
               <Textarea
                 value={reason}
                 onChange={(e) => {
@@ -156,15 +165,31 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
                 }}
                 maxLength={500}
                 aria-invalid={!!errors.reason}
-                placeholder="Encaisse les courses sans régler la commission, faux documents…"
+                placeholder="Commissions de septembre non réglées malgré trois relances, carte VTC falsifiée…"
               />
             </Field>
             <div className="space-y-2">
-              <label className={cn("flex cursor-pointer items-start gap-3 rounded-xl border p-3.5", report ? "border-red/40 bg-red/[0.06]" : "border-line hover:border-line-strong")}>
-                <input type="checkbox" checked={report} onChange={(e) => setReport(e.target.checked)} className="mt-0.5 size-4 accent-[var(--color-red)]" />
+              <label
+                className={cn(
+                  "flex items-start gap-3 rounded-xl border p-3.5",
+                  !reportable ? "cursor-not-allowed border-line opacity-70" : report ? "cursor-pointer border-red/40 bg-red/[0.06]" : "cursor-pointer border-line hover:border-line-strong",
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={report && reportable}
+                  disabled={!reportable}
+                  onChange={(e) => setReport(e.target.checked)}
+                  className="mt-0.5 size-4 accent-[var(--color-red)]"
+                />
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5 text-[13px] font-medium"><Flag className="size-3.5 text-red" /> Signaler à Rydar (bannissement de toute la plateforme)</span>
-                  <span className="mt-0.5 block text-[12px] text-fg-subtle">Rydar examine le signalement et peut refuser ce chauffeur dans toutes les centrales. Seules des empreintes de ses identités sont transmises.</span>
+                  <span className="mt-0.5 block text-[12px] text-fg-subtle">
+                    {reportable
+                      ? "Fraude ou faux document seulement. Rydar examine le signalement et peut refuser ce chauffeur dans toutes les centrales ; il lui envoie alors sa décision et ses motifs. Seules des empreintes de ses identités sont transmises. Prévenez le chauffeur que son signalement est transmis à Rydar."
+                      : "Réservé à une fraude ou à un faux document : une dette, un comportement ou un autre motif reste propre à votre centrale."}
+                  </span>
+                  {errors.reportToPlatform && <span className="mt-1 block text-[12px] text-red">{errors.reportToPlatform}</span>}
                 </span>
               </label>
               <label className={cn("flex cursor-pointer items-start gap-3 rounded-xl border p-3.5", vehicle ? "border-red/40 bg-red/[0.06]" : "border-line hover:border-line-strong")}>

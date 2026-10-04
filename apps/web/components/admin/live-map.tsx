@@ -1,5 +1,5 @@
 "use client";
-import { initials, shortAddress, type Coord } from "@rydar/shared";
+import type { Coord } from "@rydar/shared";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { PRESENCE_COLOR, ROUTE_COLOR, rideColor } from "@/components/map/map-theme";
@@ -328,14 +328,15 @@ export const LiveMap = forwardRef<LiveMapHandle, Props>(function LiveMap(
         heading: d.location.heading,
         // flèche de cap dès qu'un cap est connu (position récente)
         moving: d.location.heading != null && !d.stale,
-        initials: initials(d.first_name, d.last_name),
-        label: `${d.first_name} ${d.last_name.charAt(0)}. · ${org?.name ?? "—"}${d.stale ? " · position ancienne" : ""}`,
+        // Supervision technique : numéro de fiche et organisation, jamais le nom du chauffeur
+        initials: String(d.number),
+        label: `Chauffeur n° ${d.number} · ${org?.name ?? "—"}${d.stale ? " · position ancienne" : ""}`,
         selected,
         pulse: false,
         dim: d.stale,
       });
       setOrgTag(m.el, org, "car", d.location.heading != null && !d.stale ? d.location.heading : null);
-      m.el.setAttribute("aria-label", `${d.first_name} ${d.last_name}, ${org?.name ?? ""}`);
+      m.el.setAttribute("aria-label", `Chauffeur n° ${d.number}, ${org?.name ?? ""}`);
       m.el.style.zIndex = selected ? "8" : d.stale ? "2" : "4";
       applyDetail(d.id, m.el);
     }
@@ -382,7 +383,7 @@ export const LiveMap = forwardRef<LiveMapHandle, Props>(function LiveMap(
       const org = orgs[r.organization_id];
       p.marker.setLngLat([r.pickup_lng, r.pickup_lat]);
       p.el.style.setProperty("--c", rideColor(r.status));
-      p.el.title = `Course ${r.number} · ${org?.name ?? ""} · ${shortAddress(r.pickup_address)} · en attente de chauffeur`;
+      p.el.title = `Course ${r.number} · ${org?.name ?? ""} · en attente de chauffeur`;
       p.el.dataset.searching = "false";
       p.el.dataset.dim = String(!!selectedRideId && selectedRideId !== r.id);
       // agrandissement sur le point intérieur : MapLibre positionne l'élément racine avec `transform`

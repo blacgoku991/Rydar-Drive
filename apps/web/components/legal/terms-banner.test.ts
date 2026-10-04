@@ -51,16 +51,15 @@ describe("bandeau à afficher (un seul à la fois)", () => {
     expect(termsBannerChoice({ admin: false, orgVersions: null, userDocuments: null })).toBeNull();
   });
 
-  it("acceptation exigée avant la première course : jamais acceptées et aucune course seulement", () => {
+  it("acceptation exigée de toute organisation qui n'a jamais accepté les CGV, avec ou sans courses (owner / admin)", () => {
     const never = termsBannerChoice({ admin: true, orgVersions: [], userDocuments: [] });
-    expect(orgTermsGate(never, false)).toBe(true);
-    // Déjà en service, ou lecture des courses en échec : bandeau non bloquant
-    expect(orgTermsGate(never, true)).toBe(false);
-    expect(orgTermsGate(never, null)).toBe(false);
+    expect(orgTermsGate(never)).toBe(true);
+    // Lecture des acceptations en échec : jamais bloquant
+    expect(orgTermsGate(termsBannerChoice({ admin: true, orgVersions: null, userDocuments: both }))).toBe(false);
     // Version antérieure acceptée (mise à jour) : jamais bloquant ; dispatcher, version en vigueur : rien
-    expect(orgTermsGate(termsBannerChoice({ admin: true, orgVersions: ["2026-09-27"], userDocuments: both }), false)).toBe(false);
-    expect(orgTermsGate(termsBannerChoice({ admin: false, orgVersions: null, userDocuments: [] }), false)).toBe(false);
-    expect(orgTermsGate(termsBannerChoice({ admin: true, orgVersions: [ORG_LEGAL_VERSION], userDocuments: both }), false)).toBe(false);
+    expect(orgTermsGate(termsBannerChoice({ admin: true, orgVersions: ["2026-09-27"], userDocuments: both }))).toBe(false);
+    expect(orgTermsGate(termsBannerChoice({ admin: false, orgVersions: null, userDocuments: [] }))).toBe(false);
+    expect(orgTermsGate(termsBannerChoice({ admin: true, orgVersions: [ORG_LEGAL_VERSION], userDocuments: both }))).toBe(false);
   });
 });
 
@@ -108,6 +107,10 @@ describe("textes des bandeaux", () => {
     expect(html).toContain('<span class="text-fg">Nouvelle Flotte</span>, les ');
     for (const href of ["/cgv", "/dpa", "/cgu", "/confidentialite"]) expect(html).toContain(`href="${href}"`);
     expect(html).toContain('type="checkbox"');
+    // Organisation déjà en service, jamais signataire : même écran, pour continuer
+    const running = render(createElement(OrgTermsGate, { orgName: "Flotte Active", hasRides: true }));
+    expect(running).toContain("Conditions à accepter pour continuer");
+    expect(running).toContain("Pour continuer à utiliser le tableau de bord, le propriétaire");
   });
 
   it("membre : CGU et politique de confidentialité seulement", () => {

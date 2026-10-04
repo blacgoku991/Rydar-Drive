@@ -1,6 +1,8 @@
 "use client";
 // Super admin : signalements de fraude envoyés par les centrales → bannissement de toute la plateforme.
-import { BAN_CATEGORY_META, DRIVER_STATUS_META, IDENTITY_KIND_LABELS, formatDate, formatRelative, type FraudReport } from "@rydar/shared";
+import {
+  BAN_CATEGORY_META, DRIVER_STATUS_META, IDENTITY_KIND_LABELS, formatDate, formatRelative, isPlatformBanCategory, type FraudReport,
+} from "@rydar/shared";
 import { AlertTriangle, Archive, Fingerprint, Gavel, ShieldBan, ShieldCheck, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -41,6 +43,8 @@ const lowerFirst = (v: string) => v.charAt(0).toLowerCase() + v.slice(1);
 const kindLabel = (kind: string) => IDENTITY_KIND_LABELS[kind as keyof typeof IDENTITY_KIND_LABELS] ?? kind;
 /** Saisie par la centrale dans les 30 jours qui précèdent le signalement : à vérifier en priorité. */
 const RECENT_EDIT_DAYS = 30;
+/** Précisions communiquées au chauffeur dans l'e-mail de décision (règlement (UE) 2022/2065, art. 17) : obligatoires. */
+const BAN_NOTE_MIN = 10;
 
 export function IdentityChips({ identities }: { identities: FraudReport["identities"] }) {
   if (!identities?.length) return <span className="text-[12px] text-fg-subtle">Aucune identité exploitable.</span>;
@@ -87,13 +91,17 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
       const { report, kind } = pending;
       const s = (n: number) => (n > 1 ? "s" : "");
       if (kind === "ban") {
+        if (text.trim().length < BAN_NOTE_MIN) return void toast.error("Indiquez les faits retenus : ils sont envoyés au chauffeur avec la décision.");
         const res = await platformBanReport(report.id, text, extend);
         if (!res.ok) return void toast.error(res.error);
         const kept = res.identitiesSkipped
           ? ` · ${res.identitiesSkipped} identité${s(res.identitiesSkipped)} partagée${s(res.identitiesSkipped)} avec une fiche non confirmée : refusée${s(res.identitiesSkipped)} seulement chez ${report.organization?.name ?? "la centrale qui signale"}`
           : "";
+        const mailed = res.emails
+          ? ` · décision envoyée par e-mail (${res.emails} adresse${s(res.emails)})`
+          : " · aucune adresse e-mail valide : informez le chauffeur autrement";
         toast.success(`${report.driver_label} banni de toute la plateforme`, {
-          description: `${res.identities} identité${s(res.identities)} refusée${s(res.identities)} partout · ${res.drivers} compte${s(res.drivers)} suspendu${s(res.drivers)} et déconnecté${s(res.drivers)}${kept}.`,
+          description: `${res.identities} identité${s(res.identities)} refusée${s(res.identities)} partout · ${res.drivers} compte${s(res.drivers)} suspendu${s(res.drivers)} et déconnecté${s(res.drivers)}${kept}${mailed}.`,
         });
       } else if (kind === "lift") {
         const res = await liftPlatformBan(report.id, text);
@@ -111,7 +119,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
     }));
 
   if (!reports.length) {
-    return <EmptyState icon={<ShieldCheck />} title="Aucun signalement" description="Les centrales signalent ici les chauffeurs bannis pour fraude : vous décidez d'un bannissement sur toute la plateforme." />;
+    return <EmptyState icon={<ShieldCheck />} title="Aucun signalement" description="Les centrales signalent ici les chauffeurs bannis pour fraude ou faux document : vous décidez d'un bannissement sur toute la plateforme." />;
   }
 
   const sorted = [...reports].sort(
@@ -126,6 +134,8 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
           const meta = REPORT_STATUS_META[r.status];
           const reporter = r.reporter?.full_name ?? r.reporter?.email ?? "la centrale";
           const reviewer = r.reviewer?.full_name ?? r.reviewer?.email ?? "Rydar";
+          // Interdiction plateforme : fraude ou faux document seulement (svc_platform_ban, PLATFORM_BAN_CATEGORY)
+          const eligible = isPlatformBanCategory(r.category);
           return (
             <li key={r.id} className={cn("px-5 py-4", r.status === "open" && "bg-amber/[0.03]")}>
               {i === firstClosed && firstClosed > 0 && <p className="-mt-1 mb-3 text-[11.5px] font-medium uppercase tracking-[0.08em] text-fg-subtle">Traités</p>}
@@ -171,9 +181,15 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
                 <div className="flex shrink-0 flex-wrap gap-2 lg:flex-col lg:items-stretch">
                   {r.status === "open" && (
                     <>
-                      <Button variant="danger" size="sm" onClick={() => open(r, "ban")}>
-                        <ShieldBan /> Bannir de toute la plateforme
-                      </Button>
+                      {eligible ? (
+                        <Button variant="danger" size="sm" onClick={() => open(r, "ban")}>
+                          <ShieldBan /> Bannir de toute la plateforme
+                        </Button>
+                      ) : (
+                        <p className="max-w-[240px] text-[12px] text-fg-muted">
+                          Ni fraude ni faux document&nbsp;: pas d&apos;interdiction sur toute la plateforme, classez le signalement.
+                        </p>
+                      )}
                       <Button variant="outline" size="sm" onClick={() => open(r, "dismiss")}>
                         <Archive /> Classer
                       </Button>
@@ -184,7 +200,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
                       <Undo2 /> Lever
                     </Button>
                   )}
-                  {(r.status === "dismissed" || r.status === "lifted") && (
+                  {(r.status === "dismissed" || r.status === "lifted") && eligible && (
                     <Button variant="ghost" size="sm" onClick={() => open(r, "ban")}>
                       <Gavel /> Bannir de la plateforme
                     </Button>
@@ -208,7 +224,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
             }
             description={
               pending.kind === "ban"
-                ? "Décision lourde : ses identifiants connus (téléphone, e-mail, carte VTC, appareils…) seront refusés à toute nouvelle inscription dans toutes les centrales Rydar Drive."
+                ? "Décision lourde : ses identifiants connus (téléphone, e-mail, carte VTC, appareils…) seront refusés à toute nouvelle inscription dans toutes les centrales Rydar Drive. Chaque chauffeur touché reçoit par e-mail la décision, ses motifs et les voies de recours."
                 : pending.kind === "dismiss"
                   ? `Le chauffeur reste banni par ${pending.report.organization?.name ?? "sa centrale"} uniquement ; les autres centrales ne sont pas concernées.`
                   : "Les identités ne sont plus refusées ailleurs. Le chauffeur signalé reste banni par sa centrale."
@@ -235,14 +251,30 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
                 chauffeur que sa centrale avait déjà banni le reste.
               </p>
             )}
-            <Field label={pending.kind === "lift" ? "Motif de la levée" : "Note (visible par la centrale)"} optional>
-              <Textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                maxLength={500}
-                placeholder={pending.kind === "ban" ? "Preuves vérifiées, récidive…" : pending.kind === "dismiss" ? "Litige commercial, preuves insuffisantes…" : "Erreur d'identité, dette réglée…"}
-              />
-            </Field>
+            {pending.kind === "ban" ? (
+              <Field
+                label="Faits retenus (envoyés au chauffeur, visibles par la centrale)"
+                hint="Faits vérifiés (faux document, courses fictives…), sans donnée sur d'autres personnes ni qualification pénale : ils figurent dans l'e-mail de décision."
+              >
+                <Textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  maxLength={500}
+                  required
+                  minLength={BAN_NOTE_MIN}
+                  placeholder="Carte VTC falsifiée (numéro inexistant au registre), courses terminées sans client…"
+                />
+              </Field>
+            ) : (
+              <Field label={pending.kind === "lift" ? "Motif de la levée" : "Note (visible par la centrale)"} optional>
+                <Textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  maxLength={500}
+                  placeholder={pending.kind === "dismiss" ? "Litige commercial, preuves insuffisantes…" : "Erreur d'identité, dette réglée…"}
+                />
+              </Field>
+            )}
             {pending.kind === "ban" && (
               <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-red/25 bg-red/[0.06] px-3 py-2.5 text-[12.5px] text-fg">
                 <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5 size-4 accent-[var(--color-red)]" />
@@ -252,7 +284,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
             <div className="mt-6 flex justify-end gap-2">
               <Button variant="ghost" disabled={busy} onClick={() => setPending(null)}>Annuler</Button>
               {pending.kind === "ban" ? (
-                <Button variant="danger" loading={busy} disabled={!confirmed || previewLoading} onClick={run}>
+                <Button variant="danger" loading={busy} disabled={!confirmed || previewLoading || text.trim().length < BAN_NOTE_MIN} onClick={run}>
                   <ShieldBan /> Bannir partout
                 </Button>
               ) : pending.kind === "dismiss" ? (

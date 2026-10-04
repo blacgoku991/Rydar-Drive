@@ -124,11 +124,19 @@ describe("connexion chauffeur : compte Auth banni", () => {
     expect(await post()).toMatchObject({ status: 403, body: { code: "INACTIVE" } });
     h.driverRow = row({ organization: { status: "suspended" } });
     expect(await post()).toMatchObject({ status: 403, body: { code: "ORGANIZATION_SUSPENDED" } });
-    h.driverRow = row({ banned_at: "2026-09-01T00:00:00Z", status: "suspended" });
-    expect(await post()).toMatchObject({ status: 403, body: { code: "BANNED" } });
-    // Fiche en règle mais compte bloqué au niveau Auth (bannissement plateforme) : BANNED
+    h.driverRow = row({ banned_at: "2026-09-01T00:00:00Z", status: "suspended", ban_scope: "org" });
+    expect(await post()).toMatchObject({ status: 403, body: { code: "BANNED", error: "Accès refusé : ce compte a été banni par la centrale." } });
+    // Interdiction décidée par l'éditeur (20260924007400) : jamais attribuée à la centrale, motifs envoyés par e-mail
+    h.driverRow = row({ banned_at: "2026-09-01T00:00:00Z", status: "suspended", ban_scope: "platform" });
+    const platform = await post();
+    expect(platform).toMatchObject({ status: 403, body: { code: "BANNED" } });
+    expect(platform.body.error).toContain("interdit sur Rydar Drive par l'éditeur");
+    expect(platform.body.error).not.toContain("centrale.");
+    // Fiche en règle mais compte bloqué au niveau Auth (ancien verrou) : BANNED, message neutre
     h.driverRow = row();
-    expect(await post()).toMatchObject({ status: 403, body: { code: "BANNED" } });
+    const locked = await post();
+    expect(locked).toMatchObject({ status: 403, body: { code: "BANNED" } });
+    expect(locked.body.error).toContain("ce compte est bloqué");
   });
 });
 

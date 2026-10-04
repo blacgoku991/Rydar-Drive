@@ -77,11 +77,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
     orgVersions: terms && !terms.error ? ((terms.data ?? []) as { version: string }[]).map((a) => a.version) : null,
     userDocuments: userTerms.error ? null : ((userTerms.data ?? []) as { document: string }[]).map((a) => a.document),
   });
-  // Organisation qui n'a jamais accepté les CGV : acceptation exigée avant sa première course (lue seulement dans ce cas)
-  let gate = false;
-  if (termsBanner?.kind === "org" && !termsBanner.updated) {
-    const { data: anyRide, error: rideError } = await ctx.supabase.from("rides").select("id").eq("organization_id", ctx.org.id).limit(1);
-    gate = orgTermsGate(termsBanner, rideError ? null : (anyRide ?? []).length > 0);
+  // Organisation qui n'a jamais accepté les CGV : acceptation exigée (owner / admin), avant sa première course ou, déjà
+  // en service, pour continuer (courses lues seulement dans ce cas, pour le texte de l'écran)
+  const gate = orgTermsGate(termsBanner);
+  let gateHasRides = false;
+  if (gate) {
+    const { data: anyRide } = await ctx.supabase.from("rides").select("id").eq("organization_id", ctx.org.id).limit(1);
+    gateHasRides = (anyRide ?? []).length > 0;
   }
   // Date d'entrée en vigueur au plus tard des CGV atteinte (heure de Paris, comme la base) : bandeau « en vigueur depuis »
   const termsEffectivePassed = localIsoDay(new Date(), "Europe/Paris") >= ORG_LEGAL_EFFECTIVE_AT;
@@ -142,7 +144,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       rydarFees={fleetFees?.data === true}
       sharedNetwork={networkMenuShown(networkInfo) ? networkNavState(networkInfo?.summary) : null}
     >
-      {gate ? <OrgTermsGate orgName={ctx.org.name} /> : children}
+      {gate ? <OrgTermsGate orgName={ctx.org.name} hasRides={gateHasRides} /> : children}
     </DashboardShell>
   );
 }

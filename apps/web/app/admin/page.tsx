@@ -11,20 +11,29 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
 import { requireSuperAdmin } from "@/lib/auth";
+import { getLegalInfo } from "@/lib/legal";
+import { legalNoticeGaps } from "@/lib/legal-notice";
 
 export const metadata: Metadata = { title: "Super admin" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminOverview() {
   const session = await requireSuperAdmin();
-  const [{ data }, headcount] = await Promise.all([
+  const [{ data }, headcount, editor, legal] = await Promise.all([
     session.supabase.rpc("platform_overview"),
     // Effectifs (organisations, chauffeurs, membres, super admins) : lecture RLS du super admin
     getPlatformHeadcount(session.supabase).catch((err: unknown): PlatformHeadcount | null => {
       console.error("[admin] effectifs", err);
       return null;
     }),
+    // Identité de l'éditeur (partie aux CGV) : sans raison sociale, siège et immatriculation, accept_legal_documents
+    // refuse les CGV et l'accord de traitement (LEGAL_EDITOR_MISSING, 20260924007400)
+    session.supabase.from("platform_legal").select("company_name, address, registration").maybeSingle(),
+    getLegalInfo(),
   ]);
+  const ed = (editor.data ?? null) as { company_name: string | null; address: string | null; registration: string | null } | null;
+  const editorMissing = !ed || ![ed.company_name, ed.address, ed.registration].every((v) => !!v?.trim());
+  const legalGaps = legalNoticeGaps({ ...legal, companyName: legal.nameSet ? legal.name : "" }).filter((g) => g.required).length;
   const o = (data ?? {}) as any;
   const t = o.totals ?? {};
   // Courses du jour par organisation : déjà calculées par platform_overview
@@ -45,6 +54,20 @@ export default async function AdminOverview() {
         }
       />
       <PageBody className="space-y-6">
+        {(editorMissing || legalGaps > 0) && (
+          <div role="status" className="surface rounded-xl border border-amber/30 px-4 py-3 text-[13px] leading-relaxed">
+            <p className="font-medium text-amber">Informations légales de l&apos;éditeur à compléter</p>
+            <p className="mt-1 text-fg-muted">
+              {editorMissing &&
+                "Sans raison sociale, siège et immatriculation, aucune centrale ne peut accepter les CGV ni l'accord de traitement, exigés avant ses courses. "}
+              {legalGaps > 0 &&
+                `${legalGaps} mention${legalGaps > 1 ? "s" : ""} obligatoire${legalGaps > 1 ? "s" : ""} manquante${legalGaps > 1 ? "s" : ""}\u00a0: les mentions légales affichent «\u00a0à compléter\u00a0». `}
+              <Link href="/admin/legal" className="text-fg underline underline-offset-2">
+                Compléter les informations légales
+              </Link>
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <StatCard label="Rattacheurs" value={formatNumber(t.organizations_active)} sub={`${t.organizations_suspended ?? 0} suspendus`} icon={<Building2 />} />
           <StatCard label="Chauffeurs" value={formatNumber(t.drivers)} sub={`${t.drivers_online ?? 0} en ligne`} icon={<Users />} tone="brand" />

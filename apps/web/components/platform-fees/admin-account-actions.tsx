@@ -4,7 +4,8 @@ import { PLATFORM_CYCLE_META, formatPrice, formatTime, type PlatformAccount, typ
 import { BellRing, CalendarClock, Check, HandCoins, Minus, Plus, Scale } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
-  adjustPlatformFees, platformWhatsAppTarget, recordPlatformPayment, remindPlatformCentrale, updatePlatformTerms, type PlatformWhatsAppTarget,
+  adjustPlatformFees, platformWhatsAppTarget, recordPlatformPayment, remindPlatformCentrale, setPlatformWhatsAppRefusal, updatePlatformTerms,
+  type PlatformWhatsAppTarget,
 } from "@/app/admin/frais/actions";
 import { centsToInput, eurosToCents } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
@@ -279,6 +280,8 @@ function RemindDialog({
   const [openedAt, setOpenedAt] = useState(0);
   const [wa, setWa] = useState<PlatformWhatsAppTarget | null>(null);
   const [viaWhatsApp, setViaWhatsApp] = useState(false);
+  /** Refus du propriétaire en cours d'enregistrement (noter / retirer) */
+  const [refusing, setRefusing] = useState(false);
   useEffect(() => {
     if (!open) return;
     setNote("");
@@ -287,7 +290,7 @@ function RemindDialog({
     setWa(null);
     setViaWhatsApp(false);
     let live = true;
-    // Relance WhatsApp possible ? (numéro de Rydar relié, téléphone du propriétaire ou de l'organisation)
+    // Relance WhatsApp possible ? (numéro de Rydar relié, téléphone du propriétaire ou de l'organisation, pas de refus)
     void platformWhatsAppTarget(orgId).then((t) => {
       if (!live) return;
       setWa(t);
@@ -297,6 +300,17 @@ function RemindDialog({
       live = false;
     };
   }, [open, orgId]);
+  /** CGV art. 10 : le propriétaire peut refuser les relances WhatsApp de Rydar en écrivant à l'éditeur. */
+  const toggleRefusal = async (refused: boolean) => {
+    setRefusing(true);
+    const res = await setPlatformWhatsAppRefusal(orgId, refused).catch(() => null);
+    setRefusing(false);
+    if (!res?.ok) return setError(res?.error ?? "Action impossible pour le moment.");
+    setError(null);
+    const target = await platformWhatsAppTarget(orgId).catch(() => null);
+    setWa(target);
+    setViaWhatsApp(!!target?.ready && !!target.to_display);
+  };
   const waOk = !!wa?.ready && !!wa.to_display;
   const amount = account.due_cents > 0 ? account.due_cents : account.balance_cents;
   // Une relance par heure au plus (vérifié aussi en base) : on prévient avant l'envoi
@@ -365,13 +379,22 @@ function RemindDialog({
                     ? `Au ${wa.source === "owner" ? "propriétaire" : `numéro de la ${who(account)}`}${wa.name ? ` (${wa.name})` : ""} : ${wa.to_display}. Modèle validé par Meta, sans votre message.`
                     : wa.reason === "FLEET_UNSUPPORTED"
                       ? "Indisponible pour une flotte : le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte. La relance reste affichée dans son tableau de bord."
-                      : wa.reason === "NOT_CONFIGURED"
+                      : wa.reason === "OPTED_OUT"
+                        ? `Le propriétaire a refusé les messages WhatsApp de Rydar${wa.refused_at ? ` (noté le ${formatDay(wa.refused_at, timeZone, false)})` : ""} : la relance reste affichée dans son tableau de bord.`
+                        : wa.reason === "NOT_CONFIGURED"
                         ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
                         : `Aucun numéro valide pour le propriétaire ni pour la ${who(account)}.`}
               </span>
             </span>
             <Switch checked={viaWhatsApp && waOk} onCheckedChange={setViaWhatsApp} disabled={!waOk} aria-label="Envoyer aussi par WhatsApp" />
           </label>
+          {wa && wa.reason !== "FLEET_UNSUPPORTED" && (
+            <div className="mt-2 flex justify-end">
+              <Button type="button" variant="ghost" size="sm" loading={refusing} onClick={() => void toggleRefusal(wa.reason !== "OPTED_OUT")}>
+                {wa.reason === "OPTED_OUT" ? "Retirer le refus du propriétaire" : "Le propriétaire refuse WhatsApp"}
+              </Button>
+            </div>
+          )}
           <div className="mt-6 flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Annuler

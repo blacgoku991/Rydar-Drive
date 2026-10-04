@@ -15,37 +15,37 @@ export type AdminLiveOrg = {
   code: string;
 };
 
+/**
+ * Chauffeur en ligne vu par le super admin : supervision technique du dispatch, SANS nom, téléphone, véhicule ni
+ * vitesse (accord de traitement, art. 4 ; relecture juridique du 4 octobre 2026). Le détail nominatif reste dans la
+ * fiche de l'organisation, pour le support qu'elle demande, la sécurité et les signalements.
+ */
 export type AdminLiveDriver = {
   id: string;
   organization_id: string;
   number: number;
-  first_name: string;
-  last_name: string;
-  phone: string;
   presence: DriverPresence;
   current_ride_id: string | null;
   online_since: string | null;
-  vehicle: { brand: string | null; model: string; plate: string; color: string | null; category: string } | null;
+  vehicle: { category: string } | null;
   location: {
     lat: number;
     lng: number;
     heading: number | null;
-    speed_mps: number | null;
     accuracy_m: number | null;
     updated_at: string;
   } | null;
 };
 
+/** Course vue par le super admin : statut, horaire, catégorie et points sur la carte, sans adresse ni client. */
 export type AdminLiveRide = {
   id: string;
   organization_id: string;
   number: number;
   status: RideStatus;
   type: "instant" | "scheduled";
-  pickup_address: string;
   pickup_lat: number;
   pickup_lng: number;
-  dropoff_address: string;
   dropoff_lat: number | null;
   dropoff_lng: number | null;
   pickup_at: string;

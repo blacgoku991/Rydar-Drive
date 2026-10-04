@@ -5,8 +5,9 @@
 //    (ORG_LEGAL_VERSION), et à titre personnel CGU + politique de confidentialité (LEGAL_VERSION) ; mode « mise à
 //    jour » quand l'organisation avait accepté une version antérieure des CGV (principaux changements, date d'entrée en
 //    vigueur au plus tard tant qu'elle n'est pas passée) ; non bloquant : le dispatch continue ;
-//  - OrgTermsGate (owner / admin d'une organisation qui n'a JAMAIS accepté les CGV et n'a encore aucune course) : même
-//    acceptation, en écran plein, avant la première course (des CGV non acceptées ne sont pas opposables) ;
+//  - OrgTermsGate (owner / admin d'une organisation qui n'a JAMAIS accepté les CGV, avec ou sans courses) : même
+//    acceptation, en écran plein, avant la première course ou pour continuer (des CGV non acceptées ne sont pas
+//    opposables) ;
 //  - UserTermsBanner (tout membre, dispatcher compris) : CGU + politique de confidentialité à titre personnel.
 import { ORG_LEGAL_CHANGES, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, legalDateLabel } from "@rydar/shared";
 import { FileCheck2 } from "lucide-react";
@@ -140,15 +141,18 @@ export function TermsBanner({ orgName, updated = false, effectivePassed = false 
 }
 
 /**
- * Owner / admin d'une organisation qui n'a jamais accepté les CGV et n'a encore aucune course : acceptation avant la
- * première course (les frais par course éventuels s'appliquent dès l'ouverture du compte : CGV art. 5).
+ * Owner / admin d'une organisation qui n'a jamais accepté les CGV : acceptation avant la première course, ou pour
+ * continuer si elle a déjà des courses (`hasRides`) — les frais par course éventuels s'appliquent dès l'ouverture du
+ * compte (CGV art. 5).
  */
-export function OrgTermsGate({ orgName }: { orgName: string }) {
+export function OrgTermsGate({ orgName, hasRides = false }: { orgName: string; hasRides?: boolean }) {
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6">
-      <h1 className="text-[20px] font-semibold tracking-tight text-fg">Conditions à accepter avant votre première course</h1>
+      <h1 className="text-[20px] font-semibold tracking-tight text-fg">
+        {hasRides ? "Conditions à accepter pour continuer" : "Conditions à accepter avant votre première course"}
+      </h1>
       <p className="mt-2 text-[13.5px] leading-relaxed text-fg-muted">
-        Avant de créer des courses, le propriétaire ou un administrateur accepte, au nom de <span className="text-fg">{orgName}</span>,
+        {hasRides ? "Pour continuer à utiliser le tableau de bord" : "Avant de créer des courses"}, le propriétaire ou un administrateur accepte, au nom de <span className="text-fg">{orgName}</span>,
         les conditions générales de vente (abonnement, frais plateforme par course, paiement, résiliation) et l&apos;accord de
         traitement des données. Elles s&apos;appliquent à votre organisation dès cette acceptation.
       </p>

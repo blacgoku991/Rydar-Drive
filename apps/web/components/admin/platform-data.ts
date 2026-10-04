@@ -55,8 +55,10 @@ async function loadOrgs(supabase: SupabaseClient): Promise<AdminLiveOrg[]> {
 
 // ----------------------------------------------------------------------------- carte en direct
 
+// Supervision technique du dispatch (accord de traitement, art. 4) : ni nom, ni téléphone, ni véhicule, ni vitesse
+// des chauffeurs, ni adresse ni client des courses — numéro de fiche, organisation, présence, position, cap, catégorie.
 const RIDE_FIELDS =
-  "id, organization_id, number, status, type, pickup_address, pickup_lat, pickup_lng, dropoff_address, dropoff_lat, dropoff_lng, pickup_at, vehicle_category, passengers, driver_id, dispatch_wave";
+  "id, organization_id, number, status, type, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_at, vehicle_category, passengers, driver_id, dispatch_wave";
 
 /** Instantané de la carte en direct : chauffeurs en ligne de toutes les organisations + courses utiles. */
 export async function getPlatformLive(supabase: SupabaseClient): Promise<AdminLiveSnapshot> {
@@ -67,8 +69,8 @@ export async function getPlatformLive(supabase: SupabaseClient): Promise<AdminLi
       supabase
         .from("drivers")
         .select(
-          "id, organization_id, number, first_name, last_name, phone, presence, current_ride_id, online_since, " +
-            "vehicle:vehicles(brand, model, plate, color, category), location:driver_locations(lat, lng, heading, speed_mps, accuracy_m, updated_at)",
+          "id, organization_id, number, presence, current_ride_id, online_since, " +
+            "vehicle:vehicles(category), location:driver_locations(lat, lng, heading, accuracy_m, updated_at)",
         )
         .eq("status", "active")
         .neq("presence", "offline")

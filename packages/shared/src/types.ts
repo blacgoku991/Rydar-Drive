@@ -811,6 +811,11 @@ export interface DriverAccountState {
   organization?: { id: Uuid; name: string; logo_url: string | null; phone: string | null; email: string | null; dispatch_model: DispatchModel };
   reason?: string | null;
   can_submit_documents?: boolean;
+  /**
+   * Compte banni (20260924007400) : « org » = décision de la centrale, « platform » = interdiction décidée par l'éditeur
+   * (motifs et recours envoyés par e-mail). Absent pour une base plus ancienne : traité comme « org ».
+   */
+  ban_scope?: "org" | "platform" | null;
 }
 
 /** RPC svc_join_info(p_code) (service role) */
@@ -862,7 +867,10 @@ export interface DriverFlaggedEvent {
 /** RPC ban_driver(p_driver_id, p_reason, p_category, p_report_to_platform, p_ban_vehicle) */
 export interface BanDriverResult {
   ok: boolean;
-  code: "BANNED" | "DRIVER_NOT_FOUND" | "REASON_REQUIRED" | "INVALID_CATEGORY" | "ALREADY_BANNED" | "DRIVER_ON_RIDE";
+  code:
+    | "BANNED" | "DRIVER_NOT_FOUND" | "REASON_REQUIRED" | "INVALID_CATEGORY" | "ALREADY_BANNED" | "DRIVER_ON_RIDE"
+    // Signalement à Rydar d'une autre catégorie que fraude / faux document (20260924007400)
+    | "PLATFORM_REPORT_CATEGORY";
   message?: string;
   identities?: number;
   reassigned_rides?: number;

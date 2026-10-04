@@ -321,6 +321,15 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "Délai de paiement des frais plateforme : 45 jours au plus (facture récapitulative, article L441-10 du Code de commerce).",
   WHATSAPP_FLEET_UNSUPPORTED:
     "WhatsApp indisponible pour une flotte : le modèle approuvé par Meta renvoie à l'onglet « Encaissements », absent d'une flotte. Relancez sans WhatsApp (rappel affiché dans son tableau de bord).",
+  // Relecture juridique (20260924007400) : interdiction plateforme réservée à la fraude, identité de l'éditeur, refus
+  // WhatsApp du propriétaire (espaces insécables avant « : »)
+  PLATFORM_BAN_CATEGORY:
+    "Seule une fraude ou un faux document peut entraîner une interdiction sur toute la plateforme. Une dette, un comportement ou un autre motif reste propre à la centrale : classez le signalement.",
+  PLATFORM_REPORT_CATEGORY:
+    "Seule une fraude ou un faux document peut être signalé à Rydar : une dette, un comportement ou un autre motif reste propre à votre centrale.",
+  LEGAL_EDITOR_MISSING: "Conditions momentanément indisponibles : identité de l'éditeur à compléter.",
+  WHATSAPP_OPTED_OUT:
+    "Le propriétaire a refusé les messages WhatsApp de Rydar : relancez sans WhatsApp (rappel affiché dans son tableau de bord).",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */

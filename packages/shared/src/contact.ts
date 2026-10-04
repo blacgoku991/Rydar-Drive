@@ -47,11 +47,13 @@ export const EMAIL_STATUS_META: Record<EmailStatus, { label: string; tone: Tone 
 };
 
 /**
- * Types de public.email_outbox (dernière contrainte : 20260924007100, décision de Rydar sur une demande de participation
- * au réseau partagé ; 20260924006600 : annonces aux organisations).
+ * Types de public.email_outbox (dernière contrainte : 20260924007400, décision de bannissement plateforme envoyée au
+ * chauffeur et accusé de réception d'une réservation du mini-site ; 20260924007100 : décision de Rydar sur une demande
+ * de participation au réseau partagé ; 20260924006600 : annonces aux organisations).
  */
 export const EMAIL_KINDS = [
   "contact_notify", "contact_ack", "contact_reply", "test", "platform_fee_change", "org_terms_update", "network_review",
+  "platform_ban", "booking_receipt",
 ] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
@@ -63,6 +65,8 @@ export const EMAIL_KIND_META: Record<EmailKind, { label: string }> = {
   platform_fee_change: { label: "Frais Rydar par course" },
   org_terms_update: { label: "Nouvelles CGV" },
   network_review: { label: "Réseau partagé : validation" },
+  platform_ban: { label: "Bannissement plateforme : décision au chauffeur" },
+  booking_receipt: { label: "Mini-site : accusé de réception" },
 };
 
 /** Longueurs maximales (contraintes de public.contact_requests et public.email_outbox) : attributs maxLength. */

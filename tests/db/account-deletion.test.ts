@@ -171,7 +171,8 @@ describe("Suppression du compte chauffeur — identité effacée partout (migrat
     ]);
 
     // 6) Bannissement pour fraude signalé au super admin (motif conservé) + trace d'audit web du signalement
-    const ban = await rpc(org.ownerId, "ban_driver", [me.id, `Commission jamais payée par ${me.first}`, "unpaid", true, true]);
+    // Signalement à Rydar : fraude ou faux document seulement (20260924007400)
+    const ban = await rpc(org.ownerId, "ban_driver", [me.id, `Faux paiements déclarés par ${me.first}`, "fraud", true, true]);
     expect(ban.code).toBe("BANNED");
     const [fraud] = await sql(`select id, driver_label from public.fraud_reports where driver_id = $1`, [me.id]);
     expect(fraud.driver_label).toContain(me.last);
@@ -263,10 +264,10 @@ describe("Suppression du compte chauffeur — identité effacée partout (migrat
     expect((await sql(`select message from public.ride_events where ride_id = $1 and type = 'ride.reassigned'`, [late.id]))[0].message).toContain(alias);
     const [f] = await sql(`select driver_label, reason, identities from public.fraud_reports where id = $1`, [fraud.id]);
     // Motif conservé (lutte contre la fraude), sans son nom : signalement, identités, fiche
-    expect(f).toMatchObject({ driver_label: alias, reason: `Commission jamais payée par ${alias}` });
-    expect((await sql(`select ban_reason from public.drivers where id = $1`, [me.id]))[0].ban_reason).toBe(`Commission jamais payée par ${alias}`);
+    expect(f).toMatchObject({ driver_label: alias, reason: `Faux paiements déclarés par ${alias}` });
+    expect((await sql(`select ban_reason from public.drivers where id = $1`, [me.id]))[0].ban_reason).toBe(`Faux paiements déclarés par ${alias}`);
     expect((await sql(`select distinct reason from public.banned_identities where driver_id = $1`, [me.id])).map((b) => b.reason)).toEqual([
-      `Commission jamais payée par ${alias}`,
+      `Faux paiements déclarés par ${alias}`,
     ]);
     // Bannissement : empreintes (hachages) conservées, indices en clair effacés partout
     const bans = await sql(`select hint, value_hash from public.banned_identities where driver_id = $1`, [me.id]);

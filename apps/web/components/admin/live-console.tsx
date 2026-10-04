@@ -1,10 +1,10 @@
 "use client";
 import {
   DISPATCH_MODEL_META, PRESENCE_META, RIDE_STATUS_META, RIDE_TYPE_LABELS, VEHICLE_CATEGORY_META,
-  decodePolyline, formatPhone, formatRideDate, formatTime, initials, shortAddress,
+  decodePolyline, formatRideDate, formatTime,
   type Coord, type DriverPresence, type VehicleCategory,
 } from "@rydar/shared";
-import { ChevronRight, Crosshair, LocateFixed, Navigation2, Phone, Search, SlidersHorizontal, Tag, X } from "lucide-react";
+import { ChevronRight, Crosshair, LocateFixed, Navigation2, Search, SlidersHorizontal, Tag, X } from "lucide-react";
 import Link from "next/link";
 import { Dialog as D } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -286,12 +286,12 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
   const driverList = useMemo(() => {
     const term = query.trim().toLowerCase();
     return filtered
-      .filter((d) => !term || `${d.first_name} ${d.last_name} ${d.number} ${d.vehicle?.plate ?? ""} ${orgById[d.organization_id]?.name ?? ""}`.toLowerCase().includes(term))
+      .filter((d) => !term || `n° ${d.number} ${d.number} ${orgById[d.organization_id]?.name ?? ""}`.toLowerCase().includes(term))
       .sort(
         (a, b) =>
           Number(isStale(a)) - Number(isStale(b)) ||
           PRESENCE_ORDER.indexOf(a.presence) - PRESENCE_ORDER.indexOf(b.presence) ||
-          a.first_name.localeCompare(b.first_name, "fr"),
+          a.number - b.number,
       );
   }, [filtered, query, orgById, isStale]);
 
@@ -549,7 +549,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Nom, n°, plaque, organisation"
+                placeholder="N° de fiche, organisation"
                 aria-label="Rechercher un chauffeur" title="Rechercher un chauffeur"
                 className="h-9 w-full rounded-lg border border-line-field bg-white/[0.04] pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-brand/70"
               />
@@ -575,8 +575,8 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                   )}
                 >
                   <span className="relative shrink-0">
-                    <span className={cn("grid size-9 place-items-center rounded-full bg-ink-600 text-[11px] font-semibold", stale ? "text-fg-subtle" : "text-fg-muted")}>
-                      {initials(d.first_name, d.last_name)}
+                    <span className={cn("num grid size-9 place-items-center rounded-full bg-ink-600 text-[11px] font-semibold", stale ? "text-fg-subtle" : "text-fg-muted")}>
+                      {d.number}
                     </span>
                     <span
                       className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-ink-800"
@@ -585,7 +585,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium text-fg">
-                      {d.first_name} {d.last_name} <span className="font-normal text-fg-subtle">n° {d.number}</span>
+                      Chauffeur <span className="num">n° {d.number}</span>
                     </span>
                     <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11.5px]">
                       <OrgTag org={org} size="xs" />
@@ -794,13 +794,10 @@ function RideSummary({ ride, onClick, heading, note }: { ride: AdminLiveRide; on
         {!heading && <span className="shrink-0" style={{ color: rideColor(ride.status) }}>{RIDE_STATUS_META[ride.status]?.label ?? ride.status}</span>}
       </span>
       {note && <span className="mt-0.5 block text-[11.5px] text-fg-muted">{note}</span>}
-      <span className="mt-1.5 flex items-start gap-2">
-        <span className="mt-1 size-2 shrink-0 rounded-full" style={{ background: rideColor(ride.status) }} />
-        <span className="min-w-0 truncate text-fg">{shortAddress(ride.pickup_address)}</span>
-      </span>
-      <span className="mt-1 flex items-start gap-2">
-        <span className="mt-1 size-2 shrink-0 rounded-[2px] bg-fg" />
-        <span className="min-w-0 truncate text-fg">{shortAddress(ride.dropoff_address)}</span>
+      {/* Supervision : départ et destination seulement sur la carte, jamais l'adresse ni le client */}
+      <span className="mt-1.5 flex items-center gap-2 text-fg-muted">
+        <span className="size-2 shrink-0 rounded-full" style={{ background: rideColor(ride.status) }} />
+        Départ et destination sur la carte
       </span>
       {onClick && <span className="mt-1.5 block text-[11.5px] text-fg-muted">Voir le trajet sur la carte</span>}
     </Comp>
@@ -850,20 +847,19 @@ function DriverCard({
 }) {
   const serverNow = useServerNow(clock);
   const loc = d.location;
-  const speedKmh = loc?.speed_mps != null && loc.speed_mps >= 0 ? Math.round(loc.speed_mps * 3.6) : null;
   const category = d.vehicle?.category ? VEHICLE_CATEGORY_META[d.vehicle.category as VehicleCategory]?.label ?? d.vehicle.category : null;
   return (
     <>
       <div className="flex items-start gap-3">
         <span
-          className="grid size-11 shrink-0 place-items-center rounded-full bg-ink-600 text-[13px] font-semibold"
+          className="num grid size-11 shrink-0 place-items-center rounded-full bg-ink-600 text-[13px] font-semibold"
           style={{ boxShadow: `0 0 0 2px ${stale ? PRESENCE_COLOR.offline : PRESENCE_COLOR[d.presence]}` }}
         >
-          {initials(d.first_name, d.last_name)}
+          {d.number}
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14.5px] font-semibold">
-            {d.first_name} {d.last_name} <span className="text-[12px] font-normal text-fg-subtle">n° {d.number}</span>
+            Chauffeur <span className="num">n° {d.number}</span>
           </p>
           <p className="text-[12.5px]" style={{ color: PRESENCE_COLOR[d.presence] }}>
             {PRESENCE_META[d.presence].label}
@@ -878,14 +874,7 @@ function DriverCard({
       <OrgLink org={org} />
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5">
-        <Detail label="Téléphone">
-          <a href={`tel:${d.phone}`} className="hover:text-brand">
-            {formatPhone(d.phone)}
-          </a>
-        </Detail>
-        <Detail label="Catégorie">{category ?? "—"}</Detail>
-        <Detail label="Véhicule">{d.vehicle ? [d.vehicle.brand, d.vehicle.model].filter(Boolean).join(" ") + (d.vehicle.color ? ` · ${d.vehicle.color}` : "") : "Sans véhicule"}</Detail>
-        <Detail label="Plaque">{d.vehicle ? <span className="mono">{d.vehicle.plate}</span> : "—"}</Detail>
+        <Detail label="Catégorie">{category ?? "Sans véhicule"}</Detail>
         <Detail label="Dernière position">
           {loc ? (
             <span className={stale ? "text-amber" : undefined}>
@@ -896,19 +885,14 @@ function DriverCard({
             <span className="text-amber">Aucune position</span>
           )}
         </Detail>
-        <Detail label="Vitesse · cap">
-          {loc && (speedKmh != null || loc.heading != null) ? (
+        {/* Cap seulement : la vitesse n'est ni affichée ni gardée (aucun contrôle des vitesses) */}
+        <Detail label="Cap">
+          {loc && loc.heading != null ? (
             <span className="inline-flex items-center gap-1.5">
-              {speedKmh != null && <span className="tabular-nums">{speedKmh}{" "}km/h</span>}
-              {speedKmh != null && loc.heading != null && <span className="text-fg-subtle">·</span>}
-              {loc.heading != null && (
-                <>
-                  <Navigation2 className="size-3.5 text-fg-muted" style={{ transform: `rotate(${loc.heading}deg)` }} aria-hidden />
-                  <span className="tabular-nums">
-                    {compassPoint(loc.heading)} {Math.round(((loc.heading % 360) + 360) % 360)}°
-                  </span>
-                </>
-              )}
+              <Navigation2 className="size-3.5 text-fg-muted" style={{ transform: `rotate(${loc.heading}deg)` }} aria-hidden />
+              <span className="tabular-nums">
+                {compassPoint(loc.heading)} {Math.round(((loc.heading % 360) + 360) % 360)}°
+              </span>
             </span>
           ) : (
             "—"
@@ -933,12 +917,7 @@ function DriverCard({
         />
       )}
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <Button asChild variant="secondary" size="sm" className="h-10">
-          <a href={`tel:${d.phone}`}>
-            <Phone /> Appeler
-          </a>
-        </Button>
+      <div className="mt-3 grid grid-cols-1 gap-2">
         <Button variant="secondary" size="sm" className="h-10" onClick={onCenter} disabled={!loc}>
           <LocateFixed /> Centrer
         </Button>
@@ -1010,7 +989,7 @@ function RideCard({
                 className="flex h-9 items-center gap-2 rounded-lg bg-white/[0.05] px-2.5 text-[12.5px] transition-colors hover:bg-white/[0.09]"
               >
                 <span className="size-2 rounded-full" style={{ background: PRESENCE_COLOR[d.presence] }} />
-                {d.first_name} {d.last_name.charAt(0)}.
+                <span className="num">n° {d.number}</span>
               </button>
             ))}
           </div>
@@ -1018,7 +997,7 @@ function RideCard({
       )}
       {driver && (
         <Button variant="secondary" size="sm" className="mt-3 h-10 w-full" onClick={() => onSelectDriver(driver.id)}>
-          Chauffeur : {driver.first_name} {driver.last_name}
+          Chauffeur n° {driver.number}
         </Button>
       )}
     </>

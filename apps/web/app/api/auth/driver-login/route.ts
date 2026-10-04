@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { driverAppCors } from "@/lib/driver-app-cors";
 import {
-  checkDriverAccount, DRIVER_DENIED, DRIVER_LOGIN_WINDOW, driverAccountDecision, driverLoginEmailKey, driverLoginPairKey, isAuthBanned,
+  checkDriverAccount, DRIVER_LOCKED_UNEXPLAINED, DRIVER_LOGIN_WINDOW, driverAccountDecision, driverLoginEmailKey, driverLoginPairKey, isAuthBanned,
 } from "@/lib/driver-session";
 import { env } from "@/lib/env";
 import { rateLimitAll, resetRateLimit } from "@/lib/rate-limit";
@@ -25,7 +25,7 @@ export function OPTIONS(req: Request) {
  *  - 200 { access_token, refresh_token, expires_at, state } : chauffeur actif (state « active »)
  *    ou candidat inscrit par lien, en attente de validation (state « pending » : écran d'attente,
  *    dépôt de documents) — organisation active, compte non banni ;
- *  - 403 { code, error } : BANNED (banni par la centrale, ou compte Auth banni), REJECTED,
+ *  - 403 { code, error } : BANNED (banni par la centrale, interdit sur la plateforme par l'éditeur, ou compte Auth bloqué), REJECTED,
  *    INACTIVE (suspendu / désactivé), ORGANIZATION_SUSPENDED, NOT_DRIVER.
  * Même ordre de priorité que public.driver_account_state() (banni › centrale suspendue › candidature).
  * Renvoie les jetons Supabase que l'app installe via auth.setSession().
@@ -89,13 +89,13 @@ function invalidCredentials() {
  * Compte Auth banni : le mot de passe est vérifié ici (empreinte de Supabase Auth, comme la suppression de compte).
  * Faux → même réponse qu'un mauvais mot de passe (aucun oracle « ce compte chauffeur est sanctionné ») ; juste → le
  * vrai motif lu sur la fiche (inactif, centrale suspendue, candidature refusée…), BANNED si la fiche ne l'explique pas
- * (bannissement plateforme). Aucune session n'est ouverte.
+ * (verrou du compte sans motif sur la fiche : message neutre). Aucune session n'est ouverte.
  */
 async function bannedAccount(email: string, password: string): Promise<NextResponse> {
   const { data: userId, error } = await createAdminClient().rpc("svc_driver_password_check", { p_email: email, p_password: password });
   if (error) return NextResponse.json({ code: "UNAVAILABLE", error: "Connexion impossible pour le moment. Réessayez." }, { status: 503 });
   if (!userId) return invalidCredentials();
   const decision = await driverAccountDecision(String(userId));
-  if (decision.ok) return NextResponse.json({ code: "BANNED", error: DRIVER_DENIED.BANNED }, { status: 403 });
+  if (decision.ok) return NextResponse.json({ code: "BANNED", error: DRIVER_LOCKED_UNEXPLAINED }, { status: 403 });
   return NextResponse.json({ code: decision.code, error: decision.error }, { status: decision.status });
 }

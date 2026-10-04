@@ -381,7 +381,12 @@ export async function banDriver(
       ok: false,
       code: res.code,
       error: res.message ?? "Bannissement impossible.",
-      fieldErrors: res.code === "REASON_REQUIRED" ? { reason: res.message ?? "Indiquez le motif" } : undefined,
+      fieldErrors:
+        res.code === "REASON_REQUIRED"
+          ? { reason: res.message ?? "Indiquez le motif" }
+          : res.code === "PLATFORM_REPORT_CATEGORY"
+            ? { reportToPlatform: res.message ?? "Seule une fraude ou un faux document peut être signalé à Rydar" }
+            : undefined,
     };
   }
 

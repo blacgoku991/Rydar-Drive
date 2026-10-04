@@ -123,14 +123,28 @@ export async function remindPlatformCentrale(orgId: string, note?: string | null
   return svc("svc_platform_remind", { p_org: orgId, p_note: cleanNote(note, 300), p_whatsapp: whatsapp === true }, orgId);
 }
 
-/** reason « FLEET_UNSUPPORTED » (20260924006600) : flotte — le modèle approuvé par Meta renvoie à « Encaissements ». */
+/**
+ * reason « FLEET_UNSUPPORTED » (20260924006600) : flotte — le modèle approuvé par Meta renvoie à « Encaissements » ;
+ * « OPTED_OUT » (20260924007400) : le propriétaire a refusé les messages WhatsApp de Rydar (noté le `refused_at`).
+ */
 export type PlatformWhatsAppTarget = {
   ready: boolean;
   to_display: string | null;
   source: "owner" | "organization" | null;
   name: string | null;
-  reason: "NOT_CONFIGURED" | "NO_PHONE" | "FLEET_UNSUPPORTED" | null;
+  reason: "NOT_CONFIGURED" | "NO_PHONE" | "FLEET_UNSUPPORTED" | "OPTED_OUT" | null;
+  refused_at?: string | null;
 };
+
+/**
+ * Refus du propriétaire de recevoir les relances WhatsApp de Rydar (CGV art. 10), noté ou retiré par le super admin
+ * (svc_platform_whatsapp_refusal : auteur revérifié, journal d'audit en SQL). Refus noté : svc_platform_remind refuse
+ * toute relance par WhatsApp (WHATSAPP_OPTED_OUT), la relance affichée dans le tableau de bord reste possible.
+ */
+export async function setPlatformWhatsAppRefusal(orgId: string, refused: boolean, note?: string | null): Promise<PlatformActionResult> {
+  if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation introuvable." };
+  return svc("svc_platform_whatsapp_refusal", { p_org: orgId, p_refused: refused === true, p_note: cleanNote(note, 300) }, orgId);
+}
 
 /** Relance WhatsApp possible pour cette centrale ? (numéro de Rydar relié, téléphone du propriétaire ou de la centrale) */
 export async function platformWhatsAppTarget(orgId: string): Promise<PlatformWhatsAppTarget | null> {

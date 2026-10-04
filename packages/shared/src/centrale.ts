@@ -68,6 +68,14 @@ export const TRUST_LEVEL_META: Record<TrustLevel, { label: string; tone: Tone; d
   trusted: { label: "Confirmé", tone: "green", description: "Reçoit toutes les courses de la centrale." },
 };
 
+/**
+ * Catégories qu'une centrale peut signaler à Rydar et pour lesquelles Rydar peut interdire une personne sur toute la
+ * plateforme (ban_driver, svc_platform_ban : PLATFORM_REPORT_CATEGORY / PLATFORM_BAN_CATEGORY, 20260924007400). Une
+ * dette, un comportement ou un autre motif reste propre à la centrale : aucune liste commune de mauvais payeurs.
+ */
+export const PLATFORM_BAN_CATEGORIES = ["fraud", "documents"] as const satisfies readonly BanCategory[];
+export const isPlatformBanCategory = (category: string): boolean => (PLATFORM_BAN_CATEGORIES as readonly string[]).includes(category);
+
 export const BAN_CATEGORY_META: Record<BanCategory, { label: string }> = {
   unpaid: { label: "Commissions impayées" },
   fraud: { label: "Arnaque / fraude" },
@@ -246,10 +254,15 @@ export const joinApplicationSchema = z.object({
   website: z.string().max(0).optional(),
 });
 
-/** Bannissement (dashboard). */
-export const banDriverSchema = z.object({
-  reason: z.string().trim().min(3, "Indiquez le motif").max(500),
-  category: z.enum(["unpaid", "fraud", "behavior", "documents", "other"]),
-  reportToPlatform: z.boolean().default(false),
-  banVehicle: z.boolean().default(false),
-});
+/** Bannissement (dashboard) : signalement à Rydar seulement pour une fraude ou un faux document (comme ban_driver). */
+export const banDriverSchema = z
+  .object({
+    reason: z.string().trim().min(3, "Indiquez le motif").max(500),
+    category: z.enum(["unpaid", "fraud", "behavior", "documents", "other"]),
+    reportToPlatform: z.boolean().default(false),
+    banVehicle: z.boolean().default(false),
+  })
+  .refine((v) => !v.reportToPlatform || isPlatformBanCategory(v.category), {
+    path: ["reportToPlatform"],
+    message: "Seule une fraude ou un faux document peut être signalé à Rydar",
+  });
