@@ -1,5 +1,5 @@
 "use server";
-import { bookingSiteSchema, bookingSiteSchemaFor, describeError, extractErrorCode, fieldErrors, humanizeError } from "@rydar/shared";
+import { bookingOperatorGaps, bookingSiteSchema, bookingSiteSchemaFor, describeError, extractErrorCode, fieldErrors, humanizeError } from "@rydar/shared";
 import { createHash } from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { revalidatePath } from "next/cache";
@@ -55,6 +55,20 @@ export async function updateBookingSite(input: z.input<typeof bookingSiteSchema>
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, BOOKING_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   if (v.custom_domain && isPlatformDomain(v.custom_domain)) return { ok: false, error: PLATFORM_DOMAIN_ERROR() };
+  // Mise en ligne : vendeur identifié en bas du mini-site (raison sociale, SIRET, adresse, n° VTC : bookingOperatorGaps)
+  if (v.enabled) {
+    const { data: org, error: orgError } = await ctx.supabase
+      .from("organizations")
+      .select("legal_name, siret, address, postal_code, city, vtc_registration")
+      .eq("id", ctx.org.id)
+      .single();
+    if (orgError) return { ok: false, error: humanizeError(orgError.message, actionError(orgError)) };
+    const gaps = bookingOperatorGaps(org as never);
+    if (gaps.length) {
+      const message = `Pour mettre le mini-site en ligne, complétez dans les réglages de votre organisation\u00a0: ${gaps.join(", ")}. Ils s'affichent en bas du mini-site, comme l'exige la loi.`;
+      return { ok: false, error: message, fieldErrors: { enabled: message } };
+    }
+  }
   const { error } = await ctx.supabase
     .from("booking_sites")
     .update({ ...v, email: v.email || null, custom_domain: v.custom_domain || null, legal_mentions: v.legal_mentions ?? null })

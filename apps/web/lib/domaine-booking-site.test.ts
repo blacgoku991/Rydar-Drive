@@ -75,6 +75,16 @@ function bookingSites(kind: "user" | "admin") {
 
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ from: () => bookingSites("admin") }) }));
 
+/** organizations (client utilisateur) : exploitant identifié, exigé pour la mise en ligne (bookingOperatorGaps). */
+function organizations() {
+  const identity = {
+    legal_name: "Centrale A SAS", siret: "12345678900012", address: "1 rue de l'Exemple", postal_code: "75001", city: "Paris",
+    vtc_registration: "EVTC075230001",
+  };
+  const q = { select: () => q, eq: () => q, single: async () => ({ data: identity, error: null }) };
+  return q;
+}
+
 const { domainToken, updateBookingSite, verifyCustomDomain } = await import("../app/dashboard/booking-site/actions");
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -99,7 +109,10 @@ beforeEach(() => {
     role: "owner",
     user: { id: "u1" },
     // org_usage : droit custom_domain de l'offre relu par verifyCustomDomain (contre-audit sql3#0)
-    supabase: { from: () => bookingSites("user"), rpc: async () => ({ data: { limits: { custom_domain: true } }, error: null }) },
+    supabase: {
+      from: (table: string) => (table === "organizations" ? organizations() : bookingSites("user")),
+      rpc: async () => ({ data: { limits: { custom_domain: true } }, error: null }),
+    },
   };
   h.userUpdateError = null;
   h.userUpdates = 0;

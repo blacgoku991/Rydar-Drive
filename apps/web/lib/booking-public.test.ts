@@ -21,6 +21,8 @@ const h = vi.hoisted(() => ({
   bookingSites: true,
   /** Tables lues par l'action ou la route (aucune quand les mini-sites sont coupés) */
   reads: [] as string[],
+  /** Appels RPC (service role) : accusé de réception svc_booking_receipt */
+  rpcs: [] as { fn: string; args: Row }[],
 }));
 
 vi.mock("@/lib/booking-sites", () => ({ bookingSitesEnabled: async () => h.bookingSites }));
@@ -70,7 +72,7 @@ vi.mock("@/lib/supabase/admin", () => ({
         if (table === "pricing_rules") return { data: h.rule, error: null };
         if (table === "rides" && op === "insert") {
           h.inserts.push(payload!);
-          return { data: { number: h.inserts.length }, error: null };
+          return { data: { id: `ride-${h.inserts.length}`, number: h.inserts.length }, error: null };
         }
         return { data: [], error: null };
       };
@@ -85,6 +87,10 @@ vi.mock("@/lib/supabase/admin", () => ({
         single: async () => result(),
       };
       return b;
+    },
+    rpc: async (fn: string, args: Row) => {
+      h.rpcs.push({ fn, args });
+      return { data: { ok: true, code: "QUEUED" }, error: null };
     },
   }),
 }));
@@ -109,6 +115,7 @@ function booking(over: Row = {}) {
     when: "now",
     customerName: "Jean Client",
     customerPhone: `+3361234${String(phoneSeq).padStart(4, "0")}`,
+    customerEmail: "jean.client@exemple.fr",
     passengers: 1,
     luggage: 0,
     vehicleCategory: "standard",
@@ -124,6 +131,9 @@ beforeEach(() => {
     id: ORG,
     status: "active",
     timezone: "Europe/Paris",
+    // Vendeur identifié en bas du mini-site (bookingOperatorGaps)
+    legal_name: "Centrale B SAS", siret: "12345678900012", address: "1 rue de l'Exemple", postal_code: "75012", city: "Paris",
+    vtc_registration: "EVTC075230001",
     settings: { default_payment_method: "cash" },
     booking: {
       enabled: true, show_price_estimate: true, vehicle_categories: ["standard"], phone: "01 23 45 67 89", email: "contact@centrale-b.example",
@@ -138,6 +148,32 @@ beforeEach(() => {
   h.limits = [];
   h.bookingSites = true;
   h.reads = [];
+  h.rpcs = [];
+});
+
+describe("submitBooking : vendeur identifié, e-mail et accusé de réception (relecture juridique)", () => {
+  it("réservation avec obligation de paiement sans e-mail : refusée, rien n'est créé", async () => {
+    const res = await submitBooking("centrale-b", booking({ customerEmail: "", expectedPriceCents: 2500 }));
+    expect(res).toMatchObject({ ok: false, fieldErrors: { customerEmail: "Requis pour recevoir la confirmation" } });
+    expect(h.inserts).toHaveLength(0);
+  });
+
+  it("e-mail saisi : accusé de réception mis en file pour la course créée", async () => {
+    const res = await submitBooking("centrale-b", booking());
+    expect(res).toMatchObject({ ok: true, number: 1, receipt: true });
+    expect(h.rpcs).toEqual([{ fn: "svc_booking_receipt", args: { p_ride: "ride-1" } }]);
+    // Demande sans prix ni e-mail : acceptée, sans accusé
+    expect(await submitBooking("centrale-b", booking({ customerEmail: "" }))).toMatchObject({ ok: true, receipt: false });
+    expect(h.rpcs).toHaveLength(1);
+  });
+
+  it("vendeur incomplet (SIRET, n° VTC) : réservation en ligne refusée", async () => {
+    h.org = { ...h.org!, siret: null, vtc_registration: "" };
+    const res = await submitBooking("centrale-b", booking());
+    expect(res).toMatchObject({ ok: false });
+    expect((res as { error: string }).error).toContain("Appelez la centrale pour réserver");
+    expect(h.inserts).toHaveLength(0);
+  });
 });
 
 describe("mini-sites coupés par la plateforme (super admin)", () => {

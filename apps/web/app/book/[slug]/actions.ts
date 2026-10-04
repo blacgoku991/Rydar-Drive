@@ -1,5 +1,7 @@
 "use server";
-import { bookingRequestSchema, bookingSitePublishable, fieldErrors, formatPrice, PAYMENT_METHODS, type BookingRequest, type PaymentMethod } from "@rydar/shared";
+import {
+  bookingOperatorGaps, bookingRequestSchema, bookingSitePublishable, fieldErrors, formatPrice, PAYMENT_METHODS, type BookingRequest, type PaymentMethod,
+} from "@rydar/shared";
 import { z } from "zod";
 import { bookingSitePrice } from "@/lib/booking-price";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
@@ -10,7 +12,8 @@ import { clientIp, ipBucket } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result =
-  | { ok: true; number: number }
+  /** `receipt` : accusé de réception mis en file pour l'adresse e-mail saisie (svc_booking_receipt) */
+  | { ok: true; number: number; receipt?: boolean }
   | { ok: false; error: string; fieldErrors?: Record<string, string> }
   /** Prix recalculé différent du prix affiché : le client voit le nouveau prix (null : plus de prix en ligne) avant de confirmer */
   | { ok: false; code: "PRICE_CHANGED"; error: string; priceCents: number | null };
@@ -25,6 +28,8 @@ const MAX_ADVANCE_MS = 400 * 86_400_000;
  * affiché au client et qu'il s'est engagé à payer (expectedPriceCents, « Réserver avec obligation de paiement »),
  * enregistré seulement s'il est identique au calcul du serveur (sinon PRICE_CHANGED) ; sans prix affiché, demande
  * sans prix (price_cents null), que la centrale confirme au client. Moyen de paiement : celui de la centrale (réglages).
+ * Réservation avec obligation de paiement : e-mail obligatoire, accusé de réception envoyé (Code civil, art. 1127-2 ;
+ * contenu fixe tiré de la base, svc_booking_receipt) ; vendeur identifié en bas du mini-site (bookingOperatorGaps).
  */
 export async function submitBooking(slug: string, input: z.input<typeof bookingRequestSchema>): Promise<Result> {
   // IP (IPv6 groupée par /64) avant toute requête : 6 demandes / 10 min et 20 / jour
@@ -41,12 +46,21 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
   if (!parsed.success) return { ok: false, error: "Merci de vérifier le formulaire.", fieldErrors: fieldErrors(parsed.error) };
   const v: BookingRequest = parsed.data;
   if (v.website) return { ok: true, number: 0 }; // robot (pot de miel rempli) : on ne crée rien
+  // Commande avec obligation de paiement : accusé de réception par voie électronique (Code civil, art. 1127-2)
+  if (v.expectedPriceCents != null && !v.customerEmail) {
+    return {
+      ok: false,
+      error: "Indiquez votre e-mail\u00a0: la confirmation de votre réservation vous y est envoyée.",
+      fieldErrors: { customerEmail: "Requis pour recevoir la confirmation" },
+    };
+  }
 
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
     .select(
-      "id, status, timezone, settings:organization_settings(default_payment_method), booking:booking_sites(enabled, vehicle_categories, show_price_estimate, legal_mentions, phone, email)",
+      "id, status, timezone, legal_name, siret, address, postal_code, city, vtc_registration, " +
+        "settings:organization_settings(default_payment_method), booking:booking_sites(enabled, vehicle_categories, show_price_estimate, legal_mentions, phone, email)",
     )
     .eq("slug", slug)
     .maybeSingle();
@@ -60,6 +74,8 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
   // Mini-site publié avant la règle, sans les informations dues aux clients (conditions, téléphone, e-mail) : pas de
   // commande en ligne (C. conso. L111-1, L221-5, L221-14) ; la centrale complète ses réglages
   if (!bookingSitePublishable(site)) return { ok: false, error: `${UNAVAILABLE} Appelez la centrale pour réserver.` };
+  // Vendeur non identifié (raison sociale, SIRET, adresse, n° VTC) : pas de commande en ligne (LCEN art. 19, C. conso. R111-1)
+  if (bookingOperatorGaps(org as never).length) return { ok: false, error: `${UNAVAILABLE} Appelez la centrale pour réserver.` };
   if (!site.vehicle_categories.includes(v.vehicleCategory)) return { ok: false, error: "Catégorie non proposée." };
 
   const pickupAt = v.when === "now" ? new Date() : v.pickupAt;
@@ -151,8 +167,18 @@ export async function submitBooking(slug: string, input: z.input<typeof bookingR
       route_polyline: route.polyline,
       route_provider: route.provider,
     } as never)
-    .select("number")
+    .select("id, number")
     .single();
   if (error || !data) return { ok: false, error: "La réservation n'a pas pu être enregistrée. Appelez-nous directement." };
-  return { ok: true, number: (data as any).number };
+  // Accusé de réception (contenu fixe : n°, date, catégorie, prix, coordonnées de la centrale ; 3 par adresse et par 24 h) :
+  // un échec n'annule jamais la réservation, déjà enregistrée
+  let receipt = false;
+  if (v.customerEmail) {
+    const { data: queued } = await admin.rpc("svc_booking_receipt", { p_ride: (data as any).id }).then(
+      (r) => r,
+      () => ({ data: null }),
+    );
+    receipt = (queued as { ok?: boolean } | null)?.ok === true;
+  }
+  return { ok: true, number: (data as any).number, receipt };
 }

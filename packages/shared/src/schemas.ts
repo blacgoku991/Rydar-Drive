@@ -359,6 +359,30 @@ export function bookingSitePublishable(site: { legal_mentions?: string | null; p
 }
 
 /**
+ * Identité de l'exploitant affichée en bas du mini-site (vendeur du transport) : raison sociale, SIRET (14 chiffres),
+ * adresse complète et n° d'inscription au registre des exploitants VTC (LCEN art. 19, Code de la consommation L111-1 et
+ * R111-1, Code des transports L3122-1). Exigée pour mettre le mini-site en ligne et pour toute réservation en ligne.
+ * Renvoie ce qui manque (libellés), vide si complet.
+ */
+export type BookingOperatorIdentity = {
+  legal_name?: string | null;
+  siret?: string | null;
+  address?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  vtc_registration?: string | null;
+};
+export function bookingOperatorGaps(o: BookingOperatorIdentity | null | undefined): string[] {
+  const has = (v: string | null | undefined) => !!v?.trim();
+  const gaps: string[] = [];
+  if (!has(o?.legal_name)) gaps.push("raison sociale");
+  if (!/^\d{14}$/.test((o?.siret ?? "").replace(/\s/g, ""))) gaps.push("SIRET (14 chiffres)");
+  if (!has(o?.address) || !has(o?.postal_code) || !has(o?.city)) gaps.push("adresse complète (rue, code postal, ville)");
+  if (!has(o?.vtc_registration)) gaps.push("n° d'inscription au registre des exploitants VTC");
+  return gaps;
+}
+
+/**
  * Réglages du mini-site. `currentSubdomain` = sous-domaine enregistré : un nom réservé n'est refusé que s'il CHANGE
  * (comme le trigger SQL booking_sites_reserved_subdomain, migration 004900) ; une centrale dont le sous-domaine
  * existant est réservé (pris avant la règle) enregistre ses autres réglages sans devoir le renommer. Mise en ligne

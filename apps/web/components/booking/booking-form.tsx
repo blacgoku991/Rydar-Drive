@@ -1,6 +1,6 @@
 "use client";
 import {
-  decodePolyline, formatDistance, formatDuration, formatPrice, VEHICLE_CATEGORY_META, type VehicleCategory,
+  dateTimeFormat, decodePolyline, formatDistance, formatDuration, formatPrice, VEHICLE_CATEGORY_META, type VehicleCategory,
 } from "@rydar/shared";
 import { CalendarClock, Check, Minus, Plane, Plus, ShieldCheck, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
@@ -28,7 +28,7 @@ function Counter({ value, set, min, max, label, unit }: { value: number; set: (v
 }
 
 export function BookingForm({
-  slug, categories, timeZone = "Europe/Paris", showPrice, phone, near, operator, privacyUrl, conditions,
+  slug, categories, timeZone = "Europe/Paris", showPrice, phone, near, operator, privacyUrl, conditions, contactEmail, partnerNetwork,
 }: {
   slug: string;
   categories: VehicleCategory[];
@@ -43,6 +43,10 @@ export function BookingForm({
   privacyUrl?: string;
   /** Conditions de la centrale pour ses clients (réservation, annulation, paiement, médiateur), saisies par elle */
   conditions?: string | null;
+  /** E-mail de la centrale (droits du client sur ses données) */
+  contactEmail?: string | null;
+  /** La centrale partage ses courses sur le réseau partagé (ouvert et validé) : le client en est informé */
+  partnerNetwork?: boolean;
 }) {
   const [pickup, setPickup] = useState<PlaceValue>(empty);
   const [dropoff, setDropoff] = useState<PlaceValue>(empty);
@@ -54,7 +58,7 @@ export function BookingForm({
   const [luggage, setLuggage] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ number: number; priced: boolean } | null>(null);
+  const [done, setDone] = useState<{ number: number; priced: boolean; receipt: boolean; when: string | null } | null>(null);
   const [pending, start] = useTransition();
 
   const pickupAt = when === "now" ? new Date() : zonedInstant(date, time, timeZone);
@@ -121,9 +125,11 @@ export function BookingForm({
         </div>
         <DoneTitle>{done.priced ? "Réservation reçue" : "Demande reçue"}</DoneTitle>
         {done.number > 0 && <p className="num mt-2 text-[14px] text-fg-muted">Référence #{done.number}</p>}
+        {done.when && <p className="mt-1 text-[13px] text-fg-muted">Prise en charge&nbsp;: {done.when}</p>}
         <p className="mt-4 max-w-sm text-[14px] leading-relaxed text-fg-muted">
           Votre demande est transmise à {centrale}
           {done.priced ? "." : ", qui vous confirme le prix avant la course."}
+          {done.receipt ? " Un e-mail de confirmation vous est envoyé." : ""}
           {phone ? ` Pour toute question, appelez le ${phone}.` : ""}
         </p>
         <Button variant="outline" className="mt-8" onClick={() => { setDone(null); setPickup(empty); setDropoff(empty); }}>Nouvelle réservation</Button>
@@ -168,7 +174,15 @@ export function BookingForm({
               setErrors({});
             } else setErrors(("fieldErrors" in res && res.fieldErrors) || {});
             setError(res.error);
-          } else setDone({ number: res.number, priced: expectedPriceCents != null });
+          } else {
+            const at = when === "scheduled" ? zonedInstant(date, time, timeZone) : null;
+            setDone({
+              number: res.number,
+              priced: expectedPriceCents != null,
+              receipt: !!res.receipt,
+              when: at ? dateTimeFormat("fr-FR", { timeZone, dateStyle: "full", timeStyle: "short" }).format(at) : null,
+            });
+          }
         }, setError));
       })}
     >
@@ -222,7 +236,10 @@ export function BookingForm({
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Nom" error={errors.customerName}><Input name="name" required autoComplete="name" className="h-11" /></Field>
         <Field label="Téléphone" error={errors.customerPhone}><Input name="phone" required inputMode="tel" autoComplete="tel" className="h-11" /></Field>
-        <Field label="E-mail" optional error={errors.customerEmail}><Input name="email" type="email" autoComplete="email" className="h-11" /></Field>
+        {/* Réservation avec obligation de paiement : accusé de réception par e-mail (Code civil, art. 1127-2) */}
+        <Field label="E-mail" optional={!priced} hint={priced ? "Pour recevoir la confirmation de votre réservation" : undefined} error={errors.customerEmail}>
+          <Input name="email" type="email" autoComplete="email" required={priced} className="h-11" />
+        </Field>
         <Field label={<span className="flex items-center gap-1.5"><Plane aria-hidden className="size-3.5" /> N° de vol</span>} optional error={errors.flightNumber}><Input name="flight" className="h-11 uppercase" /></Field>
       </div>
       <Field label="Précisions" optional><Textarea name="comment" placeholder="Siège enfant, pancarte, arrêt intermédiaire…" /></Field>
@@ -255,10 +272,18 @@ export function BookingForm({
         </div>
       )}
 
-      {/* Information (RGPD art. 13) plutôt qu'une case à cocher : les coordonnées servent à exécuter la course demandée */}
+      {/* Information (RGPD art. 13) plutôt qu'une case à cocher : les coordonnées servent à exécuter la course demandée.
+          Responsable : la centrale ; durées : ménage (coordonnées effacées 3 ans après l'année de la course) */}
       <p className="text-[12px] leading-relaxed text-fg-muted">
-        Vos coordonnées sont transmises à {centrale}, qui organise la course, et servent uniquement à cette
-        réservation (aucun compte n&apos;est créé).
+        Vos coordonnées sont transmises à {centrale}, qui organise la course et est responsable de vos données&nbsp;: elle
+        les utilise pour organiser la course, vous contacter et la facturer (aucun compte n&apos;est créé). Votre téléphone,
+        votre e-mail et vos précisions sont effacés 3&nbsp;ans après la fin de l&apos;année de la course&nbsp;; le reste de la
+        réservation est conservé 10&nbsp;ans après cette date pour sa comptabilité. Rydar Drive, éditeur du logiciel, les traite
+        pour son compte.
+        {partnerNetwork && <> Votre course peut être confiée à un exploitant VTC partenaire de {centrale}&nbsp;; son chauffeur verra alors votre nom et votre téléphone.</>}
+        {contactEmail ? (
+          <> Pour accéder à vos données, les rectifier, les effacer ou vous opposer à leur traitement&nbsp;: {contactEmail}.</>
+        ) : null}
         {privacyUrl && (
           <>
             {" "}
@@ -278,10 +303,19 @@ export function BookingForm({
           prix affiché → le bouton qui passe la commande dit clairement qu'elle oblige à payer CE prix, rappelé juste
           avant ; sans prix affiché (grille masquée, devis indisponible ou en cours) → simple demande, sans engagement */}
       {priced ? (
-        <p className="text-[13px] text-fg-muted">
-          Prix de la course{quote?.fixedFare ? ` (forfait ${quote.fixedFare})` : ""}&nbsp;:{" "}
-          <span className="num font-semibold text-fg">{formatPrice(estimate)} TTC</span>, payable à {centrale}.
-        </p>
+        <div className="space-y-1.5">
+          <p className="text-[13px] text-fg-muted">
+            Prix de la course{quote?.fixedFare ? ` (forfait ${quote.fixedFare})` : ""}&nbsp;:{" "}
+            <span className="num font-semibold text-fg">{formatPrice(estimate)} TTC</span>, payable à {centrale}.
+          </p>
+          {/* Supplément seulement avec l'accord exprès du client (C. conso. L121-17) ; pas de rétractation pour un transport
+              de passagers (L221-2, sauf L221-14) */}
+          <p className="text-[12px] leading-relaxed text-fg-muted">
+            Prix pour le trajet indiqué. Un arrêt, une attente ou un détour demandé en précision peut le modifier&nbsp;:{" "}
+            {centrale} vous le confirme avant la course. Un contrat de transport de passagers ne donne pas lieu à un droit de
+            rétractation (Code de la consommation, article L221-2)&nbsp;: l&apos;annulation suit les conditions de {centrale}.
+          </p>
+        </div>
       ) : (
         <p className="text-[13px] text-fg-muted">
           Sans engagement&nbsp;: {centrale} vous confirme le prix avant la course.

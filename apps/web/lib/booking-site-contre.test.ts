@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
   usageError: null as null | { message: string },
   userUpdates: [] as Record<string, unknown>[],
   audits: [] as { action: string }[],
+  /** Identité de l'exploitant (organizations) : exigée pour mettre le mini-site en ligne (bookingOperatorGaps) */
+  identity: {} as Record<string, string | null>,
 }));
 
 vi.mock("@/lib/audit", () => ({ audit: async (e: { action: string }) => void h.audits.push(e) }));
@@ -53,6 +55,16 @@ function bookingSites(kind: "user" | "admin") {
 }
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ from: () => bookingSites("admin") }) }));
 
+/** organizations (client utilisateur) : identité de l'exploitant, lue à la mise en ligne. */
+function organizations() {
+  const q: any = { select: () => q, eq: () => q, single: async () => ({ data: h.identity, error: null }) };
+  return q;
+}
+const IDENTIFIED = {
+  legal_name: "Centrale SAS", siret: "123 456 789 00012", address: "1 rue de l'Exemple", postal_code: "75001", city: "Paris",
+  vtc_registration: "EVTC075230001",
+};
+
 const { domainToken, updateBookingSite, verifyCustomDomain } = await import("../app/dashboard/booking-site/actions");
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -73,12 +85,13 @@ beforeEach(() => {
   h.userUpdates = [];
   h.audits = [];
   h.txt = [];
+  h.identity = { ...IDENTIFIED };
   h.ctx = {
     org: { id: ORG },
     role: "owner",
     user: { id: "u1" },
     supabase: {
-      from: () => bookingSites("user"),
+      from: (table: string) => (table === "organizations" ? organizations() : bookingSites("user")),
       rpc: async (fn: string, args: { p_org: string }) => {
         expect(fn).toBe("org_usage");
         expect(args.p_org).toBe(ORG);
@@ -108,6 +121,22 @@ describe("verifyCustomDomain : droit custom_domain de l'offre (sql3#0)", () => {
     h.txt = [[await domainToken(ORG)]];
     expect(await verifyCustomDomain()).toEqual({ ok: true });
     expect(site().custom_domain_verified_at).not.toBeNull();
+  });
+});
+
+describe("updateBookingSite : exploitant identifié pour la mise en ligne (relecture juridique)", () => {
+  it("raison sociale, SIRET, adresse ou n° VTC manquants : mise en ligne refusée, sans écriture ; hors ligne : enregistré", async () => {
+    h.identity = { ...IDENTIFIED, siret: "1234", vtc_registration: null };
+    const res = await updateBookingSite(form());
+    expect(res.ok).toBe(false);
+    const error = (res as { error: string }).error;
+    expect(error).toContain("SIRET (14 chiffres)");
+    expect(error).toContain("n° d'inscription au registre des exploitants VTC");
+    expect(error).not.toContain("raison sociale");
+    expect((res as { fieldErrors?: Record<string, string> }).fieldErrors?.enabled).toBe(error);
+    expect(h.userUpdates).toEqual([]);
+    expect(await updateBookingSite(form({ enabled: false, title: "Hors ligne" }))).toEqual({ ok: true });
+    expect(site().title).toBe("Hors ligne");
   });
 });
 

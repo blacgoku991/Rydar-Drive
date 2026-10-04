@@ -17,14 +17,25 @@ async function load(slug: string) {
   // Mini-sites coupés par la plateforme (super admin) : introuvables partout, aperçu compris
   if (!(await bookingSitesEnabled())) return null;
   const admin = createAdminClient();
-  const { data: org } = await admin
-    .from("organizations")
-    .select("id, name, status, timezone, logo_url, legal_name, siret, address, postal_code, city, vtc_registration, booking:booking_sites(*)")
-    .eq("slug", slug)
-    .maybeSingle();
+  const [{ data: org }, { data: platform }] = await Promise.all([
+    admin
+      .from("organizations")
+      .select(
+        "id, name, status, timezone, logo_url, legal_name, siret, address, postal_code, city, vtc_registration, booking:booking_sites(*), " +
+          "network:network_memberships(share_out, approved_at, suspended_at)",
+      )
+      .eq("slug", slug)
+      .maybeSingle(),
+    admin.from("platform_settings").select("shared_network_enabled").maybeSingle(),
+  ]);
   if (!org || (org as any).status !== "active") return null;
-  const site = Array.isArray((org as any).booking) ? (org as any).booking[0] : (org as any).booking;
-  return { org: org as any, site };
+  const one = (v: any) => (Array.isArray(v) ? v[0] : v);
+  const site = one((org as any).booking);
+  // Réseau partagé ouvert et partage validé : le client est informé qu'un exploitant partenaire peut faire la course
+  // (convention du réseau, art. 3)
+  const network = one((org as any).network);
+  const partnerNetwork = (platform as any)?.shared_network_enabled === true && !!network?.share_out && !!network?.approved_at && !network?.suspended_at;
+  return { org: org as any, site, partnerNetwork };
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -140,6 +151,8 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             operator={org.legal_name || org.name}
             privacyUrl="/confidentialite"
             conditions={site.legal_mentions}
+            contactEmail={site.email}
+            partnerNetwork={data.partnerNetwork}
           />
         </div>
       </main>
@@ -159,7 +172,13 @@ export default async function BookingPage({ params, searchParams }: { params: Pr
             {org.address ? ` · ${[org.address, [org.postal_code, org.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}` : ""}.
             Rydar Drive fournit uniquement le logiciel de réservation.
           </p>
-          <LegalLinks only={["/mentions-legales", "/confidentialite", "/cookies", "/accessibilite"]} />
+          {/* CGU (usage du mini-site par le client) ; signalement d'un contenu illicite (règlement (UE) 2022/2065, art. 16) */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <LegalLinks only={["/mentions-legales", "/cgu", "/confidentialite", "/cookies", "/accessibilite"]} />
+            <a href="/mentions-legales#signaler-un-contenu-illicite" className="text-fg-muted hover:text-fg">
+              Signaler un contenu
+            </a>
+          </div>
         </div>
       </footer>
     </div>
