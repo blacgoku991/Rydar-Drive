@@ -4,7 +4,7 @@
 // solde = frais comptabilisés − paiements CONFIRMÉS par le super admin. Ce module les présente.
 // Centrale : frais calculés sur le prix et déduits dans la répartition (plafonnés au prix, rien sans prix). Flotte : % du
 // prix (0 sans prix) + fixe, facturés à la flotte, taux figés à la fin de chaque course (fleetPlatformFee).
-import { z } from "zod";
+import { z } from "./zod";
 import { formatPrice, isValidIban } from "./format";
 import type { Iso, Uuid } from "./types";
 import type { OrgStatus, PaymentMethod } from "./domain";

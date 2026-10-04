@@ -1,7 +1,7 @@
 // Mode « Centrale à commission » (option 2) : libellés, calculs d'affichage, formulaires.
 // Les règles qui comptent (répartition, blocages, bannissements) sont appliquées en base
 // (migration 20260924002600_centrale_mode) ; ce module ne fait que les présenter.
-import { z } from "zod";
+import { z } from "./zod";
 import { formatPrice, isValidIban } from "./format";
 import { formatIban } from "./platform-fees";
 import { emailSchema, phoneSchema, vehicleSchema } from "./schemas";

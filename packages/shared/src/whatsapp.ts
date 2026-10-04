@@ -1,7 +1,7 @@
 // WhatsApp Business Cloud API (Meta) : envoi de messages « modèles » (templates) validés par Meta.
 // Utilisé par le worker (relances automatiques) et par le web (vérification du numéro, message test).
 // Aucune dépendance : fetch standard (Node 18+, navigateurs, React Native).
-import { z } from "zod";
+import { z } from "./zod";
 
 /** Version de l'API Graph (surchargeable : WHATSAPP_API_VERSION). */
 export const WHATSAPP_API_VERSION = "v23.0";

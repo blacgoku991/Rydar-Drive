@@ -2,7 +2,7 @@
 // (HMAC-SHA256) aux adresses enregistrées par l'organisation. Tables, détection des événements et RPC svc_webhook_* :
 // migration 20260924006000_webhooks ; envoi : worker (garde SSRF, nouveaux essais) ; gestion : API v1
 // (/api/v1/webhooks, permission « webhooks:manage ») et Dashboard → Intégrations. Documentation : docs/API.md.
-import { z } from "zod";
+import { z } from "./zod";
 import type { Tone } from "./domain";
 
 /** Version du format des événements (champ « api_version » de chaque envoi). */

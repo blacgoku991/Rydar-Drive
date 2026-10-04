@@ -1,33 +1,7 @@
-import { z } from "zod";
+import { z } from "./zod";
 import { PAYMENT_METHODS, VEHICLE_CATEGORIES } from "./domain";
 import { normalizePhone } from "./format";
 
-// Messages de validation en français (API publique, formulaires).
-z.config(z.locales.fr());
-// Cas courants en langage simple (sinon « Trop petit : chaîne de caractères doit avoir >=2 caractères ») ;
-// un message écrit dans un schéma reste prioritaire, et le reste suit la locale française.
-z.config({
-  customError: (issue) => {
-    if (issue.code === "invalid_type" && issue.input === undefined) return "Champ obligatoire";
-    if (issue.code === "invalid_format" && issue.format === "email") return "Adresse e-mail invalide";
-    if (issue.code === "too_small" || issue.code === "too_big") {
-      const bound = Number(issue.code === "too_small" ? issue.minimum : issue.maximum);
-      const small = issue.code === "too_small";
-      if (issue.origin === "string") {
-        if (small && bound <= 1) return "Champ obligatoire";
-        return `${bound} caractères ${small ? "minimum" : "maximum"}`;
-      }
-      if (issue.origin === "number" || issue.origin === "int") {
-        if (issue.inclusive === false) return small ? `Doit être supérieur à ${bound}` : `Doit être inférieur à ${bound}`;
-        return `${small ? "Minimum" : "Maximum"} ${bound}`;
-      }
-      if (issue.origin === "array" || issue.origin === "set") {
-        return small ? `Au moins ${bound} élément${bound > 1 ? "s" : ""}` : `${bound} éléments au maximum`;
-      }
-    }
-    return undefined;
-  },
-});
 
 // -----------------------------------------------------------------------------
 // Briques

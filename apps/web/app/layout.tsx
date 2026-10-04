@@ -1,8 +1,8 @@
-import { GeistMono } from "geist/font/mono";
-import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
 import { Toaster } from "sonner";
 import { CookieNotice } from "@/components/legal/cookie-notice";
+import { COOKIE_NOTICE_SCRIPT } from "@/components/legal/cookie-notice-script";
 import { env } from "@/lib/env";
 import "./globals.css";
 
@@ -28,6 +28,19 @@ export const metadata: Metadata = {
   openGraph: { type: "website", locale: "fr_FR" },
 };
 
+// Geist et Geist Mono (paquet « geist »), réduits aux caractères latins : latin étendu, ponctuation, monnaies,
+// flèches, symboles ; ni grec ni cyrillique (un caractère absent s'affiche dans la police du système). Sans 51 Ko au
+// lieu de 68, Mono 50 au lieu de 69. Mono n'est pas préchargée : rare en haut de page, chargée à son premier usage.
+// Régénérer (fontTools) : subset.Subsetter, layout_features ["*"], plages U+0000-024F, U+0259, U+02B0-036F,
+// U+1E00-1EFF, U+2000-20CF, U+2100-214F, U+2190-23FF, U+25A0-27BF, U+FB00-FB06, U+FEFF, U+FFFD, sortie woff2.
+const GeistSans = localFont({ src: "./fonts/Geist-Variable.latin.woff2", variable: "--font-geist-sans", weight: "100 900" });
+const GeistMono = localFont({
+  src: "./fonts/GeistMono-Variable.latin.woff2",
+  variable: "--font-geist-mono",
+  weight: "100 900",
+  preload: false,
+});
+
 export const viewport: Viewport = {
   themeColor: "#07080b",
   colorScheme: "dark",
@@ -36,6 +49,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Bandeau cookies déjà fermé : masqué avant la première peinture (components/legal/cookie-notice-script.ts) */}
+        <script dangerouslySetInnerHTML={{ __html: COOKIE_NOTICE_SCRIPT }} />
+      </head>
       <body className="min-h-dvh bg-ink-900 text-fg antialiased">
         {children}
         <CookieNotice href="/cookies" />

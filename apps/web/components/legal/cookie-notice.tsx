@@ -13,15 +13,15 @@ import { Cookie, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-
-const KEY = "rd_cookie_notice";
+import { COOKIE_NOTICE_KEY as KEY } from "./cookie-notice-script";
 /** Fermeture annoncée aux autres exemplaires de la page (barre latérale ET menu mobile). */
 const CLOSED_EVENT = "rd:cookie-notice-closed";
 /** Pages rendues dans un shell (barre latérale) : le bandeau y est placé par le shell, jamais flottant. */
 const SHELL_PATHS = /^\/(dashboard|admin)(\/|$)/;
 
 function useNotice() {
-  const [show, setShow] = useState(false);
+  // Rendu avec la page : déjà masqué avant la première peinture s'il a été fermé (COOKIE_NOTICE_SCRIPT), retiré ici
+  const [show, setShow] = useState(true);
   useEffect(() => {
     const read = () => {
       try {
@@ -44,6 +44,7 @@ function useNotice() {
   }, []);
   const close = () => {
     setShow(false);
+    document.documentElement.dataset.cookieNotice = "closed";
     try {
       window.localStorage.setItem(KEY, "1");
     } catch {
@@ -97,7 +98,7 @@ function CloseButton({ onClose, className }: { onClose: () => void; className: s
 /** Barre latérale des espaces connectés : dans le flux, au-dessus du menu du compte (ne recouvre rien). */
 export function SidebarNotice({ href, onClose }: { href: string; onClose: () => void }) {
   return (
-    <div className="px-3 pb-3">
+    <div data-cookie-notice className="px-3 pb-3">
       <div
         role="region"
         aria-label="Information sur les cookies"
@@ -147,9 +148,10 @@ export function FloatingNotice({ href, onClose }: { href: string; onClose: () =>
       {/* Réserve en fin de page (bandeau + marges) : le dernier contrôle de la page défile au-dessus du bandeau */}
       {/* Écran bas (zoom 400 %, téléphone à l'horizontale) : bandeau dans le flux, en fin de page, au lieu de couvrir
           une grande part de l'écran (WCAG 1.4.10) ; la réserve devient inutile */}
-      <div aria-hidden="true" className="[@media(max-height:30rem)]:hidden" style={{ height: height ? height + 24 : 0 }} />
+      <div aria-hidden="true" data-cookie-notice className="[@media(max-height:30rem)]:hidden" style={{ height: height ? height + 24 : 0 }} />
       <div
         ref={ref}
+        data-cookie-notice
         role="region"
         aria-label="Information sur les cookies"
         className="fixed inset-x-3 bottom-3 z-40 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] p-3.5 text-[12.5px] leading-relaxed text-fg-muted shadow-float backdrop-blur-xl sm:inset-x-auto sm:left-4 sm:mx-0 [@media(max-height:30rem)]:static [@media(max-height:30rem)]:m-3"

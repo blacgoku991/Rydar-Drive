@@ -1,4 +1,4 @@
-import { contactHref } from "@rydar/shared";
+import { contactHref } from "@rydar/shared/contact-links";
 
 /**
  * Liens vers le formulaire de contact (/contact?sujet=…&offre=…) : contactHref de @rydar/shared, qui traduit le sujet

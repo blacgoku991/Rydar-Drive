@@ -43,6 +43,13 @@ pour les flottes, `20260924006400` frais Rydar des flottes, `20260924006500` ind
   pendant le défilement, figé si trop lent. Image à régénérer si la scène change (capture Playwright, fond
   transparent, puis AVIF/WebP) ; `install.sh`
   redémarre Caddy si le Caddyfile monté a changé ; contrôle du plafond de 1 Mo corrigé (DEPLOYMENT § 3).
+- Scores Lighthouse (04/10, serveur local, 8 pages publiques) : accessibilité, bonnes pratiques et SEO à 100 partout ;
+  performance mobile 87 à 99 (/contact et /tarifs pénalisés ici par une base injoignable), ordinateur 94 à 100.
+  Fait pour : zod chargé seulement sur /contact (`@rydar/shared/contact-links` sans zod pour l'en-tête ; locale
+  française seule ; `src/zod.ts` configure zod, seul module à effets de bord du paquet, `jitless` : plus d'« eval »
+  bloqué par la CSP) ; polices réduites au latin (Mono non préchargée) ; /tarifs sans squelette (CLS 0,12 → 0) ;
+  bandeau cookies rendu avec la page, masqué avant la première peinture s'il a été fermé (script de <head>) ;
+  apparition au défilement sans fondu (contraste) ; champ piège du formulaire nommé.
 - RESTE : parcours chauffeur complet en production (lien d'inscription → validation → en ligne → course →
   encaissement), à refaire dans une nouvelle session sur le VPS ; relecture juridique avant d'activer le réseau partagé.
 

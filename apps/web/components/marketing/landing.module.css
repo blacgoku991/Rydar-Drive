@@ -20,12 +20,22 @@
   }
 }
 
-/* Apparition au défilement : navigateurs compatibles et écran seulement (jamais à l'impression) ;
-   ailleurs, le contenu est affiché tel quel */
+/* Apparition au défilement : glissement seul, sans fondu (un texte déjà à l'écran mais encore à demi transparent
+   en bas de l'écran passait sous le contraste minimal de 4,5:1, mesuré par Lighthouse) */
+@keyframes slide {
+  from {
+    transform: translateY(16px);
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Navigateurs compatibles et écran seulement (jamais à l'impression) ; ailleurs, le contenu est affiché tel quel */
 @supports (animation-timeline: view()) {
   @media screen and (prefers-reduced-motion: no-preference) {
     .reveal {
-      animation: rise linear both;
+      animation: slide linear both;
       animation-timeline: view();
       animation-range: entry 0% cover 22%;
     }

@@ -74,31 +74,6 @@ export function PlanCards({ plans }: { plans: PublicPlan[] }) {
   );
 }
 
-/** Pendant le chargement des offres : même gabarit, sans contenu (jamais de faux « Tarif sur mesure »). */
-export function PlanCardsSkeleton() {
-  const bar = "skeleton rounded-md motion-reduce:animate-none";
-  return (
-    <div className="mx-auto grid gap-4 lg:grid-cols-3">
-      <p role="status" className="sr-only">
-        Chargement des offres…
-      </p>
-      {[0, 1, 2].map((i) => (
-        <div key={i} aria-hidden className="surface flex flex-col rounded-2xl p-7">
-          <div className={cn(bar, "h-5 w-24")} />
-          <div className={cn(bar, "mt-3 h-4 w-3/4")} />
-          <div className={cn(bar, "mt-7 h-10 w-36")} />
-          <div className="mt-7 space-y-3.5">
-            {[0, 1, 2, 3, 4].map((j) => (
-              <div key={j} className={cn(bar, "h-3.5", j % 2 ? "w-2/3" : "w-5/6")} />
-            ))}
-          </div>
-          <div className={cn(bar, "mt-9 h-10 w-full rounded-xl")} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /** Mention sous les offres : frais plateforme par course, flotte comme centrale (CGV, articles 3 à 5). */
 export function PlatformFeeNote({ className }: { className?: string }) {
   return (

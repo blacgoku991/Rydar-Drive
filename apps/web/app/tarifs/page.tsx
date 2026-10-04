@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import { unstable_rethrow } from "next/navigation";
-import { Suspense } from "react";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { PageHeader } from "@/components/marketing/page-header";
-import { PlanCards, PlanCardsSkeleton, PlatformFeeNote, PricingFacts, type PublicPlan } from "@/components/marketing/pricing";
+import { PlanCards, PlatformFeeNote, PricingFacts, type PublicPlan } from "@/components/marketing/pricing";
 import { marketingMetadata } from "@/components/marketing/seo";
 import { fr } from "@/components/marketing/typo";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
@@ -43,8 +42,9 @@ async function loadPlans(): Promise<PublicPlan[]> {
 }
 
 /**
- * Offres lues en base : rendues dans leur propre frontière Suspense, le reste de la page part sans les attendre.
- * Mini-sites coupés par la plateforme (super admin) : signalé sous les offres, qui peuvent l'inclure.
+ * Offres lues en base AVANT l'envoi de la page (requête locale de quelques ms) : plus de squelette remplacé après coup,
+ * qui faisait bouger le texte du dessous (CLS 0,12 mesuré). Mini-sites coupés par la plateforme (super admin) :
+ * signalé sous les offres, qui peuvent l'inclure.
  */
 async function Plans() {
   const plans = await loadPlans();
@@ -72,9 +72,7 @@ export default function PricingPage() {
       />
       <section aria-label="Offres" className="relative z-10">
         <div className="mx-auto max-w-6xl px-4 pb-16 sm:px-6 sm:pb-24">
-          <Suspense fallback={<PlanCardsSkeleton />}>
-            <Plans />
-          </Suspense>
+          <Plans />
           <PlatformFeeNote className="mt-8" />
         </div>
       </section>

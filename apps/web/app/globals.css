@@ -625,3 +625,9 @@
   background: linear-gradient(180deg, var(--color-brand), rgb(200 240 60 / 0.5));
   box-shadow: 0 0 14px -4px rgb(200 240 60 / 0.45);
 }
+
+/* Bandeau cookies rendu avec la page : masqué dès la première peinture s'il a déjà été fermé (script de <head>,
+   components/legal/cookie-notice-script.ts) */
+html[data-cookie-notice="closed"] [data-cookie-notice] {
+  display: none !important;
+}
