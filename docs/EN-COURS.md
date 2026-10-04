@@ -1,4 +1,4 @@
-# Travail en cours (03/10/2026)
+# Travail en cours (04/10/2026)
 
 Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal » est TERMINÉ : rapport complet dans
 [`docs/AUDIT.md`](AUDIT.md).
@@ -13,6 +13,26 @@ Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal 
 | Builds de production web et worker | OK |
 | Export Android | OK |
 | Bout en bout (Chromium, pile locale complète) | 9 parcours OK : course de bout en bout, mini-site, API, équipe et invitations, règlements, super admin, pages publiques, isolation entre centrales (354 contrôles) ; 9 défauts d'ergonomie trouvés, tous corrigés ; test de fumée final OK |
+
+## Relecture juridique (04/10/2026) — branche `legal-review`, NON poussée
+Relecture par 4 relecteurs (contrat, utilisateurs, données, public) puis rédaction. Service en bêta : textes corrigés
+SUR PLACE, sans nouvelle `LEGAL_VERSION` / `ORG_LEGAL_VERSION` (ni `ORG_LEGAL_CHANGES`, ni page d'archive, ni e-mail
+d'annonce). Migration `20260924007400_legal_review` : interdiction plateforme réservée à la fraude / au faux document
+et motivée par e-mail (`platform_ban`), `ban_scope` dans `driver_account_state`, CGV et DPA refusés sans identité de
+l'éditeur (`LEGAL_EDITOR_MISSING`), vitesse hors historique GPS, e-mail de validation du réseau sans garantie, refus
+WhatsApp du propriétaire (`svc_platform_whatsapp_refusal`), coordonnées des clients effacées après 3 ans (ménage
+`customer_contacts`), accusé de réception du mini-site (`svc_booking_receipt`). Web : carte du super admin sans nom,
+CGV exigées avant le tableau de bord (jamais acceptées), mini-site (identité de l'exploitant, e-mail obligatoire avec
+prix, information RGPD, rétractation), vitrine (mini-site coupé signalé, vols, hébergement), suspension motivée,
+textes légaux (CGV 9 bis, 10 bis, 18 ; CGU 7 et 11 renumérotées). App (JS seul → EAS Update) : information GPS,
+sécurité au volant, case d'inscription, suppression, interdiction plateforme. Docs : `RGPD-REGISTRE.md`, `AIPD.md`.
+Reste au propriétaire : remplir `/admin/legal` AVANT toute centrale (sinon CGV/DPA impossibles à accepter) ; relecture
+avocat (CGV, CGU, DPA, confidentialité, AIPD, ANDROID_ID, article 22) ; vérifier sur le VPS la région UE et l'oubli à
+14 jours des sauvegardes restic ; outil de purge d'une centrale archivée avant la première fin de contrat ; durées à
+décider (justificatifs refusés, candidats refusés, signataire, fiche archivée) ; facture par cycle émise à temps ;
+nommer le prestataire de la boîte de contact ; à l'ouverture : nouvelle version des textes à chaque changement.
+Contrôles : typecheck OK, 1 249 tests unitaires, 809 tests DB, build web OK (/, /services, /faq régénérées toutes les
+5 min), export Android OK, migrations + seed sur base neuve OK (29 chauffeurs, 3 organisations).
 
 ## Migrations de ce lot
 `20260924004300` (droits) à `20260924005600` (offres chauffeur) : 004300 droits, 004400 argent, 004500 dispatch,
