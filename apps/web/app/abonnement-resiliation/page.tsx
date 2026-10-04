@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     "Arrêt du renouvellement, résiliation, remboursement au prorata, frais par course, fin du contrat et export des données : les règles des CGV de Rydar Drive, en clair.",
 };
 
-// Résumé des CGV (articles 4 à 8, 16), SANS rien y ajouter : chaque phrase reprend une règle des CGV en vigueur
+// Résumé des CGV (articles 4 à 8, 9 bis, 16), SANS rien y ajouter : chaque phrase reprend une règle des CGV en vigueur
 // (version ORG_LEGAL_VERSION). Changer les CGV = relire cette page (test components/legal/legal-pages.test.ts).
 // Les CGV ne fixent ni le délai ni le moyen du remboursement au prorata : cette page n'en promet pas.
 export default async function SubscriptionTermsPage() {
@@ -20,8 +20,8 @@ export default async function SubscriptionTermsPage() {
   const contact = legalContact(legal.email);
   const link = "text-fg underline underline-offset-2";
   // Renvois cliquables : article des CGV (ancres /cgv#article-N) et section de cette page
-  const art = (n: number) => (
-    <Link href={`/cgv#article-${n}`} className={link}>
+  const art = (n: number | `${number} bis`) => (
+    <Link href={`/cgv#article-${String(n).replace(" ", "-")}`} className={link}>
       article {n}
     </Link>
   );
@@ -62,7 +62,7 @@ export default async function SubscriptionTermsPage() {
 
       <LegalSection title="3. Remboursement">
         <p>
-          En dehors du cas ci-dessous, l&apos;arrêt du renouvellement prend effet à la fin de la période payée, sans
+          En dehors des cas ci-dessous, l&apos;arrêt du renouvellement prend effet à la fin de la période payée, sans
           remboursement de la période en cours ({art(4)}).
         </p>
         <h3 className="text-[15px] font-semibold text-fg">Refus d&apos;une hausse des frais ou d&apos;une modification défavorable des CGV</h3>
@@ -72,6 +72,13 @@ export default async function SubscriptionTermsPage() {
             <>La résiliation prend effet à la date qu&apos;elle choisit, au plus tard la veille de cette date, et la part de l&apos;abonnement payée d&apos;avance pour la période restant à courir lui est remboursée au prorata ({art(7)}).</>,
             <>Les frais des courses terminées avant la résiliation restent dus ({art(5)}).</>,
             <>Pour résilier dans ce cas, écrivez {contact.to}, en indiquant la date d&apos;effet choisie.</>,
+          ]}
+        />
+        <h3 className="text-[15px] font-semibold text-fg">Résiliation par l&apos;éditeur ou fonction de l&apos;offre suspendue</h3>
+        <LegalList
+          items={[
+            <>Si l&apos;éditeur met fin au contrat sans faute de la centrale alors qu&apos;un abonnement est en cours, la part payée d&apos;avance pour la période restant à courir est remboursée au prorata ({art(7)}).</>,
+            <>Si une fonction comprise dans l&apos;offre souscrite (le mini-site de réservation, par exemple) est suspendue ou supprimée pour toutes les centrales, la centrale peut, pendant la suspension, changer d&apos;offre ou résilier sans frais ; la part de l&apos;abonnement payée d&apos;avance pour la période restant à courir lui est alors remboursée au prorata ({art("9 bis")}).</>,
           ]}
         />
       </LegalSection>
@@ -91,10 +98,10 @@ export default async function SubscriptionTermsPage() {
       <LegalSection title="5. Résilier le contrat">
         <LegalList
           items={[
-            <>Chaque partie peut mettre fin au contrat par écrit ; sans abonnement en cours, avec un préavis de 30 jours ({art(7)}).</>,
+            <>Chaque partie peut mettre fin au contrat par écrit ; sans abonnement en cours, avec un préavis de 30 jours ({art(7)}). Pour l&apos;éditeur, ce préavis est porté à 3 mois lorsque la relation dure depuis plus de 2 ans.</>,
             <>Avec un abonnement en cours, arrêtez son renouvellement depuis le tableau de bord : il prend fin à la fin de la période payée ({art(4)}).</>,
             <>Refus d&apos;une hausse des frais ou d&apos;une modification défavorable des CGV : résiliation sans frais ni préavis, avec remboursement au prorata ({sec(3)}).</>,
-            <>Manquement grave (impayé persistant, fraude, usage illicite, atteinte à la sécurité du service) : l&apos;éditeur peut suspendre le compte après une mise en demeure restée sans effet pendant 8 jours, ou immédiatement en cas d&apos;urgence, puis résilier le contrat. Une centrale suspendue garde l&apos;accès à ses informations de paiement et peut déclarer un paiement ({art(7)}).</>,
+            <>Manquement grave (impayé persistant, fraude, usage illicite, atteinte à la sécurité du service) : l&apos;éditeur peut suspendre le compte après une mise en demeure restée sans effet pendant 8 jours, ou immédiatement en cas d&apos;urgence, puis résilier le contrat ; il peut aussi le suspendre à la demande écrite de la centrale. Le fondement et le motif sont affichés au propriétaire et aux administrateurs. Pendant la suspension, aucune course ne peut être créée ni attribuée, et les courses à venir déjà attribuées ne peuvent pas être servies. Une centrale suspendue garde l&apos;accès à ses informations de paiement et peut déclarer un paiement ({art(7)}).</>,
           ]}
         />
       </LegalSection>

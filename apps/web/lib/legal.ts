@@ -91,29 +91,38 @@ export const getLegalInfo = cache(async (): Promise<LegalInfo> => {
  */
 export { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION } from "@rydar/shared";
 
+/**
+ * Relecture juridique du 4 octobre 2026 (service en bêta, aucune centrale cliente) : textes corrigés SUR PLACE, sans
+ * nouvelle LEGAL_VERSION ni ORG_LEGAL_VERSION (décision du propriétaire) ; seules les dates de mise à jour changent.
+ */
 /** Date de dernière mise à jour affichée sur les pages légales (CGU, suppression de compte). */
-export const LEGAL_UPDATED_AT = "27 septembre 2026";
-/** CGV (version ORG_LEGAL_VERSION) : frais plateforme par course pour les deux modèles, cumulables avec l'abonnement. */
-export const CGV_UPDATED_AT = "2 octobre 2026";
+export const LEGAL_UPDATED_AT = "4 octobre 2026";
+/**
+ * CGV (version ORG_LEGAL_VERSION) : frais plateforme par course pour les deux modèles, cumulables avec l'abonnement ;
+ * 4 octobre 2026 : qualification de l'éditeur, évolution du service (9 bis), signalements (10 bis), garantie,
+ * responsabilité, suspension motivée, dispositions générales (18).
+ */
+export const CGV_UPDATED_AT = "4 octobre 2026";
 /**
  * Accord de traitement (sa version suit celle des CGV) : 3 octobre 2026, tableau des sous-traitants corrigé
  * (hébergement réel : serveur de l'éditeur, base auto-hébergée, e-mails envoyés par ce serveur ; services publics
  * tiers hors du tableau), sauvegardes, TLS, contact. Corrections d'exactitude, sans nouvelle ORG_LEGAL_VERSION : le
  * texte accepté avant elles reste consultable (/dpa/2026-10-02) ; à reprendre dans la prochaine ORG_LEGAL_VERSION.
  */
-export const DPA_UPDATED_AT = "3 octobre 2026";
+export const DPA_UPDATED_AT = "4 octobre 2026";
 /**
  * Politique de confidentialité : 3 octobre 2026, hébergement réel, sauvegardes, journaux techniques, bases légales
  * (WhatsApp, mini-site), batterie, champs obligatoires ; durées plus courtes appliquées par le ménage (20260924007300 :
  * sessions de connexion 400 jours sans utilisation, dernière adresse IP d'une clé d'API 90 jours). Corrections
- * d'information, sans nouvelle LEGAL_VERSION.
+ * d'information, sans nouvelle LEGAL_VERSION. 4 octobre 2026 : bannissements, sauvegardes hors serveur, relances
+ * WhatsApp (intérêt légitime, opposition), coordonnées des clients effacées après 3 ans, supervision sans nom.
  */
-export const PRIVACY_UPDATED_AT = "3 octobre 2026";
+export const PRIVACY_UPDATED_AT = "4 octobre 2026";
 /** Mentions légales : point de contact du règlement sur les services numériques, hébergement des données. */
-export const NOTICE_UPDATED_AT = "3 octobre 2026";
+export const NOTICE_UPDATED_AT = "4 octobre 2026";
 /** Cookies : inventaire complété (rd_org_switch), absence de consentement expliquée. */
-export const COOKIES_UPDATED_AT = "3 octobre 2026";
+export const COOKIES_UPDATED_AT = "4 octobre 2026";
 /** Abonnement, résiliation et remboursement (reprise des CGV, sans engagement nouveau). */
-export const SUBSCRIPTION_TERMS_UPDATED_AT = "3 octobre 2026";
+export const SUBSCRIPTION_TERMS_UPDATED_AT = "4 octobre 2026";
 /** Déclaration d'accessibilité (contrôle automatique du 3 octobre 2026). */
 export const ACCESSIBILITY_UPDATED_AT = "3 octobre 2026";

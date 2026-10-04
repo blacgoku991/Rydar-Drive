@@ -78,6 +78,14 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
               <p className="text-[12.5px] leading-relaxed text-fg-muted">
                 {ERROR_MESSAGES.BOOKING_SITES_DISABLED} Vos réglages sont conservés&nbsp;; les réservations par le tableau de
                 bord et par l&apos;API ne sont pas concernées.
+                {!!subscription && (limits.booking_site || limits.custom_domain) && (
+                  <>
+                    {" "}
+                    Cette fonction étant comprise dans votre offre, vous pouvez, pendant la suspension, changer d&apos;offre
+                    ou résilier sans frais, avec remboursement au prorata de l&apos;abonnement payé d&apos;avance (CGV, article
+                    9&nbsp;bis).
+                  </>
+                )}
               </p>
             )}
           </CardBody>

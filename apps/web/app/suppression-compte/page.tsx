@@ -163,7 +163,7 @@ export default async function AccountDeletionPage() {
           ]}
         />
         <p>
-          Si vous avez été banni pour fraude, des empreintes de vos identifiants (téléphone, e-mail, carte VTC, permis, pièce
+          Si vous avez été banni (par la centrale, ou sur toute la plateforme pour fraude), des empreintes de vos identifiants (téléphone, e-mail, carte VTC, permis, pièce
           d&apos;identité, appareil, plaque le cas échéant) sont conservées, avec le motif du bannissement et, s&apos;il existe,
           le signalement de fraude, sans votre nom. Elles servent uniquement à reconnaître une nouvelle inscription avec les
           mêmes identifiants. Ce sont des hachages sha256 : ils ne sont pas chiffrés, mais ne font pas apparaître la valeur
@@ -176,7 +176,8 @@ export default async function AccountDeletionPage() {
           Si vous devez encore des commissions à votre centrale au moment de la suppression, les empreintes (hachages
           sha256, sans indice en clair) de votre téléphone, de vos adresses e-mail et de votre numéro de carte VTC sont
           conservées pour le compte de la centrale, tant qu&apos;une somme reste due, puis effacées automatiquement. Base
-          légale : constatation, exercice ou défense des droits de la centrale en justice (article 17.3.e du RGPD). Elles
+          légale : intérêt légitime de la centrale au recouvrement de sa créance (article 6.1.f du RGPD) ; elles ne sont
+          pas effacées à votre demande tant que la somme reste due (article 17.3.e du RGPD). Elles
           servent uniquement à signaler à la centrale une nouvelle candidature avec ces identifiants : elle n&apos;est
           alors pas validée automatiquement, et la centrale voit le montant restant dû. Supprimer votre compte
           n&apos;efface pas la dette : les règlements restent dus, au nom de la fiche anonyme.

@@ -90,6 +90,38 @@ describe("/cgv : version en vigueur (2 octobre 2026)", () => {
   });
 });
 
+// Relecture juridique du 4 octobre 2026 (texte corrigé sur place, même ORG_LEGAL_VERSION) : chaque engagement décrit
+// le code (interdiction plateforme réservée à la fraude, refus WhatsApp du propriétaire, suspension motivée, purge non
+// outillée retirée).
+describe("/cgv : relecture du 4 octobre 2026", () => {
+  it("qualification, évolution du service, signalements, garantie, responsabilité, dispositions générales", async () => {
+    const t = text(await render(current.default)).replace(/[\s\u00a0]+/g, " ");
+    for (const rule of [
+      "9 bis. Évolution du service",
+      "10 bis. Signalements et interdiction sur la plateforme",
+      "18. Dispositions générales",
+      "le logiciel n'applique aucune sanction automatique à un refus ou à une absence de réponse",
+      "en les conservant, elle les fait siens",
+      "l'éditeur agit comme hébergeur au sens de l'article 6 de la loi n° 2004-575 du 21 juin 2004",
+      "ni ses chauffeurs ni ses clients ne sont débiteurs de l'éditeur",
+      "sauf si le propriétaire a refusé ce canal (article 10)",
+      "le propriétaire peut s'y opposer à tout moment en écrivant à l'éditeur, qui le note",
+      "L'éditeur ne suspend pas un compte pendant qu'un chauffeur est en route ou qu'un client est à bord.",
+      "Le fondement et le motif de la suspension sont affichés au propriétaire et aux administrateurs.",
+      "articles L7341-1 et suivants du Code du travail",
+      "ou 1 000 €",
+      "Toute action contre l'éditeur se prescrit par un an",
+      "tribunal de commerce ou tribunal des activités économiques",
+      "une dette, un comportement ou un différend reste propre à la centrale et n'est jamais communiqué aux autres centrales",
+    ]) {
+      expect(t, rule).toContain(rule);
+    }
+    for (const old of ["selon sa procédure interne documentée", "ne les sélectionne pas", "si ce canal est activé"]) {
+      expect(t, old).not.toContain(old);
+    }
+  });
+});
+
 describe("/cgv/2026-09-27 : version précédente, figée", () => {
   it("texte d'origine (frais réservés au modèle centrale), version figée, lien vers la version en vigueur", async () => {
     const html = await render(previous.default);

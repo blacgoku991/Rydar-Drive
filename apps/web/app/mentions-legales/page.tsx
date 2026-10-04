@@ -90,15 +90,16 @@ export default async function LegalNoticePage() {
 
       <LegalSection title="Hébergement des données">
         <p>
-          Base de données, comptes de connexion, fichiers et sauvegardes : sur le serveur de l&apos;hébergeur du site,
-          administré par l&apos;éditeur
-          {legal.dataHost ? (
+          Base de données, comptes de connexion et fichiers : sur le serveur de l&apos;hébergeur du site, administré par
+          l&apos;éditeur
+          {legal.dataHost ? (
             <>
               {" "}
               (<span className="text-fg">{legal.dataHost}</span>)
             </>
-          ) : null}
-          . La liste complète des prestataires techniques figure dans l&apos;
+          ) : null}
+          . Sauvegardes : sur ce même serveur et, en copie chiffrée, dans l&apos;espace de stockage du même hébergeur, dans
+          l&apos;Union européenne. La liste complète des prestataires techniques figure dans l&apos;
           <Link href="/dpa" className="text-fg underline underline-offset-2">accord de traitement des données</Link>.
         </p>
       </LegalSection>
@@ -107,8 +108,9 @@ export default async function LegalNoticePage() {
         <p>
           Chaque mini-site de réservation (sous-domaine ou domaine propre) est publié par la centrale qui y est nommée.
           Elle est l&apos;exploitant du service de transport et répond du contenu du mini-site (textes, photos, prix,
-          conditions). Son nom figure en bas du mini-site, avec son numéro SIRET et son inscription au registre des VTC
-          lorsqu&apos;elle les a renseignés. L&apos;éditeur ne fournit que le logiciel.
+          conditions). Sa raison sociale, son numéro SIRET, son adresse et son inscription au registre des exploitants
+          VTC figurent en bas du mini-site : ils sont exigés pour le mettre en ligne. L&apos;éditeur ne fournit que le
+          logiciel et l&apos;hébergement de ces contenus.
         </p>
       </LegalSection>
 

@@ -5,11 +5,12 @@ import { LegalLinks } from "@/components/legal/legal-links";
 
 /**
  * Ancre d'une section de page légale : « 7. Résiliation » → « article-7 » (liens /cgv#article-7 depuis les autres
- * pages) ; sans numéro, le titre en minuscules, sans accents (« Cookies » → « cookies »).
+ * pages), « 9 bis. Évolution » → « article-9-bis » ; sans numéro, le titre en minuscules, sans accents
+ * (« Cookies » → « cookies »).
  */
 export function sectionId(title: string): string {
-  const n = /^(\d+)\.\s/.exec(title);
-  if (n) return `article-${n[1]}`;
+  const n = /^(\d+)(?: (bis|ter))?\.\s/.exec(title);
+  if (n) return `article-${n[1]}${n[2] ? `-${n[2]}` : ""}`;
   return title
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")

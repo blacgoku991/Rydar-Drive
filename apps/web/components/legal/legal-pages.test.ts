@@ -21,6 +21,8 @@ vi.mock("@/lib/legal", async () => {
     SUBSCRIPTION_TERMS_UPDATED_AT: "3 octobre 2026",
     ACCESSIBILITY_UPDATED_AT: "3 octobre 2026",
     DPA_UPDATED_AT: "3 octobre 2026",
+    LEGAL_UPDATED_AT: "4 octobre 2026",
+    PRIVACY_UPDATED_AT: "4 octobre 2026",
     getLegalInfo: async () => legal.info,
   };
 });
@@ -44,6 +46,9 @@ const subscription = await import("../../app/abonnement-resiliation/page");
 const accessibility = await import("../../app/accessibilite/page");
 const dpa = await import("../../app/dpa/page");
 const dpaAccepted = await import("../../app/dpa/2026-10-02/page");
+const cgu = await import("../../app/cgu/page");
+const privacy = await import("../../app/confidentialite/page");
+const deletion = await import("../../app/suppression-compte/page");
 
 const WEB = join(import.meta.dirname, "..", "..");
 const source = (path: string) => readFileSync(join(WEB, path), "utf8");
@@ -117,7 +122,9 @@ describe("/mentions-legales", () => {
     expect(t).toContain("règlement (UE) 2022/2065 sur les services numériques, articles 11 et 12");
     expect(t).toContain("Langue acceptée : français");
     expect(t).toContain("Hébergeur : Hébergeur SAS");
-    expect(t).toContain("Base de données, comptes de connexion, fichiers et sauvegardes : sur le serveur de l'hébergeur du site, administré par l'éditeur");
+    expect(t).toContain("Base de données, comptes de connexion et fichiers : sur le serveur de l'hébergeur du site, administré par l'éditeur");
+    // Sauvegardes : copie chiffrée hors du serveur (restic → stockage objet du même hébergeur), décrite telle quelle
+    expect(t).toContain("Sauvegardes : sur ce même serveur et, en copie chiffrée, dans l'espace de stockage du même hébergeur, dans l'Union européenne.");
     expect(t).toContain("Même serveur que le site, datacenter en France");
     expect(html).toContain('href="mailto:contact@rydar.example"');
     expect(html).toContain('href="/accessibilite"');
@@ -346,5 +353,52 @@ describe("/dpa : texte accepté avant la correction du 3 octobre 2026", () => {
 
   it("servi tel quel sur les mini-sites (proxy.ts : /cgv/AAAA-MM-JJ et /dpa/AAAA-MM-JJ)", () => {
     expect(source("proxy.ts")).toContain("/^\\/(cgv|dpa)\\/\\d{4}-\\d{2}-\\d{2}$/");
+  });
+});
+
+// Relecture juridique du 4 octobre 2026 (textes corrigés sur place, sans nouvelle version) : engagements qui décrivent
+// le code, renvois croisés (e-mail d'interdiction ↔ articles des CGU) et typographie des pages concernées.
+describe("relecture juridique du 4 octobre 2026", () => {
+  it("CGU : sécurité au volant, articles 10 et 11 cités par l'e-mail d'interdiction, aucune acceptation tacite", async () => {
+    const t = flat(text(await render(cgu.default)));
+    expect(t).toContain("7. Sécurité au volant");
+    expect(t).toContain("Il est interdit de tenir le téléphone en main en conduisant");
+    expect(t).toContain("10. Comportements interdits");
+    expect(t).toContain("11. Suspension, bannissement et recours");
+    expect(t).toContain("Seule une fraude constatée (usurpation d'identité, document faux ou falsifié, fausse déclaration)");
+    expect(t).toContain("elle n'est pas conservée dans l'historique");
+    expect(t).not.toContain("se connecter à l'application vaut aussi acceptation");
+    expect(t).not.toContain("vaut acceptation");
+    expect(t).not.toContain("ne les sélectionne pas");
+    // L'e-mail d'interdiction (migration 20260924007400) cite ces deux articles : numéros et intitulés identiques
+    const sql = readFileSync(join(WEB, "..", "..", "supabase", "migrations", "20260924007400_legal_review.sql"), "utf8");
+    expect(sql).toContain("articles 10 (comportements interdits) et 11 (suspension, bannissement et recours)");
+  });
+
+  it("confidentialité : bases légales et durées du code (WhatsApp, empreintes de dette, coordonnées des clients)", async () => {
+    const t = flat(text(await render(privacy.default)));
+    expect(t).toContain("intérêt légitime de la centrale à être payée des sommes qui lui sont dues");
+    expect(t).toContain("intérêt légitime de la centrale (article 6.1.f du RGPD)");
+    expect(t).toContain("téléphone et e-mail du client et précisions effacés 3 ans après la fin de l'année de la course");
+    expect(t).toContain("une copie chiffrée des sauvegardes est gardée dans l'espace de stockage du même hébergeur");
+    expect(t).toContain("une carte qui ne montre ni le nom ni les coordonnées des chauffeurs");
+    expect(t).not.toContain("Courses (y compris les coordonnées du client)");
+    expect(t).not.toContain("avec votre accord préalable, que la centrale s'engage à recueillir");
+    expect(t).not.toContain("protection équivalente");
+  });
+
+  it("CGV et page de résiliation : renvoi vers l'article 9 bis (ancre article-9-bis)", async () => {
+    const html = await render(subscription.default);
+    expect(html).toContain('href="/cgv#article-9-bis"');
+    expect(source("app/cgv/page.tsx")).toContain('title="9 bis. Évolution du service"');
+    expect(source("components/legal/legal-page.tsx")).toContain("(?: (bis|ter))?");
+  });
+
+  it("typographie : CGU, confidentialité, accord de traitement et suppression de compte", async () => {
+    for (const page of [cgu.default, privacy.default, dpa.default, deletion.default]) {
+      const t = text(await render(page)).replace(/https?:\/\/\S+/g, "");
+      expect(t).not.toMatch(/ [:;!?»]/);
+      expect(t).not.toMatch(/« /);
+    }
   });
 });

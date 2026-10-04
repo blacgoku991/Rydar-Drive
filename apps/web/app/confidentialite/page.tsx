@@ -64,7 +64,9 @@ export default async function PrivacyPage() {
               Position GPS, avec cap, vitesse, précision et <span className="text-fg">niveau de batterie</span> du téléphone : en continu
               lorsque vous êtes <span className="text-fg">EN LIGNE</span> ou en course, y compris application en arrière-plan ou
               téléphone verrouillé. Le niveau de batterie n&apos;est gardé qu&apos;avec la dernière position connue : il aide la
-              centrale à comprendre une position qui n&apos;arrive plus (téléphone presque déchargé). Ponctuellement, lorsque vous publiez un signalement pour la flotte (contrôle, accident,
+              centrale à comprendre une position qui n&apos;arrive plus (téléphone presque déchargé). La vitesse sert seulement à
+              savoir si le véhicule roule (affichage de la carte) : elle n&apos;est pas conservée dans l&apos;historique et n&apos;est
+              jamais utilisée pour contrôler le respect des limitations de vitesse. Ponctuellement, lorsque vous publiez un signalement pour la flotte (contrôle, accident,
               bouchon…), sa position est enregistrée et montrée aux chauffeurs de votre flotte, <span className="text-fg">même hors ligne</span>.
             </>,
             <>
@@ -83,7 +85,8 @@ export default async function PrivacyPage() {
           Votre téléphone, votre e-mail, vos numéros de carte VTC, de permis et de pièce d&apos;identité et la plaque de
           votre véhicule (à l&apos;inscription, puis à chaque modification ou envoi de justificatif), ainsi que
           l&apos;identifiant de votre appareil (à la première connexion de l&apos;application sur ce téléphone), sont
-          comparés aux empreintes des identités bannies pour fraude (voir l&apos;article 9). En cas de correspondance,
+          comparés aux empreintes des identités bannies par la centrale ou interdites sur toute la plateforme pour fraude
+          (voir l&apos;article 9). En cas de correspondance,
           l&apos;inscription, l&apos;enregistrement de la fiche ou du justificatif est refusé ; pour un appareil, la
           candidature est refusée ou le compte suspendu automatiquement, et la centrale est alertée. Vous pouvez demander
           qu&apos;une personne réexamine cette décision (article 5).
@@ -98,8 +101,10 @@ export default async function PrivacyPage() {
 
       <LegalSection title="3. Clients et passagers : données traitées">
         <p>
-          Nom, téléphone, e-mail (facultatif), adresses de départ et d&apos;arrivée, date et heure, nombre de passagers
-          et de bagages, numéro de vol éventuel, précisions, prix et mode de paiement. Vous les saisissez sur le mini-site
+          Nom, téléphone, e-mail (facultatif, sauf pour une réservation avec prix sur le mini-site), adresses de départ
+          et d&apos;arrivée, date et heure, nombre de passagers et de bagages, numéro de vol éventuel, précisions, prix et
+          mode de paiement. Une réservation avec prix faite sur le mini-site reçoit, à cette adresse e-mail, un accusé
+          de réception envoyé pour le compte de la centrale. Vous les saisissez sur le mini-site
           de la centrale, ou la centrale les enregistre (téléphone, son propre site par l&apos;API). Aucun compte client
           n&apos;est créé. Ces données sont transmises à la centrale nommée sur le mini-site, qui organise la course : aucune case à
           cocher ne vous est demandée pour cela. L&apos;adresse IP de l&apos;appareil qui envoie une réservation sert, sous
@@ -126,10 +131,11 @@ export default async function PrivacyPage() {
             <>Examiner une candidature, vérifier les justificatifs et rappeler leurs échéances : mesures précontractuelles et obligations légales de la centrale (Code des transports).</>,
             <>Calculer gains, commissions et règlements, tenir la comptabilité : exécution du contrat et obligation légale.</>,
             <>Envoyer les offres, messages, rappels et relances de commission par notification dans l&apos;application : exécution du contrat.</>,
-            <>Envoyer les relances de commission par WhatsApp, si la centrale les active : exécution du contrat qui vous lie à la centrale (somme due), avec votre accord préalable, que la centrale s&apos;engage à recueillir (<Link href="/cgv#article-10" className={link}>conditions générales de vente, article 10</Link>). Pour ne plus les recevoir par WhatsApp, prévenez la centrale : elle peut faire partir ses relances par l&apos;application seule (réglage commun à tous ses chauffeurs).</>,
-            <>Relancer par WhatsApp le propriétaire d&apos;une centrale à commission pour les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur (conditions générales de vente).</>,
-            <>Assurer la sécurité, prévenir la fraude, bannir un auteur de fraude : intérêt légitime de la centrale et de l&apos;éditeur.</>,
-            <>Garder, après la suppression d&apos;un compte, les empreintes d&apos;un chauffeur qui doit encore des commissions à la centrale : constatation, exercice ou défense des droits de la centrale en justice (article 17.3.e du RGPD), l&apos;éditeur agissant pour son compte.</>,
+            <>Envoyer les relances de commission par WhatsApp, si la centrale choisit ce canal : intérêt légitime de la centrale à être payée des sommes qui lui sont dues. Vous pouvez vous y opposer à tout moment auprès de la centrale : l&apos;application ne permettant pas encore un réglage par chauffeur, la centrale qui reçoit votre opposition fait partir ses relances par l&apos;application seule (<Link href="/cgv#article-10" className={link}>conditions générales de vente, article 10</Link>).</>,
+            <>Relancer par WhatsApp le propriétaire d&apos;une centrale à commission pour les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur (conditions générales de vente). Le propriétaire peut s&apos;y opposer en écrivant à l&apos;éditeur, qui le note.</>,
+            <>Assurer la sécurité et prévenir la fraude : bannissement d&apos;un chauffeur par la centrale, pour le motif qu&apos;elle consigne ; interdiction sur toute la plateforme par l&apos;éditeur, réservée à une fraude constatée (usurpation d&apos;identité, document faux ou falsifié, fausse déclaration) : intérêt légitime de la centrale et de l&apos;éditeur. Une dette ou un différend avec une centrale n&apos;est jamais communiqué aux autres centrales. Le motif décrit un manquement aux règles, jamais une infraction pénale supposée.</>,
+            <>Garder, après la suppression d&apos;un compte, les empreintes d&apos;un chauffeur qui doit encore des commissions à la centrale, pour lui permettre de recouvrer sa créance et de savoir qu&apos;une nouvelle candidature vient de lui : intérêt légitime de la centrale (article 6.1.f du RGPD), l&apos;éditeur agissant pour son compte. Ces empreintes ne sont pas effacées à votre demande tant que la somme reste due (article 17.3.e du RGPD).</>,
+            <>Envoyer l&apos;accusé de réception d&apos;une réservation avec prix faite sur le mini-site : exécution du contrat entre le client et la centrale, l&apos;éditeur agissant pour son compte.</>,
             <>Gérer les comptes des centrales, les abonnements et les frais plateforme : exécution du contrat entre la centrale et l&apos;éditeur, et obligations comptables.</>,
             <>Répondre à une demande envoyée par le formulaire de contact et en accuser réception : mesures précontractuelles prises à votre demande, et intérêt légitime de l&apos;éditeur à répondre aux personnes qui le contactent.</>,
             <>Traiter les signalements de contenus illicites et répondre aux autorités : obligation légale.</>,
@@ -144,12 +150,12 @@ export default async function PrivacyPage() {
         <LegalList
           items={[
             <>l&apos;attribution des offres, selon la distance au point de départ, la catégorie du véhicule et les règles fixées par la centrale (par exemple un blocage en cas de commission impayée) : vous recevez ou non une offre ;</>,
-            <>le refus d&apos;une inscription ou d&apos;une candidature, ou la suspension d&apos;un compte, lorsqu&apos;une identité ou un appareil correspond à une personne bannie pour fraude (article 2) : la logique est une comparaison exacte d&apos;empreintes (hachages) de vos identifiants (téléphone, e-mail, numéros de carte VTC, de permis et de pièce d&apos;identité, plaque, identifiant d&apos;appareil) avec celles d&apos;une personne bannie ; la conséquence est le refus de l&apos;inscription, de la fiche ou du justificatif, ou la suspension du compte, et une alerte à la centrale.</>,
+            <>le refus d&apos;une inscription ou d&apos;une candidature, ou la suspension d&apos;un compte, lorsqu&apos;une identité ou un appareil correspond à une personne bannie par la centrale ou interdite sur toute la plateforme pour fraude (article 2) : la logique est une comparaison exacte d&apos;empreintes (hachages) de vos identifiants (téléphone, e-mail, numéros de carte VTC, de permis et de pièce d&apos;identité, plaque, identifiant d&apos;appareil) avec celles d&apos;une personne bannie ; la conséquence est le refus de l&apos;inscription, de la fiche ou du justificatif, ou la suspension du compte, et une alerte à la centrale.</>,
           ]}
         />
         <p>
           Vous pouvez présenter vos observations, contester la décision et demander qu&apos;une personne la réexamine :
-          adressez-vous à la centrale, ou {contact.to} pour un bannissement décidé par l&apos;éditeur. Aucune donnée
+          adressez-vous à la centrale, ou {contact.to} pour une interdiction décidée par l&apos;éditeur. Aucune donnée
           n&apos;est vendue, utilisée pour de la publicité ou pour vous suivre sur d&apos;autres applications.
         </p>
         <p>
@@ -163,7 +169,7 @@ export default async function PrivacyPage() {
 
       <LegalSection title="6. Localisation en arrière-plan">
         <p>
-          Quand vous êtes EN LIGNE, l&apos;application continue de partager votre position si vous changez
+          Quand vous êtes EN LIGNE ou en course, l&apos;application continue de partager votre position si vous changez
           d&apos;application ou verrouillez votre téléphone, pour que les courses proches continuent de vous être
           proposées. Seule l&apos;autorisation « Pendant l&apos;utilisation » est demandée, après une information
           préalable. Sur Android, une notification « Rydar Drive — EN LIGNE » l&apos;indique en permanence ; sur iPhone,
@@ -180,15 +186,17 @@ export default async function PrivacyPage() {
             <>Les autres chauffeurs de votre flotte : votre prénom et l&apos;initiale de votre nom avec vos messages du fil « Chauffeurs » et vos signalements (avec leur position).</>,
             <>Les chauffeurs à qui une course est proposée (les plus proches pour une course immédiate, tous les chauffeurs compatibles de la centrale pour une course planifiée) : adresses de départ et d&apos;arrivée, date et heure, nombre de passagers et de bagages, numéro et provenance du vol, précisions et prix, sans le nom ni le téléphone du client. Le chauffeur attribué reçoit en plus le nom et le téléphone du client.</>,
             <>Le client : seulement ce que la centrale lui communique, par exemple le prénom du chauffeur et le modèle, la couleur et la plaque du véhicule (que l&apos;API remet à la centrale). Le logiciel ne montre pas la position du chauffeur au client.</>,
-            <>L&apos;éditeur (support, sécurité, traitement des signalements, facturation) : il peut consulter les données des centrales, y compris le fil « Chauffeurs » et la carte des chauffeurs en ligne, dans la limite de ces missions.</>,
+            <>L&apos;éditeur (support, sécurité, traitement des signalements, facturation) : il peut consulter les données des centrales, y compris le fil « Chauffeurs », dans la limite de ces missions. Il supervise le fonctionnement du dispatch sur une carte qui ne montre ni le nom ni les coordonnées des chauffeurs, ni les adresses des clients.</>,
+            <>Les applications de navigation que vous choisissez (Waze, Google Maps, Plans) : elles reçoivent l&apos;adresse ou le point de destination quand vous lancez le guidage, et le traitent selon leurs propres conditions.</>,
             <>Demandes du formulaire de contact : l&apos;éditeur seul, dans son espace d&apos;administration. L&apos;e-mail qui l&apos;avertit d&apos;une nouvelle demande ne contient aucune donnée de la demande (seulement son sujet et un lien) ; l&apos;accusé de réception et les réponses partent du serveur de messagerie de l&apos;éditeur, hébergé avec le site. Si vous répondez par e-mail, votre message arrive dans la boîte de messagerie de contact de l&apos;éditeur, chez son prestataire de messagerie.</>,
-            <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : l&apos;hébergeur du serveur de l&apos;éditeur (site, base de données, fichiers, sauvegardes et e-mails, voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>), notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète, avec les services publics tiers utilisés pour les cartes, les adresses et les itinéraires (OpenFreeMap, IGN, OSRM), dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
+            <>Les prestataires techniques de l&apos;éditeur, dans la limite de leur mission : l&apos;hébergeur du serveur de l&apos;éditeur (site, base de données, fichiers, sauvegardes, copie chiffrée des sauvegardes et e-mails, voir les <Link href="/mentions-legales" className={link}>mentions légales</Link>), notifications et mises à jour de l&apos;application (Expo, Apple, Google), cartes, adresses et itinéraires, WhatsApp si activé, paiement des abonnements des centrales. Liste complète, avec les services publics tiers utilisés pour les cartes, les adresses et les itinéraires (OpenFreeMap, IGN, OSRM), dans l&apos;<Link href="/dpa" className={link}>accord de traitement des données</Link>.</>,
             <>Les autorités, lorsque la loi l&apos;exige.</>,
           ]}
         />
         <p className="text-fg">
-          Ces prestataires sont tenus d&apos;assurer à vos données une protection équivalente à celle décrite dans cette
-          politique.
+          Les prestataires de l&apos;éditeur sont liés par un contrat de traitement des données (pour Apple, Google, Meta et
+          Expo, leurs conditions standard de traitement des données) ; les services publics tiers cités dans l&apos;accord de
+          traitement ne reçoivent aucune identité.
         </p>
       </LegalSection>
 
@@ -196,11 +204,13 @@ export default async function PrivacyPage() {
         <p>
           Les données sont hébergées dans l&apos;Union européenne, sur le serveur de l&apos;éditeur, qui porte le site, la
           base de données, les fichiers, les sauvegardes et le serveur d&apos;envoi des e-mails (hébergeur et lieu : voir
-          les <Link href="/mentions-legales" className={link}>mentions légales</Link>). Certains prestataires sont situés aux États-Unis
+          les <Link href="/mentions-legales" className={link}>mentions légales</Link>) ; une copie chiffrée des
+          sauvegardes est gardée dans l&apos;espace de stockage du même hébergeur, dans l&apos;Union européenne. Certains prestataires sont situés aux États-Unis
           ou y transfèrent des données (notifications et mises à jour de l&apos;application, cartes de l&apos;application,
           WhatsApp, paiement des abonnements des centrales, et selon la configuration adresses, itinéraires et suivi des
           vols) : ces transferts sont encadrés par le Data Privacy
-          Framework UE–États-Unis ou par les clauses contractuelles types de la Commission européenne.
+          Framework UE–États-Unis ou par les clauses contractuelles types de la Commission européenne. Une copie des
+          garanties applicables peut être obtenue en écrivant {contact.to}.
         </p>
       </LegalSection>
 
@@ -215,16 +225,20 @@ export default async function PrivacyPage() {
             <>Adresse IP et navigateur enregistrés dans le journal de sécurité (inscription par lien, actions sensibles de l&apos;équipe) et historique des connexions du service d&apos;authentification : 1 an ; ceux d&apos;un chauffeur qui supprime son compte sont effacés dès la suppression.</>,
             <>Sessions de connexion ouvertes (adresse IP et navigateur de l&apos;appareil, tenus par le service d&apos;authentification) : jusqu&apos;à la déconnexion ou à la suppression du compte, et 400 jours au plus sans utilisation.</>,
             <>Journaux techniques du serveur (fonctionnement et erreurs des services, requêtes reçues par la base de données et le service d&apos;authentification, avec l&apos;adresse IP) : 1 an au plus. Compteurs anti-abus (empreinte de l&apos;adresse IP) : 24 heures au plus.</>,
-            <>Sauvegardes de la base de données et des fichiers : faites chaque nuit, chacune gardée 14 jours puis effacée ; une donnée supprimée du service disparaît des sauvegardes au plus tard 14 jours après.</>,
-            <>Copies des e-mails envoyés par le service : celles d&apos;une demande de contact, avec la demande (3 ans) ; annonces de frais plateforme et de nouvelles conditions adressées aux centrales, 10 ans (preuve de l&apos;annonce) ; autres e-mails (tests, notifications), 1 an.</>,
-            <>Courses (y compris les coordonnées du client), gains, commissions et règlements : 10 ans après la fin de l&apos;année de la course, pour les obligations comptables de la centrale, puis supprimés, y compris une course jamais terminée.</>,
+            <>Sauvegardes de la base de données et des fichiers : faites chaque nuit, sur le serveur de l&apos;éditeur et en copie chiffrée chez le même hébergeur, chacune gardée 14 jours puis effacée ; une donnée supprimée du service disparaît des sauvegardes au plus tard 14 jours après.</>,
+            <>Copies des e-mails envoyés par le service : celles d&apos;une demande de contact, avec la demande (3 ans) ; annonces de frais plateforme et de nouvelles conditions adressées aux centrales, 10 ans (preuve de l&apos;annonce) ; autres e-mails (accusés de réception des réservations du mini-site, décisions d&apos;interdiction, tests, notifications), 1 an.</>,
+            <>Courses : téléphone et e-mail du client et précisions effacés 3 ans après la fin de l&apos;année de la course ; le reste de la course (date, trajet, nom du client, numéro de vol, prix), les gains, commissions et règlements sont conservés 10 ans après la fin de l&apos;année de la course pour les obligations comptables de la centrale, puis supprimés, y compris une course jamais terminée.</>,
             <>Comptes et journal des actions de l&apos;équipe d&apos;une centrale : tant qu&apos;elle utilise le service, puis supprimés dans les 30 jours qui suivent la fin du contrat, sauf les actions sur les frais plateforme et leurs paiements, gardées avec ce registre comptable.</>,
+            <>Fin du contrat d&apos;une centrale : les données traitées pour son compte (chauffeurs et candidats, justificatifs, courses et coordonnées des clients, messages, positions) sont supprimées dans les 30 jours qui suivent la fin de son contrat, après un éventuel export remis à la centrale, sauf les données que l&apos;éditeur conserve pour son propre compte (article 1).</>,
             <>Preuves d&apos;acceptation : celle des CGU et de cette politique reste, détachée du compte s&apos;il est supprimé (document, version, date) ; celle des CGV et de l&apos;accord de traitement, avec l&apos;e-mail de la personne qui les a acceptés, est gardée comme preuve du contrat, y compris après sa fin (la fiche de la centrale est alors archivée, jamais supprimée).</>,
             <>
-              Bannissement pour fraude : la centrale conserve des empreintes de vos identifiants (téléphone, e-mail, numéros
-              de carte VTC, de permis et de pièce d&apos;identité, identifiant d&apos;appareil, plaque si le véhicule est
-              banni) et le motif ; si elle le signale à l&apos;éditeur, celui-ci conserve aussi le signalement (nom, motif,
-              date). Les empreintes sont des hachages sha256 : elles ne sont pas chiffrées, mais ne font pas apparaître la
+              Bannissement (par la centrale, ou interdiction sur toute la plateforme pour fraude) : la centrale conserve des
+              empreintes de vos identifiants (téléphone, e-mail, numéros de carte VTC, de permis et de pièce
+              d&apos;identité, identifiant d&apos;appareil, plaque si le véhicule est banni) et le motif ; si elle signale une
+              fraude ou un document faux à l&apos;éditeur, celui-ci conserve aussi le signalement (nom, motif, date). Un
+              impayé ne donne lieu qu&apos;à un blocage ou à un bannissement par la centrale concernée, jamais à une
+              interdiction sur toute la plateforme ; le motif décrit un manquement aux règles, jamais une infraction
+              pénale supposée. Les empreintes sont des hachages sha256 : elles ne sont pas chiffrées, mais ne font pas apparaître la
               valeur en clair ; un indice partiel les accompagne (par exemple +33••••••78). Seuls les administrateurs de la
               centrale concernée et l&apos;éditeur ont accès aux empreintes, à leurs indices et au signalement ; le motif du
               bannissement est visible de toute l&apos;équipe de la centrale, dispatchers compris. Les empreintes servent
@@ -262,7 +276,7 @@ export default async function PrivacyPage() {
           items={[
             <><span className="text-fg">Supprimé</span> : compte de connexion et historique de ses connexions (s&apos;il sert aussi à gérer une centrale, seul le profil chauffeur est supprimé) ; nom, téléphone, e-mail, photo, numéro de carte VTC, message de candidature et notes de la centrale ; justificatifs et tous leurs fichiers ; positions et historique GPS ; appareils et jetons de notification ; notifications ; messages avec la centrale et dans le fil « Chauffeurs », signalements pour la flotte (leur copie dans le journal de la centrale et les alertes envoyées aux autres chauffeurs comprises), votes, signalements de messages, auteurs masqués et accusés de lecture ; véhicule créé à l&apos;inscription par lien s&apos;il n&apos;a servi à aucune course (sinon sa plaque, sa marque, son modèle, sa couleur et son année sont effacés).</>,
             <><span className="text-fg">Anonymisé</span>, conservé sans nom ni coordonnées pour les obligations comptables, jusqu&apos;à 10 ans après la fin de l&apos;année de chaque course : la fiche devient « Chauffeur supprimé (#N) » ; courses, règlements, gains et commissions y restent rattachés ; votre nom est retiré du journal des courses, des alertes (avec leur position) et des règlements ; le journal d&apos;audit est caviardé et l&apos;adresse IP et le navigateur de votre inscription en sont effacés ; dans le commentaire et le motif d&apos;annulation d&apos;une course, données de la centrale, seul votre nom complet est remplacé ; la preuve d&apos;acceptation des CGU et de cette politique reste, détachée de votre compte.</>,
-            <><span className="text-fg">Conservé</span> en cas de bannissement pour fraude : empreintes (hachages) de vos identifiants, motif et signalement de fraude, jusqu&apos;à 3 ans après le bannissement, pour empêcher une réinscription ; votre nom et les indices partiels en sont retirés dès la suppression.</>,
+            <><span className="text-fg">Conservé</span> en cas de bannissement : empreintes (hachages) de vos identifiants, motif et, s&apos;il existe, signalement de fraude, jusqu&apos;à 3 ans après le bannissement, pour empêcher une réinscription ; votre nom et les indices partiels en sont retirés dès la suppression.</>,
             <><span className="text-fg">Conservé</span> si des commissions restent dues à la centrale : empreintes (hachages) de votre téléphone, de vos adresses e-mail et de votre numéro de carte VTC, tant qu&apos;une somme reste due (article 9). Supprimer son compte n&apos;efface pas la dette.</>,
           ]}
         />

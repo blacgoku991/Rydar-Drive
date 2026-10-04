@@ -79,7 +79,7 @@ const APP_STORAGE: Line[] = [
   },
   {
     name: "Identifiant de l'appareil",
-    role: "Relier l'appareil à son jeton de notification, et empêcher qu'un appareil utilisé par un compte banni pour fraude serve à un nouveau compte. Android : identifiant ANDROID_ID lu sur le téléphone ; iPhone : identifiant aléatoire (rydar.installation_id) gardé dans le trousseau.",
+    role: "Relier l'appareil à son jeton de notification, et empêcher qu'un appareil déjà utilisé par un compte exclu (banni par la centrale ou interdit sur toute la plateforme pour fraude) ouvre un nouveau compte : nécessaire à la sécurité de l'authentification. Il n'est jamais utilisé pour la publicité ni transmis à un tiers. Android : identifiant ANDROID_ID lu sur le téléphone ; iPhone : identifiant aléatoire (rydar.installation_id) gardé dans le trousseau.",
     duration: "Android : celui du téléphone, inchangé après une réinstallation ; iPhone : gardé après une réinstallation de l'application",
   },
   {
@@ -96,6 +96,11 @@ const APP_STORAGE: Line[] = [
     name: "rydar.driver.legalAccepted.…",
     role: "Votre « J'accepte » des CGU touché sans réseau, gardé jusqu'à son envoi au serveur.",
     duration: "Jusqu'à son envoi",
+  },
+  {
+    name: "rydar.driver.networkTermsProposed.…",
+    role: "Version des conditions du réseau partagé déjà présentée, pour ne pas la présenter à nouveau (seulement si votre organisation utilise le réseau partagé).",
+    duration: "Jusqu'à la désinstallation, remplacée à chaque nouvelle version",
   },
 ];
 
