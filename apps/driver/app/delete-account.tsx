@@ -202,7 +202,9 @@ export default function DeleteAccount() {
     const notice = shown ? openDebtNotice(shown) : null;
     Alert.alert(
       frTypo("Supprimer définitivement ?"),
-      frTypo(`Votre compte et vos données personnelles seront supprimés. Cette action est irréversible.${notice ? ` ${notice.confirm}` : ""}`),
+      frTypo(
+        `Votre compte et vos données personnelles seront supprimés. Cette action est irréversible. Seules sont gardées, sans votre nom, les informations que la loi ou la défense des droits de la centrale imposent (courses et règlements, preuve d'acceptation des conditions, empreintes en cas de fraude ou de commissions dues) : détails sur la page « Supprimer son compte » du site.${notice ? ` ${notice.confirm}` : ""}`,
+      ),
       [
         { text: "Annuler", style: "cancel" },
         {

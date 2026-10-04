@@ -311,10 +311,15 @@ export default function JoinScreen() {
                       <Ionicons name={accept ? "checkbox" : "square-outline"} size={24} color={accept ? colors.brand : colors.muted} />
                       <Text style={styles.acceptText}>
                         {frTypo(
-                          `J'accepte les conditions d'utilisation de Rydar Drive et que ${org.name} traite mes données pour gérer mon activité de chauffeur, et je certifie être chauffeur VTC en règle.`,
+                          "J'accepte les conditions d'utilisation de Rydar Drive et je certifie être chauffeur VTC en règle (carte professionnelle, permis et assurance valables).",
                         )}
                       </Text>
                     </Pressable>
+                    {/* Information (RGPD art. 13), pas un accord à cocher : la transmission à la centrale est une mesure
+                        précontractuelle (art. 6.1.b), jamais liée à l'acceptation des CGU (même texte que le web) */}
+                    <Text style={styles.legalInfo}>
+                      {frTypo(`Vos informations sont transmises à ${org.name} pour l'étude de votre candidature, puis la gestion de votre activité. Voir la politique de confidentialité.`)}
+                    </Text>
                     <View style={styles.legalRow}>
                       {([["cgu", "Conditions d'utilisation"], ["confidentialite", "Confidentialité"]] as const).map(([page, label]) => {
                         const url = legalUrl(page);
@@ -389,6 +394,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: space.md },
   accept: { flexDirection: "row", gap: space.md, alignItems: "flex-start", minHeight: control.sm, paddingVertical: space.xs, marginTop: space.xs },
   acceptText: { flex: 1, color: colors.muted, fontSize: type.body, lineHeight: 21 },
+  legalInfo: { color: colors.muted, fontSize: type.footnote, lineHeight: 18, paddingLeft: 24 + space.md, marginTop: -space.xs },
   legalRow: { flexDirection: "row", flexWrap: "wrap", gap: space.lg, paddingLeft: 24 + space.md, marginTop: -space.xs },
   legalLink: { color: colors.fg, fontSize: type.footnote, textDecorationLine: "underline", paddingVertical: space.xs },
 });

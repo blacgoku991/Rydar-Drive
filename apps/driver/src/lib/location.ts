@@ -312,7 +312,7 @@ function confirmLocationDisclosure() {
   return new Promise<boolean>((resolve) =>
     Alert.alert(
       "Utilisation de votre position",
-      `Rydar Drive collecte votre position quand vous êtes EN LIGNE, y compris application en arrière-plan ou écran éteint, pour vous proposer les courses proches et permettre à votre centrale de suivre vos courses. ${indicator} l'indique. Passer hors ligne ou fermer l'application arrête cette collecte${NBSP}; hors ligne, votre position n'est envoyée qu'avec un signalement que vous publiez.`,
+      `Votre centrale reçoit votre position quand vous êtes EN LIGNE ou en course, y compris application en arrière-plan ou écran éteint, avec votre direction, votre vitesse et le niveau de batterie du téléphone${NBSP}: elle sert à vous proposer les courses proches et à suivre la course. L'éditeur de Rydar Drive peut aussi y accéder, pour le support et la sécurité du service. L'historique des positions est effacé après 30${NBSP}jours. ${indicator} l'indique. Passer hors ligne (impossible pendant une course) ou fermer l'application arrête cet envoi${NBSP}; hors ligne, votre position ne part qu'avec un signalement que vous publiez.`,
       [
         { text: "Annuler", style: "cancel", onPress: () => resolve(false) },
         { text: "Continuer", onPress: () => resolve(true) },

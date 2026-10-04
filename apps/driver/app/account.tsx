@@ -337,12 +337,21 @@ const BLOCKED: Record<Blocked, { icon: keyof typeof Ionicons.glyphMap; color: st
   },
 };
 
+/**
+ * Interdiction sur toute la plateforme (ban_scope « platform », décidée par l'éditeur après un signalement de fraude) :
+ * jamais présentée comme une décision de la centrale ; motifs et recours envoyés par e-mail (svc_platform_ban).
+ */
+const PLATFORM_BAN_MESSAGE =
+  "Ce compte a été interdit sur Rydar Drive par l'éditeur du logiciel, après le signalement d'une fraude. Les motifs et les voies de recours sont envoyés à l'adresse e-mail de votre compte ; pour contester, écrivez à l'éditeur depuis la page Contact du site Rydar Drive.";
+
 function AccountBlocked({ account }: { account: DriverAccountState }) {
   const { checkAccount, signOut } = useDriver();
   const [checking, setChecking] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const meta = BLOCKED[account.state as Blocked] ?? BLOCKED.inactive;
   const org = account.organization?.name ?? "votre centrale";
+  const platformBan = account.state === "banned" && account.ban_scope === "platform";
+  const reasonLabel = platformBan ? "Motif enregistré" : "Motif indiqué par la centrale";
   const phone = account.organization?.phone ?? null;
   const email = account.organization?.email ?? null;
 
@@ -355,14 +364,14 @@ function AccountBlocked({ account }: { account: DriverAccountState }) {
             <Text style={styles.title} accessibilityRole="header">
               {meta.title}
             </Text>
-            <Text style={styles.message}>{frTypo(meta.message(org))}</Text>
+            <Text style={styles.message}>{frTypo(platformBan ? PLATFORM_BAN_MESSAGE : meta.message(org))}</Text>
           </View>
 
           {account.reason ? (
-            <View style={styles.row} accessible accessibilityLabel={`Motif indiqué par la centrale${NB}: ${account.reason}`}>
+            <View style={styles.row} accessible accessibilityLabel={`${reasonLabel}${NB}: ${account.reason}`}>
               <Ionicons name="chatbox-ellipses-outline" size={20} color={colors.muted} />
               <View style={styles.rowBody}>
-                <Text style={styles.rowLabel}>Motif indiqué par la centrale</Text>
+                <Text style={styles.rowLabel}>{reasonLabel}</Text>
                 <Text style={styles.rowText}>{frTypo(account.reason)}</Text>
               </View>
             </View>

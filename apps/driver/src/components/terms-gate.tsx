@@ -41,7 +41,8 @@ type GateState = "unknown" | "pending" | "syncing" | "accepted" | "unsupported";
 /** L'essentiel des deux documents (résumé, les documents complets font foi). Typographie : frTypo à l'affichage. */
 const POINTS = [
   "Rydar Drive fournit l'outil de dispatch de votre centrale : les courses, les clients et les prix relèvent d'elle.",
-  "Quand vous êtes EN LIGNE, votre position est partagée avec votre centrale, y compris application en arrière-plan ; hors ligne, elle accompagne seulement les signalements que vous publiez.",
+  "Quand vous êtes EN LIGNE ou en course, votre position (avec direction, vitesse et batterie) est envoyée à votre centrale, y compris application en arrière-plan ; l'éditeur peut y accéder pour le support et la sécurité. Hors ligne, elle accompagne seulement les signalements que vous publiez.",
+  "Au volant, ne manipulez pas votre téléphone : acceptez les offres et écrivez vos messages à l'arrêt, dans un endroit sûr.",
   "Fil Chauffeurs : aucune tolérance pour les contenus choquants ni pour les comportements abusifs. Votre centrale le modère et peut exclure leurs auteurs.",
 ] as const;
 

@@ -194,7 +194,7 @@ export function BigButton({
 }
 
 /**
- * Glisser pour confirmer : évite les erreurs de manipulation au volant
+ * Glisser pour confirmer : évite les erreurs de manipulation (gestes accidentels, téléphone sur son support)
  * (« Je suis arrivé », « Terminer la course »…).
  */
 export function SlideToConfirm({

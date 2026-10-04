@@ -129,7 +129,7 @@ export function useReportSender(me: Pos) {
   return { send, sending, locating, error, setError };
 }
 
-/** Tuile de signalement (pictogramme + libellé), utilisable au volant. */
+/** Tuile de signalement (pictogramme + libellé), grande cible tactile ; à publier véhicule à l'arrêt (CGU, article 7). */
 export function ReportButton({
   type: kind, onPress, loading, disabled, compact, style,
 }: { type: FleetReportType; onPress: () => void; loading?: boolean; disabled?: boolean; compact?: boolean; style?: StyleProp<ViewStyle> }) {
