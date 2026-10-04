@@ -7,6 +7,7 @@ import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { marketingMetadata } from "@/components/marketing/seo";
 import { ServicesOverview } from "@/components/marketing/services-overview";
 import { fr } from "@/components/marketing/typo";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { env } from "@/lib/env";
 
 const TITLE = "Rydar Drive — Logiciel de dispatch VTC pour centrales et flottes";
@@ -30,12 +31,16 @@ const JSON_LD = {
   audience: { "@type": "BusinessAudience", audienceType: "Centrales de réservation et flottes de VTC" },
 };
 
-export default function Landing() {
+// Page statique régénérée toutes les 5 minutes au plus : suit l'interrupteur des mini-sites (super admin)
+export const revalidate = 300;
+
+export default async function Landing() {
+  const bookingSites = await bookingSitesEnabled();
   return (
     <MarketingShell backdrop="hero">
       <LegacyAnchorRedirect />
       <Hero />
-      <ServicesOverview />
+      <ServicesOverview bookingSites={bookingSites} />
       <AudiencesPreview />
       <FinalCta spaced />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD).replace(/</g, "\\u003c") }} />

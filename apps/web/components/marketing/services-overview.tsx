@@ -6,36 +6,45 @@ import styles from "./landing.module.css";
 import { Section, SectionHeading } from "./section";
 import { fr } from "./typo";
 
-/** Points forts de l'accueil, chacun relié à son thème de la page Services. */
-const HIGHLIGHTS: { href: string; icon: LucideIcon; title: string; text: string }[] = [
-  {
-    href: "/services#dispatch",
-    icon: Radar,
-    title: "Dispatch par vagues",
-    text: "Chaque course part d'abord à vos chauffeurs à moins de 4 km, puis à 8, 12 et 16 km. Un seul l'obtient.",
-  },
-  {
-    href: "/services#chauffeurs",
-    icon: Smartphone,
-    title: "App chauffeur iOS & Android",
-    text: "L'offre sonne même téléphone verrouillé, avec départ, destination et prix avant d'accepter. Guidage inclus.",
-  },
-  {
-    href: "/services#reservations",
-    icon: AppWindow,
-    title: "Mini-site de réservation",
-    text: "À vos couleurs, sur votre sous-domaine ou votre domaine, avec devis instantané. Sans compte client.",
-  },
-  {
-    href: "/services#commissions",
-    icon: HandCoins,
-    title: "Centrale à commission",
-    text: "Commission calculée à chaque course, règlement suivi jusqu'à l'encaissement, relances automatiques.",
-  },
-];
+/** Points forts de l'accueil, chacun relié à son thème de la page Services. Mini-sites coupés : carte « Réservations ». */
+function highlights(bookingSites: boolean): { href: string; icon: LucideIcon; title: string; text: string }[] {
+  return [
+    {
+      href: "/services#dispatch",
+      icon: Radar,
+      title: "Dispatch par vagues",
+      text: "Chaque course part d'abord à vos chauffeurs à moins de 4 km, puis à 8, 12 et 16 km. Un seul l'obtient.",
+    },
+    {
+      href: "/services#chauffeurs",
+      icon: Smartphone,
+      title: "App chauffeur iOS & Android",
+      text: "L'offre sonne même téléphone verrouillé, avec départ, destination et prix avant d'accepter. Guidage inclus.",
+    },
+    bookingSites
+      ? {
+          href: "/services#reservations",
+          icon: AppWindow,
+          title: "Mini-site de réservation",
+          text: "À vos couleurs, sur votre sous-domaine ou votre domaine, avec devis instantané. Sans compte client.",
+        }
+      : {
+          href: "/services#reservations",
+          icon: AppWindow,
+          title: "Réservations",
+          text: "Votre site relié à l'API, ou la saisie au tableau de bord. Le mini-site de réservation est momentanément indisponible.",
+        },
+    {
+      href: "/services#commissions",
+      icon: HandCoins,
+      title: "Centrale à commission",
+      text: "Commission calculée à chaque course, règlement suivi jusqu'à l'encaissement, relances automatiques.",
+    },
+  ];
+}
 
 /** Accueil : aperçu court des services. */
-export function ServicesOverview() {
+export function ServicesOverview({ bookingSites }: { bookingSites: boolean }) {
   return (
     <Section id="apercu-services" labelledBy="apercu-services-titre">
       <div className="grid gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16">
@@ -53,7 +62,7 @@ export function ServicesOverview() {
           </Button>
         </div>
         <ul className="grid gap-4 sm:grid-cols-2">
-          {HIGHLIGHTS.map(({ href, icon: Icon, title, text }) => (
+          {highlights(bookingSites).map(({ href, icon: Icon, title, text }) => (
             <li
               key={href}
               className={cn(

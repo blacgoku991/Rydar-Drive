@@ -6,7 +6,7 @@ import { Section, SectionHeading } from "./section";
 import { fr } from "./typo";
 
 const OWNED: { icon: LucideIcon; title: string; text: string }[] = [
-  { icon: ClipboardList, title: "Vos courses", text: "Réservées chez vous, à votre nom : sur votre site, votre mini-site ou par votre équipe." },
+  { icon: ClipboardList, title: "Vos courses", text: "Réservées chez vous, à votre nom : sur votre site, par votre équipe ou, quand il est proposé, sur votre mini-site." },
   { icon: UsersRound, title: "Vos clients", text: "Aucun compte client chez Rydar, aucune application client : la relation reste la vôtre." },
   { icon: BadgeEuro, title: "Vos prix", text: "Grilles, forfaits et commissions sont fixés par votre centrale." },
   { icon: CarFront, title: "Vos chauffeurs", text: "Rattachés à votre centrale : vous les ajoutez ou validez leur inscription, et vous contrôlez leurs documents." },

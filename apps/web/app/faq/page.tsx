@@ -5,6 +5,7 @@ import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { PageHeader } from "@/components/marketing/page-header";
 import { marketingMetadata } from "@/components/marketing/seo";
 import { fr } from "@/components/marketing/typo";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 
 export const metadata: Metadata = marketingMetadata({
   path: "/faq",
@@ -14,11 +15,15 @@ export const metadata: Metadata = marketingMetadata({
   ),
 });
 
-export default function FaqPage() {
+// Page statique régénérée toutes les 5 minutes au plus : suit l'interrupteur des mini-sites (super admin)
+export const revalidate = 300;
+
+export default async function FaqPage() {
+  const bookingSites = await bookingSitesEnabled();
   return (
     <MarketingShell>
       <PageHeader id="faq-titre" eyebrow="Questions fréquentes" title="Vos questions, nos réponses." intro={<FaqContactLine />} />
-      <FaqGroups />
+      <FaqGroups bookingSites={bookingSites} />
       <FinalCta />
     </MarketingShell>
   );

@@ -47,7 +47,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <h2 className="max-w-lg text-[34px] font-semibold leading-[1.1] tracking-tight">
             <span className="text-gradient">Le dispatch VTC,</span>
             <br />
-            <span className="text-brand-gradient">sans WhatsApp.</span>
+            <span className="text-brand-gradient">sans groupes de messagerie.</span>
           </h2>
           <p className="mt-3 max-w-md text-[15px] leading-relaxed text-fg-muted">
             Vos courses arrivent du site ou du dashboard, Rydar notifie les chauffeurs les plus proches et le premier qui accepte

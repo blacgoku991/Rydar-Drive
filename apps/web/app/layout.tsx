@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   metadataBase: appBaseUrl(),
   title: { default: "Rydar Drive — Dispatch VTC temps réel", template: "%s · Rydar Drive" },
   description:
-    "Rydar Drive remplace les groupes WhatsApp : réservations, dispatch automatique au plus proche et suivi temps réel de votre flotte VTC.",
+    "Rydar Drive remplace les groupes de messagerie : réservations, dispatch automatique au plus proche et suivi temps réel de votre flotte VTC.",
   applicationName: "Rydar Drive",
   icons: { icon: "/icon.svg" },
   openGraph: { type: "website", locale: "fr_FR" },

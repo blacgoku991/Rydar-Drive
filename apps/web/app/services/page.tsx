@@ -6,16 +6,21 @@ import { PageHeader } from "@/components/marketing/page-header";
 import { marketingMetadata } from "@/components/marketing/seo";
 import { ServicesNav, ServiceThemes, ThemeEyebrow } from "@/components/marketing/services";
 import { fr } from "@/components/marketing/typo";
+import { bookingSitesEnabled } from "@/lib/booking-sites";
 
 export const metadata: Metadata = marketingMetadata({
   path: "/services",
   title: "Services du logiciel de dispatch VTC",
   description: fr(
-    "Mini-site de réservation, dispatch par vagues de 4 à 16 km, carte en temps réel, app chauffeur iOS et Android, commissions suivies et relancées : tous les services de Rydar Drive.",
+    "Dispatch par vagues de 4 à 16 km, carte en temps réel, app chauffeur iOS et Android, réservations par API ou au tableau de bord, commissions suivies et relancées : tous les services de Rydar Drive.",
   ),
 });
 
-export default function ServicesPage() {
+// Page statique régénérée toutes les 5 minutes au plus : suit l'interrupteur des mini-sites (super admin)
+export const revalidate = 300;
+
+export default async function ServicesPage() {
+  const bookingSites = await bookingSitesEnabled();
   return (
     <MarketingShell>
       <PageHeader
@@ -28,8 +33,12 @@ export default function ServicesPage() {
       >
         <ServicesNav />
       </PageHeader>
-      <ServiceThemes />
-      <HowItWorks className="border-y border-line bg-ink-950/40" eyebrow={<ThemeEyebrow index={6} label="Fonctionnement" />} />
+      <ServiceThemes bookingSites={bookingSites} />
+      <HowItWorks
+        className="border-y border-line bg-ink-950/40"
+        eyebrow={<ThemeEyebrow index={6} label="Fonctionnement" />}
+        bookingSites={bookingSites}
+      />
       <FinalCta spaced />
     </MarketingShell>
   );

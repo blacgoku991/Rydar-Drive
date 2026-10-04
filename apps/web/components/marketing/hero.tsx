@@ -95,7 +95,7 @@ export function Hero() {
           >
             <span className="text-gradient">Le dispatch VTC,</span>
             <br />
-            <span className="text-brand-gradient">sans WhatsApp.</span>
+            <span className="text-brand-gradient">sans groupes de messagerie.</span>
           </h1>
           <p className={cn("mt-6 max-w-xl text-pretty text-[16px] leading-relaxed text-fg-muted sm:text-[17px]", styles.enter)} style={delay(160)}>
             {fr(

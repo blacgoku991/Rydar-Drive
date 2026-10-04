@@ -20,6 +20,7 @@ import {
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { BOOKING_SITES_OFF_NOTICE } from "./booking-sites-notice";
 import styles from "./landing.module.css";
 import { Section, SectionHeading } from "./section";
 import {
@@ -228,7 +229,7 @@ function DriverPhones() {
 }
 
 /** Contenu de la page Services, par thème. */
-export function ServiceThemes() {
+export function ServiceThemes({ bookingSites }: { bookingSites: boolean }) {
   return (
     <>
       <Theme
@@ -248,6 +249,7 @@ export function ServiceThemes() {
             fr("Devis instantané : trajet et prix estimé selon votre grille tarifaire, si vous l'affichez."),
             fr("Vous avez déjà un site ? Reliez-le par l'API, ou affichez-y le formulaire de réservation."),
           ]}
+          footer={bookingSites ? undefined : <p className="text-amber">{fr(BOOKING_SITES_OFF_NOTICE)}</p>}
           visual={<BookingSiteVisual />}
         />
         <div className="grid gap-4 md:grid-cols-2">
@@ -261,7 +263,7 @@ export function ServiceThemes() {
           <Card
             icon={PlaneLanding}
             title="Suivi des vols"
-            text="Prise en charge à l'aéroport : le vol est suivi, l'heure de prise en charge suit le retard et le chauffeur est prévenu."
+            text="Prise en charge à l'aéroport : indiquez le numéro de vol. Quand le suivi des vols est actif pour votre compte, l'heure de prise en charge suit le retard annoncé par le fournisseur de données de vol et le chauffeur est prévenu. Ces données viennent d'un service tiers : vérifiez-les en cas de doute."
           >
             <FlightVisual />
           </Card>
@@ -377,7 +379,7 @@ export function ServiceThemes() {
           <Card
             icon={ShieldAlert}
             title="Retards, plafonds et bannissements"
-            text="Les retardataires sont bloqués automatiquement jusqu'au règlement (réglage activé par défaut). Vous pouvez aussi fixer un plafond d'encours, plafonner le prix des courses des nouveaux chauffeurs et bannir définitivement un fraudeur."
+            text="Un chauffeur en retard de règlement ne reçoit plus vos offres jusqu'au paiement : réglage proposé activé à l'ouverture, que vous pouvez couper à tout moment. Vous pouvez aussi fixer un plafond d'encours, plafonner le prix des courses des nouveaux chauffeurs et exclure définitivement un chauffeur de votre centrale, avec un motif consigné."
           >
             <TrustVisual />
           </Card>
@@ -388,15 +390,15 @@ export function ServiceThemes() {
         id="securite"
         index={5}
         eyebrow="Sécurité et RGPD"
-        title="Vos données, isolées et protégées."
-        intro="Chaque centrale est isolée des autres, les accès sont contrôlés en base et les actions sensibles journalisées."
+        title="Vos données, cloisonnées et protégées."
+        intro="Les données de chaque centrale sont cloisonnées en base, les accès sont contrôlés et les actions sensibles journalisées."
       >
         <Feature
           icon={ShieldCheck}
           title="Un sous-traitant encadré"
           text="Rydar Drive traite les données de votre centrale pour votre compte : un accord de traitement des données encadre cette sous-traitance au sens du RGPD."
           points={[
-            fr("Données hébergées dans l'Union européenne."),
+            fr("Base de données, fichiers et sauvegardes hébergés dans l'Union européenne ; les prestataires situés hors de l'Union (notifications, cartes) sont encadrés par l'accord de traitement."),
             fr("Rôles d'équipe : propriétaire, administrateur ou dispatcher, chacun avec ses accès."),
             fr("Position des chauffeurs envoyée seulement en ligne ou en course."),
             fr("Export de vos données au format CSV sur demande, avant la fin du contrat."),

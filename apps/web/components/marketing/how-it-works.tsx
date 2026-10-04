@@ -9,6 +9,9 @@ const STEPS = [
   {
     title: "La réservation arrive",
     text: "Depuis votre tableau de bord (téléphone, hôtel, conciergerie), votre mini-site ou votre site relié à l'API. Course immédiate ou planifiée.",
+    /** Mini-sites coupés pour toute la plateforme */
+    textWithoutBookingSites:
+      "Depuis votre tableau de bord (téléphone, hôtel, conciergerie) ou votre site relié à l'API. Course immédiate ou planifiée.",
   },
   {
     title: "Les vagues partent",
@@ -26,7 +29,7 @@ const STEPS = [
 
 /** Journal d'une course (illustration). */
 const TIMELINE = [
-  ["14:32:02", "Course #1928 créée depuis le mini-site", "text-fg-muted"],
+  ["14:32:02", "Course #1928 créée depuis le tableau de bord", "text-fg-muted"],
   ["14:32:03", "Vague 1 : rayon 4 km", "text-fg-muted"],
   ["14:32:03", "3 chauffeurs notifiés", "text-fg"],
   ["14:32:33", "Vague 2 : rayon 8 km", "text-fg-muted"],
@@ -43,7 +46,16 @@ const SUMMARY = [
 ];
 
 /** « Comment ça marche » (ancre #fonctionnement de la page Services). */
-export function HowItWorks({ className, eyebrow = "Fonctionnement" }: { className?: string; eyebrow?: ReactNode }) {
+export function HowItWorks({
+  className,
+  eyebrow = "Fonctionnement",
+  bookingSites,
+}: {
+  className?: string;
+  eyebrow?: ReactNode;
+  /** Interrupteur plateforme des mini-sites (`bookingSitesEnabled`) */
+  bookingSites: boolean;
+}) {
   return (
     <Section id="fonctionnement" labelledBy="fonctionnement-titre" className={className}>
       <div className="grid gap-12 lg:grid-cols-[1.1fr_1fr] lg:gap-16">
@@ -64,7 +76,9 @@ export function HowItWorks({ className, eyebrow = "Fonctionnement" }: { classNam
                 </div>
                 <div className="pb-2">
                   <h3 className="text-[17px] font-semibold tracking-tight">{s.title}</h3>
-                  <p className="mt-1.5 text-[14.5px] leading-relaxed text-fg-muted">{fr(s.text)}</p>
+                  <p className="mt-1.5 text-[14.5px] leading-relaxed text-fg-muted">
+                    {fr((!bookingSites && s.textWithoutBookingSites) || s.text)}
+                  </p>
                 </div>
               </li>
             ))}
