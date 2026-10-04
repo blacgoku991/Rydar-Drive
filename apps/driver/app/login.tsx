@@ -310,7 +310,8 @@ function LoginPanel({
           ouvert : la phrase seule, pour garder « Se connecter » visible ; les liens reviennent clavier fermé */}
       <View style={styles.legal}>
         <Text style={styles.legalText} maxFontSizeMultiplier={TEXT_SCALE}>
-          En vous connectant, vous acceptez les conditions d&apos;utilisation et la politique de confidentialité.
+          Avant d&apos;utiliser l&apos;application, vous accepterez les conditions d&apos;utilisation et la politique de
+          confidentialité.
         </Text>
         {!compact && (CGU_URL || PRIVACY_URL) && (
           <View style={styles.legalLinks}>

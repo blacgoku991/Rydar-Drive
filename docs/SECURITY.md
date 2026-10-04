@@ -111,15 +111,49 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
   nécessaire est ajouté au tableau de `/cookies` (test `components/legal/legal-pages.test.ts`).
 - **Hébergement décrit par les textes** : `/confidentialite` (§ 7 à 9), `/dpa` (art. 5, 6, 7, 11) et
   `/mentions-legales` décrivent la production : serveur de l'éditeur (VPS) avec Supabase auto-hébergé, sauvegardes
-  nocturnes gardées 14 jours, e-mails envoyés par le Postfix du serveur, aucun relais tiers. Tout changement (base chez
-  Supabase cloud, copie des sauvegardes hors du serveur, relais SMTP, nouveau prestataire) se reporte d'abord dans ces
-  pages ; un nouveau sous-traitant est annoncé aux centrales 30 jours avant (accord de traitement, art. 6).
+  nocturnes sur le serveur et en copie chiffrée (restic) dans le stockage objet du MÊME hébergeur, dans l'UE, gardées
+  14 jours, e-mails envoyés par le Postfix du serveur, aucun relais tiers. Tout changement (base chez Supabase cloud,
+  stockage des sauvegardes chez un autre prestataire ou hors UE, relais SMTP, nouveau prestataire) se reporte d'abord
+  dans ces pages ; un nouveau sous-traitant est annoncé aux centrales 30 jours avant (accord de traitement, art. 6).
+- **Relecture juridique du 4 octobre 2026** (bêta, aucune centrale cliente) : textes corrigés SUR PLACE, sans nouvelle
+  `LEGAL_VERSION` / `ORG_LEGAL_VERSION` (décision du propriétaire). Dès l'ouverture, toute modification redevient une
+  nouvelle version (préambule, `ORG_LEGAL_CHANGES`, e-mail d'annonce, page figée). Registre, procédure de violation et
+  délégué : `docs/RGPD-REGISTRE.md` ; analyses d'impact : `docs/AIPD.md` (DPA, art. 10, y renvoie).
+- **Interdiction sur toute la plateforme** (CGU, art. 10 et 11 ; CGV, art. 10 bis ; DSA, art. 17) : seulement pour une
+  fraude ou un document faux (`PLATFORM_BAN_CATEGORY`, `PLATFORM_REPORT_CATEGORY`), faits retenus obligatoires,
+  e-mail motivé à chaque chauffeur touché (`platform_ban` : motifs, articles 10 et 11 des CGU, recours de 6 mois, juge,
+  CNIL), message d'accès refusé distinct (`ban_scope`, connexion et application). Renuméroter les CGU = changer
+  l'e-mail dans une nouvelle migration (test `legal-pages.test.ts`).
+- **Identité de l'éditeur** : `accept_legal_documents` refuse les CGV et le DPA (`LEGAL_EDITOR_MISSING`) tant que la
+  raison sociale, l'adresse et l'immatriculation manquent dans `/admin/legal` (alerte en tête de `/admin`) ; une
+  organisation qui n'a jamais accepté les CGV ne voit que l'écran d'acceptation (owner / admin, `orgTermsGate`).
+- **Supervision par l'éditeur** (DPA, art. 4) : carte en direct du super admin sans nom, téléphone, plaque, adresse ni
+  vitesse ; la vitesse n'est jamais historisée (`update_driver_location`, 007400) ni affichée en km/h.
+- **Suspension d'une centrale** (CGV, art. 7) : fondement (mise en demeure de 8 jours au moins, urgence, demande de la
+  centrale) et motif obligatoires (`lib/suspension.ts`), montrés au propriétaire et aux administrateurs (`/suspended`) ;
+  la base refuse pendant une course en cours (`DRIVER_ON_RIDE`).
+- **Relances WhatsApp de Rydar au propriétaire** : refus noté par le super admin (`svc_platform_whatsapp_refusal`,
+  `/admin/frais`), respecté par `svc_platform_remind` (`WHATSAPP_OPTED_OUT`). Relances des chauffeurs : intérêt
+  légitime de la centrale, opposition auprès d'elle (canal commun à tous ses chauffeurs tant qu'aucun réglage par
+  chauffeur n'existe).
+- **Coordonnées des clients** : téléphone, e-mail et précisions effacés 3 ans après la fin de l'année de la course
+  (ménage quotidien `customer_contacts`) ; nom, trajet et montants gardés 10 ans.
+- **Fin du contrat d'une centrale** (CGV, art. 8 ; DPA, art. 11) : suppression promise sous 30 jours, mais **aucun outil
+  de purge n'existe encore**. À construire AVANT la première fin de contrat d'une centrale cliente : RPC super admin
+  `svc_purge_archived_org` (organisation archivée depuis 30 jours au moins ; chauffeurs et candidats par
+  `private.delete_driver_account` ; coordonnées des clients et précisions effacées des courses qui portent des frais
+  plateforme — registre en `on delete restrict` —, autres courses supprimées ; messages, positions, mini-site,
+  adhésions ; fiche, registre des frais, paiements et preuves gardés ; audit). D'ici là, n'archiver aucune centrale
+  cliente en fin de contrat.
 - **Mini-sites (clients particuliers)** : le professionnel est la centrale, Rydar lui donne les moyens d'être conforme :
   bouton « Réserver avec obligation de paiement » (Code de la consommation L221-14, maintenu pour le transport de
   passagers par L221-2), conditions de la centrale (`booking_sites.legal_mentions` : réservation, annulation, moyens de
   paiement, médiateur) affichées avant le bouton, simple information sur les données (aucune case de consentement), prix
-  estimé « TTC », aucune promesse affichée qui ne dépende des réglages de la centrale. À relire avant de rouvrir les
-  mini-sites (`booking_sites_enabled()`) ; test `components/legal/legal-pages.test.ts`.
+  estimé « TTC », aucune promesse affichée qui ne dépende des réglages de la centrale. Mise en ligne et réservation
+  refusées sans raison sociale, SIRET, adresse et n° VTC de la centrale (`bookingOperatorGaps`) ; avec un prix,
+  e-mail obligatoire et accusé de réception à contenu fixe (`svc_booking_receipt`, 3 par adresse et par 24 h) ;
+  pas de droit de rétractation (L221-2) rappelé. À relire avant de rouvrir les mini-sites (`booking_sites_enabled()`) ;
+  le site vitrine affiche l'indisponibilité tant qu'ils sont coupés ; test `components/legal/legal-pages.test.ts`.
 
 ## Limites des offres
 

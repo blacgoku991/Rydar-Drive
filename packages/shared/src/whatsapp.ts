@@ -9,11 +9,15 @@ export const WHATSAPP_GRAPH_URL = "https://graph.facebook.com";
 
 /** Modèles à créer dans le Gestionnaire WhatsApp (catégorie Utilité, langue Français) — textes : docs/WHATSAPP.md */
 export const WHATSAPP_TEMPLATES = {
-  /** Centrale → chauffeur : {{1}} prénom, {{2}} montant, {{3}} centrale, {{4}} « 2 courses » */
+  /**
+   * Centrale → chauffeur : {{1}} prénom, {{2}} montant, {{3}} centrale, {{4}} « 2 courses ». Sans le nom de Rydar : la
+   * centrale est seule créancière (relecture juridique du 4 octobre 2026) ; un modèle déjà approuvé chez Meta avec
+   * l'ancien texte reste utilisable (même nom, mêmes variables).
+   */
   driver: {
     name: "rappel_commission",
     variables: 4,
-    text: "Bonjour {{1}}, vous avez {{2}} de commission à régler à {{3}} ({{4}}). Réglez depuis l'application Rydar Drive, onglet Commissions.",
+    text: "Bonjour {{1}}, vous avez {{2}} de commission à régler à {{3}} ({{4}}). Réglez depuis votre application chauffeur, onglet Commissions.",
     sample: ["Karim", "19 €", "NovaLink", "2 courses"],
   },
   /** Rydar → propriétaire de la centrale : {{1}} centrale, {{2}} montant, {{3}} échéance */

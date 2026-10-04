@@ -183,7 +183,7 @@ ni `ACCESS_BACKGROUND_LOCATION` ni exemption d'optimisation de la batterie.
 **Nom** : Rydar Drive Chauffeur
 **Sous-titre (iOS, 30 caractères)** : Courses VTC de votre centrale
 **Description courte (Google, 80 caractères)** : L'app des chauffeurs VTC : courses proches, guidage, gains et messages.
-**Mots-clés (iOS, 100 caractères)** : vtc,chauffeur,taxi,courses,dispatch,centrale,flotte,chauffeur privé,navigation,planning
+**Mots-clés (iOS, 100 caractères)** : vtc,chauffeur,chauffeur privé,courses,dispatch,centrale,flotte,réservation,navigation,planning
 
 **Description** :
 
@@ -199,7 +199,9 @@ ni `ACCESS_BACKGROUND_LOCATION` ni exemption d'optimisation de la batterie.
 >
 > L'application est réservée aux chauffeurs inscrits par une centrale : demandez votre lien d'inscription à votre centrale.
 >
-> Position : quand vous êtes EN LIGNE, Rydar Drive utilise votre position, y compris en arrière-plan, pour vous proposer les courses proches. Passer hors ligne ou fermer l'application arrête ce suivi ; seul un signalement que vous publiez envoie ensuite votre position.
+> Position : quand vous êtes EN LIGNE ou en course, votre position est envoyée à votre centrale, y compris en arrière-plan, pour vous proposer les courses proches et suivre la course. Passer hors ligne ou fermer l'application arrête ce suivi ; seul un signalement que vous publiez envoie ensuite votre position.
+>
+> Sécurité : au volant, ne manipulez pas votre téléphone ; acceptez les offres et écrivez vos messages à l'arrêt.
 >
 > Rydar Drive est un logiciel de dispatch : les courses sont organisées par votre centrale, qui fixe les prix et les conditions.
 
@@ -212,7 +214,7 @@ ni `ACCESS_BACKGROUND_LOCATION` ni exemption d'optimisation de la batterie.
 > 3. Under "Mes courses planifiées", open the ride and slide "Aller au départ" (go to pickup): in-app turn-by-turn navigation starts. Keep sliding through each step until the ride is completed.
 > Instant ride offers (with a ringtone, even when the phone is locked) are only sent to drivers within 4 to 16 km of the pickup point, so the scheduled rides above are provided for the review; the attached video shows an instant offer.
 > Background location (UIBackgroundModes: location): while the driver is online, the app keeps sharing the driver's location, including when the app is in the background or the screen is locked, so that nearby rides can be offered and the company can follow the ride. The iOS location indicator is shown. Continuous location sharing stops when the driver goes offline or closes the app. "When In Use" permission only, requested after an in-app explanation.
-> Terms: every driver must accept our Terms of Use and Privacy Policy in the app, on a full-screen acceptance page shown at first sign-in and again for each new version; the sign-in screen also states that signing in means accepting them. The Terms (section 8) set the rules of the drivers' channel, with zero tolerance for objectionable content or abusive users.
+> Terms: every driver must accept our Terms of Use and Privacy Policy in the app, on a full-screen acceptance page shown at first sign-in and again for each new version; the sign-in screen links to them. The Terms (section 9) set the rules of the drivers' channel, with zero tolerance for objectionable content or abusive users.
 > Drivers' channel (chat bubble > "Chauffeurs"), the only place where drivers share content with each other: visible only to the company's drivers and staff (owner, admins, dispatchers). Before a driver's first post (message or road report), the channel rules are displayed and must be accepted: they are summarized on the Terms page, and a "Règles du fil" sheet with a link to the full Terms and a "J'accepte" button appears if the current Terms have not been accepted yet; posting is not possible without accepting. With a long press on any message, a driver can report it to the company (it disappears from their feed at once) or hide all messages from its author. Reports reach the company's staff immediately in their dashboard (alert and badge); they moderate the channel: they delete the message for everyone or dismiss the report, and can suspend or exclude the author. When the reported message comes from the company itself, the report sheet shows our contact e-mail. Illegal content can also be reported to us: [contact e-mail].
 > Account deletion: Profil (Mon compte) > Supprimer mon compte, also offered when sign-in is refused (suspended or banned account). Privacy policy: https://[domain]/confidentialite · Terms: https://[domain]/cgu · Account deletion page: https://[domain]/suppression-compte
 
@@ -260,6 +262,13 @@ Deux façons de mettre à jour l'app, toutes deux depuis `apps/driver` :
      **Ajouter pour vérification** puis **Soumettre**. Publication manuelle ou automatique après acceptation.
    - Mettre à jour les réponses App Privacy / Sécurité des données (§ 5 et § 6) si l'app collecte une donnée de
      plus, **avant** l'envoi.
+
+**Avant d'ouvrir le réseau partagé** (`shared_network_enabled`) : chez Google, déclarer « Partagées : oui » pour
+Position exacte et Nom (finalité : Fonctionnalités de l'appli ; destinataire : organisation partenaire qui confie la
+course) ; mettre à jour App Privacy ; ajouter à la description : « Si votre centrale participe au réseau partagé, les
+courses d'une centrale partenaire peuvent vous être proposées : elle voit alors votre prénom, votre véhicule et votre
+position pendant la course. » Compléter aussi `/confidentialite` et `/dpa` (données transmises, coordonnées bancaires
+du chauffeur, durées) après la relecture de la convention par un avocat.
 
 Nouvelle version des CGU ou de la politique de confidentialité (`LEGAL_VERSION`, `packages/shared/src/features.ts`) :
 l'app embarque cette valeur, donc une mise à jour à distance est nécessaire pour que les chauffeurs voient l'écran

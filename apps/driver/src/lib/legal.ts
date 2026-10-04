@@ -90,7 +90,7 @@ export function markTermsAccepted(userId: string) {
 
 /**
  * CGU et politique acceptées (version en vigueur), d'après le registre lu ou « J'accepte » dans cette session. Les
- * règles du fil « Chauffeurs » (CGU § 8) le sont alors aussi, même avant la lecture de la messagerie.
+ * règles du fil « Chauffeurs » (CGU § 9) le sont alors aussi, même avant la lecture de la messagerie.
  */
 export function termsAcceptedFor(userId: string | null | undefined) {
   return !!userId && userId === acceptedUserId;

@@ -528,8 +528,8 @@ hébergeurs dans la base :
   - **`LEGAL_VERSION`** (CGU + politique de confidentialité, à titre personnel) : un bandeau (non bloquant) du
     tableau de bord la fait accepter à chaque membre, dispatchers compris ; dans l'application chauffeur, un écran
     plein la fait accepter à chaque chauffeur, invité par sa centrale ou inscrit par lien (jamais pendant une offre
-    ou une course ; « J'accepte » sans réseau est envoyé dès que possible) ; l'écran de connexion rappelle qu'en se
-    connectant, on les accepte. Les règles du fil « Chauffeurs » (CGU § 8), résumées sur cet écran, sont ainsi
+    ou une course ; « J'accepte » sans réseau est envoyé dès que possible) ; l'écran de connexion annonce qu'il faudra les
+    accepter (aucune acceptation tacite : CGU, article 17). Les règles du fil « Chauffeurs » (CGU § 9), résumées sur cet écran, sont ainsi
     acceptées avant toute publication dans le fil ; à défaut, une feuille « Règles du fil » les fait accepter avant le
     premier envoi. **L'app embarque `LEGAL_VERSION`** : après un changement, publiez une mise à jour à distance (EAS
     Update, [STORES.md](STORES.md) § 10), sinon les chauffeurs ne voient pas la nouvelle version ;
@@ -621,14 +621,14 @@ Tant qu'un point n'est pas vérifié, la phrase correspondante des pages légale
   d'accès) ; n'en ajoutez pas sans modifier d'abord `/confidentialite` § 4 et § 9 (durée, sans adresse IP si
   possible). Kong (passerelle de Supabase) journalise les appels à l'API avec l'adresse IP : c'est un journal
   technique, couvert par la durée d'1 an ci-dessus.
-- **Sauvegardes** (`/dpa` art. 5, `/confidentialite` § 9) : chaque nuit, base et fichiers, gardées 14 jours, **sur le
-  VPS seulement** aujourd'hui. Une panne, une suppression ou un chiffrement du VPS ferait perdre les données ET leurs
-  sauvegardes (RGPD art. 32.1.c : pouvoir rétablir la disponibilité) : ajouter une **copie chiffrée hors du VPS**
-  (stockage objet en Union européenne, par exemple OVH Object Storage ; chiffrement avant l'envoi, clé gardée hors
-  du stockage ; même durée de 14 jours), puis **tester une restauration** sur une machine vide et noter la date du
-  test. Ensuite seulement, décrire la copie dans `/dpa` (art. 5 et tableau des sous-traitants si le prestataire
-  diffère de l'hébergeur du serveur, avec l'annonce aux centrales 30 jours avant prévue à l'art. 6) et dans
-  `/confidentialite` § 7 à 9 (lieu, durée).
+- **Sauvegardes** (`/dpa` art. 5 et 11, `/confidentialite` § 7 à 9, `/mentions-legales`) : chaque nuit, base et
+  fichiers, sur le VPS et en **copie chiffrée** (restic, clé gardée hors du stockage) dans l'Object Storage d'OVH,
+  chacune gardée 14 jours ; restauration d'essai faite le 3 octobre 2026. Les textes l'affirment depuis le
+  4 octobre 2026 : vérifier sur le VPS, en lecture seule, que (1) la région du conteneur est dans l'Union européenne
+  (GRA, SBG, RBX, DE, WAW… ; jamais BHS, UK ni hors UE), (2) la règle d'oubli est `restic forget --keep-daily 14
+  --prune` (ou plus court) et tourne chaque nuit, (3) le prestataire est bien l'hébergeur du serveur (OVH) : sinon,
+  nouveau sous-traitant à ajouter au tableau du DPA et à annoncer aux centrales 30 jours avant (art. 6). Noter la date
+  de chaque restauration d'essai.
 - **Boîte de messagerie de contact** (`CONTACT_NOTIFY_EMAIL`, `/confidentialite` § 7 et § 9) : la notification ne
   contient plus aucune donnée de la demande, mais les réponses que les demandeurs envoient par e-mail y arrivent.
   Supprimer de cette boîte les échanges de plus de 3 ans (règle de suppression automatique de la messagerie, ou

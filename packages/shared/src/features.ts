@@ -260,7 +260,7 @@ export const FLEET_CHAT_RULES_POINTS = [
 // Documents légaux : deux versions, dates ISO (AAAA-MM-JJ) comparables comme du texte, jamais dans le futur
 // (accept_legal_documents refuse une version postérieure au lendemain, heure de Paris ; aucune version en base).
 //  - LEGAL_VERSION : CGU + politique de confidentialité, acceptées à titre personnel par TOUT utilisateur (membres du
-//    tableau de bord, chauffeurs : app, /rejoindre, règles du fil « Chauffeurs » = CGU § 8). L'app l'embarque : la
+//    tableau de bord, chauffeurs : app, /rejoindre, règles du fil « Chauffeurs » = CGU § 9). L'app l'embarque : la
 //    changer = nouvel écran d'acceptation pour chaque chauffeur (après une mise à jour de l'app) et chaque membre.
 //  - ORG_LEGAL_VERSION : CGV + accord de traitement des données, acceptés au nom de l'organisation par le
 //    propriétaire ou un administrateur (bandeau du tableau de bord, /admin/legal). La changer ne touche ni les

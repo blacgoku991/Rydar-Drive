@@ -26,8 +26,13 @@ WhatsApp peut être impossible : numéro non relié, envois désactivés, numér
 ### Modèle centrale : `rappel_commission` (4 variables)
 
 ```
-Bonjour {{1}}, vous avez {{2}} de commission à régler à {{3}} ({{4}}). Réglez depuis l'application Rydar Drive, onglet Commissions.
+Bonjour {{1}}, vous avez {{2}} de commission à régler à {{3}} ({{4}}). Réglez depuis votre application chauffeur, onglet Commissions.
 ```
+
+Le modèle ne cite pas Rydar : la relance vient de la centrale, seule créancière de la commission (Rydar n'est ni
+créancier ni recouvreur). Un modèle déjà approuvé avec l'ancien texte (« … depuis l'application Rydar Drive … ») reste
+utilisable ; à la prochaine création, soumettre ce texte-ci. Le chauffeur peut s'opposer aux relances WhatsApp auprès de
+sa centrale (politique de confidentialité, § 5) : la centrale fait alors partir ses relances par l'application seule.
 
 Exemple de variables demandé par Meta : `Karim`, `19 €`, `NovaLink`, `2 courses`.
 

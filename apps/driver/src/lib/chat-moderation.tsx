@@ -188,7 +188,7 @@ function FleetRulesSheet({
 
 // ---------------------------------------------------------------- contact de l'éditeur
 
-/** Éditeur de Rydar Drive (public_legal_info) : recours quand la centrale ne traite pas un abus (CGU § 8). */
+/** Éditeur de Rydar Drive (public_legal_info) : recours quand la centrale ne traite pas un abus (CGU § 9). */
 export type PublisherContact = { name: string; email: string | null };
 
 let contactRequest: Promise<PublisherContact | null> | null = null;

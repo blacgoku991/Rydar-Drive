@@ -585,7 +585,7 @@ function ActionRow({ icon, title, hint, onPress }: { icon: IconName; title: stri
 }
 
 /**
- * Recours auprès de l'éditeur (CGU § 8) quand le message signalé vient de la centrale, qui modère son propre fil :
+ * Recours auprès de l'éditeur (CGU § 9) quand le message signalé vient de la centrale, qui modère son propre fil :
  * e-mail de l'éditeur (public_legal_info), sinon ses coordonnées sur la page des mentions légales.
  */
 function PublisherRecourse({ messageId }: { messageId: string }) {
