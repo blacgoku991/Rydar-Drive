@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import { Logo, RadarMark } from "@/components/brand/logo";
 import { LegalLinks } from "@/components/legal/legal-links";
-import { JOIN_LINK_INACTIVE, joinInfoModel, joinPageCopy } from "@/components/network/join-copy";
+import { JOIN_LINK_INACTIVE, joinBadge, joinInfoModel, joinPageCopy } from "@/components/network/join-copy";
 import { JoinForm } from "@/components/network/join-form";
 import { OpenInApp } from "@/components/network/open-in-app";
 import { loadJoinInfo } from "@/lib/join";
@@ -41,11 +41,16 @@ function readableOn(hex: string) {
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b! > 0.35 ? "#0b0d04" : "#ffffff";
 }
 
-// Centrale à commission (inchangé)
+// Centrale à commission : seulement ce que le produit fait (part affichée si la centrale a fixé le prix, moyens de
+// règlement renseignés par elle, rappels par l'application ou WhatsApp selon ses réglages)
 const BENEFITS = [
   { icon: Navigation, title: "Courses près de vous", text: "Proposées selon votre position : vous acceptez celles qui vous conviennent." },
-  { icon: BadgeEuro, title: "Votre part affichée avant d'accepter", text: "Chaque offre indique ce que vous gagnez, commission déjà déduite." },
-  { icon: HandCoins, title: "Commission réglée en 2 clics depuis l'app", text: "Lien de paiement, espèces ou virement : pas de relance par message." },
+  { icon: BadgeEuro, title: "Votre part affichée avant d'accepter", text: "Quand la centrale a fixé le prix de la course, l'offre indique votre part, commission déjà déduite." },
+  {
+    icon: HandCoins,
+    title: "Commissions réglées depuis l'app",
+    text: "Avec les moyens que propose la centrale (lien de paiement, virement, espèces). Des rappels peuvent vous être envoyés dans l'application ou par WhatsApp.",
+  },
 ];
 // Flotte : ni commission ni part chauffeur
 const FLEET_BENEFITS = [
@@ -138,7 +143,7 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
           <div className="mt-8 grid gap-8 lg:mt-14 lg:grid-cols-[1fr_520px] lg:gap-12">
             <section className="lg:sticky lg:top-10 lg:self-start lg:pt-6">
               <span className="inline-flex items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.08] px-3 py-1 text-[12px] font-medium text-brand">
-                <span className="size-1.5 animate-breathe rounded-full bg-brand" /> Recrutement chauffeurs VTC
+                <span className="size-1.5 animate-breathe rounded-full bg-brand" /> {joinBadge(model)}
               </span>
               <h1 className="mt-4 text-[30px] font-semibold leading-[1.08] tracking-tight sm:text-[40px] lg:text-[48px]">
                 <span className="text-gradient">{copy.title}</span>

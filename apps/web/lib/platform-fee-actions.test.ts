@@ -57,6 +57,7 @@ vi.mock("@/lib/audit", () => ({ audit: async (e: Record<string, unknown>) => voi
 vi.mock("@/lib/auth", () => ({ requireSuperAdmin: async () => h.session }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin }));
 vi.mock("@/lib/errors", async () => await import("./errors"));
+vi.mock("@/lib/suspension", async () => await import("./suspension"));
 vi.mock("@/lib/member-invite", () => ({ findUserIdByEmail: async () => null, sendMemberInvitationEmail: async () => true }));
 
 const NEW_USER = "44444444-4444-4444-8444-444444444444";

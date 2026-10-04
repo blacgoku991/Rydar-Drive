@@ -71,6 +71,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/org-context", () => ({ getOrgContext: async () => h.ctx }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin }));
 vi.mock("@/lib/errors", async () => await import("./errors"));
+vi.mock("@/lib/suspension", async () => await import("./suspension"));
 vi.mock("@/lib/member-invite", async () => await import("./member-invite"));
 vi.mock("@/lib/whatsapp", () => ({ removeWhatsApp: vi.fn(), saveWhatsApp: vi.fn(), testWhatsApp: vi.fn() }));
 vi.mock("@/components/settlements/settings-schema", () => ({ centraleIssues: () => ({}) }));
@@ -243,8 +244,15 @@ describe("Super admin : propriétaire et accès", () => {
   it("suspension d'une centrale : aucun bannissement Auth ; réactivation : levée pour les membres (fiche chauffeur inactive ou suspendue comprise) et les chauffeurs autorisés, jamais pour une fiche bannie", async () => {
     const orgStatus = (op: Op): Reply => (op.table === "rpc:svc_platform_set_org_status" ? { data: { ok: true, code: "UPDATED" } } : undefined);
     h.handle = orgStatus;
-    expect(await adminActions.setOrganizationStatus(ORG, "suspended", "Impayé")).toEqual({ ok: true });
-    expect(h.ops.find((o) => o.table === "rpc:svc_platform_set_org_status")?.values).toMatchObject({ p_org: ORG, p_status: "suspended", p_reason: "Impayé" });
+    // Suspension : fondement (CGV, article 7) et motif obligatoires, enregistrés ensemble
+    expect(await adminActions.setOrganizationStatus(ORG, "suspended", "Impayé")).toMatchObject({ ok: false });
+    expect(h.ops.some((o) => o.table === "rpc:svc_platform_set_org_status")).toBe(false);
+    expect(await adminActions.setOrganizationStatus(ORG, "suspended", "Frais impayés depuis trois mois", { kind: "urgent" })).toEqual({ ok: true });
+    expect(h.ops.find((o) => o.table === "rpc:svc_platform_set_org_status")?.values).toMatchObject({
+      p_org: ORG,
+      p_status: "suspended",
+      p_reason: "Suspension d'urgence. Frais impayés depuis trois mois",
+    });
     expect(authCalls("updateUserById")).toEqual([]);
     // Refus en base (chauffeur en route ou client à bord) : message rendu tel quel, aucune levée Auth
     h.handle = (op) => (op.table === "rpc:svc_platform_set_org_status" ? { data: { ok: false, code: "DRIVER_ON_RIDE", message: "1 course en cours" } } : undefined);

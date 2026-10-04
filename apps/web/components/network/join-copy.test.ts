@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  JOIN_ALREADY_REGISTERED, JOIN_LINK_INACTIVE, autoApproveHelp, joinErrorCopy, joinInfoModel, joinMessage, joinNavLabel, joinPageCopy,
-  joinShareText, joinSuccessCopy, joinedLabel, rejectReasons,
+  JOIN_ALREADY_REGISTERED, JOIN_LINK_INACTIVE, autoApproveHelp, joinBadge, joinErrorCopy, joinInfoModel, joinMessage, joinNavLabel,
+  joinPageCopy, joinShareText, joinSuccessCopy, joinedLabel, rejectReasons,
 } from "./join-copy";
 
 // Lien d'inscription des chauffeurs (20260924006300) : flotte comme centrale. Textes de la centrale inchangés ;
@@ -15,6 +15,7 @@ const COMMISSION_WORDS = /commission|part chauffeur|votre part|plafonn|réseau|i
 function allTexts(model: "fleet" | "centrale") {
   return [
     joinNavLabel(model),
+    joinBadge(model),
     joinMessage("Taxi Sud", URL, model),
     joinShareText("Taxi Sud", model),
     joinedLabel(model),
@@ -45,7 +46,7 @@ describe("textes du lien d'inscription selon le modèle", () => {
     expect(joinNavLabel("centrale")).toBe("Réseau");
     expect(joinMessage("Taxi Sud", URL, "centrale")).toBe(`Rejoignez le réseau Taxi Sud sur Rydar Drive : ${URL}`);
     expect(joinShareText("Taxi Sud", "centrale")).toBe("Rejoignez le réseau Taxi Sud sur Rydar Drive");
-    expect(autoApproveHelp("centrale", true)).toBe("Actifs dès l'inscription, au niveau « Nouveau » (courses plafonnées).");
+    expect(autoApproveHelp("centrale", true)).toMatch(/^Actifs dès l'inscription, au niveau « Nouveau » \(courses plafonnées\)\. /);
     expect(rejectReasons("centrale")).toContain("Réseau complet");
     const page = joinPageCopy("Taxi Sud", "centrale", false);
     expect(page.title).toBe("Rejoignez le réseau Taxi Sud");
@@ -64,6 +65,18 @@ describe("textes du lien d'inscription selon le modèle", () => {
     expect(joinSuccessCopy("Taxi Sud", "fleet", false).text).toMatch(new RegExp(`^Merci${NB}! Taxi Sud étudie votre candidature`));
     expect(autoApproveHelp("fleet", true)).toContain(`inscription${NB}:`);
     expect(rejectReasons("fleet")).toContain("Flotte complète");
+  });
+
+  it("validation automatique : rappel du contrôle des documents ; badge sans vocabulaire d'embauche", () => {
+    for (const model of ["fleet", "centrale"] as const) {
+      expect(autoApproveHelp(model, true)).toContain(`La validation automatique ne vaut pas vérification de leurs documents${NB}:`);
+      expect(autoApproveHelp(model, true)).toContain("carte professionnelle VTC, le permis");
+      expect(autoApproveHelp(model, false)).not.toMatch(/vérification/);
+      expect(joinBadge(model)).not.toMatch(/recrut|embauch|emploi/i);
+    }
+    expect(autoApproveHelp("centrale", true)).toContain("inscription au registre des exploitants VTC");
+    expect(joinBadge("centrale")).toBe("Inscription chauffeurs VTC indépendants");
+    expect(joinBadge("fleet")).toBe("Inscription chauffeurs VTC");
   });
 
   it("réponse sans modèle (base d'avant 20260924006300 : seules les centrales avaient un lien) → centrale, partout", () => {

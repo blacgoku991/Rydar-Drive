@@ -12,6 +12,7 @@ import { env } from "@/lib/env";
 import { actionError } from "@/lib/errors";
 import { findUserIdByEmail, sendMemberInvitationEmail } from "@/lib/member-invite";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { suspensionReason, type SuspensionBasis } from "@/lib/suspension";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
@@ -703,10 +704,22 @@ export async function unlockMemberLogin(orgId: string, memberId: string): Promis
  * verrouillés. Réactivation : levée des anciens bannissements hérités (membres actifs sauf fiche bannie, chauffeurs
  * autorisés : inheritedBanUserIds).
  */
-export async function setOrganizationStatus(orgId: string, status: "active" | "suspended" | "archived", reason?: string): Promise<Result> {
+export async function setOrganizationStatus(
+  orgId: string,
+  status: "active" | "suspended" | "archived",
+  reason?: string,
+  basis?: SuspensionBasis,
+): Promise<Result> {
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(orgId).success || !["active", "suspended", "archived"].includes(status)) return { ok: false, error: "Demande invalide." };
-  const motive = note(reason);
+  let motive = note(reason);
+  // Suspension (CGV, article 7) : fondement (mise en demeure de 8 jours au moins, urgence, demande de la centrale) et
+  // motif obligatoires, enregistrés ensemble et montrés à la centrale (/suspended)
+  if (status === "suspended") {
+    const why = suspensionReason(reason, basis);
+    if (!why.ok) return { ok: false, error: why.error };
+    motive = why.text;
+  }
   // Une transaction (svc_platform_set_org_status, journal en base) : refus si un chauffeur est en route ou a un client à
   // bord, offres en attente fermées, chauffeurs hors ligne ; le dispatch ignore ensuite l'organisation.
   const { data, error } = await createAdminClient().rpc("svc_platform_set_org_status", {

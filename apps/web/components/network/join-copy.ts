@@ -65,12 +65,20 @@ export function joinedLabel(model: DispatchModel) {
   return isFleet(model) ? "a rejoint la flotte" : "a rejoint le réseau";
 }
 
-/** Aide du réglage « Validation automatique des inscrits ». */
+/**
+ * Aide du réglage « Validation automatique des inscrits ». Activée : rappel que l'organisation reste tenue de vérifier
+ * les documents de chaque inscrit avant de lui confier une course (Code des transports) ; le logiciel ne les vérifie pas.
+ */
 export function autoApproveHelp(model: DispatchModel, autoApprove: boolean) {
   if (!autoApprove) return "Chaque inscrit attend votre validation ci-contre.";
   return isFleet(model)
-    ? `Actifs dès l'inscription${NB}: ils reçoivent vos courses comme les chauffeurs que vous créez.`
-    : "Actifs dès l'inscription, au niveau « Nouveau » (courses plafonnées).";
+    ? `Actifs dès l'inscription${NB}: ils reçoivent vos courses comme les chauffeurs que vous créez. La validation automatique ne vaut pas vérification de leurs documents${NB}: vérifiez la carte professionnelle VTC, le permis et l'assurance de chaque inscrit avant de lui confier une course.`
+    : `Actifs dès l'inscription, au niveau « Nouveau » (courses plafonnées). La validation automatique ne vaut pas vérification de leurs documents${NB}: vérifiez la carte professionnelle VTC, le permis, l'assurance et, pour un chauffeur indépendant, l'inscription au registre des exploitants VTC de chaque inscrit avant de lui confier une course.`;
+}
+
+/** Badge de la page publique /rejoindre : jamais un vocabulaire d'embauche (chauffeurs indépendants en centrale). */
+export function joinBadge(model: DispatchModel) {
+  return isFleet(model) ? "Inscription chauffeurs VTC" : "Inscription chauffeurs VTC indépendants";
 }
 
 /** Motifs de refus proposés (le dernier dépend du modèle). */

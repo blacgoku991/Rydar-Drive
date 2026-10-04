@@ -9,6 +9,7 @@ import { getPayerContext } from "@/components/platform-fees/org-payer-context";
 import { OrgSuspendedDues } from "@/components/platform-fees/org-suspended-dues";
 import { Button } from "@/components/ui/button";
 import { networkSummary } from "@/lib/shared-network";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { signOut } from "@/app/login/actions";
 import { SwitchOrganization } from "./switch-organization";
 
@@ -21,13 +22,18 @@ export default async function SuspendedPage() {
   let platform: Extract<OrgPlatformAccount, { enabled: true }> | null = null;
   // Réseau partagé (C12) : courses confiées à des chauffeurs partenaires dont les règlements restent dus / attendus
   let network: { text: string } | null = null;
+  // Motif de la suspension (fondement et faits, CGV article 7) : propriétaire et administrateurs seulement. Colonne hors
+  // des droits de lecture du navigateur (004300) : lue par le serveur pour la seule centrale courante, rôle vérifié.
+  let motive: string | null = null;
   if (ctx && ctx.org.status === "suspended" && ctx.canPay) {
-    const [{ data }, summary] = await Promise.all([
+    const [{ data }, summary, reason] = await Promise.all([
       ctx.supabase.rpc("org_platform_account", { p_org: ctx.org.id }),
       // Réseau ouvert, ou fermé par Rydar avec des sommes en cours (NETWORK_CLOSED_RPCS) : la carte n'apparaît que
       // s'il reste quelque chose à régler ; organisation jamais membre ou lecture refusée : rien
       networkSummary(ctx.supabase, ctx.org.id),
+      createAdminClient().from("organizations").select("suspended_reason").eq("id", ctx.org.id).maybeSingle(),
     ]);
+    motive = (reason.data as { suspended_reason: string | null } | null)?.suspended_reason?.trim() || null;
     const acc = (data ?? null) as OrgPlatformAccount | null;
     if (acc?.enabled && (acc.account.balance_cents > 0 || acc.account.declared_count > 0)) platform = acc;
     if (summary && hasOpenNetworkSettlements(summary.given)) network = { text: openNetworkSummaryText(summary.given, summary.currency || "EUR") };
@@ -37,6 +43,7 @@ export default async function SuspendedPage() {
   return (
     <StatusScreen icon={<PauseCircle />} title="Compte suspendu" actions={<form action={signOut}><Button variant="secondary" type="submit">Se déconnecter</Button></form>}>
       L&apos;accès de votre centrale à Rydar Drive est temporairement suspendu. Contactez l&apos;équipe Rydar pour le réactiver.
+      {motive && <p className="mt-3 text-[13.5px] text-fg-muted [overflow-wrap:anywhere]">Motif&nbsp;: {motive}</p>}
       {platform && <OrgSuspendedDues data={platform} serverNow={Date.now()} />}
       {network && (
         <Link

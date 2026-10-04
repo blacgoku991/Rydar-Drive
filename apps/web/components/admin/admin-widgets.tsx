@@ -13,6 +13,7 @@ import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
+import type { SuspensionBasis } from "@/lib/suspension";
 import { submitWith } from "@/lib/utils";
 
 const dayLabel = (v: string) => {
@@ -134,15 +135,24 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
   );
 }
 
+/** Fondements d'une suspension (CGV, article 7). */
+const SUSPENSION_BASES = [
+  { value: "notice", label: "Mise en demeure restée sans effet (8 jours au moins)" },
+  { value: "urgent", label: "Urgence : fraude, usage illicite ou atteinte à la sécurité du service" },
+  { value: "request", label: "Demande écrite de la centrale" },
+] as const;
+
 export function OrganizationStatusActions({ orgId, status }: { orgId: string; status: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [reason, setReason] = useState("");
+  const [basis, setBasis] = useState<"" | SuspensionBasis["kind"]>("");
+  const [noticeDate, setNoticeDate] = useState("");
   const run = (s: "active" | "suspended" | "archived") =>
     start(() => runAction(async () => {
-      const res = await setOrganizationStatus(orgId, s, reason);
+      const res = await setOrganizationStatus(orgId, s, reason, basis ? { kind: basis, noticeDate: noticeDate || null } : undefined);
       if (!res.ok) return void toast.error(res.error);
       toast.success(s === "active" ? "Rattacheur réactivé" : s === "suspended" ? "Rattacheur suspendu — accès coupés" : "Rattacheur archivé");
       setOpen(false);
@@ -159,7 +169,22 @@ export function OrganizationStatusActions({ orgId, status }: { orgId: string; st
           title="Suspendre ce rattacheur"
           description="Membres et chauffeurs perdent immédiatement l'accès aux données ; les courses ne sont plus dispatchées. Le propriétaire et les administrateurs peuvent encore se connecter pour voir la suspension et régler les frais dus."
         >
-          <Field label="Motif"><Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Impayé, demande du client…" /></Field>
+          <div className="space-y-4">
+            <Field label="Fondement" hint="Article 7 des CGV. Le fondement et le motif sont enregistrés et affichés au propriétaire et aux administrateurs de la centrale.">
+              <NativeSelect value={basis} onChange={(e) => setBasis(e.target.value as "" | SuspensionBasis["kind"])}>
+                <option value="">Choisir…</option>
+                {SUSPENSION_BASES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+              </NativeSelect>
+            </Field>
+            {basis === "notice" && (
+              <Field label="Date de la mise en demeure" hint="Envoyée par écrit au propriétaire, il y a 8 jours au moins.">
+                <Input type="date" value={noticeDate} onChange={(e) => setNoticeDate(e.target.value)} />
+              </Field>
+            )}
+            <Field label="Motif" hint="Faits reprochés, 10 caractères au moins.">
+              <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Frais impayés depuis le…, fraude constatée le…" />
+            </Field>
+          </div>
           <div className="mt-6 flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
             <Button variant="danger" loading={pending} onClick={() => run("suspended")}>Suspendre</Button>
