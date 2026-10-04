@@ -863,10 +863,12 @@ begin
     'standard', 5900, 1400, 'cash', 21400, 1860)
   returning id into r;
 
-  -- Chauffeur banni pour commissions impayées + signalement au super admin
+  -- Chauffeur banni pour fraude + signalement au super admin (signalement à Rydar réservé à la fraude et au faux
+  -- document depuis 20260924007400 : une dette reste propre à la centrale, PLATFORM_REPORT_CATEGORY). Contrôlé par la CI
+  -- (un signalement « open »).
   perform set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-a000-000000000005', 'role', 'authenticated')::text, false);
   perform public.ban_driver((select id from public.drivers where email = 'fares@centrale-express.fr'),
-    'Encaisse les courses en espèces sans jamais régler la commission (5 courses)', 'unpaid', true, false);
+    'Courses déclarées terminées sans client, encaissées en espèces sans régler la commission (5 courses)', 'fraud', true, false);
   perform pg_temp.reset_claims();
 end;
 $$;

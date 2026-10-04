@@ -41,8 +41,9 @@ create index if not exists email_outbox_booking_receipt_idx on public.email_outb
 -- Texte de l'e-mail au chauffeur interdit sur toute la plateforme (règlement (UE) 2022/2065, art. 17 : décision et
 -- portée, faits, fondement contractuel, absence de décision automatisée, recours). Contenu fixe : catégorie du
 -- signalement, date, précisions écrites par le super admin (montrées aussi à la centrale qui signale : jamais de donnée
--- d'un tiers), fiche touchée parce qu'elle partage un identifiant. Aucun nom : l'adresse est celle de la fiche ou du
--- compte, pas une preuve d'identité.
+-- d'un tiers), fiche touchée parce qu'elle partage un identifiant. Aucun nom : l'adresse est celle du compte ou de la
+-- fiche, pas une preuve d'identité. Recours : réexamen par une personne de l'éditeur (jamais promis à « une autre
+-- personne » : l'éditeur peut n'avoir qu'un seul décideur).
 create or replace function private.platform_ban_email(p_category text, p_note text, p_shared boolean, p_org_name text)
 returns jsonb
 language plpgsql
@@ -58,7 +59,7 @@ begin
     format('L''éditeur de Rydar Drive (logiciel utilisé par des centrales et des flottes de VTC) a décidé le %s d''interdire votre compte chauffeur sur toute la plateforme Rydar Drive.',
       private.fr_long_date((now() at time zone 'Europe/Paris')::date)),
     'Motif : ' || case p_category when 'documents' then 'document faux ou falsifié' else 'fraude constatée' end
-      || ', signalé par une centrale qui utilise Rydar Drive et examiné par l''éditeur.'
+      || ' (signalement d''une centrale qui utilise Rydar Drive, examiné par l''éditeur).'
       || coalesce(' Précisions : ' || nullif(btrim(coalesce(p_note, '')), ''), '')];
   if p_shared then
     v_parts := v_parts || format('Votre fiche chez %s est concernée parce qu''elle partage un identifiant (téléphone, e-mail, numéro de carte VTC, de permis ou de pièce d''identité, plaque ou appareil) avec le compte signalé.',
@@ -71,7 +72,7 @@ begin
     'Recours : vous pouvez contester cette décision dans les 6 mois, '
       || case when v_reply then 'en répondant à cet e-mail'
               else 'en écrivant à l''éditeur depuis la page Contact du site Rydar Drive' end
-      || ' : une autre personne de l''éditeur la réexaminera et vous recevrez une réponse motivée. Vous pouvez aussi saisir le juge compétent et, pour vos données personnelles, adresser une réclamation à la CNIL (www.cnil.fr).',
+      || ' : elle sera réexaminée par une personne de l''éditeur, et vous recevrez une réponse motivée. Vous pouvez aussi saisir le juge compétent et, pour vos données personnelles, adresser une réclamation à la CNIL (www.cnil.fr).',
     'Vous pouvez supprimer votre compte à tout moment : voir la page « Supprimer son compte » du site Rydar Drive.',
     'L''équipe Rydar Drive'];
   return jsonb_build_object(
@@ -226,10 +227,11 @@ begin
       end if;
     end if;
     v_drivers := v_drivers + 1;
-    -- Décision motivée envoyée au chauffeur (adresse de la fiche, sinon celle du compte), une fois par adresse ; une
-    -- fiche autre que celle signalée est touchée parce qu'elle partage un identifiant avec elle
-    v_email := coalesce(nullif(lower(btrim(coalesce(x.email, ''))), ''),
-                        (select lower(btrim(u.email)) from public.users u where u.id = x.user_id));
+    -- Décision motivée envoyée au chauffeur (adresse de son compte, celle annoncée par les CGU, art. 11, et par
+    -- l'application ; sinon celle de la fiche), une fois par adresse ; une fiche autre que celle signalée est touchée
+    -- parce qu'elle partage un identifiant avec elle
+    v_email := coalesce((select nullif(lower(btrim(u.email)), '') from public.users u where u.id = x.user_id),
+                        nullif(lower(btrim(coalesce(x.email, ''))), ''));
     if private.email_address_ok(v_email) and not (v_email = any (v_sent)) then
       v_sent := v_sent || v_email;
       v_mail := private.platform_ban_email(f.category, v_note, x.id <> f.driver_id, x.org_name);
@@ -734,6 +736,8 @@ create table if not exists private.platform_whatsapp_refusals (
 );
 comment on table private.platform_whatsapp_refusals is
   'Refus du propriétaire de recevoir les relances WhatsApp de Rydar (frais plateforme) — écriture : svc_platform_whatsapp_refusal (super admin).';
+-- RLS partout (comme les autres tables de private) : aucune policy, accès par les seules fonctions security definer
+alter table private.platform_whatsapp_refusals enable row level security;
 revoke all on private.platform_whatsapp_refusals from public, anon, authenticated, service_role;
 
 -- Super admin (service role, auteur p_actor revérifié) : noter (p_refused) ou retirer le refus ; journal d'audit
@@ -1148,9 +1152,10 @@ $$;
 -- 10. Mini-site : accusé de réception de la réservation (Code civil, art. 1127-2)
 -- =============================================================================
 -- Le web (service role) appelle svc_booking_receipt juste après l'enregistrement d'une réservation du mini-site qui
--- porte une adresse e-mail. Contenu FIXE tiré de la base (n°, date, catégorie, passagers, prix, coordonnées de la
--- centrale) : jamais d'adresse ni de texte saisis par le visiteur (le formulaire ne sert pas à écrire à un tiers) ;
--- un accusé par réservation, 3 au plus par adresse et par 24 h.
+-- porte une adresse e-mail (réservation avec prix : e-mail obligatoire ; demande sans prix : seulement si le client en
+-- donne une, accusé d'une « demande de réservation »). Contenu FIXE tiré de la base (n°, date, catégorie, passagers,
+-- prix, coordonnées de la centrale) : jamais d'adresse ni de texte saisis par le visiteur (le formulaire ne sert pas à
+-- écrire à un tiers) ; un accusé par réservation, 3 au plus par adresse et par 24 h.
 alter table public.email_outbox add column if not exists ride_id uuid references public.rides (id) on delete cascade;
 comment on column public.email_outbox.ride_id is 'Réservation du mini-site dont cet e-mail accuse réception (booking_receipt).';
 create unique index if not exists email_outbox_booking_receipt_ride_key on public.email_outbox (ride_id) where kind = 'booking_receipt';
@@ -1165,11 +1170,14 @@ declare
   v_tz text := coalesce(nullif(o.timezone, ''), 'Europe/Paris');
   v_operator text := coalesce(nullif(btrim(coalesce(o.legal_name, '')), ''), o.name);
   v_contact text := concat_ws(', ', nullif(btrim(coalesce(s.phone, '')), ''), nullif(btrim(coalesce(s.email, '')), ''));
+  -- Sans prix affiché, le mini-site n'enregistre qu'une demande (« Demande reçue ») : jamais présentée comme une
+  -- réservation confirmée
+  v_what text := case when r.price_cents is not null then 'réservation' else 'demande de réservation' end;
   v_parts text[];
 begin
   v_parts := array[
     'Bonjour,',
-    format('%s a bien reçu votre réservation n° %s.', v_operator, r.number),
+    format('%s a bien reçu votre %s n° %s.', v_operator, v_what, r.number),
     format('Prise en charge : le %s à %s (heure locale du départ).',
       private.fr_long_date((r.pickup_at at time zone v_tz)::date), to_char(r.pickup_at at time zone v_tz, 'HH24:MI')),
     format('Véhicule : %s, %s.',
@@ -1184,7 +1192,7 @@ begin
     format('Message envoyé pour %s par Rydar Drive, éditeur du logiciel de réservation, qui n''est pas partie au contrat de transport.',
       v_operator)];
   return jsonb_build_object(
-    'subject', left(private.fr_typo(format('Votre réservation n° %s auprès de %s', r.number, v_operator)), 200),
+    'subject', left(private.fr_typo(format('Votre %s n° %s auprès de %s', v_what, r.number, v_operator)), 200),
     'body', private.fr_typo(array_to_string(v_parts, E'\n\n')));
 end;
 $$;

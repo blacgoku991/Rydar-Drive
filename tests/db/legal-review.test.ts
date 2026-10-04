@@ -113,12 +113,15 @@ describe("Bannissement de toute la plateforme : fraude seulement, décision moti
     expect(mail.organization_id).toBeNull();
     const body = mail.body_text as string;
     expect(body).toContain("d'interdire votre compte chauffeur sur toute la plateforme Rydar Drive");
-    expect(body).toContain(`Motif${NB}: fraude constatée, signalé par une centrale qui utilise Rydar Drive et examiné par l'éditeur.`);
+    expect(body).toContain(`Motif${NB}: fraude constatée (signalement d'une centrale qui utilise Rydar Drive, examiné par l'éditeur).`);
     expect(body).toContain(`Précisions${NB}: Trois courses terminées sans client, positions incohérentes.`);
     expect(body).toContain("articles 10 (comportements interdits) et 11 (suspension, bannissement et recours)");
     expect(body).toContain("elle n'a pas été prise de façon automatisée");
     expect(body).toContain("conservées 3 ans au plus");
     expect(body).toContain("dans les 6 mois, en répondant à cet e-mail");
+    // Réexamen humain, jamais promis à « une autre personne » (l'éditeur peut n'avoir qu'un décideur ; CGU art. 11)
+    expect(body).toContain("elle sera réexaminée par une personne de l'éditeur");
+    expect(body).not.toContain("autre personne");
     expect(body).toContain("CNIL");
     expect(body).not.toContain("Karim");
     expect(body).not.toContain("partage un identifiant");
@@ -151,6 +154,18 @@ describe("Bannissement de toute la plateforme : fraude seulement, décision moti
     await sql("update public.users set email = 'pas une adresse' where id = $1", [noMail.userId]);
     const ban2 = await rpc(org.ownerId, "ban_driver", [noMail.id, "Pièce d'identité falsifiée", "documents", true, false]);
     expect(await svc("svc_platform_ban", [ban2.report_id, sa, null])).toMatchObject({ ok: true, emails: 0 });
+  });
+
+  it("adresse du compte d'abord (celle qu'annoncent les CGU, art. 11, et l'application), sinon celle de la fiche", async () => {
+    const sa = await superAdmin();
+    const org = await centrale("Légal Adresse Compte");
+    const d = await driverIn(org);
+    const ficheEmail = `fiche-${randomUUID().slice(0, 8)}@test.dev`;
+    await sql("update public.drivers set email = $2 where id = $1", [d.id, ficheEmail]);
+    const ban = await rpc(org.ownerId, "ban_driver", [d.id, "Usurpation d'identité", "fraud", true, false]);
+    expect(await svc("svc_platform_ban", [ban.report_id, sa, "Pièce d'identité d'un tiers déposée."])).toMatchObject({ ok: true, emails: 1 });
+    expect(await banEmails(d.email!)).toHaveLength(1);
+    expect(await banEmails(ficheEmail)).toHaveLength(0);
   });
 
   it("application : « ban_scope » dit qui a décidé (centrale ou éditeur)", async () => {
@@ -336,8 +351,16 @@ describe("Mini-site : accusé de réception de la réservation", () => {
     }
     const fourth = await insertRideBypass(org, { status: "SEARCHING_DRIVER", source: "booking_site", customer_email: to });
     expect(await svc("svc_booking_receipt", [fourth])).toMatchObject({ ok: false, code: "RATE_LIMITED" });
-    const unpriced = await sql("select body_text from public.email_outbox where kind = 'booking_receipt' and to_email = $1 and body_text like '%confirme avant la course%'", [to]);
+    const unpriced = await sql(
+      "select subject, body_text from public.email_outbox where kind = 'booking_receipt' and to_email = $1 and body_text like '%confirme avant la course%'",
+      [to],
+    );
     expect(unpriced.length).toBeGreaterThan(0);
+    // Demande sans prix (« Demande reçue » sur le mini-site) : jamais présentée comme une réservation confirmée
+    for (const m of unpriced) {
+      expect(m.subject).toMatch(/^Votre demande de réservation n° \d+ auprès de Légal Mini-site SAS$/);
+      expect(m.body_text).toContain("Légal Mini-site SAS a bien reçu votre demande de réservation n° ");
+    }
   });
 
   it("seulement pour une réservation du mini-site, avec une adresse valide ; service role seulement", async () => {
