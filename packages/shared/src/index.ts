@@ -12,6 +12,7 @@ export * from "./navigation";
 export * from "./platform-fees";
 export * from "./whatsapp";
 export * from "./contact";
+export * from "./eligibility";
 export * from "./api-ride";
 export * from "./webhooks";
 export * from "./network";

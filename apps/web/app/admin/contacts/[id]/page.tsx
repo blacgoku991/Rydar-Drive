@@ -1,13 +1,13 @@
 import {
   CONTACT_STATUS_META,
-  CONTACT_TOPIC_META,
+  contactRequestTopicLabel,
   EMAIL_KIND_META,
   EMAIL_STATUS_META,
   FLEET_SIZE_META,
   formatDate,
   formatPhone,
   formatTime,
-  type ContactTopic,
+  type ContactRequestTopic,
 } from "@rydar/shared";
 import { ArrowLeft, Mail, MessageSquareText, Send, SlidersHorizontal } from "lucide-react";
 import type { Metadata } from "next";
@@ -28,7 +28,7 @@ type Status = keyof typeof CONTACT_STATUS_META;
 type Request = {
   id: string;
   created_at: string;
-  topic: ContactTopic;
+  topic: ContactRequestTopic;
   plan_code: string | null;
   name: string;
   company: string | null;
@@ -85,7 +85,7 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
   const st = CONTACT_STATUS_META[req.status];
 
   const facts: [string, React.ReactNode][] = [
-    ["Sujet", CONTACT_TOPIC_META[req.topic]?.label ?? req.topic],
+    ["Sujet", contactRequestTopicLabel(req.topic)],
     ...(planName ? ([["Offre visée", planName]] as [string, React.ReactNode][]) : []),
     ...(req.fleet_size ? ([["Taille de la flotte", FLEET_SIZE_META[req.fleet_size]?.label ?? req.fleet_size]] as [string, React.ReactNode][]) : []),
     [
@@ -116,7 +116,7 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
           </Link>
         }
         title={req.name}
-        description={[req.company, CONTACT_TOPIC_META[req.topic]?.label].filter(Boolean).join(" · ")}
+        description={[req.company, contactRequestTopicLabel(req.topic)].filter(Boolean).join(" · ")}
         actions={<Badge tone={st?.tone ?? "neutral"}>{st?.label ?? req.status}</Badge>}
       />
       <PageBody>

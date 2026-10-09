@@ -18,7 +18,10 @@ export function isPlatformHost(rawHost: string | null | undefined, platform: { a
     // URL de l'application invalide : restent le domaine racine, localhost et les adresses IP
   }
   const root = platform.rootDomain.toLowerCase();
-  return host === appHost || host === root || host === `www.${root}` || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host);
+  return (
+    host === appHost || host === root || host === `www.${root}` || host === `eligibilite.${root}` || host === "localhost" ||
+    /^\d+\.\d+\.\d+\.\d+$/.test(host)
+  );
 }
 
 /** Image de partage des pages du site vitrine (le layout racine n'en déclare pas : les mini-sites en hériteraient). */

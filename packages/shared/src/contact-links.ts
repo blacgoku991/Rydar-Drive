@@ -19,6 +19,21 @@ export const CONTACT_TOPIC_META: Record<ContactTopic, { label: string; param: Co
   other: { label: "Autre demande", param: "autre" },
 };
 
+/**
+ * Sujets d'une demande enregistrée : ceux du formulaire /contact, plus « eligibility » (test d'éligibilité Flotte
+ * Privée, page eligibilite.<domaine>), jamais proposé dans le formulaire.
+ */
+export const CONTACT_REQUEST_TOPICS = [...CONTACT_TOPICS, "eligibility"] as const;
+export type ContactRequestTopic = (typeof CONTACT_REQUEST_TOPICS)[number];
+
+/** Libellé du sujet d'une demande (/admin/contacts, notification) ; sujet inconnu → « Autre demande ». */
+export function contactRequestTopicLabel(topic: string): string {
+  if (topic === "eligibility") return "Test d’éligibilité Flotte Privée";
+  return Object.prototype.hasOwnProperty.call(CONTACT_TOPIC_META, topic)
+    ? CONTACT_TOPIC_META[topic as ContactTopic].label
+    : CONTACT_TOPIC_META.other.label;
+}
+
 /** « ?sujet=tarif » → « pricing » ; absent ou inconnu → undefined (jamais une clé héritée comme « constructor »). */
 export function contactTopicFromParam(param: string | string[] | null | undefined): ContactTopic | undefined {
   const value = (Array.isArray(param) ? param[0] : param)?.trim().toLowerCase();

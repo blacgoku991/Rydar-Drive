@@ -9,6 +9,7 @@ import {
   contactAckEmail, contactNotifyEmail, contactReplyEmail, contactRequestSchema, testEmail,
 } from "../../packages/shared/src/contact";
 import { humanizeError } from "../../packages/shared/src/domain";
+import { eligibilityMessage, eligibilitySchema } from "../../packages/shared/src/eligibility";
 import { as, createAuthUser, createDriver, createMember, createOrg, DB_URL, expectPgError, pool, sql } from "./helpers";
 
 afterAll(async () => {
@@ -291,6 +292,25 @@ describe("svc_contact_submit", () => {
     }
     expect(await count("contact_requests")).toBe(3);
     expect(await count("email_outbox")).toBe(0);
+  });
+
+  it("test d'éligibilité Flotte Privée (007500) : sujet « eligibility » enregistré, message du test, téléphone E.164", async () => {
+    const d = eligibilitySchema.parse({
+      revenue: "4k-7k", budget: "300-800", zone: "idf", name: "Karim B.", phone: "06 12 34 56 78",
+      email: "Karim@Test.dev", city: "Paris", consent: true, simBudget: 900,
+    });
+    const id = randomUUID();
+    const notifyMail = contactNotifyEmail({ id, topic: "eligibility" }, { appUrl: APP_URL });
+    expect(notifyMail.subject).toContain("Test d’éligibilité Flotte Privée");
+    const res = await submit(
+      { id, topic: "eligibility", plan_code: null, name: d.name, company: null, email: d.email, phone: d.phone, fleet_size: null,
+        message: eligibilityMessage(d), ip_hash: "e".repeat(64) },
+      [notify({ subject: notifyMail.subject, body_text: notifyMail.text, reply_to: null }), ack(d.email)],
+    );
+    expect(res).toEqual({ ok: true, id, ack_queued: true });
+    const [row] = await sql("select topic, phone, email, message from public.contact_requests where id = $1", [id]);
+    expect(row).toMatchObject({ topic: "eligibility", phone: "+33612345678", email: "karim@test.dev" });
+    expect(row.message).toContain("Budget testé dans le simulateur : 900 € par mois");
   });
 
   it("chaîne complète : formulaire validé par contactRequestSchema et e-mails des modèles acceptés tels quels", async () => {

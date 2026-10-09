@@ -1,5 +1,13 @@
 # Travail en cours (04/10/2026)
 
+## Flotte Privée : page du test d'éligibilité (09/10/2026)
+
+`eligibilite.<domaine>` (proxy.ts → `app/eligibilite`, autres chemins → plateforme ; TLS : `/api/tls/allowed`) : test en
+2 étapes (CA VTC, budget pub, zone → coordonnées + accord), verdict et score (`packages/shared/src/eligibility.ts`),
+simulateur (budget 150–2 000 €, course 40–80 €, taux 10–35 %, coût par clic 2,50 €, applis 18,50 € − 25 %). Enregistré
+comme demande de contact (sujet `eligibility`, migration 007500, /admin/contacts, mêmes e-mails et durées). Données
+d'EXEMPLE affichées comme telles, aucun script tiers, applis jamais nommées. DNS : `eligibilite` A → VPS si pas de `*`.
+
 Branche `claude/confident-clarke-rpfwmo`. Le lot « audit de sécurité maximal » est TERMINÉ : rapport complet dans
 [`docs/AUDIT.md`](AUDIT.md).
 

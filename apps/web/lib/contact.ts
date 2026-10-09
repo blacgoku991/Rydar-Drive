@@ -93,12 +93,12 @@ export async function contactRecipients(): Promise<string[]> {
 }
 
 /** Empreinte de l'adresse IP (seau IPv4 / IPv6 /64) : repérer les abus sans garder l'adresse en clair. */
-function ipHash(ip: string): string {
+export function ipHash(ip: string): string {
   const key = serverEnv().apiKeyPepper || "rydar-contact";
   return createHmac("sha256", key).update(`contact:${ipBucket(ip)}`).digest("hex");
 }
 
-type QueuedEmail = { kind: "contact_notify" | "contact_ack"; to_email: string; reply_to: string | null; subject: string; body_text: string };
+export type QueuedEmail = { kind: "contact_notify" | "contact_ack"; to_email: string; reply_to: string | null; subject: string; body_text: string };
 
 export async function submitContactRequest(input: ContactInput): Promise<ContactResult> {
   // Piège à robots : champ caché rempli → faux succès, rien n'est enregistré ni envoyé

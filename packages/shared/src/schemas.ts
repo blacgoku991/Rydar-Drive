@@ -236,7 +236,7 @@ export const RESERVED_SUBDOMAINS = [
   "www", "app", "api", "admin", "administration", "support", "aide", "help", "status", "statut", "mail", "email", "smtp", "imap",
   "pop", "mx", "mta-sts", "autodiscover", "autoconfig", "docs", "doc", "blog", "login", "connexion", "auth", "compte", "account",
   "securite", "security", "paiement", "payment", "facturation", "billing", "dashboard", "static", "cdn", "assets", "book",
-  "rejoindre", "chauffeur", "driver", "centrale", "legal", "juridique",
+  "rejoindre", "chauffeur", "driver", "centrale", "legal", "juridique", "eligibilite", "eligibility",
 ] as const;
 
 export function isReservedSubdomain(value: string): boolean {

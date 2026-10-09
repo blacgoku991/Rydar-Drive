@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 // Règle de perf (CLAUDE.md) : chaque <Link> du tableau de bord déclare prefetch (un préchargement = rendu serveur complet
 // de la page visée, authentification comprise, pour CHAQUE lien visible : une ligne de tableau, un clic sur une course…).
 const WEB = join(import.meta.dirname, "..", "..");
-// Site public (vitrine, pages légales, mini-sites) et espace super admin : hors tableau de bord des centrales
-const SKIP = /components\/(admin|marketing|legal|booking)\/|components\/platform-fees\/admin-/;
+// Site public (vitrine, pages légales, mini-sites, test d'éligibilité) et espace super admin : hors tableau de bord des centrales
+const SKIP = /components\/(admin|marketing|legal|booking|eligibility)\/|components\/platform-fees\/admin-/;
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

@@ -52,6 +52,7 @@ Chez votre registraire, dans la zone DNS du domaine :
 | `@` | A | IP du VPS |
 | `www` | A | IP du VPS |
 | `*` | A | IP du VPS (mini-sites `{centrale}.votre-domaine`) |
+| `eligibilite` | A | IP du VPS (page du test d'éligibilité Flotte Privée ; inutile si `*` existe déjà) |
 
 La propagation prend de quelques minutes à quelques heures. `install.sh` vous prévient tant que le domaine ne pointe pas vers le serveur ; le certificat HTTPS arrive tout seul dès que c'est le cas.
 

@@ -4,7 +4,7 @@
 // Anti-abus : l'accusé de réception part vers une adresse saisie par un inconnu → contenu FIXE, sans aucune donnée
 // saisie dans le formulaire (le formulaire ne peut pas servir à écrire à un tiers).
 import { z } from "./zod";
-import { CONTACT_TOPIC_META, CONTACT_TOPICS, PLAN_CODE_RE, type ContactTopic } from "./contact-links";
+import { contactRequestTopicLabel, CONTACT_TOPICS, PLAN_CODE_RE, type ContactRequestTopic } from "./contact-links";
 import type { Tone } from "./domain";
 import { normalizePhone } from "./format";
 
@@ -89,7 +89,7 @@ export type ContactRequestRow = {
   id: string;
   created_at: string;
   updated_at: string;
-  topic: ContactTopic;
+  topic: ContactRequestTopic;
   plan_code: string | null;
   name: string;
   company: string | null;
@@ -230,7 +230,7 @@ export type EmailContent = { subject: string; text: string };
 /** Demande enregistrée : sortie de contactRequestSchema + identifiant choisi par le web (lien de la notification). */
 export type ContactNotifyRequest = {
   id: string;
-  topic: ContactTopic;
+  topic: ContactRequestTopic;
   name: string;
   email: string;
   message: string;
@@ -281,7 +281,7 @@ export function contactNotifyEmail(
   req: Pick<ContactNotifyRequest, "id" | "topic"> & Partial<ContactNotifyRequest>,
   opts: { appUrl: string; planName?: string | null },
 ): EmailContent {
-  const topic = CONTACT_TOPIC_META[req.topic]?.label ?? "Autre demande";
+  const topic = contactRequestTopicLabel(req.topic);
   const ref = sanitizeHeaderText(req.id, 64).replace(/[^0-9a-z]/gi, "").slice(0, 8);
   const subject = sanitizeHeaderText(`Nouvelle demande de contact — ${topic}${ref ? ` (réf. ${ref})` : ""}`);
   const plan = sanitizeHeaderText(opts.planName, 120) || sanitizeHeaderText(req.planCode, CONTACT_LIMITS.planCode);

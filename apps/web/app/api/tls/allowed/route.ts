@@ -16,7 +16,8 @@ export async function GET(req: Request) {
   if (!isValidHostname(domain)) return new NextResponse(null, { status: 400 });
 
   const appHost = new URL(env.appUrl).hostname;
-  if (domain === appHost || domain === env.rootDomain || domain === `www.${env.rootDomain}`) {
+  // Plateforme, et page du test d'éligibilité Flotte Privée (proxy.ts)
+  if (domain === appHost || domain === env.rootDomain || domain === `www.${env.rootDomain}` || domain === `eligibilite.${env.rootDomain}`) {
     return new NextResponse(null, { status: 200 });
   }
   if (!(await bookingSitesEnabled())) return new NextResponse(null, { status: 404 });

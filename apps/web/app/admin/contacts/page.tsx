@@ -1,12 +1,12 @@
 import {
   CONTACT_STATUS_META,
-  CONTACT_TOPIC_META,
+  contactRequestTopicLabel,
   EMAIL_KIND_META,
   EMAIL_STATUS_META,
   formatDate,
   formatRelative,
   formatTime,
-  type ContactTopic,
+  type ContactRequestTopic,
 } from "@rydar/shared";
 import { AlertTriangle, Inbox, MailCheck } from "lucide-react";
 import type { Metadata } from "next";
@@ -33,7 +33,7 @@ const FILTERS: { key: string; label: string; statuses: Status[] | null }[] = [
 type Row = {
   id: string;
   created_at: string;
-  topic: ContactTopic;
+  topic: ContactRequestTopic;
   name: string;
   company: string | null;
   email: string;
@@ -177,7 +177,7 @@ export default async function AdminContactsPage({ searchParams }: { searchParams
                               {r.company && <span className="font-normal text-fg-muted"> · {r.company}</span>}
                             </p>
                             <p className="mt-0.5 truncate text-[12.5px] text-fg-muted">
-                              {CONTACT_TOPIC_META[r.topic]?.label ?? r.topic} · {r.email}
+                              {contactRequestTopicLabel(r.topic)} · {r.email}
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-3">

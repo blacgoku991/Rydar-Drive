@@ -8,8 +8,12 @@ import { decodeJwt, verifiableLocally } from "@/lib/supabase/jwt";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
-const APP_HOST = new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").hostname;
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const APP_HOST = new URL(APP_URL).hostname;
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN || "rydar.app";
+/** Page du test d'éligibilité Flotte Privée (app/eligibilite) servie à la racine de son sous-domaine. */
+const ELIGIBILITY_HOST = `eligibilite.${ROOT_DOMAIN}`;
+const ELIGIBILITY_PATH = "/eligibilite";
 
 /** Mini-site trouvé : 5 min ; aucun mini-site : 30 s (un site tout juste activé ou vérifié apparaît vite). */
 const HOST_TTL_MS = 5 * 60_000;
@@ -95,6 +99,20 @@ const UNSERVED_HOST_PATH = "/_mini-site-indisponible";
 export async function proxy(request: NextRequest) {
   const host = (request.headers.get("host") ?? "").split(":")[0]!.toLowerCase();
   const { pathname } = request.nextUrl;
+
+  // 0) eligibilite.<domaine> : la page du test à la racine ; pages légales, API et fichiers servis tels quels ; tout le
+  //    reste (connexion, espaces, site vitrine) renvoie vers l'adresse de la plateforme
+  if (host === ELIGIBILITY_HOST) {
+    if (pathname === "/") {
+      const url = request.nextUrl.clone();
+      url.pathname = ELIGIBILITY_PATH;
+      return NextResponse.rewrite(url);
+    }
+    if (pathname !== ELIGIBILITY_PATH && !pathname.startsWith("/api/") && !pathname.startsWith("/_next/") && !isLegalPath(pathname)) {
+      return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, APP_URL));
+    }
+    return NextResponse.next({ request });
+  }
 
   // 1) Mini-sites de réservation sur sous-domaine / domaine personnalisé
   //    (/rejoindre/{code} : inscription chauffeur publique, jamais réécrite vers le mini-site)

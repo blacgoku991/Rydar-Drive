@@ -87,6 +87,8 @@ Architecture cible :
 - Domaines :
   - `app.votre-domaine` pour le dashboard ;
   - `*.votre-domaine` (wildcard) pour les mini-sites `{slug}.votre-domaine` ;
+  - `eligibilite.votre-domaine` : page du test d'éligibilité Flotte Privée (`app/eligibilite`, servie à la racine par
+    `proxy.ts`, certificat accepté par `/api/tls/allowed`) ; couvert par le wildcard ;
   - les domaines personnalisés des organisations Business, ajoutés dans Vercel.
 
 | Variable | Rôle |
