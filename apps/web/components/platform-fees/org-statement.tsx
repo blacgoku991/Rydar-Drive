@@ -1,216 +1,213 @@
-// Relevé mensuel des frais plateforme (côté centrale ou flotte) : solde d'ouverture, frais du mois, reçu par Rydar,
-// solde de clôture, chaque écriture (course, correction, avoir) et chaque paiement. Rendu serveur. Flotte : pas de
-// colonne « règlement chauffeur » (aucune commission), sauf course passée par le mode centrale.
+// Relevé mensuel des frais Rydar (côté centrale ou flotte) : reste dû au début du mois, frais du mois, reçu par Rydar,
+// reste dû à la fin ; le détail des frais, une ligne par course (« #1022 · 1 oct. 10:08 · Gare Saint-Lazare → Accor
+// Arena · 60 € payé en ligne », +5 €, règlement chauffeur d'une centrale), groupé par échéance (« À régler le 5 nov. ·
+// 47 courses · 235 € »), 20 lignes puis un repli ; chaque paiement du mois. Corrections, avoirs, baisses en attente ou
+// refusées gardent leurs mentions. Rendu serveur ; montants et export CSV inchangés.
 import {
   PAYMENT_METHOD_LABELS,
   PLATFORM_ENTRY_KIND_META,
-  platformEntryStatusMeta,
   PLATFORM_PAYMENT_STATUS_META,
+  dateTimeFormat,
   formatPrice,
+  platformEntryStatusMeta,
   type PlatformEntry,
   type PlatformPayment,
   type PlatformStatement,
 } from "@rydar/shared";
-import { ArrowRight, ReceiptText } from "lucide-react";
 import Link from "next/link";
 import {
   dayTime, platformMethodLabel, price, rideSettlementText, shortDay, showSettlementColumn, signedPrice,
 } from "@/components/platform-fees/org-platform-format";
-import { Badge, toneText } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
+import { Disclosure } from "@/components/ui/disclosure";
 import { EmptyState } from "@/components/ui/misc";
-import { TD, TH, THead, TR, Table } from "@/components/ui/table";
+import { plural } from "@/lib/wording";
 import { cn } from "@/lib/utils";
 
-/** « septembre 2026 » */
+const NB = " ";
+/** Lignes montrées d'emblée dans chaque échéance ; les suivantes sont dans un repli. */
+export const STATEMENT_FIRST_LINES = 20;
+
+/** « septembre 2026 » (formateur mémorisé) */
 export function monthLabel(month: string, style: "long" | "short" = "long") {
-  return new Intl.DateTimeFormat("fr-FR", { month: style, year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T12:00:00Z`));
+  return dateTimeFormat("fr-FR", { month: style, year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T12:00:00Z`));
 }
 
-/** Libellé d'une écriture : « Course », « Correction », « Avoir », « Frais ajoutés ». */
+const capitalize = (t: string) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+
+/** « Reste dû au 1er octobre » / « Avance au 1er octobre » ; « … fin octobre » ; « … à ce jour » (mois en cours). */
+export function statementBalanceLabel(cents: number, when: string) {
+  return `${cents < 0 ? "Avance en votre faveur" : "Reste dû"} ${when}`;
+}
+
+/** Libellé d'une ligne qui n'est pas une course : « Correction », « Avoir de Rydar », « Frais ajoutés par Rydar ». */
 function kindLabel(e: PlatformEntry) {
   if (e.kind === "adjustment") return e.amount_cents < 0 ? "Avoir de Rydar" : "Frais ajoutés par Rydar";
   if (e.kind === "ride") return "Frais de course";
   return PLATFORM_ENTRY_KIND_META[e.kind].label;
 }
 
-/** Règlement chauffeur lié à la course (commission encaissée par la centrale, ou course payée à la centrale). */
-function settlementText(e: PlatformEntry): { text: string; tone: string } | null {
-  const st = rideSettlementText(e.ride);
-  return st ? { text: st.text, tone: toneText[st.tone] } : null;
+/** « 60 € payé en ligne », « 55 € en espèces », « 40 € carte à bord » */
+function ridePayment(r: NonNullable<PlatformEntry["ride"]>, currency: string) {
+  const label = PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method;
+  const how = r.payment_method === "cash" ? "en espèces" : label.charAt(0).toLowerCase() + label.slice(1);
+  return r.price_cents == null ? `sans prix · ${how}` : `${formatPrice(r.price_cents, currency)} ${how}`;
 }
 
 function amountClass(e: PlatformEntry) {
-  if (e.status === "rejected") return "text-fg-subtle line-through";
+  if (e.status === "rejected") return "text-fg-muted line-through";
   if (e.status === "pending") return "text-amber";
   if (e.amount_cents < 0) return "text-green";
   return "text-fg";
 }
 
-function EntryStatus({ e }: { e: PlatformEntry }) {
-  if (e.status === "posted") return null;
-  const meta = platformEntryStatusMeta(e);
-  return <Badge tone={meta.tone}>{e.status === "pending" ? "En attente de Rydar" : meta.label}</Badge>;
-}
-
-function EntryText({ e, timeZone }: { e: PlatformEntry; timeZone: string }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-[13px] font-medium text-fg">{e.label}</p>
-      <p className="text-[12px] text-fg-muted">
-        {kindLabel(e)}
-        {e.kind === "adjustment" && e.created_by_name ? ` · ${e.created_by_name}` : ""}
-        {e.status !== "rejected" ? ` · échéance ${shortDay(e.due_at, timeZone)}` : ""}
-      </p>
-      {e.reason && <p className="mt-0.5 text-[12px] text-fg-muted">{e.reason}</p>}
-      {e.status === "pending" && <p className="mt-0.5 text-[12px] text-amber">Ne compte pas tant que Rydar ne l&apos;a pas acceptée.</p>}
-      {e.review_note && <p className="mt-0.5 text-[12px] text-fg-muted">Rydar&nbsp;: «&nbsp;{e.review_note}&nbsp;»</p>}
-    </div>
-  );
-}
-
-function RideCell({ e, currency }: { e: PlatformEntry; currency: string }) {
-  const r = e.ride;
-  if (!r) return <span className="text-[12px] text-fg-muted">{e.kind === "adjustment" ? "—" : "Course supprimée"}</span>;
-  return (
-    <div className="min-w-0">
-      <p className="flex items-baseline gap-2 text-[13px]">
-        <Link href={`/dashboard/rides/${r.id}`} prefetch={false} className="mono font-semibold text-fg hover:text-brand">
-          #{r.number}
-        </Link>
-        <span className="mono text-fg">{formatPrice(r.price_cents, currency)}</span>
-        <span className="truncate text-[12px] text-fg-muted">{PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method}</span>
-      </p>
-      <p className="truncate text-[12px] text-fg-muted" title={`${r.pickup ?? ""} → ${r.dropoff ?? ""}`}>
-        {r.pickup ?? "—"} <ArrowRight className="inline size-3 -translate-y-px" /> {r.dropoff ?? "—"}
-      </p>
-    </div>
-  );
-}
-
-export function StatementSummary({ s }: { s: PlatformStatement }) {
+// ---------------------------------------------------------------------------- résumé du mois
+export function StatementSummary({ s, current }: { s: PlatformStatement; current: boolean }) {
   const cur = s.organization.currency || "EUR";
+  const label = monthLabel(s.month);
   const items = [
-    { label: "Solde d'ouverture", value: price(s.opening_cents, cur), sub: `au 1er ${monthLabel(s.month)}`, op: null, cls: "text-fg" },
-    { label: "Frais du mois", value: price(s.fees_cents, cur), sub: "courses, corrections, avoirs", op: "+", cls: "text-fg" },
-    { label: "Reçu par Rydar", value: price(s.received_cents, cur), sub: "paiements confirmés", op: "−", cls: s.received_cents > 0 ? "text-green" : "text-fg" },
-    {
-      label: "Solde de clôture",
-      value: price(Math.abs(s.closing_cents), cur),
-      sub: s.closing_cents > 0 ? "restant à régler" : s.closing_cents < 0 ? "d'avance en votre faveur" : "rien à régler",
-      op: "=",
-      cls: s.closing_cents > 0 ? "text-amber" : "text-green",
-    },
+    { label: statementBalanceLabel(s.opening_cents, `au 1er ${label}`), value: formatPrice(Math.abs(s.opening_cents), cur), op: null },
+    { label: "Frais du mois", value: price(s.fees_cents, cur), op: "+" },
+    { label: "Reçu par Rydar", value: price(s.received_cents, cur), op: "−" },
+    { label: statementBalanceLabel(s.closing_cents, current ? "à ce jour" : `fin ${label}`), value: formatPrice(Math.abs(s.closing_cents), cur), op: "=" },
   ];
   return (
-    <section aria-label="Résumé du mois" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <dl aria-label="Résumé du mois" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {items.map((it) => (
-        <div key={it.label} className="surface relative min-w-0 rounded-xl px-4 py-3.5">
-          <p className="flex items-center gap-1.5 truncate text-[12.5px] text-fg-muted">
+        <div key={it.label} className="surface min-w-0 rounded-xl px-4 py-3.5">
+          <dt className="flex items-start gap-1.5 text-[13px] text-fg-muted">
             {it.op && (
-              <span className="mono text-fg-subtle" aria-hidden>
+              <span className="mono text-fg-muted" aria-hidden>
                 {it.op}
               </span>
             )}
             {it.label}
-          </p>
-          <p className={cn("mono mt-1.5 truncate text-[22px] font-semibold leading-none tracking-tight sm:text-[24px]", it.cls)}>{it.value}</p>
-          <p className="mt-1.5 line-clamp-2 text-[12px] text-fg-muted">{it.sub}</p>
+          </dt>
+          <dd className="mt-1.5 text-[22px] font-semibold leading-none tabular-nums tracking-tight text-fg sm:text-[24px]">{it.value}</dd>
         </div>
       ))}
-    </section>
+    </dl>
   );
 }
 
-export function StatementEntries({ s }: { s: PlatformStatement }) {
+// ---------------------------------------------------------------------------- détail des frais
+type Group = { due: string; entries: PlatformEntry[]; rides: number; others: number; postedCents: number };
+
+/** Lignes groupées par échéance (la plus proche d'abord), dans l'ordre du relevé à l'intérieur. */
+export function groupByDue(entries: PlatformEntry[], timeZone: string): Group[] {
+  const map = new Map<string, Group>();
+  for (const e of entries) {
+    const key = dateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone }).format(new Date(e.due_at));
+    const g = map.get(key) ?? { due: e.due_at, entries: [], rides: 0, others: 0, postedCents: 0 };
+    g.entries.push(e);
+    if (e.kind === "ride") g.rides += 1;
+    else g.others += 1;
+    if (e.status === "posted") g.postedCents += e.amount_cents;
+    map.set(key, g);
+  }
+  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, g]) => g);
+}
+
+/** « À régler le 5 nov. · 47 courses · 235 € » (échéance à venir) / « Échéance du 5 oct. · 23 courses · 115 € » (passée). */
+function groupTitle(g: Group, timeZone: string, now: number, currency: string) {
+  const day = shortDay(g.due, timeZone, now);
+  const when = Date.parse(g.due) > now ? `À régler le ${day}` : `Échéance du ${day}`;
+  const count = [g.rides ? plural(g.rides, "course") : null, g.others ? plural(g.others, "autre ligne", "autres lignes") : null].filter(Boolean).join(" · ");
+  return `${when} · ${count} · ${formatPrice(g.postedCents, currency)}`;
+}
+
+function EntryLine({ e, timeZone, currency, settlement }: { e: PlatformEntry; timeZone: string; currency: string; settlement: boolean }) {
+  const r = e.ride;
+  const st = settlement ? rideSettlementText(r) : null;
+  const status = e.status === "posted" ? null : platformEntryStatusMeta(e);
+  const head =
+    e.kind === "ride" && r
+      ? [`#${r.number}`, dayTime(e.occurred_at, timeZone), r.pickup && r.dropoff ? `${r.pickup} → ${r.dropoff}` : null, ridePayment(r, currency)]
+      : [r ? `#${r.number}` : null, kindLabel(e), dayTime(e.occurred_at, timeZone), e.kind === "adjustment" && e.created_by_name ? e.created_by_name : null];
+  const text = head.filter(Boolean).join(" · ");
+  return (
+    <li className={cn("flex items-start justify-between gap-3 px-4 py-2.5 sm:px-5", e.status === "pending" && "bg-amber/[0.03]")}>
+      <div className="min-w-0">
+        <p className="text-[13px] text-fg [overflow-wrap:anywhere]">
+          {r ? (
+            <>
+              <Link href={`/dashboard/rides/${r.id}`} prefetch={false} className="mono font-semibold hover:text-brand">
+                #{r.number}
+              </Link>
+              {text.slice(`#${r.number}`.length)}
+            </>
+          ) : (
+            text
+          )}
+        </p>
+        {e.kind !== "ride" && e.label && <p className="text-[12px] text-fg-muted">{e.label}</p>}
+        {e.reason && <p className="text-[12px] text-fg-muted">{e.reason}</p>}
+        {e.status === "pending" && <p className="text-[12px] text-amber">Ne compte pas tant que Rydar ne l&apos;a pas acceptée.</p>}
+        {e.review_note && <p className="text-[12px] text-fg-muted">Rydar{NB}: «{NB}{e.review_note}{NB}»</p>}
+        {(st || status) && (
+          <p className="mt-1 flex flex-wrap items-center gap-1.5">
+            {st && <Badge tone={st.tone}>{st.text}</Badge>}
+            {status && <Badge tone={status.tone}>{e.status === "pending" ? "En attente de Rydar" : status.label}</Badge>}
+          </p>
+        )}
+      </div>
+      <p className={cn("mono shrink-0 whitespace-nowrap text-[14px] font-semibold", amountClass(e))}>{signedPrice(e.amount_cents, currency)}</p>
+    </li>
+  );
+}
+
+export function StatementEntries({ s, now }: { s: PlatformStatement; now: number }) {
   const cur = s.organization.currency || "EUR";
   const tz = s.organization.timezone || "Europe/Paris";
   const pending = s.entries.filter((e) => e.status === "pending");
-  const withSettlement = showSettlementColumn(s);
+  const settlement = showSettlementColumn(s);
+  const groups = groupByDue(s.entries, tz);
   return (
     <Card className="overflow-hidden">
       <CardHeader
-        title={`Écritures · ${s.entries.length}`}
-        description="Une écriture par course terminée ; toute modification ultérieure du montant ajoute une correction (les baisses attendent l'accord de Rydar)."
+        title={`Détail des frais · ${s.entries.length}`}
+        description="Une ligne par course terminée ; un prix modifié ensuite ajoute une correction (une baisse attend l'accord de Rydar)."
       />
       {s.entries.length === 0 ? (
-        <EmptyState
-          icon={<ReceiptText />}
-          title="Aucune écriture ce mois-ci"
-          description="Les frais apparaissent ici à la fin de chaque course."
-          className="py-10"
-        />
+        <EmptyState size="compact" title="Aucun frais ce mois-ci." description="Les frais apparaissent ici à la fin de chaque course." />
       ) : (
         <>
-          {/* Grand écran : tableau */}
-          <div className="hidden lg:block">
-            <Table>
-              <THead>
-                <tr>
-                  <TH className="w-[118px]">Date</TH>
-                  <TH>Libellé</TH>
-                  <TH>Course</TH>
-                  {withSettlement && <TH>Règlement chauffeur</TH>}
-                  <TH className="text-right">Montant</TH>
-                </tr>
-              </THead>
-              <tbody>
-                {s.entries.map((e) => {
-                  const st = settlementText(e);
-                  return (
-                    <TR key={e.id} className={cn(e.status === "pending" && "bg-amber/[0.03]")}>
-                      <TD className="h-auto whitespace-nowrap py-3 align-top text-[12.5px] text-fg-muted">{dayTime(e.occurred_at, tz)}</TD>
-                      <TD className="h-auto max-w-[340px] py-3 align-top">
-                        <EntryText e={e} timeZone={tz} />
-                      </TD>
-                      <TD className="h-auto max-w-[320px] py-3 align-top">
-                        <RideCell e={e} currency={cur} />
-                      </TD>
-                      {withSettlement && <TD className={cn("h-auto py-3 align-top text-[12.5px]", st?.tone ?? "text-fg-muted")}>{st?.text ?? "—"}</TD>}
-                      <TD className="h-auto py-3 text-right align-top">
-                        <p className={cn("mono whitespace-nowrap text-[14px] font-semibold", amountClass(e))}>{signedPrice(e.amount_cents, cur)}</p>
-                        <div className="mt-1 flex justify-end">
-                          <EntryStatus e={e} />
-                        </div>
-                      </TD>
-                    </TR>
-                  );
-                })}
-              </tbody>
-            </Table>
-          </div>
-          {/* Mobile / tablette : liste */}
-          <ul className="divide-y divide-line lg:hidden">
-            {s.entries.map((e) => {
-              const st = withSettlement ? settlementText(e) : null;
-              return (
-                <li key={e.id} className={cn("space-y-2 px-4 py-3.5 sm:px-5", e.status === "pending" && "bg-amber/[0.03]")}>
-                  <div className="flex items-start justify-between gap-3">
-                    <EntryText e={e} timeZone={tz} />
-                    <div className="shrink-0 text-right">
-                      <p className={cn("mono whitespace-nowrap text-[14px] font-semibold", amountClass(e))}>{signedPrice(e.amount_cents, cur)}</p>
-                      <p className="text-[12px] text-fg-muted">{dayTime(e.occurred_at, tz)}</p>
-                    </div>
-                  </div>
-                  {e.ride && <RideCell e={e} currency={cur} />}
-                  {(st || e.status !== "posted") && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {st && <span className={cn("text-[12px]", st.tone)}>{st.text}</span>}
-                      <EntryStatus e={e} />
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+          {groups.map((g) => {
+            const first = g.entries.slice(0, STATEMENT_FIRST_LINES);
+            const rest = g.entries.slice(STATEMENT_FIRST_LINES);
+            return (
+              <section key={g.due} aria-label={groupTitle(g, tz, now, cur)} className="border-t border-line">
+                <h3 className="bg-white/[0.02] px-4 py-2.5 text-[13px] font-medium text-fg sm:px-5">{groupTitle(g, tz, now, cur)}</h3>
+                <ul className="divide-y divide-line/70">
+                  {first.map((e) => (
+                    <EntryLine key={e.id} e={e} timeZone={tz} currency={cur} settlement={settlement} />
+                  ))}
+                </ul>
+                {rest.length > 0 && (
+                  <Disclosure
+                    title={rest.length === 1 ? "Afficher la dernière ligne" : `Afficher les ${rest.length} autres lignes`}
+                    className="border-t border-line"
+                    summaryClassName="px-4 text-[13px] text-fg-muted hover:text-fg sm:px-5"
+                  >
+                    <ul className="divide-y divide-line/70 border-t border-line">
+                      {rest.map((e) => (
+                        <EntryLine key={e.id} e={e} timeZone={tz} currency={cur} settlement={settlement} />
+                      ))}
+                    </ul>
+                  </Disclosure>
+                )}
+              </section>
+            );
+          })}
           {pending.length > 0 && (
-            <p className="border-t border-line px-5 py-3 text-[12.5px] text-amber">
+            <p className="border-t border-line px-4 py-3 text-[13px] text-amber sm:px-5">
               {pending.length === 1 ? "1 baisse" : `${pending.length} baisses`} en attente de Rydar (
               {price(
                 pending.reduce((n, e) => n + e.amount_cents, 0),
                 cur,
               )}
-              ) : non comptée{pending.length > 1 ? "s" : ""} dans les totaux.
+              ){NB}: non comptée{pending.length > 1 ? "s" : ""} dans les totaux.
             </p>
           )}
         </>
@@ -219,22 +216,18 @@ export function StatementEntries({ s }: { s: PlatformStatement }) {
   );
 }
 
+// ---------------------------------------------------------------------------- paiements du mois
 export function StatementPayments({ s }: { s: PlatformStatement }) {
   const cur = s.organization.currency || "EUR";
   const tz = s.organization.timezone || "Europe/Paris";
   return (
     <Card className="overflow-hidden">
       <CardHeader
-        title={`Paiements · ${s.payments.length}`}
+        title={`Paiements du mois · ${s.payments.length}`}
         description="Déclarés ou traités par Rydar ce mois-ci. Seuls les paiements confirmés (montant reçu) font baisser le solde."
       />
       {s.payments.length === 0 ? (
-        <EmptyState
-          icon={<ReceiptText />}
-          title="Aucun paiement ce mois-ci"
-          description="Vos déclarations « J'ai payé » et les paiements enregistrés par Rydar apparaîtront ici."
-          className="py-10"
-        />
+        <EmptyState size="compact" title="Aucun paiement ce mois-ci." description="Vos déclarations « J'ai payé » et les paiements enregistrés par Rydar apparaîtront ici." />
       ) : (
         <ul className="divide-y divide-line">
           {s.payments.map((p) => (
@@ -266,8 +259,8 @@ function PaymentLine({ p, currency, timeZone }: { p: PlatformPayment; currency: 
             .filter(Boolean)
             .join(" · ")}
         </p>
-        {p.note && <p className="text-[12px] text-fg-muted">«&nbsp;{p.note}&nbsp;»</p>}
-        {p.review_note && <p className={cn("text-[12px]", p.status === "rejected" ? "text-red" : "text-fg-muted")}>Rydar&nbsp;: «&nbsp;{p.review_note}&nbsp;»</p>}
+        {p.note && <p className="text-[12px] text-fg-muted">«{NB}{p.note}{NB}»</p>}
+        {p.review_note && <p className={cn("text-[12px]", p.status === "rejected" ? "text-red" : "text-fg-muted")}>Rydar{NB}: «{NB}{p.review_note}{NB}»</p>}
       </div>
       <div className="shrink-0 text-[12px] text-fg-muted sm:text-right">
         <p>{p.source === "admin" ? "Saisi par Rydar" : `Déclaré le ${dayTime(p.declared_at, timeZone)}`}</p>
@@ -276,11 +269,11 @@ function PaymentLine({ p, currency, timeZone }: { p: PlatformPayment; currency: 
             {p.status === "confirmed" ? "Confirmé" : "Traité"} le {dayTime(p.reviewed_at, timeZone)}
           </p>
         )}
-        {p.status === "cancelled" && <p>Retiré par la centrale</p>}
-        {p.status === "confirmed" && (
-          <p className={cn("mono font-semibold", toneText.green)}>{price(-(p.received_cents ?? p.amount_cents), currency)} sur le solde</p>
-        )}
+        {p.status === "cancelled" && <p>Déclaration retirée</p>}
+        {p.status === "confirmed" && <p className="mono font-semibold text-green">{price(-(p.received_cents ?? p.amount_cents), currency)} sur le solde</p>}
       </div>
     </li>
   );
 }
+
+export { capitalize as capitalizeMonth };

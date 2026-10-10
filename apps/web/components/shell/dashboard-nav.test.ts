@@ -77,7 +77,7 @@ describe("menu standard : « Au quotidien » et « Gestion »", () => {
             icon: "message",
             badge: 1,
             badgeTone: "amber",
-            badgeLabel: "1 message signalé à traiter · 2 messages non lus",
+            badgeLabel: "1 message à modérer · 2 messages non lus",
           },
           { href: "/dashboard/rides", label: "Courses", icon: "route", badge: 0, badgeTone: "red", badgeLabel: COURSES_LABEL(0) },
           {

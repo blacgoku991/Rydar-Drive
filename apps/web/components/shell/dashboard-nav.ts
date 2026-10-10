@@ -15,7 +15,7 @@ import type { NavSection } from "./sidebar";
 export type DashboardNavCounts = {
   /** Standard : courses sans chauffeur des 6 dernières heures et à venir (alerte rouge de « Courses ») */
   alerts?: number;
-  /** Messages non lus et messages signalés à traiter (standard) */
+  /** Messages non lus et messages à modérer (standard) */
   unread?: number;
   openReports?: number;
   /** Documents déposés à valider (standard, « Chauffeurs ») */
@@ -88,10 +88,10 @@ function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput
     declared ? plural(declared, "paiement à confirmer", "paiements à confirmer") : null,
     overdue ? plural(overdue, "commission en retard", "commissions en retard") : null,
   ].filter(Boolean).join(" · ");
-  // « Messages » : messages signalés à traiter (ambre) en priorité, sinon non-lus
+  // « Messages » : messages à modérer (ambre) en priorité, sinon non-lus
   const unreadLabel = plural(unread, "message non lu", "messages non lus");
   const messagesLabel = openReports
-    ? [plural(openReports, "message signalé à traiter", "messages signalés à traiter"), unread ? unreadLabel : null].filter(Boolean).join(" · ")
+    ? [plural(openReports, "message à modérer", "messages à modérer"), unread ? unreadLabel : null].filter(Boolean).join(" · ")
     : unreadLabel;
   return [
     {

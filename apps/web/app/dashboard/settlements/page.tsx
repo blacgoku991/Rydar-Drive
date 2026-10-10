@@ -10,6 +10,7 @@ import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths
 import { SETTLEMENT_MAX, SETTLEMENT_PAGE, compactOpen, sortOpen } from "@/components/settlements/settlement-list";
 import { SettlementsView } from "@/components/settlements/settlements-view";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
@@ -37,13 +38,13 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
   if (ctx.org.dispatch_model !== "centrale") {
     return (
       <>
-        <PageHeader eyebrow="Opérations" title="Encaissements" />
+        <PageHeader title="Encaissements" />
         <PageBody>
           <Card>
             <EmptyState
               icon={<HandCoins />}
               title="Réservé au mode centrale"
-              description={`Votre compte fonctionne en ${DISPATCH_MODEL_META.fleet.short.toLowerCase()} : vos chauffeurs font partie de votre société, il n'y a pas de commission à encaisser. Le mode « ${DISPATCH_MODEL_META.centrale.label} » est activé par l'équipe Rydar.`}
+              description={`Votre compte fonctionne en flotte${NB}: vos chauffeurs font partie de votre société, il n'y a pas de commission à encaisser. Le mode «${NB}${DISPATCH_MODEL_META.centrale.label}${NB}» est activé par l'équipe Rydar.`}
               action={
                 // Frais dus à Rydar par une flotte : page « Frais Rydar » (owner / admin)
                 isAdminRole(ctx.role) ? (
@@ -69,7 +70,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
 
   // « À traiter » (tous chauffeurs) sert aussi aux compteurs et messages WhatsApp : lu une fois (500 au plus), envoyé au
   // navigateur en version compacte ; seules les lignes affichées (100 par défaut, « Afficher plus ») sont complètes.
-  // Frais plateforme dus à Rydar : owner / admin seulement (un dispatcher ne voit pas la carte).
+  // Frais Rydar (frais plateforme dus à Rydar) : owner / admin seulement (un dispatcher ne voit pas la carte).
   // Règlements des chauffeurs PARTENAIRES (réseau partagé) : jamais listés ici (onglet « Réseau partagé ») ; un renvoi
   // les signale quand il en reste d'ouverts (même lecture que la mise en page : cache React, aucun appel de plus)
   const [overview, open, filtered, platform, network] = await Promise.all([
@@ -95,12 +96,11 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
   return (
     <>
       <PageHeader
-        eyebrow="Centrale"
         title="Encaissements"
         description={
           canManage
-            ? "Frais plateforme à régler à Rydar, commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez, relancez, réclamez en un clic."
-            : "Commissions à encaisser auprès des chauffeurs, parts à leur verser : confirmez les paiements, relancez les retardataires, réclamez en un clic."
+            ? "Ce que vos chauffeurs vous doivent, ce que vous leur devez, et vos frais Rydar."
+            : "Ce que vos chauffeurs vous doivent et ce que vous leur devez."
         }
         actions={
           canManage ? (
@@ -112,11 +112,11 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
           ) : undefined
         }
       />
-      <PageBody className="space-y-8">
+      <PageBody className="space-y-6">
         {platform?.error ? (
-          <Card id="frais-plateforme">
-            <EmptyState icon={<Landmark />} title="Frais plateforme indisponibles" description="La lecture de votre compte auprès de Rydar a échoué. Réessayez dans un instant." className="py-8" />
-          </Card>
+          <Callout id="frais-plateforme" tone="warning" icon={<Landmark />} title="Frais Rydar">
+            Lecture impossible, réessayez dans un instant.
+          </Callout>
         ) : platformData?.enabled ? (
           <OrgPlatformCard data={platformData} serverNow={serverNow} />
         ) : null}
@@ -126,18 +126,18 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
             prefetch={false}
             className="surface flex items-center gap-3 rounded-xl px-4 py-3 transition-colors hover:border-line-strong"
           >
-            <ArrowLeftRight className="size-4 shrink-0 text-violet" aria-hidden />
+            <ArrowLeftRight className="size-4 shrink-0 text-fg-muted" aria-hidden />
             <span className="min-w-0 flex-1 text-[13px] text-fg-muted">
               <span className="font-medium text-fg">Chauffeurs partenaires{NB}:</span> {partnerLine}
-              <span className="text-fg-subtle"> · à régler dans Réseau partagé</span>
+              <span> · à régler dans Réseau partagé</span>
             </span>
-            <ChevronRight className="size-4 shrink-0 text-fg-subtle" aria-hidden />
+            <ChevronRight className="size-4 shrink-0 text-fg-muted" aria-hidden />
           </Link>
         )}
         {failed ? (
-          <Card>
-            <EmptyState icon={<HandCoins />} title="Encaissements indisponibles" description="La lecture des règlements a échoué. Réessayez dans un instant." />
-          </Card>
+          <Callout tone="warning" icon={<HandCoins />} title="Règlements">
+            Lecture impossible, réessayez dans un instant.
+          </Callout>
         ) : (
           <SettlementsView
             key={`${filter}:${driver ?? ""}`}
@@ -152,7 +152,6 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
             timeZone={ctx.org.timezone || "Europe/Paris"}
             canManage={canManage}
             serverNow={serverNow}
-            platformMonthCents={platformData?.enabled ? platformData.account.month.fees_cents : null}
           />
         )}
       </PageBody>

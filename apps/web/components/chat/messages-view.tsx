@@ -64,7 +64,7 @@ export function MessagesView({
   activeDrivers: number;
   initialThread: ChatThreadKey | null;
   initialPage: Page | null;
-  /** Messages signalés en attente (null : modération indisponible sur ce serveur) */
+  /** Messages à modérer en attente (null : modération indisponible sur ce serveur) */
   initialModeration: ChatModerationQueue | null;
 }) {
   const sp = useSearchParams();
@@ -425,7 +425,7 @@ export function MessagesView({
       }
       // Signalement effacé avec le compte de son auteur (les autres restent) ou état dépassé : file relue
       refreshModeration();
-      if (res.code === "REPORT_NOT_FOUND") toast.info("Ce signalement n'existe plus : la liste a été mise à jour.");
+      if (res.code === "REPORT_NOT_FOUND") toast.info("Cette demande de modération n'existe plus : la liste a été mise à jour.");
       else toast.error(res.error);
       return;
     }
@@ -438,12 +438,12 @@ export function MessagesView({
         toast.info("Ce message a déjà été supprimé.");
       } else {
         dropQueued(id);
-        toast.info(res.status === "dismissed" ? "Ces signalements ont déjà été traités." : "Ce signalement n'est plus en attente.");
+        toast.info(res.status === "dismissed" ? "Ce message a déjà été modéré." : "Cette demande n'est plus en attente.");
       }
       return;
     }
     dropQueued(id);
-    toast.success("Signalement ignoré : le message reste visible.");
+    toast.success("Demande ignorée : le message reste visible.");
   };
 
   const sorted = useMemo(() => sortDriverThreads(drivers), [drivers]);
@@ -517,7 +517,7 @@ export function MessagesView({
               <>
                 <p className="relative text-[15px] font-semibold">Aucun message pour l&apos;instant</p>
                 <p className="relative mt-1.5 max-w-sm text-[13px] text-fg-muted">
-                  Écrivez à un chauffeur : il reçoit une notification sur son téléphone. Les annonces à toute la flotte
+                  Écrivez à un chauffeur : il reçoit une notification sur son téléphone. Les annonces à toute la flotte
                   s&apos;affichent dans l&apos;application chauffeur, sans notification.
                 </p>
               </>

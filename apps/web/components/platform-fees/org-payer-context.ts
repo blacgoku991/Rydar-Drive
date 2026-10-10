@@ -3,6 +3,7 @@ import "server-only";
 // MÊME choix que requireOrg / getOrgContext (pickMembership : cookie → dernière utilisée → première ACTIVE) : « J'ai
 // payé » et l'export du relevé visent la centrale affichée, jamais une autre centrale du compte. Le rôle owner / admin
 // est vérifié en base par chaque RPC (assert_platform_payer) et par les appelants avant tout appel.
+import { dateTimeFormat } from "@rydar/shared";
 import { cookies } from "next/headers";
 import { ORG_COOKIE, getSession, isAdminRole, pickMembership } from "@/lib/auth";
 
@@ -23,7 +24,7 @@ export function parseMonth(value: string | null | undefined): string | null {
 
 /** Mois courant (« YYYY-MM ») dans le fuseau de la centrale. */
 export function currentMonth(timeZone: string, now = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", timeZone }).formatToParts(now);
+  const parts = dateTimeFormat("en-CA", { year: "numeric", month: "2-digit", timeZone }).formatToParts(now);
   const v = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   return `${v("year")}-${v("month")}`;
 }

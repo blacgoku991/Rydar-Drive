@@ -1,12 +1,12 @@
 "use client";
-// Bandeau « Frais plateforme » (centrale) / « Frais Rydar » (flotte avec des frais Rydar) du tableau de bord (owner /
-// admin), lu via org_platform_status :
-//  • rouge : montant en retard (non couvert par une déclaration) ou création de courses suspendue — non fermable ;
+// Bandeau « Frais Rydar » du tableau de bord (owner / admin d'une centrale, ou d'une flotte avec des frais Rydar), lu via
+// org_platform_status. Montant : la même phrase que la carte et la fenêtre « J'ai payé » (pay-now.ts) :
+//  • rouge : à payer maintenant (échu non couvert par une déclaration) ou création de courses suspendue — non fermable ;
 //  • ambre : échéance dans moins de 3 jours ;
 //  • bleu discret : paiement déclaré qui couvre le retard (en attente de Rydar), hausse des frais par course annoncée
 //    (« À partir du JJ/MM/AAAA », 20260924006600), relance récente de Rydar.
 // Rafraîchi sur « platform.updated » et toutes les 5 min ; fermable pour la session (sauf rouge).
-import { dateTimeFormat, formatPrice, isoDayLabel, type OrgPlatformStatus, type PlatformAccount, type PlatformEvent } from "@rydar/shared";
+import { isoDayLabel, type OrgPlatformStatus, type PlatformAccount, type PlatformEvent } from "@rydar/shared";
 import { AlertTriangle, BellRing, CalendarClock, Clock3, Lock, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { ago, isRecentReminder, scheduledFeeChangeText } from "@/components/platform-fees/org-platform-format";
 import type { PlatformFeesPaths } from "@/components/platform-fees/org-platform-paths";
+import { payNowSummary } from "@/components/platform-fees/pay-now";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -23,64 +24,34 @@ type BannerState = { tone: Tone; key: string; icon: React.ReactNode; title: stri
 
 const SOON_MS = 3 * 24 * 3600_000;
 const HIDE_KEY = "rydar.platform-banner:";
+const days = (n: number) => `${n} jour${n > 1 ? "s" : ""}`;
 
-function dayMonth(iso: string, timeZone: string) {
-  return dateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone }).format(new Date(iso));
-}
-
-/** État du bandeau (null : rien à afficher). `label` : « Frais plateforme » (centrale) ou « Frais Rydar » (flotte, comme
- *  son menu). */
-export function platformBanner(a: PlatformAccount, now: number, timeZone: string, label = "Frais plateforme"): BannerState | null {
-  const cur = a.currency || "EUR";
-  const noun = label.charAt(0).toLowerCase() + label.slice(1);
+/** État du bandeau (null : rien à afficher). `label` : nom des frais (« Frais Rydar », org-platform-paths). */
+export function platformBanner(a: PlatformAccount, now: number, timeZone: string, label = "Frais Rydar"): BannerState | null {
   const reminded = isRecentReminder(a, now);
   const reminder = reminded ? ` · relance de Rydar ${ago(a.reminded_at, now)}` : "";
-  const uncovered = a.due_cents - a.declared_cents;
-  const days = (n: number) => `${n} jour${n > 1 ? "s" : ""}`;
+  const pay = payNowSummary(a, now, timeZone);
 
   if (a.blocked) {
-    return {
-      tone: "red",
-      key: `blocked:${a.due_cents}`,
-      icon: <Lock />,
-      title: "Création de courses suspendue par Rydar",
-      detail: `${formatPrice(a.due_cents, cur)} de ${noun} en retard depuis ${days(a.days_overdue)}.`,
-    };
+    return { tone: "red", key: `blocked:${a.due_cents}`, icon: <Lock />, title: "Création de courses suspendue par Rydar", detail: `${pay.text}.` };
   }
-  if (a.due_cents > 0 && a.overdue_since && uncovered > 0) {
+  if (pay.kind === "now") {
     const left = a.block_after_days != null ? a.block_after_days - a.days_overdue : null;
     return {
       tone: "red",
       key: `overdue:${a.due_cents}`,
       icon: <AlertTriangle />,
-      title: `${label} en retard`,
-      detail:
-        `${formatPrice(uncovered, cur)} à régler à Rydar${a.days_overdue > 0 ? ` depuis ${days(a.days_overdue)}` : ""}` +
-        (left != null && left > 0 ? ` · création de courses suspendue dans ${days(left)} sans règlement` : "") +
-        reminder +
-        ".",
+      title: label,
+      detail: pay.text + (left != null && left > 0 ? ` · création de courses suspendue dans ${days(left)} sans règlement` : "") + reminder + ".",
     };
   }
-  if (a.due_cents > 0 && a.overdue_since) {
+  if (a.due_cents > 0 && a.overdue_since && pay.declared) {
     // Retard entièrement couvert par un paiement déclaré : en attente de la confirmation de Rydar
-    return {
-      tone: "blue",
-      key: `declared:${a.declared_cents}`,
-      icon: <Clock3 />,
-      title: "Paiement signalé à Rydar",
-      detail: `${formatPrice(a.declared_cents, cur)} en attente de confirmation.`,
-    };
+    return { tone: "blue", key: `declared:${a.declared_cents}`, icon: <Clock3 />, title: "Paiement signalé à Rydar", detail: `${pay.declared}.` };
   }
   const soon = a.next_due_at ? Date.parse(a.next_due_at) - now : Infinity;
-  const toPay = a.next_due_cents - a.declared_cents;
-  if (a.next_due_at && soon >= 0 && soon <= SOON_MS && toPay > 0) {
-    return {
-      tone: "amber",
-      key: `soon:${a.next_due_at}:${toPay}`,
-      icon: <Clock3 />,
-      title: `${label} à régler`,
-      detail: `${formatPrice(toPay, cur)} à régler à Rydar au plus tard le ${dayMonth(a.next_due_at, timeZone)}${reminder}.`,
-    };
+  if (pay.kind === "before" && soon >= 0 && soon <= SOON_MS) {
+    return { tone: "amber", key: `soon:${a.next_due_at}:${pay.amountCents}`, icon: <Clock3 />, title: label, detail: `${pay.text}${reminder}.` };
   }
   // Hausse des frais par course annoncée, pas encore appliquée : annonce (fermable pour la session)
   const upcoming = scheduledFeeChangeText(a, a.dispatch_model, timeZone);
@@ -99,8 +70,8 @@ export function platformBanner(a: PlatformAccount, now: number, timeZone: string
       tone: "blue",
       key: `reminded:${a.reminded_at}`,
       icon: <BellRing />,
-      title: `Rydar vous relance`,
-      detail: a.reminder_note ? `« ${a.reminder_note} »` : `${formatPrice(a.balance_cents, cur)} de ${noun} à régler.`,
+      title: "Rydar vous relance",
+      detail: a.reminder_note ? `«\u00a0${a.reminder_note}\u00a0»` : `${pay.kind === "nothing" ? pay.balance : pay.text}.`,
     };
   }
   return null;
@@ -122,7 +93,7 @@ export function OrgPlatformBanner({
   orgId: string;
   timeZone: string;
   enabled: boolean;
-  /** Où régler : « Encaissements » (centrale) ou « Frais Rydar » (flotte), et nom des frais */
+  /** Où régler : carte d'« Encaissements » (centrale) ou « Frais Rydar » (flotte), et nom des frais */
   paths: Pick<PlatformFeesPaths, "account" | "page" | "label">;
   /** false : toujours dans le flux (un bandeau de conditions à accepter est affiché juste en dessous : jamais recouvert) */
   floating?: boolean;
@@ -169,7 +140,7 @@ export function OrgPlatformBanner({
   if (!state) return null;
   const dismissible = state.tone !== "red";
   if (dismissible && hidden === state.key) return null;
-  // La carte « Frais plateforme » est déjà sur la page (Encaissements / Frais Rydar) ; Messages occupe toute la hauteur
+  // La carte « Frais Rydar » est déjà sur la page (Encaissements / Frais Rydar) ; Messages occupe toute la hauteur
   // de l'écran (h-dvh) : un bandeau dans le flux pousserait la zone de saisie hors de l'écran
   if (pathname === paths.page || pathname.startsWith("/dashboard/messages")) return null;
   const floating = floatingAllowed && pathname === "/dashboard";

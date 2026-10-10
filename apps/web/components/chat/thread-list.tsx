@@ -5,6 +5,7 @@ import { PRESENCE_COLOR } from "@/components/map/map-theme";
 import { Avatar } from "@/components/ui/misc";
 import { cn } from "@/lib/utils";
 import { FLEET_THREAD, firstName, whenShort, type DriverThreadSummary } from "./chat-utils";
+import { moderationCountLabel } from "./moderation";
 
 /** Extrait du dernier message : « Vous : … », « Karim : … », « 🚓 Police signalée par Karim ». */
 export function messagePreview(m: ChatMessage | null, meId: string, withAuthor: boolean) {
@@ -14,13 +15,13 @@ export function messagePreview(m: ChatMessage | null, meId: string, withAuthor: 
     return `${FLEET_REPORT_META[type].emoji} ${fleetReportTitle(type, m.author_user_id === meId ? "vous" : firstName(m.author_name))}`;
   }
   const who = m.author_type === "user" ? (m.author_user_id === meId ? "Vous" : firstName(m.author_name)) : withAuthor ? firstName(m.author_name) : null;
-  return who ? `${who} : ${m.body}` : m.body;
+  return who ? `${who} : ${m.body}` : m.body;
 }
 
 function UnreadBadge({ n }: { n: number }) {
   if (!n) return null;
   return (
-    <span className="grid h-[19px] min-w-[19px] place-items-center rounded-full bg-brand px-1.5 text-[11px] font-semibold tabular-nums text-brand-fg" aria-label={`${n} non lu${n > 1 ? "s" : ""}`}>
+    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1.5 text-[12px] font-semibold tabular-nums text-brand-fg" aria-label={`${n} non lu${n > 1 ? "s" : ""}`}>
       {n > 99 ? "99+" : n}
     </span>
   );
@@ -49,7 +50,7 @@ export function ThreadList({
   timeZone: string;
   now: number;
   unreadTotal: number;
-  /** Messages du fil flotte signalés par les chauffeurs, en attente de décision */
+  /** Messages du fil flotte à modérer (retrait demandé par des chauffeurs), en attente de décision */
   openReports?: number;
 }) {
   const term = query.trim().toLowerCase();
@@ -89,8 +90,8 @@ export function ThreadList({
           <span className="min-w-0 flex-1">
             <span className="flex items-baseline gap-2">
               <span className={cn("truncate text-[13.5px]", t.unread ? "font-semibold text-fg" : "font-medium text-fg")}>{name}</span>
-              {d.status !== "active" && <span className="shrink-0 text-[11px] text-fg-subtle">désactivé</span>}
-              <span className={cn("ml-auto shrink-0 text-[11px] tabular-nums", t.unread ? "font-medium text-brand" : "text-fg-subtle")}>
+              {d.status !== "active" && <span className="shrink-0 text-[12px] text-fg-subtle">désactivé</span>}
+              <span className={cn("ml-auto shrink-0 text-[12px] tabular-nums", t.unread ? "font-medium text-brand" : "text-fg-subtle")}>
                 {m ? whenShort(m.created_at, timeZone, now) : ""}
               </span>
             </span>
@@ -101,7 +102,7 @@ export function ThreadList({
               {t.unread ? (
                 <UnreadBadge n={t.unread} />
               ) : seen ? (
-                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-brand/80" title="Lu par le chauffeur">
+                <span className="flex shrink-0 items-center gap-0.5 text-[12px] text-brand" title="Lu par le chauffeur">
                   <CheckCheck className="size-3.5" /> Vu
                 </span>
               ) : null}
@@ -166,7 +167,7 @@ export function ThreadList({
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2">
                 <span className={cn("truncate text-[13.5px]", fleet.unread ? "font-semibold" : "font-medium")}>Toute la flotte</span>
-                <span className={cn("ml-auto shrink-0 text-[11px] tabular-nums", fleet.unread ? "font-medium text-brand" : "text-fg-subtle")}>
+                <span className={cn("ml-auto shrink-0 text-[12px] tabular-nums", fleet.unread ? "font-medium text-brand" : "text-fg-subtle")}>
                   {fleet.last_message ? whenShort(fleet.last_message.created_at, timeZone, now) : ""}
                 </span>
               </span>
@@ -179,18 +180,18 @@ export function ThreadList({
               {(fleet.active_reports > 0 || openReports > 0) && (
                 <span className="mt-1.5 flex flex-wrap gap-1.5">
                   {fleet.active_reports > 0 && (
-                    <span className="inline-flex h-5 items-center gap-1.5 rounded-full bg-amber/10 px-2 text-[11px] font-medium text-amber">
-                      <span className="size-1.5 animate-breathe rounded-full bg-amber" />
+                    <span className="inline-flex h-5 items-center gap-1.5 rounded-full bg-amber/10 px-2 text-[12px] font-medium text-amber">
+                      <span aria-hidden className="size-1.5 rounded-full bg-amber" />
                       {fleet.active_reports} signalement{fleet.active_reports > 1 ? "s" : ""} actif{fleet.active_reports > 1 ? "s" : ""}
                     </span>
                   )}
                   {openReports > 0 && (
                     <span
-                      className="inline-flex h-5 items-center gap-1.5 rounded-full bg-red/10 px-2 text-[11px] font-medium text-red"
-                      title="Messages signalés par vos chauffeurs : à supprimer ou à ignorer"
+                      className="inline-flex h-5 items-center gap-1.5 rounded-full bg-red/10 px-2 text-[12px] font-medium text-red"
+                      title="Vos chauffeurs demandent le retrait de ces messages : à supprimer ou à ignorer"
                     >
                       <Flag className="size-3" aria-hidden />
-                      {openReports} message{openReports > 1 ? "s" : ""} signalé{openReports > 1 ? "s" : ""}
+                      {moderationCountLabel(openReports)}
                     </span>
                   )}
                 </span>
@@ -201,13 +202,13 @@ export function ThreadList({
 
         {talking.length > 0 && (
           <>
-            <p className="px-2.5 pb-1 pt-3 text-[11.5px] text-fg-subtle">Conversations</p>
+            <p className="px-2.5 pb-1 pt-3 text-[12px] text-fg-subtle">Conversations</p>
             <ul className="space-y-0.5">{talking.map(row)}</ul>
           </>
         )}
         {others.length > 0 && (
           <>
-            <p className="px-2.5 pb-1 pt-4 text-[11.5px] text-fg-subtle">{talking.length ? "Autres chauffeurs" : "Chauffeurs"}</p>
+            <p className="px-2.5 pb-1 pt-4 text-[12px] text-fg-subtle">{talking.length ? "Autres chauffeurs" : "Chauffeurs"}</p>
             <ul className="space-y-0.5">{others.map(row)}</ul>
           </>
         )}

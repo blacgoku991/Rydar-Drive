@@ -8,7 +8,8 @@ describe("platformFeesPaths : où régler les frais Rydar selon le modèle", () 
       page: "/dashboard/settlements",
       statement: "/dashboard/settlements/rydar",
       back: "Encaissements",
-      label: "Frais plateforme",
+      // Même nom pour les deux modèles (lexique de la refonte : « Frais Rydar » dans les titres, cartes et bandeaux)
+      label: "Frais Rydar",
     });
     expect(platformFeesPaths("fleet")).toEqual({
       account: "/dashboard/rydar",

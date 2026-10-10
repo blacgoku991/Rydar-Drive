@@ -111,7 +111,7 @@ export function Composer({
           )}
         </button>
       </form>
-      <div className="mt-1.5 flex min-h-[18px] items-center justify-between gap-3 px-1 text-[11.5px]">
+      <div className="mt-1.5 flex min-h-[18px] items-center justify-between gap-3 px-1 text-[12px]">
         {error ? (
           <span className="flex items-center gap-1.5 text-red" role="alert">
             <CircleAlert className="size-3.5 shrink-0" /> {error}

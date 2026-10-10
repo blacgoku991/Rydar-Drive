@@ -1,10 +1,19 @@
 // Frais plateforme (côté centrale ou flotte) : textes et formats purs (utilisables côté serveur comme côté client).
 import {
-  PLATFORM_PAYMENT_METHOD_META, formatDate, formatPrice, isoDayLabel, platformFeeScopeText, type DispatchModel, type PlatformAccount, type PlatformPaymentMethod,
-  type PlatformStatement,
+  PLATFORM_PAYMENT_METHOD_META, dateTimeFormat, formatDate, formatPrice, isoDayLabel, platformFeeScopeText, type DispatchModel, type PlatformAccount,
+  type PlatformPaymentMethod, type PlatformStatement,
 } from "@rydar/shared";
 
-export const platformMethodLabel = (m: string | null | undefined) => PLATFORM_PAYMENT_METHOD_META[(m ?? "other") as PlatformPaymentMethod]?.label ?? "Autre";
+/**
+ * Moyens de paiement à Rydar : un ordre et des libellés uniques sur le web (Virement, Lien de paiement, Espèces, Carte,
+ * Autre moyen), comme les moyens des chauffeurs (settlement-ui) — surcharge web, la table partagée ne change pas.
+ */
+export const PLATFORM_METHOD_ORDER: readonly PlatformPaymentMethod[] = ["transfer", "link", "cash", "card", "other"];
+const PLATFORM_METHOD_LABEL: Partial<Record<PlatformPaymentMethod, string>> = { other: "Autre moyen" };
+export const platformMethodLabel = (m: string | null | undefined) => {
+  const key = (m ?? "other") as PlatformPaymentMethod;
+  return PLATFORM_METHOD_LABEL[key] ?? PLATFORM_PAYMENT_METHOD_META[key]?.label ?? "Autre moyen";
+};
 
 /** Montant signé lisible : « +5 € », « −2 € » (signe moins typographique). */
 export function signedPrice(cents: number, currency = "EUR") {
@@ -82,14 +91,13 @@ export function cycleText(a: Pick<PlatformAccount, "cycle" | "payment_days">) {
     : "Facturation mensuelle · à régler avant la fin du mois";
 }
 
-/** « 26 sept. », « 26 sept. 2025 » (autre année). */
+/** « 26 sept. », « 26 sept. 2025 » (autre année). Formateurs mémorisés (dateTimeFormat). */
 export function shortDay(iso: string | null | undefined, timeZone: string, now = Date.now()) {
   if (!iso) return "—";
   const d = new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso);
-  const sameYear =
-    new Intl.DateTimeFormat("fr-FR", { year: "numeric", timeZone }).format(d) ===
-    new Intl.DateTimeFormat("fr-FR", { year: "numeric", timeZone }).format(new Date(now));
-  return new Intl.DateTimeFormat("fr-FR", {
+  const year = dateTimeFormat("fr-FR", { year: "numeric", timeZone });
+  const sameYear = year.format(d) === year.format(new Date(now));
+  return dateTimeFormat("fr-FR", {
     day: "numeric",
     month: "short",
     year: sameYear ? undefined : "numeric",
@@ -100,7 +108,7 @@ export function shortDay(iso: string | null | undefined, timeZone: string, now =
 /** « 26 sept. 14:32 » */
 export function dayTime(iso: string | null | undefined, timeZone: string) {
   if (!iso) return "—";
-  return new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso));
+  return dateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso));
 }
 
 /** « il y a 3 h », « il y a 2 j » */
@@ -116,7 +124,7 @@ export function ago(iso: string | null | undefined, now: number) {
 
 /** Date du jour (« YYYY-MM-DD ») dans le fuseau de la centrale. */
 export function todayIn(timeZone: string, now = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone }).format(now);
+  return dateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone }).format(now);
 }
 
 /** Relance récente de Rydar (7 jours). */
@@ -163,7 +171,7 @@ export function rideSettlementText(
   if (ride.fleet_fee && !ride.settlement_status) return { text: "Course de la flotte", tone: "neutral" as const };
   const s = ride.settlement_status ?? "";
   if (ride.payment_method === "cash" || ride.payment_method === "card") {
-    return COMMISSION_STATUS[s] ?? { text: "Commission : aucun règlement", tone: "neutral" as const };
+    return COMMISSION_STATUS[s] ?? { text: "Commission : aucun règlement", tone: "neutral" as const };
   }
   return PAYOUT_STATUS[s] ?? { text: "Payée à la centrale", tone: "green" as const };
 }

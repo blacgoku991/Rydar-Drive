@@ -18,11 +18,13 @@ import { fullName } from "@/components/network/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { Avatar, EmptyState } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
+
+const NB = "\u00a0";
 
 export type Candidate = {
   id: string;
@@ -116,7 +118,7 @@ export function ApplicationActions({
     start(() => runAction(async () => {
       const res = await rejectApplication(candidate.id, reason);
       if (!res.ok) return void toast.error(res.error);
-      toast.success(`Candidature de ${name} refusée`, { description: reason ? `Motif transmis : ${reason}` : undefined });
+      toast.success(`Candidature de ${name} refusée`, { description: reason ? `Motif transmis : ${reason}` : undefined });
       setDialog(null);
       router.refresh();
     }));
@@ -131,7 +133,7 @@ export function ApplicationActions({
       </Button>
 
       <Dialog open={dialog === "approve"} onOpenChange={(o) => !o && !pending && setDialog(null)}>
-        <DialogContent title={`Valider ${name} ?`} description="Son compte devient actif : il peut passer en ligne et recevoir vos courses. Il est prévenu par notification.">
+        <DialogContent title={`Valider ${name} ?`} description="Son compte devient actif : il peut passer en ligne et recevoir vos courses. Il est prévenu par notification.">
           {fleet ? (
             <p className="text-[13px] leading-relaxed text-fg-muted">
               Il rejoint votre flotte comme un chauffeur que vous créez vous-même. Vous pourrez le suspendre ou le désactiver depuis sa fiche.
@@ -151,32 +153,31 @@ export function ApplicationActions({
                     <span className={cn("text-[13.5px] font-semibold", trust === t && "text-brand")}>{t === "new" ? "Nouveau (courses plafonnées)" : "Confirmé"}</span>
                     {trust === t && <Check className="size-4 shrink-0 text-brand" />}
                   </span>
-                  <span className="mt-1 block text-[12px] leading-snug text-fg-subtle">{t === "new" ? newHelp : TRUST_LEVEL_META.trusted.description}</span>
+                  <span className="mt-1 block text-[12px] leading-snug text-fg-muted">{t === "new" ? newHelp : TRUST_LEVEL_META.trusted.description}</span>
                 </button>
               ))}
             </div>
           )}
           {candidate.debt && (
-            <p className="mt-4 rounded-lg border border-red/25 bg-red/[0.07] px-3 py-2.5 text-[12.5px] text-red">
+            <p className="mt-4 rounded-lg border border-red/25 bg-red/[0.07] px-3 py-2.5 text-[13px] text-red">
               {debtText(candidate.debt)} Montant à la date de sa candidature : vérifiez vos encaissements avant de valider.
             </p>
           )}
           {missing.length > 0 && (
-            <p className="mt-4 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">
+            <p className="mt-4 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[13px] text-amber">
               Documents manquants : {missing.map((t) => DOCUMENT_TYPE_LABELS[t]).join(", ")}. Il pourra les déposer depuis l&apos;application.
             </p>
           )}
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" disabled={pending} onClick={() => setDialog(null)}>Annuler</Button>
+          <DialogFooter backDisabled={pending}>
             <Button variant="primary" loading={pending} onClick={doApprove}>
               <Check /> Valider la candidature
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={dialog === "reject"} onOpenChange={(o) => !o && !pending && setDialog(null)}>
-        <DialogContent title={`Refuser ${name} ?`} description="Le candidat voit votre motif dans l'application. Pour écarter un fraudeur, bannissez-le depuis sa fiche.">
+        <DialogContent title={`Refuser ${name} ?`} description="Le candidat voit votre motif dans l'application. Pour écarter un fraudeur, bannissez-le depuis sa fiche.">
           <div className="mb-3 flex flex-wrap gap-1.5">
             {rejectReasons(model).map((r) => (
               <button
@@ -192,12 +193,11 @@ export function ApplicationActions({
           <Field label="Motif" optional>
             <Textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Précisez si besoin…" />
           </Field>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" disabled={pending} onClick={() => setDialog(null)}>Annuler</Button>
+          <DialogFooter backDisabled={pending}>
             <Button variant="danger" loading={pending} onClick={doReject}>
               <X /> Refuser la candidature
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
@@ -230,13 +230,14 @@ export function ApplicationsCard({
         title="Candidatures"
         icon={<Inbox />}
         description="Chauffeurs inscrits par votre lien, en attente de validation. Ils peuvent déjà déposer leurs documents dans l'application."
-        action={candidates.length ? <Badge tone="amber" pulse>{candidates.length} en attente</Badge> : undefined}
+        action={candidates.length ? <Badge tone="amber">{candidates.length} en attente</Badge> : undefined}
       />
       {!candidates.length ? (
         <EmptyState
+          size="compact"
           icon={<Inbox />}
-          title="Aucune candidature en attente"
-          description={joinActive ? "Partagez votre lien d'inscription dans vos groupes WhatsApp / Telegram : les candidatures arrivent ici en temps réel." : "Activez votre lien d'inscription pour recevoir des candidatures."}
+          title="Aucune candidature en attente."
+          description={joinActive ? "Partagez votre lien d'inscription dans vos groupes WhatsApp / Telegram : les candidatures arrivent ici en temps réel." : "Activez votre lien d'inscription pour recevoir des candidatures."}
         />
       ) : (
         <ul className="divide-y divide-line">
@@ -250,25 +251,25 @@ export function ApplicationsCard({
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <p className="text-[14px] font-semibold">{fullName(c)}</p>
-                      <span className="num text-[11.5px] text-fg-subtle">#{c.number}</span>
+                      <span className="num text-[12px] text-fg-muted">#{c.number}</span>
                       {c.debt && (
                         <Badge tone="red" className="self-center">
                           Commissions dues : <span className="num">{formatPrice(c.debt.owedCents)}</span>
                         </Badge>
                       )}
                       {c.applied_at && (
-                        <span className="text-[12px] text-fg-subtle" title={formatDate(c.applied_at)} suppressHydrationWarning>
+                        <span className="text-[12px] text-fg-muted" title={formatDate(c.applied_at)} suppressHydrationWarning>
                           · candidature {formatRelative(c.applied_at)}
                         </span>
                       )}
                     </div>
-                    <p className="text-[12.5px] text-fg-muted [overflow-wrap:anywhere]">
+                    <p className="text-[13px] text-fg-muted [overflow-wrap:anywhere]">
                       <a href={`tel:${c.phone.replace(/\s/g, "")}`} className="num hover:text-fg">{formatPhone(c.phone)}</a>
                       {c.email && <> · <a href={`mailto:${c.email}`} className="hover:text-fg">{c.email}</a></>}
                     </p>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-fg-muted">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-fg-muted">
                       <span className="flex items-start gap-1.5">
-                        <CarFront className="mt-[3px] size-3.5 shrink-0 text-fg-subtle" />
+                        <CarFront aria-hidden className="mt-[3px] size-3.5 shrink-0 text-fg-muted" />
                         <span className="min-w-0">
                           {c.vehicle ? (
                             <>
@@ -282,25 +283,25 @@ export function ApplicationsCard({
                         </span>
                       </span>
                       <span className="flex items-start gap-1.5">
-                        <IdCard className="mt-[3px] size-3.5 shrink-0 text-fg-subtle" />
+                        <IdCard aria-hidden className="mt-[3px] size-3.5 shrink-0 text-fg-muted" />
                         <span className="min-w-0">
                           {c.vtc_card_number ? <>Carte VTC <span className="num text-fg">{c.vtc_card_number}</span></> : <span className="text-amber">Carte VTC non renseignée</span>}
                         </span>
                       </span>
                     </div>
                     {c.debt && (
-                      <p className="rounded-lg border border-red/25 bg-red/[0.06] px-3 py-2 text-[12.5px] leading-relaxed text-red">
+                      <p className="rounded-lg border border-red/25 bg-red/[0.06] px-3 py-2 text-[13px] leading-relaxed text-red">
                         {debtText(c.debt)} Validation manuelle obligatoire.
                       </p>
                     )}
                     {c.application_message && (
-                      <p className="rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-[12.5px] leading-relaxed text-fg">« {c.application_message} »</p>
+                      <p className="rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-[13px] leading-relaxed text-fg">«{NB}{c.application_message}{NB}»</p>
                     )}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 sm:pl-[54px]">
                   <Button variant="secondary" size="sm" onClick={() => setDocsFor(c.id)}>
-                    <FileText /> Documents <span className="num text-fg-subtle">{provided}/{REQUIRED.length}</span>
+                    <FileText /> Documents <span className="num text-fg-muted">{provided}/{REQUIRED.length}</span>
                     <DocDots c={c} />
                     {toReview > 0 && <Badge tone="blue" dot={false} className="h-[18px] px-1.5">{toReview} à valider</Badge>}
                   </Button>
@@ -318,13 +319,10 @@ export function ApplicationsCard({
           })}
         </ul>
       )}
-      {!canManage && candidates.length > 0 && (
-        <p className="border-t border-line px-5 py-3 text-[12px] text-fg-subtle">Validation et refus réservés aux administrateurs (propriétaire ou admin).</p>
-      )}
 
       <Dialog open={!!docsCandidate} onOpenChange={(o) => !o && setDocsFor(null)}>
         {docsCandidate && (
-          <DialogContent size="lg" title={`Documents de ${fullName(docsCandidate)}`} description="Déposés depuis l'application Rydar Drive : validez-les avant ou après la candidature.">
+          <DialogContent size="lg" title={`Documents de ${fullName(docsCandidate)}`} description="Déposés depuis l'application Rydar Drive : validez-les avant ou après la candidature.">
             <DriverDocuments
               driverId={docsCandidate.id}
               firstName={docsCandidate.first_name}

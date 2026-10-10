@@ -1,12 +1,12 @@
 import {
-  BAN_CATEGORY_META, DISPATCH_MODEL_META, formatDate, formatRelative,
+  BAN_CATEGORY_META, formatDate, formatRelative,
   type BanCategory, type DispatchModel, type DocumentType, type FraudReport, type IdentityKind, type VehicleCategory,
 } from "@rydar/shared";
-import { BadgeCheck, Ban, Flag, HandCoins, History, ShieldBan, UserPlus, Users } from "lucide-react";
+import { Flag, History, ShieldBan } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DOCUMENT_COLUMNS, buildDocumentView, fileKind, type DocumentRow, type DocumentView } from "@/components/drivers/documents";
-import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
+import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { ApplicationsCard, type Candidate, type CandidateDebt } from "@/components/network/applications";
 import { BannedDriversCard, type BannedDriverRow } from "@/components/network/banned-drivers";
 import { joinNavLabel } from "@/components/network/join-copy";
@@ -15,13 +15,17 @@ import { REPORT_STATUS_FOR_ORG } from "@/components/network/labels";
 import { NetworkLive } from "@/components/network/network-live";
 import { ReconsiderButton } from "@/components/network/reconsider-button";
 import { Badge } from "@/components/ui/badge";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardHeader } from "@/components/ui/card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { privateFleetPage } from "@/lib/private-fleet";
+import { plural } from "@/lib/wording";
 import { networkMenuShown } from "@/components/network-share/access";
 import { networkAccess } from "@/lib/shared-network";
 
 export const dynamic = "force-dynamic";
+
+const NB = "\u00a0";
 
 export async function generateMetadata(): Promise<Metadata> {
   const ctx = await requireOrg();
@@ -51,7 +55,9 @@ async function signedUrl(supabase: Ctx["supabase"], path: string): Promise<strin
 /**
  * Même page pour les deux modèles (20260924006300) : « Réseau » en centrale (recrutement de chauffeurs indépendants,
  * niveaux de confiance), « Inscriptions » en flotte (lien d'inscription, candidatures, bannissements ; aucune
- * commission ni niveau de confiance).
+ * commission ni niveau de confiance). Ordre (docs/REFONTE-PANELS.md, R9) : les candidatures d'abord quand il y en a
+ * (pleine largeur), puis le lien, puis « Sécurité » (bannis, signalements envoyés à Rydar, dernières décisions) ; les
+ * blocs vides sont masqués.
  */
 export default async function NetworkPage() {
   const ctx = await requireOrg();
@@ -167,93 +173,105 @@ export default async function NetworkPage() {
   const decisions = (decisionsRes.data ?? []) as { id: string; number: number; first_name: string; last_name: string; application_status: string; application_reviewed_at: string; application_note: string | null; banned_at: string | null }[];
   const settings = settingsRes.data as { new_driver_max_price_cents: number | null; trust_after_rides: number | null } | null;
 
+  const activeCount = activeRes.count ?? 0;
+  const newCount = newRes.count ?? 0;
+  const summary = [
+    plural(activeCount, "chauffeur actif", "chauffeurs actifs"),
+    candidates.length ? plural(candidates.length, "candidature en attente", "candidatures en attente") : "aucune candidature en attente",
+    centrale && newCount ? `${plural(newCount, "nouveau", "nouveaux")} (courses plafonnées)` : null,
+    banned.length ? plural(banned.length, "banni", "bannis") : null,
+  ].filter(Boolean);
+
+  const applications = (
+    <ApplicationsCard
+      candidates={candidates}
+      canManage={canManage}
+      canReviewDocuments={["owner", "admin", "dispatcher"].includes(ctx.role)}
+      newDriverMaxPriceCents={settings?.new_driver_max_price_cents ?? null}
+      trustAfterRides={settings?.trust_after_rides ?? null}
+      joinActive={!!org?.join_enabled}
+      model={model}
+    />
+  );
+  const link = (
+    <JoinLinkCard
+      orgName={org?.name ?? ctx.org.name}
+      initial={{ join_code: org?.join_code ?? null, join_enabled: !!org?.join_enabled, join_auto_approve: !!org?.join_auto_approve }}
+      canManage={canManage}
+      model={model}
+    />
+  );
+
   return (
     <>
       <NetworkLive model={model} />
       <PageHeader
-        eyebrow={DISPATCH_MODEL_META[model].label}
         title={joinNavLabel(model, networkMenuShown(await networkAccess(ctx.supabase, ctx.org.id)))}
         description={
           centrale
-            ? "Recrutez des chauffeurs indépendants avec votre lien, validez les candidatures et écartez définitivement les fraudeurs."
-            : "Partagez votre lien d'inscription\u00a0: les chauffeurs créent leur compte, ajoutent leur véhicule et leurs documents, puis rejoignent votre flotte dès votre validation."
+            ? "Recrutez avec votre lien, validez les candidatures et écartez définitivement les fraudeurs."
+            : "Partagez votre lien d'inscription, validez les candidatures et écartez définitivement les fraudeurs."
         }
       />
       <PageBody className="space-y-6">
-        <div className={centrale ? "grid grid-cols-2 gap-3 lg:grid-cols-4" : "grid grid-cols-2 gap-3 sm:grid-cols-3"}>
-          <StatCard label="Chauffeurs actifs" value={activeRes.count ?? 0} icon={<Users />} />
-          <StatCard label="Candidatures" value={candidates.length} sub="en attente de validation" tone={candidates.length ? "amber" : undefined} icon={<UserPlus />} />
-          {centrale && <StatCard label="Nouveaux" value={newRes.count ?? 0} sub="courses plafonnées" icon={<BadgeCheck />} />}
-          <StatCard label="Bannis" value={banned.length} sub="définitivement" tone={banned.length ? "red" : undefined} icon={<Ban />} />
-        </div>
+        {!canManage && (
+          <Callout tone="neutral" icon={<ShieldBan />}>
+            Consultation seule{NB}: validations, refus, bannissements et réglages du lien sont réservés au propriétaire et aux administrateurs.
+          </Callout>
+        )}
+        <p className="text-[13px] text-fg-muted">{summary.join(" · ")}.</p>
 
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-          <JoinLinkCard
-            orgName={org?.name ?? ctx.org.name}
-            initial={{ join_code: org?.join_code ?? null, join_enabled: !!org?.join_enabled, join_auto_approve: !!org?.join_auto_approve }}
-            canManage={canManage}
-            model={model}
-          />
-          <ApplicationsCard
-            candidates={candidates}
-            canManage={canManage}
-            canReviewDocuments={["owner", "admin", "dispatcher"].includes(ctx.role)}
-            newDriverMaxPriceCents={settings?.new_driver_max_price_cents ?? null}
-            trustAfterRides={settings?.trust_after_rides ?? null}
-            joinActive={!!org?.join_enabled}
-            model={model}
-          />
-        </div>
+        {/* Candidatures d'abord (pleine largeur) quand il y en a ; sinon le lien d'inscription (ou sa création) */}
+        {candidates.length > 0 && applications}
 
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
-          <BannedDriversCard drivers={banned} canManage={canManage} timeZone={tz} />
-          <div className="space-y-6">
-            {canManage && (
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          {link}
+
+          <section aria-labelledby="securite-title" className="space-y-4">
+            <h2 id="securite-title" className="text-[17px] font-semibold tracking-tight">
+              Sécurité
+            </h2>
+            <BannedDriversCard drivers={banned} canManage={canManage} timeZone={tz} model={model} />
+            {canManage && reports.length > 0 && (
               <Card className="overflow-hidden">
                 <CardHeader
                   title="Signalements envoyés à Rydar"
                   icon={<Flag />}
-                  description="Envoyés avec un bannissement : Rydar peut bannir le chauffeur de toute la plateforme."
+                  description="Envoyés avec un bannissement : Rydar peut bannir le chauffeur de toute la plateforme."
                 />
-                {!reports.length ? (
-                  <p className="px-5 py-5 text-[13px] text-fg-subtle">Aucun signalement. Cochez « Signaler à Rydar » en bannissant un fraudeur.</p>
-                ) : (
-                  <ul className="divide-y divide-line">
-                    {reports.map((r) => {
-                      const meta = REPORT_STATUS_FOR_ORG[r.status];
-                      return (
-                        <li key={r.id} className="space-y-1.5 px-5 py-3.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="min-w-0 truncate text-[13.5px] font-medium">
-                              {r.driver_id ? <Link href={`/dashboard/drivers/${r.driver_id}`} prefetch={false} className="hover:text-brand">{r.driver_label}</Link> : r.driver_label}
-                            </p>
-                            <Badge tone={meta.tone} pulse={r.status === "open"}>{meta.label}</Badge>
-                          </div>
-                          <p className="text-[12px] text-fg-subtle">
-                            {BAN_CATEGORY_META[r.category as BanCategory]?.label ?? r.category} · envoyé le {formatDate(r.created_at, tz)}
-                            {r.reviewed_at ? ` · traité ${formatRelative(r.reviewed_at)}` : ""}
+                <ul className="divide-y divide-line">
+                  {reports.map((r) => {
+                    const meta = REPORT_STATUS_FOR_ORG[r.status];
+                    return (
+                      <li key={r.id} className="space-y-1.5 px-4 py-3.5 sm:px-5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="min-w-0 truncate text-[14px] font-medium">
+                            {r.driver_id ? <Link href={`/dashboard/drivers/${r.driver_id}`} prefetch={false} className="hover:text-brand">{r.driver_label}</Link> : r.driver_label}
                           </p>
-                          <p className="text-[12px] text-fg-muted">{meta.help}</p>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+                          <Badge tone={meta.tone}>{meta.label}</Badge>
+                        </div>
+                        <p className="text-[12px] text-fg-muted">
+                          {BAN_CATEGORY_META[r.category as BanCategory]?.label ?? r.category} · envoyé le {formatDate(r.created_at, tz)}
+                          {r.reviewed_at ? ` · traité ${formatRelative(r.reviewed_at)}` : ""}
+                        </p>
+                        <p className="text-[12px] text-fg-muted">{meta.help}</p>
+                      </li>
+                    );
+                  })}
+                </ul>
               </Card>
             )}
-            <Card className="overflow-hidden">
-              <CardHeader title="Dernières décisions" icon={<History />} description="Candidatures validées ou refusées." />
-              {!decisions.length ? (
-                <p className="px-5 py-5 text-[13px] text-fg-subtle">Aucune décision pour l&apos;instant.</p>
-              ) : (
+            {decisions.length > 0 && (
+              <Card className="overflow-hidden">
+                <CardHeader title="Dernières décisions" icon={<History />} description="Candidatures validées ou refusées." />
                 <ul className="divide-y divide-line">
                   {decisions.map((d) => (
-                    <li key={d.id} className="flex items-center justify-between gap-3 px-5 py-2.5">
+                    <li key={d.id} className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5">
                       <span className="min-w-0">
                         <Link href={`/dashboard/drivers/${d.id}`} prefetch={false} className="block truncate text-[13px] font-medium hover:text-brand">
-                          {d.first_name} {d.last_name} <span className="num text-[11.5px] font-normal text-fg-subtle">#{d.number}</span>
+                          {d.first_name} {d.last_name} <span className="num text-[12px] font-normal text-fg-muted">#{d.number}</span>
                         </Link>
-                        <span className="block truncate text-[11.5px] text-fg-subtle">
+                        <span className="block truncate text-[12px] text-fg-muted">
                           {formatRelative(d.application_reviewed_at)}
                           {d.application_status === "rejected" && d.application_note ? ` · ${d.application_note}` : ""}
                         </span>
@@ -267,31 +285,27 @@ export default async function NetworkPage() {
                     </li>
                   ))}
                 </ul>
-              )}
-            </Card>
-            {centrale ? (
-              <div className="flex items-start gap-3 rounded-xl border border-line bg-white/[0.015] px-4 py-3.5 text-[12.5px] leading-relaxed text-fg-muted">
-                <HandCoins className="mt-0.5 size-4 shrink-0 text-brand" />
-                <p>
-                  Un nouveau chauffeur reçoit d&apos;abord des courses plafonnées, puis passe « Confirmé » après quelques courses réglées. Réglez ces seuils dans{" "}
-                  <Link href="/dashboard/settings" prefetch={false} className="text-brand underline underline-offset-2">Réglages</Link>.
-                </p>
-              </div>
-            ) : (
-              <div className="flex items-start gap-3 rounded-xl border border-line bg-white/[0.015] px-4 py-3.5 text-[12.5px] leading-relaxed text-fg-muted">
-                <Users className="mt-0.5 size-4 shrink-0 text-brand" />
-                <p>
-                  Un chauffeur validé apparaît dans{" "}
-                  <Link href="/dashboard/drivers" prefetch={false} className="text-brand underline underline-offset-2">Chauffeurs</Link>, comme ceux que vous créez vous-même
-                  {" "}: suspension, documents et messages depuis sa fiche.
-                </p>
-              </div>
+              </Card>
             )}
-          </div>
+          </section>
         </div>
-        {!canManage && (
-          <p className="flex items-center gap-2 text-[12px] text-fg-subtle">
-            <ShieldBan className="size-3.5" /> Consultation : validations, refus, bannissements et réglages du lien sont réservés aux administrateurs.
+
+        {centrale ? (
+          <p className="text-[13px] leading-relaxed text-fg-muted">
+            Un nouveau chauffeur reçoit d&apos;abord des courses plafonnées, puis passe «{NB}Confirmé{NB}» après quelques courses réglées. Réglez ces seuils
+            dans{" "}
+            <Link href="/dashboard/settings?tab=centrale" prefetch={false} className="text-fg underline underline-offset-2 hover:text-brand">
+              Réglages › Commission &amp; encaissement
+            </Link>
+            .
+          </p>
+        ) : (
+          <p className="text-[13px] leading-relaxed text-fg-muted">
+            Un chauffeur validé apparaît dans{" "}
+            <Link href="/dashboard/drivers" prefetch={false} className="text-fg underline underline-offset-2 hover:text-brand">
+              Chauffeurs
+            </Link>
+            , comme ceux que vous créez vous-même{NB}: suspension, documents et messages depuis sa fiche.
           </p>
         )}
       </PageBody>

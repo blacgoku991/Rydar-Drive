@@ -1,6 +1,6 @@
 "use client";
 // Éléments communs des encaissements (mode centrale) : statut, répartition, échéances, WhatsApp prérempli,
-// et les décisions de la centrale — Reçu / Versé, Pas reçu, Annuler la dette, Rouvrir, Relancer.
+// et les décisions de la centrale — Reçu / Versé, Pas reçu, Annuler la commission (ou le versement), Rouvrir, Relancer.
 // Utilisés par la page Encaissements, la fiche course, le panneau du command center et les alertes.
 import {
   SETTLEMENT_METHOD_META, SETTLEMENT_STATUS_META, dateTimeFormat, formatPrice, settlementPaymentLink, settlementRequestMessage, settlementStatusLabel,
@@ -18,7 +18,7 @@ import {
 import { type SettlementBankInfo, useCentrale } from "@/components/settlements/centrale-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
@@ -27,12 +27,16 @@ import { cn } from "@/lib/utils";
 import { NewTabHint } from "@/components/ui/new-tab";
 
 // ---------------------------------------------------------------------------- libellés
+const NB = "\u00a0";
 export type ConfirmMethod = SettlementMethod | "other";
 
 export const METHOD_ICON: Record<ConfirmMethod, LucideIcon> = { link: Link2, cash: Banknote, transfer: ArrowLeftRight, other: Ellipsis };
-export const methodLabel = (m: string | null | undefined) => (m ? (SETTLEMENT_METHOD_META[m as ConfirmMethod]?.label ?? "Autre") : "—");
-/** Libellés courts (colonnes étroites) */
-const METHOD_SHORT: Record<ConfirmMethod, string> = { link: "Lien", cash: "Espèces", transfer: "Virement", other: "Autre" };
+/**
+ * Moyens de paiement : un ordre et des libellés uniques sur le web (Virement, Lien de paiement, Espèces, Autre moyen),
+ * comme les paiements à Rydar (org-platform-format) — surcharge web, SETTLEMENT_METHOD_META (lu par l'app) ne change pas.
+ */
+export const METHOD_ORDER: readonly ConfirmMethod[] = ["transfer", "link", "cash", "other"];
+export const methodLabel = (m: string | null | undefined) => (m ? (SETTLEMENT_METHOD_META[m as ConfirmMethod]?.label ?? "Autre moyen") : "—");
 
 /** Couleur d'un statut : « à régler » passé l'échéance = rouge. */
 export function settlementTone(s: Pick<Settlement, "status" | "overdue">): Tone {
@@ -42,7 +46,7 @@ export function settlementTone(s: Pick<Settlement, "status" | "overdue">): Tone 
 
 export function SettlementBadge({ settlement: s, className }: { settlement: Pick<Settlement, "status" | "direction" | "overdue">; className?: string }) {
   return (
-    <Badge tone={settlementTone(s)} pulse={s.status === "declared"} className={className}>
+    <Badge tone={settlementTone(s)} className={className}>
       {settlementStatusLabel(s.status, s.direction, s.overdue)}
     </Badge>
   );
@@ -88,13 +92,13 @@ export function fromNow(iso: string | null | undefined, now = Date.now()) {
   return diff < 0 ? `il y a ${span(diff)}` : `dans ${span(diff)}`;
 }
 
-/** Échéance lisible : « échéance dans 5 h », « 2 j de retard · offres bloquées », « encaissé il y a 3 h »… */
+/** Échéance lisible : « échéance dans 5 h », « 2 j de retard · chauffeur bloqué », « encaissé il y a 3 h »… */
 export function dueInfo(
   s: Pick<Settlement, "status" | "direction" | "due_at" | "overdue" | "settled_at" | "declared_at">,
   now = Date.now(),
   opts: { blockUnpaid?: boolean } = {},
 ): { text: string; tone: Tone } {
-  const blocked = opts.blockUnpaid !== false && s.direction === "driver_owes" ? " · offres bloquées" : "";
+  const blocked = opts.blockUnpaid !== false && s.direction === "driver_owes" ? " · chauffeur bloqué" : "";
   if (s.status === "paid") return { text: `${s.direction === "driver_owes" ? "encaissé" : "versé"} ${fromNow(s.settled_at, now)}`, tone: "green" };
   if (s.status === "waived") return { text: `annulé ${fromNow(s.settled_at, now)}`, tone: "neutral" };
   if (s.status === "declared") return { text: `signalé ${fromNow(s.declared_at, now)}`, tone: "blue" };
@@ -220,7 +224,7 @@ export function WhatsAppButton({ href, size = "sm", label = "WhatsApp", iconOnly
   if (!href) return null;
   return (
     <Button asChild variant="outline" size={iconOnly ? (size === "md" ? "icon" : "icon-sm") : size} className={cn("text-green hover:text-green", className)}>
-      <a href={href} target="_blank" rel="noopener noreferrer" title="Réclamer par WhatsApp (message prérempli)" aria-label={iconOnly ? `${label} : réclamer le paiement (nouvel onglet)` : undefined}>
+      <a href={href} target="_blank" rel="noopener noreferrer" title="Réclamer par WhatsApp (message prérempli)" aria-label={iconOnly ? `${label} : réclamer le paiement (nouvel onglet)` : undefined}>
         <MessageCircle />
         {!iconOnly && label}
         {!iconOnly && <NewTabHint />}
@@ -279,9 +283,20 @@ export function Chips({ options, onPick }: { options: string[]; onPick: (v: stri
   );
 }
 
-export function MethodPicker({ value, onChange, options = ["link", "cash", "transfer", "other"] }: { value: ConfirmMethod | null; onChange: (m: ConfirmMethod) => void; options?: ConfirmMethod[] }) {
+export function MethodPicker({
+  value,
+  onChange,
+  options = METHOD_ORDER,
+  labelledBy,
+}: {
+  value: ConfirmMethod | null;
+  onChange: (m: ConfirmMethod) => void;
+  options?: readonly ConfirmMethod[];
+  /** Identifiant du libellé visible du champ (sinon : « Moyen de paiement ») */
+  labelledBy?: string;
+}) {
   return (
-    <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Moyen de paiement">
+    <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label={labelledBy ? undefined : "Moyen de paiement"} aria-labelledby={labelledBy}>
       {options.map((m) => {
         const Icon = METHOD_ICON[m];
         const on = value === m;
@@ -293,11 +308,11 @@ export function MethodPicker({ value, onChange, options = ["link", "cash", "tran
             aria-checked={on}
             onClick={() => onChange(m)}
             className={cn(
-              "flex h-10 items-center justify-center gap-2 rounded-lg border text-[12.5px] font-medium transition-colors",
+              "flex min-h-11 items-center justify-center gap-2 rounded-lg border px-2 text-[13px] font-medium transition-colors sm:min-h-10",
               on ? "border-brand/60 bg-brand/[0.08] text-fg" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
             )}
           >
-            <Icon className={cn("size-4", on ? "text-brand" : "text-fg-subtle")} />
+            <Icon aria-hidden className={cn("size-4 shrink-0", on ? "text-brand" : "text-fg-subtle")} />
             {methodLabel(m)}
           </button>
         );
@@ -315,9 +330,9 @@ function Summary({ s }: { s: ActionSettlement }) {
   return (
     <div className="mb-4 flex items-center justify-between gap-3 rounded-xl bg-white/[0.035] px-3.5 py-3">
       <div className="min-w-0">
-        <p className="truncate text-[13px] font-medium text-fg">{who.name}{who.number ? <span className="text-fg-subtle"> #{who.number}</span> : null}</p>
-        <p className="text-[12px] text-fg-subtle">
-          {n ? `Course #${n} · ` : ""}réf. <span className="mono text-fg-muted">{s.reference}</span>
+        <p className="truncate text-[13px] font-medium text-fg">{who.name}{who.number ? <span className="text-fg-muted"> #{who.number}</span> : null}</p>
+        <p className="text-[12px] text-fg-muted">
+          {n ? `Course #${n} · ` : ""}réf. <span className="mono">{s.reference}</span>
         </p>
       </div>
       <p className="mono shrink-0 text-[20px] font-semibold tracking-tight text-fg">{formatPrice(s.amount_cents, s.currency)}</p>
@@ -357,24 +372,23 @@ export function SettlementDialogs({
       <Dialog open={mode === "confirm"} onOpenChange={(o) => !o && close()}>
         <DialogContent
           size="sm"
-          title={owes ? "Commission reçue" : "Part chauffeur versée"}
+          title={owes ? "Paiement reçu" : "Part chauffeur versée"}
           description={owes ? "Le règlement est soldé et le chauffeur est prévenu (il est débloqué s'il était en retard)." : `${who} est prévenu que sa part a été versée.`}
         >
           <Summary s={s} />
           {s.status === "declared" && (
-            <p className="mb-4 rounded-lg border border-blue/25 bg-blue/[0.07] px-3 py-2 text-[12.5px] text-fg-muted">
+            <p className="mb-4 rounded-lg border border-blue/25 bg-blue/[0.07] px-3 py-2 text-[13px] text-fg-muted">
               {who} signale avoir payé par <span className="font-medium text-fg">{methodLabel(s.declared_method).toLowerCase()}</span> {fromNow(s.declared_at)}
-              {s.declared_note ? <> · « {s.declared_note} »</> : null}
+              {s.declared_note ? <> · «{NB}{s.declared_note}{NB}»</> : null}
             </p>
           )}
           <Field label={owes ? "Reçu par" : "Versé par"}>
             <MethodPicker value={method} onChange={setMethod} />
           </Field>
           <Field label="Note" optional className="mt-4">
-            <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder={owes ? "Ex. espèces remises à Mehdi" : "Ex. virement du 25/09"} />
+            <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder={owes ? `ex.${NB}: espèces remises à Mehdi` : `ex.${NB}: virement du 25/09`} />
           </Field>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" onClick={close}>Annuler</Button>
+          <DialogFooter backDisabled={pending}>
             <Button
               variant="primary"
               loading={pending}
@@ -382,7 +396,7 @@ export function SettlementDialogs({
             >
               <Check /> {owes ? "Marquer reçu" : "Marquer versé"}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -392,28 +406,27 @@ export function SettlementDialogs({
           title="Paiement non reçu"
           description={
             org?.blockUnpaid === false
-              ? `${who} est prévenu immédiatement ; le règlement reste à encaisser.`
+              ? `${who} est prévenu immédiatement ; le règlement reste à encaisser.`
               : `${who} est prévenu immédiatement et ne reçoit plus de courses tant que ce paiement n'est pas réglé.`
           }
         >
           <Summary s={s} />
           <Field label="Ce qui ne va pas">
-            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Ex. rien reçu sur le compte Revolut" className="min-h-[72px]" autoFocus />
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder={`ex.${NB}: rien reçu sur le compte Revolut`} className="min-h-[72px]" autoFocus />
           </Field>
           <div className="mt-2.5">
             <Chips options={DISPUTE_REASONS} onPick={setReason} />
           </div>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" onClick={close}>Retour</Button>
+          <DialogFooter backDisabled={pending}>
             <Button
               variant="danger"
               loading={pending}
               disabled={reason.trim().length < 3}
-              onClick={() => run(() => disputeSettlement(s.id, reason), () => `Paiement contesté : ${who} est prévenu`, close)}
+              onClick={() => run(() => disputeSettlement(s.id, reason), () => `Paiement contesté : ${who} est prévenu`, close)}
             >
               <CircleSlash /> Pas reçu
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -425,34 +438,32 @@ export function SettlementDialogs({
         >
           <Summary s={s} />
           <Field label="Motif">
-            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Ex. geste commercial" className="min-h-[72px]" autoFocus />
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder={`ex.${NB}: geste commercial`} className="min-h-[72px]" autoFocus />
           </Field>
           <div className="mt-2.5">
             <Chips options={WAIVE_REASONS} onPick={setReason} />
           </div>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" onClick={close}>Retour</Button>
+          <DialogFooter backDisabled={pending}>
             <Button
               variant="danger"
               loading={pending}
               disabled={reason.trim().length < 3}
               onClick={() => run(() => waiveSettlement(s.id, reason), () => `Règlement ${s.reference} annulé`, close)}
             >
-              {owes ? "Annuler la dette" : "Annuler le versement"}
+              {owes ? "Annuler la commission" : "Annuler le versement"}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={mode === "reopen"} onOpenChange={(o) => !o && close()}>
-        <DialogContent size="sm" title="Rouvrir le règlement" description={`Il redevient « à régler »${owes ? ` et ${who} est prévenu qu'il reste ${amount} à payer` : ""}.`}>
+        <DialogContent size="sm" title="Rouvrir le règlement" description={`Il redevient «${NB}à régler${NB}»${owes ? ` et ${who} est prévenu qu'il reste ${amount} à payer` : ""}.`}>
           <Summary s={s} />
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" onClick={close}>Retour</Button>
+          <DialogFooter backDisabled={pending}>
             <Button variant="primary" loading={pending} onClick={() => run(() => reopenSettlement(s.id), () => `Règlement ${s.reference} rouvert`, close)}>
-              <Undo2 /> Rouvrir
+              <Undo2 /> Rouvrir le règlement
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
@@ -462,10 +473,13 @@ export function SettlementDialogs({
 // ---------------------------------------------------------------------------- barre d'actions
 /**
  * Actions d'un règlement selon son état :
- *  commission à régler / contestée → Reçu · Pas reçu · WhatsApp · ⋯ (Relancer, Annuler la dette)
- *  commission signalée payée       → Reçu · Pas reçu · ⋯
- *  part chauffeur à verser         → Versé · ⋯ (Annuler)
- *  encaissé / annulé               → Rouvrir (owner / admin)
+ *  commission à régler, échue ou signalée payée → Reçu · Pas reçu · WhatsApp · ⋮ (Relancer, Annuler la commission)
+ *  commission à régler, pas encore échue      → Reçu · WhatsApp · ⋮ (Relancer, Pas reçu, Annuler la commission)
+ *  commission contestée                        → Reçu · WhatsApp · ⋮ (Relancer, Annuler la commission)
+ *  part chauffeur à verser                     → Versé · ⋮ (Annuler le versement)
+ *  réglé / annulé                              → ⋮ (Rouvrir, owner / admin)
+ * « Pas reçu » bloque le chauffeur : bouton direct seulement s'il a déclaré avoir payé ou si l'échéance est passée
+ * (`overdue`), sinon dans le menu — même fenêtre, motif obligatoire.
  */
 export function SettlementActions({
   settlement: s,
@@ -498,9 +512,15 @@ export function SettlementActions({
   );
   const wa = whatsapp === undefined ? computed : whatsapp;
   const { pending: reminding, remind } = useRemindDriver(onChanged);
+  // « Pas reçu » : bouton direct si le chauffeur a déclaré avoir payé ou si l'échéance est passée ; sinon dans le menu
+  const canDispute = open && owes && s.status !== "disputed";
+  const disputeDirect = canDispute && (s.status === "declared" || (s.status === "due" && !!s.overdue));
   const menuRemind = showRemind && owes && (s.status === "due" || s.status === "disputed") && !!s.driver_id;
+  const menuDispute = canDispute && !disputeDirect;
   const menuWaive = canManage && open;
+  const menuReopen = canManage && !open;
   const btn = size === "xs" ? "xs" : "sm";
+  const ref = n ? `course #${n}` : `règlement ${s.reference}`;
 
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
@@ -509,7 +529,7 @@ export function SettlementActions({
           <Button variant="primary" size={btn} onClick={() => setMode("confirm")}>
             <Check /> Reçu
           </Button>
-          {s.status !== "disputed" && (
+          {disputeDirect && (
             <Button variant="outline" size={btn} onClick={() => setMode("dispute")}>
               Pas reçu
             </Button>
@@ -522,28 +542,33 @@ export function SettlementActions({
           <Check /> Versé
         </Button>
       )}
-      {!open && canManage && (
-        <Button variant="ghost" size={btn} onClick={() => setMode("reopen")}>
-          <RotateCcw /> Rouvrir
-        </Button>
-      )}
-      {(menuRemind || menuWaive) && (
+      {(menuRemind || menuDispute || menuWaive || menuReopen) && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Plus d'actions" disabled={reminding}>
+            <Button variant="ghost" size="icon-sm" aria-label={`Plus d'actions : ${ref}`} disabled={reminding}>
               <EllipsisVertical />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-[230px]">
+          <DropdownMenuContent align="end" className="w-[240px]">
             {menuRemind && (
               <DropdownMenuItem onSelect={() => remind(s.driver_id!, who.firstName)}>
-                <BellRing /> Relancer {who.firstName} (push)
+                <BellRing /> Relancer {who.firstName}
               </DropdownMenuItem>
             )}
-            {menuRemind && menuWaive && <DropdownMenuSeparator />}
+            {menuReopen && (
+              <DropdownMenuItem onSelect={() => setMode("reopen")}>
+                <RotateCcw /> Rouvrir le règlement
+              </DropdownMenuItem>
+            )}
+            {(menuRemind || menuReopen) && (menuDispute || menuWaive) && <DropdownMenuSeparator />}
+            {menuDispute && (
+              <DropdownMenuItem destructive onSelect={() => setMode("dispute")}>
+                <CircleSlash /> Pas reçu
+              </DropdownMenuItem>
+            )}
             {menuWaive && (
               <DropdownMenuItem destructive onSelect={() => setMode("waive")}>
-                <CircleSlash /> {owes ? "Annuler la dette" : "Annuler le versement"}
+                <CircleSlash /> {owes ? "Annuler la commission" : "Annuler le versement"}
               </DropdownMenuItem>
             )}
           </DropdownMenuContent>
@@ -558,15 +583,15 @@ export function SettlementActions({
 export function DeclarationLine({ settlement: s, now, className }: { settlement: Pick<Settlement, "declared_at" | "declared_method" | "declared_note">; now?: number; className?: string }) {
   if (!s.declared_at) return null;
   const Icon = s.declared_method ? METHOD_ICON[s.declared_method] : Ellipsis;
-  const title = [`Payé par ${methodLabel(s.declared_method).toLowerCase()}`, fromNow(s.declared_at, now), s.declared_note ? `« ${s.declared_note} »` : null]
+  const title = [`Payé par ${methodLabel(s.declared_method).toLowerCase()}`, fromNow(s.declared_at, now), s.declared_note ? `«${NB}${s.declared_note}${NB}»` : null]
     .filter(Boolean)
     .join(" · ");
   return (
     <p className={cn("flex min-w-0 items-center gap-1.5 text-[12px] text-blue", className)} title={title}>
-      <Icon className="size-3.5 shrink-0" />
+      <Icon aria-hidden className="size-3.5 shrink-0" />
       <span className="truncate">
-        {METHOD_SHORT[s.declared_method ?? "other"]} · {fromNow(s.declared_at, now)}
-        {s.declared_note ? <span className="text-fg-muted"> · « {s.declared_note} »</span> : null}
+        {methodLabel(s.declared_method ?? "other")} · {fromNow(s.declared_at, now)}
+        {s.declared_note ? <span className="text-fg-muted"> · «{NB}{s.declared_note}{NB}»</span> : null}
       </span>
     </p>
   );

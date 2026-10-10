@@ -6,10 +6,10 @@ import { cn } from "@/lib/utils";
 import { ago, clockTime, dayLabel, firstName, minutesLeft, sameDay } from "./chat-utils";
 import { RemoveMessageButton, reportedLabel } from "./moderation";
 
-/** Marque « Signalé » d'un message (fil flotte, signalements en attente). */
+/** Marque « À modérer » d'un message (fil flotte, demandes de retrait en attente). */
 function FlagMark({ count }: { count: number }) {
   return (
-    <span className="inline-flex items-center gap-1 px-1 text-[11px] font-medium text-amber">
+    <span className="inline-flex items-center gap-1 px-1 text-[12px] font-medium text-amber">
       <Flag className="size-3" aria-hidden /> {reportedLabel(count)}
     </span>
   );
@@ -71,7 +71,7 @@ export function DaySeparator({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3 py-2" role="separator" aria-label={label}>
       <span className="h-px flex-1 bg-line" />
-      <span className="rounded-full border border-line bg-ink-850 px-3 py-1 text-[11.5px] font-medium text-fg-muted first-letter:uppercase">
+      <span className="rounded-full border border-line bg-ink-850 px-3 py-1 text-[12px] font-medium text-fg-muted first-letter:uppercase">
         {label}
       </span>
       <span className="h-px flex-1 bg-line" />
@@ -93,7 +93,7 @@ export function MessageGroup({
   author: string;
   messages: ChatMessage[];
   timeZone: string;
-  /** Nom de l'auteur au-dessus du groupe (fil flotte, ou autre membre de la centrale) */
+  /** Nom de l'auteur au-dessus du groupe (fil flotte, ou autre membre de l'équipe) */
   showAuthor: boolean;
   /** Accusé sous le dernier message envoyé (fil direct) */
   receipt?: "sent" | "seen" | null;
@@ -106,14 +106,14 @@ export function MessageGroup({
   return (
     <div className={cn("flex gap-2.5", right ? "justify-end" : "justify-start")}>
       {!right && showAuthor && (
-        <span className="mt-5 grid size-7 shrink-0 place-items-center rounded-full bg-ink-600 text-[10.5px] font-semibold text-fg-muted" aria-hidden>
+        <span className="mt-5 grid size-7 shrink-0 place-items-center rounded-full bg-ink-600 text-[12px] font-semibold text-fg-muted" aria-hidden>
           {initials(author.split(/\s+/)[0], author.split(/\s+/)[1])}
         </span>
       )}
       <div className={cn("flex min-w-0 max-w-[min(560px,86%)] flex-col gap-1", right ? "items-end" : "items-start")}>
         {showAuthor && (
-          <span className={cn("px-1 text-[11.5px] font-medium", side === "driver" ? "text-fg-muted" : "text-fg-subtle")}>
-            {side === "team" ? `${author} · centrale` : author}
+          <span className={cn("px-1 text-[12px] font-medium", side === "driver" ? "text-fg-muted" : "text-fg-subtle")}>
+            {side === "team" ? `${author} · équipe` : author}
           </span>
         )}
         {messages.map((m, i) => {
@@ -132,7 +132,7 @@ export function MessageGroup({
               <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</span>
               <time
                 dateTime={m.created_at}
-                className={cn("float-right ml-3 mt-[5px] font-mono text-[10.5px] leading-none", side === "me" ? "text-brand/60" : "text-fg-subtle")}
+                className={cn("float-right ml-3 mt-[4px] font-mono text-[12px] leading-none", side === "me" ? "text-brand/70" : "text-fg-subtle")}
               >
                 {clockTime(m.created_at, timeZone)}
               </time>
@@ -151,7 +151,7 @@ export function MessageGroup({
           );
         })}
         {receipt && (
-          <span className={cn("flex items-center gap-1 px-1 text-[11px]", receipt === "seen" ? "text-brand" : "text-fg-subtle")}>
+          <span className={cn("flex items-center gap-1 px-1 text-[12px]", receipt === "seen" ? "text-brand" : "text-fg-subtle")}>
             {receipt === "seen" ? <CheckCheck className="size-3.5" /> : <Check className="size-3.5" />}
             {receipt === "seen" ? "Vu" : "Envoyé"}
           </span>
@@ -215,12 +215,12 @@ export function ReportCard({
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <p className={cn("text-[13.5px] font-semibold tracking-tight", active ? "text-fg" : "text-fg-muted")}>{fleetReportTitle(type, author)}</p>
               {active ? (
-                <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full px-2 text-[11.5px] font-medium" style={{ background: `${meta.color}1a`, color: meta.color }}>
-                  <span className="size-1.5 animate-breathe rounded-full" style={{ background: meta.color }} />
+                <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full px-2 text-[12px] font-medium" style={{ background: `${meta.color}1a`, color: meta.color }}>
+                  <span aria-hidden className="size-1.5 rounded-full" style={{ background: meta.color }} />
                   Actif · encore {left} min
                 </span>
               ) : (
-                <span className="inline-flex h-[22px] items-center rounded-full bg-white/[0.05] px-2 text-[11.5px] font-medium text-fg-subtle">Expiré</span>
+                <span className="inline-flex h-[22px] items-center rounded-full bg-white/[0.05] px-2 text-[12px] font-medium text-fg-subtle">Expiré</span>
               )}
             </div>
             {comment && <p className="mt-1 whitespace-pre-wrap break-words text-[13px] text-fg-muted">{comment}</p>}

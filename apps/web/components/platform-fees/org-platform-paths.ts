@@ -14,7 +14,10 @@ export type PlatformFeesPaths = {
   statement: string;
   /** Libellé du lien retour du relevé */
   back: string;
-  /** Nom des frais dans le bandeau et les alertes : « Frais plateforme » (centrale), « Frais Rydar » (flotte, comme le menu) */
+  /**
+   * Nom des frais dans le bandeau et les alertes : « Frais Rydar » pour les deux modèles, comme la carte d'Encaissements
+   * et le menu d'une flotte (docs/REFONTE-PANELS.md § 4 ; « frais plateforme » reste le terme des textes juridiques)
+   */
   label: string;
 };
 
@@ -25,7 +28,7 @@ export function platformFeesPaths(model: DispatchModel | null | undefined): Plat
         page: "/dashboard/settlements",
         statement: "/dashboard/settlements/rydar",
         back: "Encaissements",
-        label: "Frais plateforme",
+        label: "Frais Rydar",
       }
     : { account: "/dashboard/rydar", page: "/dashboard/rydar", statement: "/dashboard/rydar/releve", back: "Frais Rydar", label: "Frais Rydar" };
 }

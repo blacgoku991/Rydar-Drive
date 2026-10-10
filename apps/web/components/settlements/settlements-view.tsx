@@ -1,19 +1,23 @@
 "use client";
-// Page « Encaissements » (mode centrale) : indicateurs, soldes par chauffeur, règlements filtrables.
-// Les chiffres viennent de org_settlement_overview / org_settlements ; toute décision passe par une RPC
-// (Reçu, Pas reçu, Versé, Annuler, Rouvrir, Relancer) puis la page est relue. Temps réel : settlement.updated.
+// Page « Encaissements » (mode centrale) : quatre chiffres dans l'ordre d'action (à confirmer, en retard, à encaisser, à
+// verser), une ligne « Ce mois-ci », puis « Règlements » en deux vues : « Par course » (onglets À traiter · Réglés ·
+// Annulés · Tous, puces À confirmer / En retard / Contestés / À verser quand elles comptent quelque chose) et « Par
+// chauffeur » (ce que chacun doit ou attend, relance, WhatsApp ; un chauffeur ouvre ses règlements, ?driver=…).
+// Les chiffres viennent de org_settlement_overview / org_settlements ; toute décision passe par une RPC (Reçu, Pas reçu,
+// Versé, Annuler, Rouvrir, Relancer) puis la page est relue. Temps réel : settlement.updated.
 // Chaque règlement est rendu une seule fois (ligne de tableau sur grand écran, carte en dessous : même balisage).
 // Liens sans préchargement : pages dynamiques sans loading.js, le préchargement ne rapportait que la mise en page et
 // repartait (onglets, réglages, relevé…) à chaque relecture de la page.
 import {
-  DRIVER_BLOCKER_META, TRUST_LEVEL_META, formatNumber, formatPhone, formatPrice, formatRideDate, shortAddress, splitSummary,
-  type OrgSettlementDriver, type OrgSettlementFilter, type OrgSettlementItem, type OrgSettlementOverview,
+  DRIVER_BLOCKER_META, formatPhone, formatPrice, formatRideDate, shortAddress, splitSummary,
+  type DriverBlocker, type OrgSettlementDriver, type OrgSettlementFilter, type OrgSettlementItem, type OrgSettlementOverview,
 } from "@rydar/shared";
-import { ArrowDownLeft, ArrowUpRight, BellRing, Check, CheckCheck, Funnel, FunnelX, HandCoins, Hourglass, Lock, X } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, BellRing, CheckCheck, Funnel, HandCoins, Hourglass, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { confirmSettlements } from "@/app/dashboard/settlements/actions";
+import { StatCard } from "@/components/layout/page-header";
 import { useRealtimeEvent } from "@/components/realtime/realtime-provider";
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { useCentrale } from "@/components/settlements/centrale-context";
@@ -21,15 +25,18 @@ import {
   OPEN_STATUSES, SETTLEMENT_MAX, SETTLEMENT_PAGE, carrySelection, lateNow, sortOpen, type OpenSettlement,
 } from "@/components/settlements/settlement-list";
 import {
-  DeclarationLine, METHOD_ICON, SettlementActions, SettlementBadge, SplitBar, WhatsAppButton, batchReference, buildSettlementWhatsApp,
+  DeclarationLine, METHOD_ICON, METHOD_ORDER, SettlementActions, SettlementBadge, WhatsAppButton, batchReference, buildSettlementWhatsApp,
   dueInfo, fromNow, methodLabel, rideNumberOf, useRemindDriver, useSettlementRunner, type ConfirmMethod,
 } from "@/components/settlements/settlement-ui";
 import { Badge, toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Avatar, EmptyState, Tooltip } from "@/components/ui/misc";
 import { useNow } from "@/hooks/use-now";
+import { plural } from "@/lib/wording";
 import { cn } from "@/lib/utils";
+
+const NB = " ";
 
 type Props = {
   overview: OrgSettlementOverview;
@@ -47,30 +54,32 @@ type Props = {
   canManage: boolean;
   /** Horloge du rendu serveur (libellés relatifs identiques à l'hydratation) */
   serverNow: number;
-  /** Frais plateforme du mois selon le registre Rydar (carte « Frais plateforme », owner / admin) : même chiffre que la carte */
-  platformMonthCents?: number | null;
 };
 
+/** Onglets (toujours visibles) ; mêmes clés d'URL qu'avant (« Réglés » = paid). */
 const TABS: { key: OrgSettlementFilter; label: string }[] = [
   { key: "open", label: "À traiter" },
-  { key: "declared", label: "À confirmer" },
-  { key: "overdue", label: "En retard" },
-  { key: "disputed", label: "Contestés" },
-  { key: "to_pay", label: "À verser" },
-  { key: "paid", label: "Encaissés" },
+  { key: "paid", label: "Réglés" },
   { key: "waived", label: "Annulés" },
   { key: "all", label: "Tous" },
 ];
+/** Puces : sous-ensembles de « À traiter », visibles seulement s'ils comptent quelque chose (ou s'ils sont affichés). */
+const CHIPS: { key: OrgSettlementFilter; label: string; alert?: boolean }[] = [
+  { key: "declared", label: "À confirmer" },
+  { key: "overdue", label: "En retard", alert: true },
+  { key: "disputed", label: "Contestés", alert: true },
+  { key: "to_pay", label: "À verser" },
+];
 
 const EMPTY: Record<OrgSettlementFilter, { title: string; description: string }> = {
-  open: { title: "Tout est réglé", description: "Les commissions à encaisser et les parts à verser apparaîtront ici à la fin de chaque course." },
-  declared: { title: "Rien à confirmer", description: "Quand un chauffeur signale « J'ai payé », le paiement attend ici votre « Reçu »." },
-  overdue: { title: "Aucun retard", description: "Aucune commission n'a dépassé son échéance." },
-  disputed: { title: "Aucune contestation", description: "Les paiements marqués « Pas reçu » s'afficheront ici." },
-  to_pay: { title: "Rien à verser", description: "Les courses payées à la centrale (en ligne, facture) créent ici la part à verser au chauffeur." },
-  paid: { title: "Aucun encaissement", description: "Les règlements confirmés s'afficheront ici." },
-  waived: { title: "Aucune annulation", description: "Les dettes annulées (geste commercial, litige) s'afficheront ici." },
-  all: { title: "Aucun règlement", description: "Les règlements sont créés automatiquement à la fin des courses." },
+  open: { title: "Tout est réglé.", description: "Les commissions à encaisser et les parts à verser apparaîtront ici à la fin de chaque course." },
+  declared: { title: "Rien à confirmer.", description: "Quand un chauffeur signale « J'ai payé », le paiement attend ici votre « Reçu »." },
+  overdue: { title: "Aucun retard.", description: "Aucune commission n'a dépassé son échéance." },
+  disputed: { title: "Aucune contestation.", description: "Les paiements marqués « Pas reçu » s'afficheront ici." },
+  to_pay: { title: "Rien à verser.", description: "Les courses payées à la centrale (en ligne, facture) créent ici la part à verser au chauffeur." },
+  paid: { title: "Aucun règlement réglé.", description: "Les commissions encaissées et les parts versées s'afficheront ici." },
+  waived: { title: "Aucune annulation.", description: "Les commissions et versements annulés (geste commercial, litige) s'afficheront ici." },
+  all: { title: "Aucun règlement.", description: "Les règlements sont créés automatiquement à la fin des courses." },
 };
 
 const isOpen = (s: OrgSettlementItem) => OPEN_STATUSES.has(s.status);
@@ -88,7 +97,7 @@ function href(filter: OrgSettlementFilter, driver: string | null, n?: number) {
 const driverName = (d: { first_name: string; last_name: string }) => `${d.first_name} ${d.last_name}`;
 
 // ---------------------------------------------------------------------------- vue
-export function SettlementsView({ overview, openIndex, items, filter, driverId, limit, hasMore, orgName, timeZone, canManage, serverNow, platformMonthCents }: Props) {
+export function SettlementsView({ overview, openIndex, items, filter, driverId, limit, hasMore, orgName, timeZone, canManage, serverNow }: Props) {
   const router = useRouter();
   const now = useNow(30_000) ?? serverNow;
   const t = overview.totals;
@@ -96,13 +105,14 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
   const currency = overview.currency || "EUR";
   const settings = overview.settings;
   const centrale = useCentrale();
+  const [view, setView] = useState<"rides" | "drivers">("rides");
 
   // Relecture à chaque règlement créé / déclaré / confirmé (ici ou ailleurs), différée si l'onglet est caché ; sans
   // temps réel, sondage 15 s → 45 s → 2 min (en pause onglet caché) ; avec, relecture de sécurité toutes les 5 min
   // (diffusion perdue sans coupure du canal)
   const { schedule } = useLiveSync(() => router.refresh(), { pollMs: 15_000, maxPollMs: 120_000, livePollMs: 300_000, debounceMs: 450 });
   useRealtimeEvent("settlement.updated", schedule);
-  // Carte « Frais plateforme » en tête de page (owner / admin) : paiement, relance, frais par course changés, hausse
+  // Carte « Frais Rydar » en tête de page (owner / admin) : paiement, relance, frais par course changés, hausse
   // annoncée ou annulée (« platform.updated », identifiants seulement : la page relue contrôle le rôle)
   useRealtimeEvent("platform.updated", () => canManage && schedule());
   // Une commission passe « en retard » à son échéance, sans événement : montants « En retard » relus à ce moment-là
@@ -138,6 +148,15 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
       to_pay: scoped.filter((s) => s.direction === "centrale_owes" && s.status === "due").length,
     }),
     [scoped, now],
+  );
+  // Chiffres de la page (tous chauffeurs)
+  const all = useMemo(
+    () => ({
+      commissions: openIndex.filter((s) => s.direction === "driver_owes").length,
+      overdue: openIndex.filter((s) => lateNow(s, now)).length,
+      toPay: openIndex.filter((s) => s.direction === "centrale_owes" && s.status === "due").length,
+    }),
+    [openIndex, now],
   );
 
   const list = useMemo(() => {
@@ -177,318 +196,340 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
   const drivers = overview.drivers ?? [];
   const filteredDriver = driverId ? (drivers.find((d) => d.driver_id === driverId) ?? items.find((s) => s.driver?.id === driverId)?.driver ?? null) : null;
   const filteredDriverLabel = filteredDriver ? `${driverName(filteredDriver)} #${filteredDriver.number}` : "Chauffeur sélectionné";
-  const openCommissions = openIndex.filter((s) => s.direction === "driver_owes").length;
+  const month = [
+    `${formatPrice(t.collected_month_cents, currency)} encaissés`,
+    t.paid_out_month_cents ? `${formatPrice(t.paid_out_month_cents, currency)} versés aux chauffeurs` : null,
+    `${formatPrice(m.commission_cents, currency)} de commissions (${plural(m.rides, "course terminée", "courses terminées")})`,
+    `${formatPrice(m.volume_cents, currency)} de volume`,
+  ].filter(Boolean);
 
   return (
-    <div className="space-y-8">
-      {/* ------------------------------------------------------------ indicateurs */}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Indicateurs d'encaissement">
-        <Kpi
-          label="À encaisser"
-          value={formatPrice(t.to_collect_cents, currency)}
-          sub={openCommissions ? `${formatNumber(openCommissions)} commission${openCommissions > 1 ? "s" : ""} en cours` : "rien à encaisser"}
-          href={href("open", null)}
-          icon={<HandCoins />}
-        />
-        <Kpi
-          label="En retard"
-          value={formatPrice(t.overdue_cents, currency)}
-          tone={t.overdue_cents > 0 ? "red" : undefined}
-          sub={t.overdue_cents > 0 ? (settings.block_unpaid ? "chauffeurs bloqués jusqu'au règlement" : "à relancer") : "aucun retard"}
-          href={href("overdue", null)}
-          icon={<Hourglass />}
-        />
-        <Kpi
-          label="À confirmer"
-          value={formatPrice(t.declared_cents, currency)}
-          tone={t.declared_count > 0 ? "blue" : undefined}
-          sub={t.declared_count > 0 ? `${t.declared_count} paiement${t.declared_count > 1 ? "s" : ""} signalé${t.declared_count > 1 ? "s" : ""} par les chauffeurs` : "rien en attente"}
-          href={href("declared", null)}
-          icon={<CheckCheck />}
-        />
-        <Kpi
-          label="À verser aux chauffeurs"
-          value={formatPrice(t.to_pay_cents, currency)}
-          tone={t.to_pay_cents > 0 ? "violet" : undefined}
-          sub="courses payées à la centrale"
-          href={href("to_pay", null)}
-          icon={<ArrowUpRight />}
-        />
-        <Kpi
-          label="Encaissé ce mois"
-          value={formatPrice(t.collected_month_cents, currency)}
-          tone="green"
-          sub={t.paid_out_month_cents ? `${formatPrice(t.paid_out_month_cents, currency)} versés aux chauffeurs` : "commissions confirmées"}
-          href={href("paid", null)}
-          icon={<Check />}
-        />
-        <Kpi label="Commission du mois" value={formatPrice(m.commission_cents, currency)} tone="brand" sub={`${formatNumber(m.rides)} course${m.rides > 1 ? "s" : ""} terminée${m.rides > 1 ? "s" : ""}`} />
-        {(platformMonthCents ?? m.platform_fee_cents) > 0 && (
-          // Registre Rydar (avoirs, baisses validées) quand la carte est affichée, sinon frais calculés sur les courses
-          <Kpi
-            label="Frais plateforme du mois"
-            value={formatPrice(platformMonthCents ?? m.platform_fee_cents, currency)}
-            sub={platformMonthCents != null ? "comptés par Rydar · voir votre compte" : "fixés par Rydar"}
-            href={platformMonthCents != null ? "#frais-plateforme" : undefined}
+    <div className="space-y-6">
+      {/* ------------------------------------------------------------ chiffres, dans l'ordre d'action */}
+      <section aria-label="Ce qui demande une action">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard
+            label="À confirmer"
+            value={formatPrice(t.declared_cents, currency)}
+            tone={t.declared_count > 0 ? "amber" : undefined}
+            sub={t.declared_count > 0 ? `${plural(t.declared_count, "paiement signalé", "paiements signalés")} par les chauffeurs` : "rien en attente"}
+            href={href("declared", null)}
+            active={filter === "declared" && !driverId}
+            icon={<CheckCheck />}
           />
-        )}
-        <Kpi label="Volume du mois" value={formatPrice(m.volume_cents, currency)} sub={`dont ${formatPrice(m.driver_payout_cents, currency)} pour les chauffeurs`} />
+          <StatCard
+            label="En retard"
+            value={formatPrice(t.overdue_cents, currency)}
+            tone={t.overdue_cents > 0 ? "red" : undefined}
+            sub={
+              t.overdue_cents > 0
+                ? `${plural(all.overdue, "commission", "commissions")}${settings.block_unpaid ? " · chauffeurs bloqués jusqu'au règlement" : " à relancer"}`
+                : "aucun retard"
+            }
+            href={href("overdue", null)}
+            active={filter === "overdue" && !driverId}
+            icon={<Hourglass />}
+          />
+          <StatCard
+            label="À encaisser"
+            value={formatPrice(t.to_collect_cents, currency)}
+            sub={all.commissions ? `${plural(all.commissions, "commission", "commissions")} en cours` : "rien à encaisser"}
+            href={href("open", null)}
+            active={filter === "open" && !driverId}
+            icon={<HandCoins />}
+          />
+          <StatCard
+            label="À verser"
+            value={formatPrice(t.to_pay_cents, currency)}
+            tone={t.to_pay_cents > 0 ? "amber" : undefined}
+            sub={all.toPay ? `${plural(all.toPay, "part chauffeur", "parts chauffeurs")} · courses payées à la centrale` : "rien à verser aux chauffeurs"}
+            href={href("to_pay", null)}
+            active={filter === "to_pay" && !driverId}
+            icon={<ArrowUpRight />}
+          />
+        </div>
+        <p className="mt-3 text-[13px] leading-5 text-fg-muted">
+          <span className="font-medium text-fg">Ce mois-ci{NB}:</span> {month.join(" · ")}.
+        </p>
       </section>
-
-      {/* ------------------------------------------------------------ soldes par chauffeur */}
-      <Card>
-        <CardHeader
-          title="Soldes par chauffeur"
-          description="Ce que chacun doit encore (ou attend) : relancez par notification ou réclamez par WhatsApp avec le lien de paiement prérempli."
-        />
-        {drivers.length === 0 ? (
-          <EmptyState icon={<CheckCheck />} title="Aucun solde ouvert" description="Toutes les commissions sont réglées et toutes les parts versées." className="py-10" />
-        ) : (
-          <div>
-            <div className={cn("hidden border-b border-line px-5 py-2.5 text-[12px] font-medium text-fg-subtle", BALANCE_GRID)}>
-              <span>Chauffeur</span>
-              <span>Statut</span>
-              <span className="text-right">À régler</span>
-              <span className="text-right">En retard</span>
-              <span className="text-right">Déclaré</span>
-              <span className="text-right">À verser</span>
-              <span>Relance</span>
-              <span className="sr-only">Actions</span>
-            </div>
-            <ul className="divide-y divide-line">
-              {drivers.map((d) => (
-                <BalanceRow key={d.driver_id} d={d} currency={currency} now={now} whatsapp={whatsappFor(d)} active={d.driver_id === driverId} />
-              ))}
-            </ul>
-          </div>
-        )}
-      </Card>
 
       {/* ------------------------------------------------------------ règlements */}
-      <section id="reglements" className="scroll-mt-6">
+      <section id="reglements" aria-labelledby="reglements-title" className="scroll-mt-6">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-[16px] font-semibold tracking-tight">Règlements</h2>
-            <p className="mt-0.5 text-[12.5px] text-fg-muted">Un règlement par course terminée : commission due par le chauffeur ou part à lui verser.</p>
+          <div className="min-w-0">
+            <h2 id="reglements-title" className="text-[17px] font-semibold tracking-tight">
+              Règlements
+            </h2>
+            <p className="mt-0.5 text-[13px] text-fg-muted">
+              {view === "rides"
+                ? "Un règlement par course terminée : commission due par le chauffeur ou part à lui verser."
+                : "Ce que chaque chauffeur doit encore ou attend : relancez-le ou réclamez par WhatsApp."}
+            </p>
           </div>
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-fg-subtle" aria-label="Légende de la répartition">
-            <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-brand" /> chauffeur</span>
-            <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-blue" /> commission</span>
-            <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-violet" /> plateforme</span>
-          </p>
+          <ViewToggle view={view} onChange={setView} />
         </div>
 
-        <div className="-mx-1 mb-3 flex gap-1 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Filtrer les règlements">
-          {TABS.map((tab) => {
-            const n = counts[tab.key];
-            const active = tab.key === filter;
-            const alarm = (tab.key === "overdue" || tab.key === "disputed") && !!n;
-            return (
-              <Link
-                key={tab.key}
-                href={href(tab.key, driverId)}
-                prefetch={false}
-                role="tab"
-                aria-selected={active}
-                scroll={false}
-                className={cn(
-                  "flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[12.5px] font-medium transition-colors",
-                  active ? "bg-white/[0.08] text-fg" : "text-fg-muted hover:bg-white/[0.04] hover:text-fg",
-                )}
-              >
-                {tab.label}
-                {n != null && n > 0 && (
-                  <span
-                    className={cn(
-                      "mono rounded-md px-1.5 text-[11px] leading-[18px]",
-                      alarm ? "bg-red/15 text-red" : tab.key === "declared" ? "bg-blue/15 text-blue" : active ? "bg-brand/15 text-brand" : "bg-white/[0.06] text-fg-subtle",
-                    )}
+        {view === "drivers" ? (
+          <DriverBalances drivers={drivers} currency={currency} now={now} whatsappFor={whatsappFor} activeId={driverId} />
+        ) : (
+          <>
+            <SettlementTabs filter={filter} driverId={driverId} counts={counts} />
+
+            {driverId && (
+              <div className="mb-3 flex items-center gap-2">
+                <span className="inline-flex min-h-8 items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.07] pl-3 pr-1 text-[13px] text-fg">
+                  <Funnel aria-hidden className="size-3.5 text-brand" />
+                  {filteredDriverLabel}
+                  <Link
+                    href={href(filter, null)}
+                    scroll={false}
+                    prefetch={false}
+                    className="grid size-7 place-items-center rounded-full text-fg-muted hover:bg-white/10 hover:text-fg"
+                    aria-label="Retirer le filtre chauffeur"
                   >
-                    {n}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-        </div>
+                    <X className="size-3.5" />
+                  </Link>
+                </span>
+              </div>
+            )}
 
-        {driverId && (
-          <div className="mb-3 flex items-center gap-2">
-            <span className="inline-flex h-7 items-center gap-2 rounded-full border border-brand/30 bg-brand/[0.07] pl-3 pr-1 text-[12.5px] text-fg">
-              <Funnel className="size-3.5 text-brand" />
-              {filteredDriverLabel}
-              <Link href={href(filter, null)} scroll={false} prefetch={false} className="grid size-5 place-items-center rounded-full text-fg-muted hover:bg-white/10 hover:text-fg" aria-label="Retirer le filtre chauffeur">
-                <X className="size-3.5" />
-              </Link>
-            </span>
-          </div>
-        )}
+            <SettlementList
+              items={list}
+              openById={openById}
+              filter={filter}
+              now={now}
+              timeZone={timeZone}
+              canManage={canManage}
+              currency={currency}
+              blockUnpaid={settings.block_unpaid}
+              whatsappFor={(s) =>
+                s.driver && owesNow(s)
+                  ? buildSettlementWhatsApp(
+                      {
+                        phone: s.driver.phone,
+                        firstName: s.driver.first_name,
+                        amountCents: s.amount_cents,
+                        currency: s.currency,
+                        rideNumbers: [rideNumberOf(s) ?? s.reference],
+                        reference: s.reference,
+                      },
+                      { orgName, link: settings.link, instructions: settings.instructions, methods: settings.methods ?? [], bank: centrale?.bank ?? null },
+                    )
+                  : null
+              }
+            />
 
-        <SettlementList
-          items={list}
-          openById={openById}
-          filter={filter}
-          now={now}
-          timeZone={timeZone}
-          canManage={canManage}
-          currency={currency}
-          blockUnpaid={settings.block_unpaid}
-          whatsappFor={(s) =>
-            s.driver && owesNow(s)
-              ? buildSettlementWhatsApp(
-                  {
-                    phone: s.driver.phone,
-                    firstName: s.driver.first_name,
-                    amountCents: s.amount_cents,
-                    currency: s.currency,
-                    rideNumbers: [rideNumberOf(s) ?? s.reference],
-                    reference: s.reference,
-                  },
-                  { orgName, link: settings.link, instructions: settings.instructions, methods: settings.methods ?? [], bank: centrale?.bank ?? null },
-                )
-              : null
-          }
-        />
-
-        {hasMore && (
-          <div className="mt-4 flex justify-center">
-            <Button asChild variant="outline" size="sm">
-              <Link href={href(filter, driverId, Math.min(SETTLEMENT_MAX, limit + SETTLEMENT_PAGE))} scroll={false} prefetch={false}>Afficher plus</Link>
-            </Button>
-          </div>
+            {hasMore && (
+              <div className="mt-4 flex justify-center">
+                <Button asChild variant="outline" size="sm">
+                  <Link href={href(filter, driverId, Math.min(SETTLEMENT_MAX, limit + SETTLEMENT_PAGE))} scroll={false} prefetch={false}>Afficher plus</Link>
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </section>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------- indicateur
-export type KpiTone = "red" | "blue" | "violet" | "green" | "brand" | "amber";
-export function Kpi({ label, value, sub, tone, href: to, icon }: { label: string; value: string; sub?: string; tone?: KpiTone; href?: string; icon?: React.ReactNode }) {
-  const body = (
-    <>
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-[12.5px] text-fg-subtle">{label}</span>
-        {icon && <span className={cn("shrink-0 [&_svg]:size-4", tone ? toneText[tone] : "text-fg-subtle")}>{icon}</span>}
-      </div>
-      <div className={cn("mono mt-1.5 truncate text-[22px] font-semibold leading-none tracking-tight sm:text-[24px]", tone ? toneText[tone] : "text-fg")}>{value}</div>
-      {sub && <div className="mt-1.5 line-clamp-2 text-[12px] text-fg-subtle">{sub}</div>}
-    </>
-  );
-  const cls = "surface relative block min-w-0 rounded-xl px-4 py-3.5";
-  return to ? (
-    // Défilement jusqu'à la liste filtrée (#reglements)
-    <Link href={to} prefetch={false} className={cn(cls, "transition-colors hover:border-line-strong hover:bg-ink-700")}>
-      {body}
-    </Link>
-  ) : (
-    <div className={cls}>{body}</div>
-  );
-}
-
-// ---------------------------------------------------------------------------- solde d'un chauffeur
-const BALANCE_GRID = "xl:grid xl:grid-cols-[minmax(0,1.5fr)_minmax(190px,1.2fr)_repeat(4,minmax(0,0.62fr))_minmax(0,0.7fr)_268px] xl:items-center xl:gap-3";
-function Money({ cents, currency, tone, className }: { cents: number; currency: string; tone?: KpiTone; className?: string }) {
+// ---------------------------------------------------------------------------- bascule « Par course | Par chauffeur »
+function ViewToggle({ view, onChange }: { view: "rides" | "drivers"; onChange: (v: "rides" | "drivers") => void }) {
   return (
-    <span className={cn("mono text-[13.5px]", cents ? (tone ? cn("font-semibold", toneText[tone]) : "text-fg") : "text-fg-subtle", className)}>
-      {cents ? formatPrice(cents, currency) : "—"}
-    </span>
-  );
-}
-
-function BalanceRow({ d, currency, now, whatsapp, active }: { d: OrgSettlementDriver; currency: string; now: number; whatsapp: string | null; active: boolean }) {
-  const { pending, remind } = useRemindDriver();
-  const trust = TRUST_LEVEL_META[d.trust_level];
-  const recent = d.last_reminded_at ? now - Date.parse(d.last_reminded_at) < 30 * 60_000 : false;
-  const canRemind = d.owed_cents > 0 && !recent;
-  const badge = d.banned ? (
-    <Badge tone="red">Banni</Badge>
-  ) : d.blocked ? (
-    <Badge tone="red" dot={false}>
-      <Lock className="size-3" /> Bloqué
-    </Badge>
-  ) : (
-    <Badge tone="green">
-      <span className="xl:hidden">Actif</span>
-      <span className="hidden xl:inline">Reçoit les courses</span>
-    </Badge>
-  );
-  // Niveau (Nouveau / Confirmé) + motif du blocage
-  const detail = (
-    <>
-      <span className={d.trust_level === "new" ? "text-amber" : undefined}>{trust?.label ?? d.trust_level}</span>
-      {d.blocked && !d.banned && <span className="text-red"> · {DRIVER_BLOCKER_META[d.blocked].label}</span>}
-    </>
-  );
-  const detailTitle = [trust?.description, d.blocked ? DRIVER_BLOCKER_META[d.blocked].message : null].filter(Boolean).join(" ");
-  const actions = (
-    <div className="flex flex-wrap items-center gap-1.5 xl:flex-nowrap xl:justify-end">
-      <Tooltip content={d.owed_cents <= 0 ? "Rien à régler" : recent ? `Déjà relancé ${fromNow(d.last_reminded_at, now)} (1 rappel / 30 min)` : "Notification push au chauffeur"}>
-        <span className={cn(d.owed_cents <= 0 && "hidden xl:inline")}>
-          <Button variant="secondary" size="sm" disabled={!canRemind || pending} loading={pending} onClick={() => remind(d.driver_id, d.first_name)}>
-            <BellRing /> Relancer
-          </Button>
-        </span>
-      </Tooltip>
-      <WhatsAppButton href={whatsapp} size="sm" />
-      <Tooltip content={active ? "Tous les chauffeurs" : `Règlements de ${d.first_name}`}>
-        <Button asChild variant="ghost" size="icon-sm" aria-label={active ? "Retirer le filtre chauffeur" : `Afficher les règlements de ${d.first_name}`}>
-          <Link href={href("open", active ? null : d.driver_id)} scroll={!active} prefetch={false}>
-            {active ? <FunnelX className="text-brand" /> : <Funnel />}
-          </Link>
-        </Button>
-      </Tooltip>
+    <div role="group" aria-label="Affichage des règlements" className="inline-flex rounded-lg border border-line bg-ink-850 p-0.5">
+      {(
+        [
+          ["rides", "Par course"],
+          ["drivers", "Par chauffeur"],
+        ] as const
+      ).map(([key, label]) => (
+        <button
+          key={key}
+          type="button"
+          aria-pressed={view === key}
+          onClick={() => onChange(key)}
+          className={cn(
+            "min-h-10 rounded-md px-3 text-[13px] font-medium transition-colors sm:min-h-8",
+            view === key ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg",
+          )}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------- onglets et puces
+/**
+ * Barre des règlements : liste d'onglets (role="tab", même sémantique qu'avant) au style des filtres. « À traiter ·
+ * Réglés · Annulés · Tous » toujours visibles ; « À confirmer », « En retard », « Contestés », « À verser » seulement
+ * au-dessus de zéro ou quand ils sont affichés (mêmes clés ?filter=).
+ */
+function SettlementTabs({ filter, driverId, counts }: { filter: OrgSettlementFilter; driverId: string | null; counts: Partial<Record<OrgSettlementFilter, number>> }) {
+  const chips = CHIPS.filter((c) => (counts[c.key] ?? 0) > 0 || c.key === filter);
+  const tab = (key: OrgSettlementFilter, label: string, alert = false) => {
+    const n = counts[key];
+    const active = key === filter;
+    return (
+      <Link
+        key={key}
+        href={href(key, driverId)}
+        prefetch={false}
+        role="tab"
+        aria-selected={active}
+        scroll={false}
+        className={cn(
+          "inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 text-[13px] transition-colors sm:h-9",
+          active ? "border-line-strong bg-ink-600 font-medium text-fg" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+        )}
+      >
+        {label}
+        {n != null && n > 0 && (
+          <span
+            className={cn(
+              "min-w-5 rounded-full px-1.5 text-center text-[12px] font-semibold leading-5 tabular-nums",
+              alert ? "bg-red/15 text-red" : active ? "bg-white/[0.08] text-fg" : "bg-white/[0.05] text-fg-muted",
+            )}
+          >
+            {n}
+          </span>
+        )}
+      </Link>
+    );
+  };
   return (
-    <li className={cn("px-5 py-3.5", active && "bg-brand/[0.035]")}>
-      <div className={cn("flex flex-col gap-2.5", BALANCE_GRID)}>
-        <div className="flex items-start justify-between gap-3 xl:contents">
-          <div className="flex min-w-0 items-center gap-3">
-            <Avatar name={driverName(d)} size={34} />
-            <div className="min-w-0">
-              <p className="truncate text-[13.5px] font-medium">
-                {driverName(d)} <span className="mono font-normal text-fg-subtle">#{d.number}</span>
-              </p>
-              <a href={`tel:${d.phone}`} className="mono block truncate text-[12px] text-fg-subtle hover:text-fg">{formatPhone(d.phone)}</a>
-            </div>
-          </div>
-          <div className="min-w-0 shrink-0 xl:shrink">
-            {badge}
-            <p className="mt-1 hidden truncate text-[11.5px] text-fg-subtle xl:block" title={detailTitle}>{detail}</p>
-          </div>
-        </div>
-        <p className="-mt-1 text-[11.5px] text-fg-subtle xl:hidden" title={detailTitle}>{detail}</p>
-        {/* montants : grille sur grand écran, encart compact sinon */}
-        <div className="rounded-xl bg-white/[0.025] px-3 py-2 xl:contents">
-          <div className="grid grid-cols-4 gap-2 xl:contents">
-            {(
-              [
-                ["À régler", d.owed_cents, undefined],
-                ["En retard", d.overdue_cents, "red"],
-                ["Déclaré", d.declared_cents, "blue"],
-                ["À verser", d.to_pay_cents, "violet"],
-              ] as const
-            ).map(([label, cents, tone]) => (
-              <div key={label} className="min-w-0 xl:text-right">
-                <p className="text-[11px] text-fg-subtle xl:hidden">{label}</p>
-                <Money cents={cents} currency={currency} tone={tone} />
-              </div>
-            ))}
-          </div>
-          <p className="mt-1.5 border-t border-line pt-1.5 text-[11.5px] text-fg-subtle xl:mt-0 xl:border-0 xl:pt-0 xl:text-[12px]">
-            <span className="xl:hidden">{d.last_reminded_at ? "Relancé " : "Jamais relancé"}</span>
-            {d.last_reminded_at ? fromNow(d.last_reminded_at, now) : <span className="hidden xl:inline">jamais</span>}
+    <div className="mb-3 flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Filtrer les règlements">
+      {TABS.map((t) => tab(t.key, t.label))}
+      {chips.length > 0 && <span aria-hidden className="mx-1 hidden h-5 w-px bg-line sm:block" />}
+      {chips.map((c) => tab(c.key, c.label, c.alert))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------- vue « Par chauffeur »
+/**
+ * État d'un chauffeur en un seul libellé : « Actif », « Bloqué · commission en retard », « Bloqué · paiement contesté »,
+ * « Banni ». « unpaid » couvre une commission en retard OU contestée (DRIVER_BLOCKER_META) : sans montant en retard,
+ * c'est la contestation qui bloque.
+ */
+const BLOCKED_REASON: Record<DriverBlocker, string> = {
+  unpaid: "commission en retard",
+  credit_limit: "plafond de commissions atteint",
+  new_driver: "courses réservées aux confirmés",
+};
+
+function driverState(d: Pick<OrgSettlementDriver, "banned" | "blocked" | "overdue_cents">): { label: string; tone: "red" | "green" } {
+  if (d.banned) return { label: "Banni", tone: "red" };
+  if (d.blocked === "unpaid" && !(d.overdue_cents > 0)) return { label: "Bloqué · paiement contesté", tone: "red" };
+  if (d.blocked) return { label: `Bloqué · ${BLOCKED_REASON[d.blocked] ?? DRIVER_BLOCKER_META[d.blocked]?.label.toLowerCase() ?? "commission en retard"}`, tone: "red" };
+  return { label: "Actif", tone: "green" };
+}
+
+/** « doit 30 €, en retard · a déclaré 11 €, à confirmer · à lui verser 66,20 € » (montants à zéro omis). */
+export function balancePhrase(d: Pick<OrgSettlementDriver, "owed_cents" | "overdue_cents" | "declared_cents" | "to_pay_cents">, currency = "EUR") {
+  const p = (c: number) => formatPrice(c, currency);
+  const parts: string[] = [];
+  if (d.owed_cents > 0) {
+    parts.push(
+      d.overdue_cents >= d.owed_cents
+        ? `doit ${p(d.owed_cents)}, en retard`
+        : d.overdue_cents > 0
+          ? `doit ${p(d.owed_cents)}, dont ${p(d.overdue_cents)} en retard`
+          : `doit ${p(d.owed_cents)}`,
+    );
+  }
+  if (d.declared_cents > 0) parts.push(`a déclaré ${p(d.declared_cents)}, à confirmer`);
+  if (d.to_pay_cents > 0) parts.push(`à lui verser ${p(d.to_pay_cents)}`);
+  return parts.length ? parts.join(" · ") : "rien en cours";
+}
+
+function DriverBalances({
+  drivers,
+  currency,
+  now,
+  whatsappFor,
+  activeId,
+}: {
+  drivers: OrgSettlementDriver[];
+  currency: string;
+  now: number;
+  whatsappFor: (d: OrgSettlementDriver) => string | null;
+  activeId: string | null;
+}) {
+  if (!drivers.length) {
+    return (
+      <Card>
+        <EmptyState size="compact" icon={<CheckCheck />} title="Aucun solde ouvert." description="Toutes les commissions sont réglées et toutes les parts versées." />
+      </Card>
+    );
+  }
+  return (
+    <Card className="overflow-hidden">
+      <ul className="divide-y divide-line">
+        {drivers.map((d) => (
+          <DriverBalanceRow key={d.driver_id} d={d} currency={currency} now={now} whatsapp={whatsappFor(d)} active={d.driver_id === activeId} />
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function DriverBalanceRow({ d, currency, now, whatsapp, active }: { d: OrgSettlementDriver; currency: string; now: number; whatsapp: string | null; active: boolean }) {
+  const { pending, remind } = useRemindDriver();
+  const recent = d.last_reminded_at ? now - Date.parse(d.last_reminded_at) < 30 * 60_000 : false;
+  const canRemind = d.owed_cents > 0 && !recent;
+  const state = driverState(d);
+  const phrase = balancePhrase(d, currency);
+  const late = d.overdue_cents > 0;
+  return (
+    <li className={cn("flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:px-5", active && "bg-brand/[0.035]")}>
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <Avatar name={driverName(d)} size={36} />
+        <div className="min-w-0 flex-1">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Link
+              href={href("open", d.driver_id)}
+              prefetch={false}
+              className="text-[14px] font-medium text-fg underline-offset-2 hover:text-brand hover:underline"
+              title={`Voir les règlements de ${d.first_name}`}
+            >
+              {driverName(d)} <span className="mono font-normal text-fg-muted">#{d.number}</span>
+            </Link>
+            {/* Un seul libellé d'état, jamais coupé (retour à la ligne si besoin) */}
+            <Badge tone={state.tone} className="h-auto min-h-[22px] whitespace-normal py-0.5">
+              {state.label}
+            </Badge>
+            {d.trust_level === "new" && <span className="text-[12px] text-amber">nouveau</span>}
+          </p>
+          <p className={cn("mt-0.5 text-[13px]", late ? "text-red" : "text-fg")}>{phrase}</p>
+          <p className="mt-0.5 text-[12px] text-fg-muted">
+            <a href={`tel:${d.phone}`} className="mono hover:text-fg">
+              {formatPhone(d.phone)}
+            </a>
+            {" · "}
+            {d.last_reminded_at ? `relancé ${fromNow(d.last_reminded_at, now)}` : "jamais relancé"}
           </p>
         </div>
-        {actions}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 max-sm:pl-12 sm:shrink-0 sm:justify-end">
+        {d.owed_cents > 0 && (
+          <Tooltip content={recent ? `Déjà relancé ${fromNow(d.last_reminded_at, now)} (1 rappel / 30 min)` : "Rappel au chauffeur, par le canal choisi dans vos réglages"}>
+            <span>
+              <Button variant="secondary" size="sm" disabled={!canRemind || pending} loading={pending} onClick={() => remind(d.driver_id, d.first_name)}>
+                <BellRing /> Relancer
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+        <WhatsAppButton href={whatsapp} size="sm" />
       </div>
     </li>
   );
 }
 
 // ---------------------------------------------------------------------------- liste des règlements
-const ROW_GRID = "xl:grid xl:grid-cols-[20px_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.8fr)_minmax(158px,1.15fr)_220px] xl:items-center xl:gap-3";
+const ROW_GRID = "xl:grid xl:grid-cols-[20px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,0.75fr)_minmax(150px,1.1fr)_200px] xl:items-center xl:gap-3";
 
 function SettlementList({
   items,
@@ -548,7 +589,7 @@ function SettlementList({
   if (!items.length) {
     return (
       <Card>
-        <EmptyState icon={<CheckCheck />} title={EMPTY[filter].title} description={EMPTY[filter].description} />
+        <EmptyState size="compact" icon={<CheckCheck />} title={EMPTY[filter].title} description={EMPTY[filter].description} />
       </Card>
     );
   }
@@ -556,7 +597,7 @@ function SettlementList({
   return (
     <>
       <Card className="overflow-hidden">
-        <div className={cn("hidden border-b border-line px-5 py-2.5 text-[12px] font-medium text-fg-subtle", ROW_GRID)}>
+        <div className={cn("hidden border-b border-line px-5 py-2.5 text-[12px] font-medium text-fg-muted", ROW_GRID)}>
           <span>
             {selectable.length > 0 && (
               <Checkbox
@@ -590,10 +631,10 @@ function SettlementList({
         </ul>
         {carried.length > 0 && (
           <div className="border-t border-line-strong">
-            <p className="px-5 pb-1 pt-3 text-[12px] text-fg-muted">
+            <p className="px-5 pb-1 pt-3 text-[13px] text-fg-muted">
               {carried.length > 1
-                ? `Sélection conservée : ces ${carried.length} règlements ne font plus partie des lignes affichées.`
-                : "Sélection conservée : ce règlement ne fait plus partie des lignes affichées."}
+                ? `Sélection conservée : ces ${carried.length} règlements ne font plus partie des lignes affichées.`
+                : "Sélection conservée : ce règlement ne fait plus partie des lignes affichées."}
             </p>
             <ul className="divide-y divide-line">
               {carried.map((s) => (
@@ -621,21 +662,21 @@ function SettlementList({
             <span className="mono font-semibold text-fg">{pickedAmount}</span>
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-[12.5px] text-fg-muted">
+            <label className="flex items-center gap-2 text-[13px] text-fg-muted">
               <span className="hidden sm:inline">Moyen</span>
               <select
                 value={bulkMethod}
                 onChange={(e) => setBulkMethod(e.target.value as ConfirmMethod | "declared")}
-                className="h-8 rounded-lg border border-line bg-ink-800 px-2 text-[12.5px] text-fg outline-none focus:border-brand/50"
+                className="h-9 rounded-lg border border-line bg-ink-800 px-2 text-[13px] text-fg outline-none focus:border-brand/50"
                 aria-label="Moyen de paiement"
               >
                 <option value="declared">Selon la déclaration</option>
-                {(["link", "cash", "transfer", "other"] as const).map((mth) => (
+                {METHOD_ORDER.map((mth) => (
                   <option key={mth} value={mth}>{methodLabel(mth)}</option>
                 ))}
               </select>
             </label>
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Map())}>Annuler</Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Map())}>Tout désélectionner</Button>
             <Button
               variant="primary"
               size="sm"
@@ -697,8 +738,8 @@ function SettlementRow({
   const live = { ...s, overdue: s.direction === "driver_owes" && s.status === "due" && Date.parse(s.due_at) <= at };
   const due = dueInfo(live, at, { blockUnpaid });
   const owes = s.direction === "driver_owes";
+  const open = isOpen(s);
   const n = rideNumberOf(s);
-  const split = { price: s.price_cents, driver: s.driver_payout_cents, commission: s.commission_cents, platform: s.platform_fee_cents };
   const summary = splitSummary({ ...s, currency: s.currency });
   const DirIcon = owes ? ArrowDownLeft : ArrowUpRight;
   const driver = s.driver;
@@ -706,13 +747,13 @@ function SettlementRow({
 
   const course = (
     <div className="min-w-0 xl:order-1">
-      <p className="flex min-w-0 items-baseline gap-2 text-[13.5px]">
+      <p className="flex min-w-0 items-baseline gap-2 text-[14px]">
         <Link href={`/dashboard/rides/${s.ride_id}`} prefetch={false} className="mono shrink-0 font-semibold text-fg hover:text-brand">
           #{n ?? "—"}
         </Link>
-        <span className="truncate text-[12px] text-fg-subtle">{s.ride.completed_at ? formatRideDate(s.ride.completed_at, timeZone, new Date(at)) : "—"}</span>
+        <span className="truncate text-[12px] text-fg-muted">{s.ride.completed_at ? formatRideDate(s.ride.completed_at, timeZone, new Date(at)) : "—"}</span>
       </p>
-      <p className="truncate text-[12.5px] text-fg-muted" title={`${s.ride.pickup} → ${s.ride.dropoff}`}>
+      <p className="truncate text-[13px] text-fg-muted" title={`${s.ride.pickup} → ${s.ride.dropoff}`}>
         {shortAddress(s.ride.pickup)} → {shortAddress(s.ride.dropoff)}
       </p>
     </div>
@@ -721,37 +762,30 @@ function SettlementRow({
     <div className="min-w-0 xl:order-2">
       <p className="truncate text-[13px]">
         {driver ? `${driver.first_name} ${driver.last_name}` : s.driver_label}
-        {driver && <span className="mono text-fg-subtle"> #{driver.number}</span>}
+        {driver && <span className="mono text-fg-muted"> #{driver.number}</span>}
       </p>
-      <p className="flex items-center gap-1.5 text-[11.5px] text-fg-subtle">
-        <span>réf.</span> <span className="mono text-fg-muted">{s.reference}</span>
+      <p className="flex flex-wrap items-center gap-x-1.5 text-[12px] text-fg-muted">
+        <span>réf.</span> <span className="mono">{s.reference}</span>
         {driver?.trust_level === "new" && <span className="text-amber">· nouveau</span>}
         {driver?.banned && <span className="text-red">· banni</span>}
       </p>
     </div>
   );
-  // Grand écran : prix, barre et trois montants ; dessous, encart compact (barre + résumé)
-  const repartition = (
-    <div className="hidden min-w-0 xl:order-3 xl:block" title={summary ?? undefined}>
-      <div className="flex items-center gap-2">
-        <span className="mono shrink-0 text-[12.5px] text-fg">{formatPrice(s.price_cents, s.currency)}</span>
-        <SplitBar split={split} className="h-1.5 flex-1" />
-      </div>
-      <p className="mono mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-fg-subtle">
-        <span className="text-brand">{formatPrice(s.driver_payout_cents, s.currency)}</span>
-        <span className="text-blue">{formatPrice(s.commission_cents, s.currency)}</span>
-        {s.platform_fee_cents > 0 && <span className="text-violet">{formatPrice(s.platform_fee_cents, s.currency)}</span>}
-      </p>
-    </div>
-  );
+  // Répartition en phrase (« 30 € = 19 € chauffeur + 6 € commission + 5 € plateforme »), partout
+  const repartition = summary ? <p className="min-w-0 text-[12px] leading-[18px] text-fg-muted xl:order-3">{summary}</p> : <span className="hidden xl:order-3 xl:block" />;
   const amount = (
     <div className="shrink-0 text-right xl:order-4">
-      <p className={cn("mono text-[15px] font-semibold tracking-tight", s.status === "waived" ? "text-fg-subtle line-through" : "text-fg")}>
+      <p className={cn("mono whitespace-nowrap text-[15px] font-semibold tracking-tight", s.status === "waived" ? "text-fg-muted line-through" : "text-fg")}>
         {formatPrice(s.amount_cents, s.currency)}
       </p>
-      <p className={cn("inline-flex items-center gap-1 whitespace-nowrap text-[11.5px]", owes ? "text-fg-muted" : "text-violet")}>
-        <DirIcon className="size-3" /> {owes ? "à encaisser" : "à verser"}
-      </p>
+      {/* Sens : « à encaisser / à verser » seulement tant que le règlement est ouvert */}
+      {open ? (
+        <p className={cn("inline-flex items-center gap-1 whitespace-nowrap text-[12px]", owes ? "text-fg-muted" : "text-amber")}>
+          <DirIcon aria-hidden className="size-3" /> {owes ? "à encaisser" : "à verser"}
+        </p>
+      ) : (
+        <p className="whitespace-nowrap text-[12px] text-fg-muted">{owes ? "commission" : "part chauffeur"}</p>
+      )}
     </div>
   );
   const status = (
@@ -760,20 +794,20 @@ function SettlementRow({
       {s.status === "declared" ? (
         <DeclarationLine settlement={s} now={at} />
       ) : (
-        <p className={cn("flex min-w-0 items-center gap-1.5 truncate text-[11.5px]", toneText[due.tone])}>
-          {s.status === "paid" && MethodIcon && <MethodIcon className="size-3 shrink-0" />}
-          <span className="truncate">
+        <p className={cn("flex min-w-0 items-center gap-1.5 text-[12px]", toneText[due.tone])}>
+          {s.status === "paid" && MethodIcon && <MethodIcon aria-hidden className="size-3 shrink-0" />}
+          <span className="min-w-0">
             {s.status === "paid" && s.settled_method ? `${methodLabel(s.settled_method)} · ` : ""}
             {due.text}
           </span>
         </p>
       )}
       {(s.status === "disputed" || s.status === "waived") && s.note && (
-        <p className="truncate text-[11.5px] text-fg-subtle" title={s.note}>« {s.note} »</p>
+        <p className="truncate text-[12px] text-fg-muted" title={s.note}>«{NB}{s.note}{NB}»</p>
       )}
     </div>
   );
-  const actions = <SettlementActions settlement={s} canManage={canManage} whatsapp={whatsapp} size="xs" className="xl:order-6 xl:flex-nowrap xl:justify-end" />;
+  const actions = <SettlementActions settlement={live} canManage={canManage} whatsapp={whatsapp} size="xs" className="xl:order-6 xl:flex-nowrap xl:justify-end" />;
 
   return (
     <li className={cn("px-4 py-3.5 transition-colors sm:px-5", checked ? "bg-brand/[0.04]" : "hover:bg-white/[0.015]")}>
@@ -793,10 +827,6 @@ function SettlementRow({
             {status}
           </div>
           {repartition}
-          <div className="rounded-lg bg-white/[0.025] px-3 py-2 xl:hidden">
-            <SplitBar split={split} className="h-1.5" />
-            {summary && <p className="mono mt-1.5 text-[11.5px] leading-4 text-fg-muted">{summary}</p>}
-          </div>
           {actions}
         </div>
       </div>

@@ -1,5 +1,5 @@
 // Utilitaires de la messagerie (sans dépendance client : utilisables par les actions serveur).
-import { extractErrorCode, type ChatMessage, type ChatMessageRow, type ChatOverview, type ChatThreadKey } from "@rydar/shared";
+import { dateTimeFormat, extractErrorCode, type ChatMessage, type ChatMessageRow, type ChatOverview, type ChatThreadKey } from "@rydar/shared";
 
 export const FLEET_THREAD = "fleet" as const;
 export const CHAT_MAX_LENGTH = 1000;
@@ -35,7 +35,7 @@ export function threadHref(thread: ChatThreadKey | null) {
 }
 
 const CHAT_ERRORS: Record<string, string> = {
-  RATE_LIMITED: "Trop de messages d'affilée : patientez une minute avant de réécrire.",
+  RATE_LIMITED: "Trop de messages d'affilée : patientez une minute avant de réécrire.",
   EMPTY_MESSAGE: "Le message est vide.",
   MESSAGE_TOO_LONG: `Message trop long (${CHAT_MAX_LENGTH} caractères maximum).`,
   INVALID_THREAD: "Conversation introuvable.",
@@ -43,9 +43,10 @@ const CHAT_ERRORS: Record<string, string> = {
   FORBIDDEN_TENANT: "Ce chauffeur ne fait pas partie de votre flotte.",
   FORBIDDEN_ROLE: "Votre rôle ne permet pas d'écrire aux chauffeurs.",
   // Modération (20260924004100)
-  NOT_REMOVABLE: "Seuls les messages du fil « Toute la flotte » peuvent être supprimés.",
+  NOT_REMOVABLE: "Seuls les messages du fil « Toute la flotte » peuvent être supprimés.",
   MESSAGE_NOT_FOUND: "Ce message a déjà été supprimé.",
-  REPORT_NOT_FOUND: "Ce signalement n'existe plus.",
+  // Côté web, seule la modération (dismiss_chat_report) renvoie ce code : une demande de modération
+  REPORT_NOT_FOUND: "Cette demande de modération n'existe plus.",
   INVALID_MESSAGE: "Message introuvable.",
   INVALID_REPORT: "Signalement introuvable.",
 };
@@ -58,9 +59,9 @@ export function chatErrorMessage(error: { code?: string; message?: string } | nu
   return fallback;
 }
 
-// ---------------------------------------------------------------- Dates (fuseau de l'organisation)
+// ---------------------------------------------------------------- Dates (fuseau de l'organisation, formateurs mémorisés)
 function dayKey(d: Date, timeZone: string) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  return dateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 }
 
 export function sameDay(a: string, b: string, timeZone: string) {
@@ -68,7 +69,7 @@ export function sameDay(a: string, b: string, timeZone: string) {
 }
 
 export function clockTime(iso: string, timeZone: string) {
-  return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso));
+  return dateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso));
 }
 
 /** Séparateur de jour : « Aujourd'hui », « Hier », « lundi 22 septembre ». */
@@ -78,7 +79,7 @@ export function dayLabel(iso: string, timeZone: string, now = Date.now()) {
   if (key === dayKey(new Date(now), timeZone)) return "Aujourd'hui";
   if (key === dayKey(new Date(now - 86_400_000), timeZone)) return "Hier";
   const sameYear = key.slice(0, 4) === dayKey(new Date(now), timeZone).slice(0, 4);
-  return new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: sameYear ? undefined : "numeric", timeZone }).format(d);
+  return dateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: sameYear ? undefined : "numeric", timeZone }).format(d);
 }
 
 /** Horodatage compact de la liste : « à l'instant », « 5 min », « 14:32 », « hier », « lun. », « 12/09 ». */
@@ -91,8 +92,8 @@ export function whenShort(iso: string | null | undefined, timeZone: string, now 
   const key = dayKey(d, timeZone);
   if (key === dayKey(new Date(now), timeZone)) return clockTime(iso, timeZone);
   if (key === dayKey(new Date(now - 86_400_000), timeZone)) return "hier";
-  if (diff < 6 * 86_400_000) return new Intl.DateTimeFormat("fr-FR", { weekday: "short", timeZone }).format(d);
-  return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", timeZone }).format(d);
+  if (diff < 6 * 86_400_000) return dateTimeFormat("fr-FR", { weekday: "short", timeZone }).format(d);
+  return dateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", timeZone }).format(d);
 }
 
 /** « il y a 6 min », « il y a 2 h » */

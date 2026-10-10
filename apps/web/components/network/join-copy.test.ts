@@ -75,6 +75,11 @@ describe("textes du lien d'inscription selon le modèle", () => {
       expect(joinBadge(model)).not.toMatch(/recrut|embauch|emploi/i);
     }
     expect(autoApproveHelp("centrale", true)).toContain("inscription au registre des exploitants VTC");
+    // Validation manuelle : l'aide renvoie à la liste « Candidatures » de la page (jamais « ci-contre », faux sur téléphone)
+    for (const model of ["fleet", "centrale"] as const) {
+      expect(autoApproveHelp(model, false)).toBe("Chaque inscrit attend votre validation dans Candidatures.");
+      expect(autoApproveHelp(model, false)).not.toContain("ci-contre");
+    }
     expect(joinBadge("centrale")).toBe("Inscription chauffeurs VTC indépendants");
     expect(joinBadge("fleet")).toBe("Inscription chauffeurs VTC");
   });

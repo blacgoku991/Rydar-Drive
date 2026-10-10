@@ -73,7 +73,7 @@ export function ThreadPane({
   error: string | null;
   onLoadOlder: () => void;
   onBack: () => void;
-  /** Fil flotte : messages signalés par les chauffeurs, en attente de décision */
+  /** Fil flotte : messages à modérer (retrait demandé par des chauffeurs), en attente de décision */
   moderation?: ChatModerationItem[];
   moderationTotal?: number;
   /** Suppression / classement en cours */
@@ -94,7 +94,7 @@ export function ThreadPane({
 
   const blocks = useMemo(() => buildBlocks(items, meId, timeZone, now), [items, meId, timeZone, now]);
 
-  // Accusé « Vu » : seulement quand le dernier message du fil direct vient de la centrale
+  // Accusé « Vu » : seulement quand le dernier message du fil direct vient de votre équipe
   const last = items[items.length - 1];
   const receiptFor =
     !isFleet && last && last.author_type === "user" && !last.report_type
@@ -249,8 +249,8 @@ export function ThreadPane({
             <p className="text-[14px] font-semibold">Aucun message pour l&apos;instant</p>
             <p className="mt-1 max-w-sm text-[13px] text-fg-muted">
               {isFleet
-                ? "Les annonces de la centrale et les signalements des chauffeurs (police, bouchons…) apparaîtront ici."
-                : `Écrivez à ${d ? d.first_name : "ce chauffeur"} : il reçoit une notification sur son téléphone.`}
+                ? "Vos annonces et les signalements des chauffeurs (police, bouchons…) apparaîtront ici."
+                : `Écrivez à ${d ? d.first_name : "ce chauffeur"} : il reçoit une notification sur son téléphone.`}
             </p>
           </div>
         )}

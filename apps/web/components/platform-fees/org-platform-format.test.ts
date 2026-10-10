@@ -30,7 +30,7 @@ describe("frais Rydar d'une flotte : relevé et libellés", () => {
     expect(rideSettlementText(ride({ fleet_fee: { percent: 0, fixed_cents: 200 } }))).toEqual({ text: "Course de la flotte", tone: "neutral" });
     // Course passée par le mode centrale (règlement chauffeur) : statut du règlement, comme avant
     expect(rideSettlementText(ride({ fleet_fee: null, settlement_status: "paid" }))?.text).toBe("Commission encaissée");
-    expect(rideSettlementText(ride({ settlement_status: null }))?.text).toBe("Commission : aucun règlement");
+    expect(rideSettlementText(ride({ settlement_status: null }))?.text).toBe("Commission : aucun règlement");
     expect(rideSettlementText(null)).toBeNull();
   });
 

@@ -1,6 +1,6 @@
 "use client";
-// Historique des paiements de la centrale à Rydar : déclaré / reçu (montant reçu s'il diffère), motif d'un refus,
-// « Retirer » pour une déclaration que Rydar n'a pas encore traitée.
+// Historique des paiements de l'organisation à Rydar : déclaré / reçu (montant reçu s'il diffère), motif d'un refus,
+// « Retirer » pour une déclaration que Rydar n'a pas encore traitée (confirmation : « Retirer la déclaration »).
 import { formatPrice, type PlatformPayment } from "@rydar/shared";
 import { Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -10,7 +10,7 @@ import { cancelPlatformPayment } from "@/app/dashboard/settlements/platform-acti
 import { ago, platformMethodLabel, shortDay } from "@/components/platform-fees/org-platform-format";
 import { PLATFORM_METHOD_ICON, PlatformPaymentBadge } from "@/components/platform-fees/org-platform-ui";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +36,7 @@ export function PlatformPaymentHistory({
   const [cancelling, setCancelling] = useState<PlatformPayment | null>(null);
   const shown = all ? payments : payments.slice(0, limit);
   if (!payments.length) {
-    return <p className={cn("px-5 py-6 text-center text-[12.5px] text-fg-muted", className)}>Aucun paiement déclaré pour l&apos;instant.</p>;
+    return <p className={cn("px-4 py-5 text-[13px] text-fg-muted sm:px-5", className)}>Aucun paiement déclaré pour l&apos;instant.</p>;
   }
   return (
     <div className={className}>
@@ -53,8 +53,13 @@ export function PlatformPaymentHistory({
         ))}
       </ul>
       {payments.length > limit && (
-        <div className="border-t border-line px-5 py-2.5 text-center">
-          <button type="button" onClick={() => setAll((v) => !v)} className="text-[12.5px] font-medium text-fg-muted hover:text-fg">
+        <div className="border-t border-line px-4 py-1 text-center sm:px-5">
+          <button
+            type="button"
+            onClick={() => setAll((v) => !v)}
+            aria-expanded={all}
+            className="min-h-11 text-[13px] font-medium text-fg-muted hover:text-fg sm:min-h-9"
+          >
             {all ? "Afficher moins" : `Afficher les ${payments.length} paiements`}
           </button>
         </div>
@@ -75,8 +80,8 @@ function PaymentRow({ p, currency, timeZone, now, onCancel }: { p: PlatformPayme
       ? `enregistré par Rydar ${ago(p.reviewed_at ?? p.declared_at, now)}`
       : `déclaré ${ago(p.declared_at, now)}${p.declared_by_name ? ` par ${p.declared_by_name}` : ""}`;
   return (
-    <li className="flex items-start gap-3 px-5 py-3">
-      <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted">
+    <li className="flex items-start gap-3 px-4 py-3 sm:px-5">
+      <span aria-hidden className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted">
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
@@ -115,7 +120,7 @@ function PaymentRow({ p, currency, timeZone, now, onCancel }: { p: PlatformPayme
         )}
       </div>
       {onCancel && (
-        <Button variant="ghost" size="xs" onClick={onCancel} className="shrink-0">
+        <Button variant="ghost" size="xs" onClick={onCancel} className="shrink-0" aria-label={`Retirer la déclaration de ${formatPrice(p.amount_cents, currency)}`}>
           <Undo2 /> Retirer
         </Button>
       )}
@@ -131,7 +136,7 @@ function CancelDialog({ payment, currency, onClose }: { payment: PlatformPayment
       <DialogContent
         size="sm"
         title="Retirer la déclaration"
-        description="Rydar ne l'a pas encore traitée : elle disparaît de sa liste « à confirmer ». Vous pourrez déclarer à nouveau le bon paiement."
+        description={"Rydar ne l'a pas encore traitée\u00a0: elle disparaît de sa liste «\u00a0à confirmer\u00a0». Vous pourrez déclarer à nouveau le bon paiement."}
       >
         {payment && (
           <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-white/[0.035] px-3.5 py-3">
@@ -139,13 +144,10 @@ function CancelDialog({ payment, currency, onClose }: { payment: PlatformPayment
               <p className="text-[13px] font-medium text-fg">{platformMethodLabel(payment.method)}</p>
               {payment.reference && <p className="mono truncate text-[12px] text-fg-muted">réf. {payment.reference}</p>}
             </div>
-            <p className="mono shrink-0 text-[20px] font-semibold tracking-tight text-fg">{formatPrice(payment.amount_cents, currency)}</p>
+            <p className="shrink-0 text-[20px] font-semibold tabular-nums tracking-tight text-fg">{formatPrice(payment.amount_cents, currency)}</p>
           </div>
         )}
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Garder
-          </Button>
+        <DialogFooter backDisabled={pending}>
           <Button
             variant="danger"
             loading={pending}
@@ -168,9 +170,9 @@ function CancelDialog({ payment, currency, onClose }: { payment: PlatformPayment
               }))
             }
           >
-            <Undo2 /> Retirer
+            <Undo2 /> Retirer la déclaration
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -1,7 +1,9 @@
 "use client";
-// « Courses confiées » : décisions sur une course partagée (owner / admin) — Reçu, Pas reçu, Annuler (payée à bord),
-// Versé (RIB du chauffeur en feuille latérale), Valider, Contester la course, Rouvrir, Exclure ce chauffeur,
-// Ne plus travailler avec {organisation} ; « Relancer » (application) pour tout membre, dispatcher compris.
+// « Courses confiées » : décisions sur une course partagée (owner / admin) — Reçu, Pas reçu (bouton direct seulement si
+// le chauffeur a déclaré avoir payé ou si l'échéance est passée, sinon dans le menu ⋮ : même fenêtre, motif obligatoire),
+// Annuler la part à vous reverser (payée à bord), Versé (RIB du chauffeur en feuille latérale), Valider, Contester la
+// course, Rouvrir, Exclure ce chauffeur, Ne plus travailler avec {organisation} ; « Relancer » (application) pour tout
+// membre, dispatcher compris.
 // Chaque bouton appelle une action serveur (app/dashboard/reseau-partage/actions.ts) puis relit la page.
 import { formatIban, formatPrice, type NetworkGivenItem, type OrgNetworkPayoutInfo } from "@rydar/shared";
 import {
@@ -19,7 +21,7 @@ import { useNetworkRunner } from "@/components/network-share/use-network-runner"
 import { useCentrale } from "@/components/settlements/centrale-context";
 import { Chips, MethodPicker, fromNow, methodLabel, type ConfirmMethod } from "@/components/settlements/settlement-ui";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, SheetContent } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
@@ -42,7 +44,7 @@ function Summary({ item }: { item: NetworkGivenItem }) {
         <p className="truncate text-[13px] font-medium text-fg">
           {item.execution.driver_label} <span className="text-violet">· {item.execution.partner.name}</span>
         </p>
-        <p className="text-[12px] text-fg-subtle">
+        <p className="text-[12px] text-fg-muted">
           Course #{item.ride.number} · réf. <span className="mono text-fg-muted">{s?.reference ?? `R${item.ride.number}`}</span>
         </p>
       </div>
@@ -65,7 +67,11 @@ export function GivenActions({
   const s = item.settlement;
   const driver = item.execution.driver_label;
   const partner = item.execution.partner.name;
-  const menu = [can.remind && can.confirm, can.waive, can.contest, can.reopen, can.excludeDriver, can.excludePartner].some(Boolean);
+  // « Pas reçu » bloque le chauffeur pour vos courses : en bouton seulement s'il a déclaré avoir payé ou si l'échéance
+  // est passée (overdue, calculé par la base), sinon dans le menu
+  const disputeDirect = can.dispute && !!s && (s.status === "declared" || (s.status === "due" && !!s.overdue));
+  const disputeInMenu = can.dispute && !disputeDirect;
+  const menu = [can.remind && can.confirm, disputeInMenu, can.waive, can.contest, can.reopen, can.excludeDriver, can.excludePartner].some(Boolean);
   const remind = () => s && run(() => remindNetworkDriver(s.id));
   const close = () => setMode(null);
 
@@ -76,7 +82,7 @@ export function GivenActions({
           <Check /> Reçu
         </Button>
       )}
-      {can.dispute && (
+      {disputeDirect && (
         <Button variant="outline" size="xs" onClick={() => setMode("dispute")}>
           Pas reçu
         </Button>
@@ -103,7 +109,7 @@ export function GivenActions({
       {menu && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={`Plus d'actions : course #${item.ride.number}`} disabled={pending}>
+            <Button variant="ghost" size="icon-sm" aria-label={`Plus d'actions : course #${item.ride.number}`} disabled={pending}>
               <EllipsisVertical />
             </Button>
           </DropdownMenuTrigger>
@@ -118,9 +124,14 @@ export function GivenActions({
                 <Undo2 /> Rouvrir le règlement
               </DropdownMenuItem>
             )}
+            {disputeInMenu && (
+              <DropdownMenuItem destructive onSelect={() => setMode("dispute")}>
+                <CircleSlash /> Pas reçu
+              </DropdownMenuItem>
+            )}
             {can.waive && (
               <DropdownMenuItem destructive onSelect={() => setMode("waive")}>
-                <CircleSlash /> Annuler le reversement
+                <CircleSlash /> Annuler la part à vous reverser
               </DropdownMenuItem>
             )}
             {can.contest && (
@@ -168,9 +179,9 @@ function ConfirmDialog({ item, open, onClose }: { item: NetworkGivenItem; open: 
       <DialogContent size="sm" title="Paiement reçu" description={`Le règlement est soldé et ${item.execution.driver_label} est prévenu.`}>
         <Summary item={item} />
         {s.status === "declared" && (
-          <p className="mb-4 rounded-lg border border-blue/25 bg-blue/[0.07] px-3 py-2 text-[12.5px] text-fg-muted">
+          <p className="mb-4 rounded-lg border border-blue/25 bg-blue/[0.07] px-3 py-2 text-[13px] text-fg-muted">
             Le chauffeur signale avoir payé par <span className="font-medium text-fg">{methodLabel(s.declared_method).toLowerCase()}</span> {fromNow(s.declared_at)}
-            {s.declared_note ? <> · « {s.declared_note} »</> : null}
+            {s.declared_note ? <> · «{NB}{s.declared_note}{NB}»</> : null}
           </p>
         )}
         <form onSubmit={submitWith((data) => run(() => confirmNetworkSettlement(s.id, method, String(data.get("note") ?? "")), onClose))}>
@@ -178,14 +189,13 @@ function ConfirmDialog({ item, open, onClose }: { item: NetworkGivenItem; open: 
             <MethodPicker value={method} onChange={setMethod} />
           </Field>
           <Field label="Note" optional className="mt-4">
-            <Input name="note" maxLength={500} placeholder="Ex. virement reçu le 25/09" />
+            <Input name="note" maxLength={500} placeholder={`ex.${NB}: virement reçu le 25/09`} />
           </Field>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={onClose}>Annuler</Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="primary" loading={pending}>
               <Check /> Marquer reçu
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -197,17 +207,17 @@ const REASON_COPY = {
   dispute: {
     title: "Paiement non reçu",
     label: "Ce qui ne va pas",
-    placeholder: "Ex. rien reçu sur le compte",
+    placeholder: "ex.\u00a0: rien reçu sur le compte",
     button: "Pas reçu",
     chips: DISPUTE_REASONS,
     min: 3,
     optional: false,
   },
   waive: {
-    title: "Annuler le reversement",
+    title: "Annuler la part à vous reverser",
     label: "Motif",
-    placeholder: "Ex. geste commercial",
-    button: "Annuler le reversement",
+    placeholder: "ex.\u00a0: geste commercial",
+    button: "Annuler la part à vous reverser",
     chips: WAIVE_REASONS,
     min: 3,
     optional: false,
@@ -215,7 +225,7 @@ const REASON_COPY = {
   contest: {
     title: "Contester la course",
     label: "Ce qui ne va pas",
-    placeholder: "Ex. le client n'a jamais été pris en charge",
+    placeholder: "ex.\u00a0: le client n'a jamais été pris en charge",
     button: "Contester la course",
     chips: CONTEST_REASONS,
     min: 5,
@@ -224,7 +234,7 @@ const REASON_COPY = {
   excludeDriver: {
     title: "Exclure ce chauffeur",
     label: "Motif (pour vous)",
-    placeholder: "Ex. retard important",
+    placeholder: "ex.\u00a0: retard important",
     button: "Exclure",
     chips: [] as string[],
     min: 0,
@@ -249,13 +259,13 @@ function ReasonDialog({ kind, item, open, onClose }: { kind: keyof typeof REASON
   const description = {
     dispute:
       centrale?.blockUnpaid === false
-        ? `${driver} est prévenu immédiatement ; le règlement reste à encaisser.`
+        ? `${driver} est prévenu immédiatement ; le règlement reste à encaisser.`
         : `${driver} est prévenu immédiatement. Tant que ce paiement n'est pas réglé, il ne reçoit plus vos courses (rien ne change pour ses autres courses).`,
-    waive: `Le règlement est clos sans paiement : ${driver} ne vous doit plus rien pour cette course. Vous pourrez le rouvrir en cas d'erreur.`,
+    waive: `Le règlement est clos sans paiement : ${driver} ne vous doit plus rien pour cette course. Vous pourrez le rouvrir en cas d'erreur.`,
     contest: `À utiliser si la course n'a pas été faite comme prévu. ${
-      owes ? "Le reversement reste dû." : "Le versement au chauffeur est annulé."
+      owes ? "La part à vous reverser reste due." : "Le versement au chauffeur est annulé."
     } Rydar examine la baisse de ses frais pour cette course (ils restent dus tant qu'il ne l'a pas acceptée). ${driver} est prévenu et peut répondre.`,
-    excludeDriver: `${driver} ne recevra plus vos courses, quelle que soit son organisation. Les courses en cours vont à leur terme ; vous pourrez lever l'exclusion dans Réglages › Options avancées.`,
+    excludeDriver: `${driver} ne recevra plus vos courses, quelle que soit son organisation. Les courses en cours vont à leur terme ; vous pourrez lever l'exclusion dans Réglages › Options avancées.`,
   }[kind];
   const submit = () => {
     const v = reason.trim();
@@ -289,12 +299,11 @@ function ReasonDialog({ kind, item, open, onClose }: { kind: keyof typeof REASON
               <Chips options={[...copy.chips]} onPick={setReason} />
             </div>
           )}
-          <div className="mt-6 flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={onClose}>Retour</Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="danger" loading={pending}>
               {kind === "excludeDriver" ? <UserX /> : kind === "contest" ? <ShieldAlert /> : <CircleSlash />} {copy.button}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -316,13 +325,13 @@ function ValidateDialog({ item, onClose }: { item: NetworkGivenItem; onClose: ()
         title={`Valider la course #${item.ride.number}${NB}?`}
         description={
           payout
-            ? `Vous confirmez que la course s'est bien passée : le versement de ${amount} à ${e.driver_label} n'est plus retenu et devient payable.`
-            : "Vous confirmez que la course s'est bien passée : elle n'est plus « à vérifier »."
+            ? `Vous confirmez que la course s'est bien passée : le versement de ${amount} à ${e.driver_label} n'est plus retenu et devient payable.`
+            : "Vous confirmez que la course s'est bien passée : elle n'est plus « à vérifier »."
         }
       >
         <Summary item={item} />
         {reasons.length > 0 && (
-          <div className="rounded-lg border border-amber/30 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-fg-muted">
+          <div className="rounded-lg border border-amber/30 bg-amber/[0.07] px-3 py-2.5 text-[13px] text-fg-muted">
             <p className="font-medium text-fg">Motifs signalés à la fin de la course</p>
             <ul className="mt-1 list-disc space-y-0.5 pl-4">
               {reasons.map((r) => (
@@ -331,12 +340,11 @@ function ValidateDialog({ item, onClose }: { item: NetworkGivenItem; onClose: ()
             </ul>
           </div>
         )}
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Retour</Button>
+        <DialogFooter backDisabled={pending}>
           <Button variant="primary" loading={pending} onClick={() => run(() => validateNetworkRide(item.ride.id), onClose)}>
             <ShieldCheck /> Valider la course
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -351,15 +359,14 @@ function ReopenDialog({ item, open, onClose }: { item: NetworkGivenItem; open: b
       <DialogContent
         size="sm"
         title="Rouvrir le règlement"
-        description={`Il redevient à régler, avec une nouvelle échéance d'au moins 48 h ; ${item.execution.driver_label} est prévenu.`}
+        description={`Il redevient à régler, avec une nouvelle échéance d'au moins 48 h ; ${item.execution.driver_label} est prévenu.`}
       >
         <Summary item={item} />
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Retour</Button>
+        <DialogFooter backDisabled={pending}>
           <Button variant="primary" loading={pending} onClick={() => run(() => reopenNetworkSettlement(s.id), onClose)}>
-            <RotateCcw /> Rouvrir
+            <RotateCcw /> Rouvrir le règlement
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -374,14 +381,13 @@ export function ExcludePartnerDialog({ partner, onClose }: { partner: { id: stri
       <DialogContent
         size="sm"
         title={`Ne plus travailler avec ${partner.name}`}
-        description={`Vos courses ne seront plus proposées aux chauffeurs de ${partner.name}, et vous ne recevrez plus les siennes. ${partner.name} n'en est pas informée. Les courses déjà acceptées vont à leur terme ; réversible dans Réglages › Options avancées.`}
+        description={`Vos courses ne seront plus proposées aux chauffeurs de ${partner.name}, et vous ne recevrez plus les siennes. ${partner.name} n'en est pas informée. Les courses déjà acceptées vont à leur terme ; réversible dans Réglages › Options avancées.`}
       >
-        <div className="mt-2 flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Retour</Button>
+        <DialogFooter backDisabled={pending}>
           <Button variant="danger" loading={pending} onClick={() => run(() => setNetworkPartnerExcluded(partner.id, true), onClose)}>
             <Ban /> Ne plus travailler avec {partner.name}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -389,8 +395,8 @@ export function ExcludePartnerDialog({ partner, onClose }: { partner: { id: stri
 
 // ---------------------------------------------------------------------------- « Versé » : RIB en feuille latérale
 const WARNING_TEXT = {
-  iban_changed: "Le RIB a changé depuis la fin de la course : vérifiez-le auprès du chauffeur avant de verser.",
-  recent_change: "RIB modifié il y a moins de 72 h : vérifiez-le auprès du chauffeur avant de verser.",
+  iban_changed: "Le RIB a changé depuis la fin de la course : vérifiez-le auprès du chauffeur avant de verser.",
+  recent_change: "RIB modifié il y a moins de 72 h : vérifiez-le auprès du chauffeur avant de verser.",
 } as const;
 
 function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: boolean; onClose: () => void }) {
@@ -432,18 +438,18 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
         <div className="space-y-5 px-6 py-5">
           <section aria-labelledby="rib-title" className="rounded-xl border border-line bg-white/[0.02] p-4">
             <h3 id="rib-title" className="flex items-center gap-2 text-[13px] font-medium">
-              <Landmark className="size-4 text-fg-subtle" /> Coordonnées bancaires du chauffeur
+              <Landmark aria-hidden className="size-4 text-fg-muted" /> Coordonnées bancaires du chauffeur
             </h3>
             {missing ? (
-              <p role="status" className="mt-3 rounded-lg border border-line bg-white/[0.03] px-3 py-2.5 text-[12.5px] text-fg-muted">
+              <p role="status" className="mt-3 rounded-lg border border-line bg-white/[0.03] px-3 py-2.5 text-[13px] text-fg-muted">
                 {item.execution.driver_label} n&apos;a pas encore enregistré ses coordonnées bancaires{NB}: demandez-les-lui, ou versez sa part
                 par un autre moyen, puis «{NB}Marquer versé{NB}».
               </p>
             ) : !info ? (
               <div className="mt-3 space-y-3">
-                <p className="text-[12.5px] text-fg-muted">Le chauffeur est prévenu de chaque consultation de son RIB.</p>
+                <p className="text-[13px] text-fg-muted">Le chauffeur est prévenu de chaque consultation de son RIB.</p>
                 {error && (
-                  <p role="alert" className="text-[12.5px] text-red">
+                  <p role="alert" className="text-[13px] text-red">
                     {error}
                   </p>
                 )}
@@ -454,17 +460,17 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
             ) : (
               <div className="mt-3 space-y-2.5">
                 {info.warnings.map((w) => (
-                  <p key={w} role="alert" className="rounded-lg border border-amber/30 bg-amber/[0.08] px-3 py-2 text-[12.5px] text-amber">
+                  <p key={w} role="alert" className="rounded-lg border border-amber/30 bg-amber/[0.08] px-3 py-2 text-[13px] text-amber">
                     {WARNING_TEXT[w]}
                   </p>
                 ))}
                 <dl className="space-y-2.5 text-[13px]">
                   <div>
-                    <dt className="text-[11.5px] text-fg-subtle">Titulaire</dt>
+                    <dt className="text-[12px] text-fg-muted">Titulaire</dt>
                     <dd className="font-medium">{info.payee_name}</dd>
                   </div>
                   <div>
-                    <dt className="text-[11.5px] text-fg-subtle">IBAN</dt>
+                    <dt className="text-[12px] text-fg-muted">IBAN</dt>
                     <dd className="flex items-center gap-2">
                       <span className="mono">{formatIban(info.iban)}</span>
                       <Button variant="ghost" size="icon-sm" aria-label="Copier l'IBAN" onClick={() => copy(info.iban, "IBAN")}>
@@ -474,12 +480,12 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
                   </div>
                   {info.bic && (
                     <div>
-                      <dt className="text-[11.5px] text-fg-subtle">BIC</dt>
+                      <dt className="text-[12px] text-fg-muted">BIC</dt>
                       <dd className="mono">{info.bic}</dd>
                     </div>
                   )}
                   <div>
-                    <dt className="text-[11.5px] text-fg-subtle">Libellé du virement</dt>
+                    <dt className="text-[12px] text-fg-muted">Libellé du virement</dt>
                     <dd className="flex items-center gap-2">
                       <span className="mono">{info.reference}</span>
                       <Button variant="ghost" size="icon-sm" aria-label="Copier le libellé" onClick={() => copy(info.reference, "Libellé")}>
@@ -488,7 +494,7 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
                     </dd>
                   </div>
                 </dl>
-                <p className="text-[11.5px] text-fg-subtle">RIB mis à jour par le chauffeur {fromNow(info.updated_at)}.</p>
+                <p className="text-[12px] text-fg-muted">RIB mis à jour par le chauffeur {fromNow(info.updated_at)}.</p>
               </div>
             )}
           </section>
@@ -497,14 +503,13 @@ function PayoutSheet({ item, open, onClose }: { item: NetworkGivenItem; open: bo
               <MethodPicker value={method} onChange={setMethod} />
             </Field>
             <Field label="Note" optional>
-              <Input name="note" maxLength={500} placeholder="Ex. virement du 25/09" />
+              <Input name="note" maxLength={500} placeholder={`ex.${NB}: virement du 25/09`} />
             </Field>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button type="button" variant="ghost" onClick={onClose}>Fermer</Button>
+            <DialogFooter className="mt-2" backDisabled={pending}>
               <Button type="submit" variant="primary" loading={pending}>
                 <Check /> Marquer versé
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </div>
       </SheetContent>
