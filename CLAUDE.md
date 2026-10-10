@@ -128,6 +128,7 @@ la centrale doit les frais plateforme à Rydar.
 - Messagerie flotte modérée (004100) ; registre des frais `on delete restrict` (004200) : une centrale avec frais s'archive.
 - Bannissement plateforme : les fiches d'AUTRES centrales partageant une identité ne sont bannies que si le super admin les coche
   (`admin_fraud_report_matches`) ; justificatif « Visite médicale » plus déposable (aucune donnée de santé collectée).
+- Flotte Privée (007600-007700, `docs/FLOTTE-PRIVEE.md` ; texte soumis au propriétaire) : flotte d'un seul chauffeur, le propriétaire (même compte, `owner_driver`) ; `private_fleet` écrit par les seules RPC `svc_platform_*_private_fleet` ; gardes en base + `org_limits` (1 fiche, 1 accès) ; réservation « à confirmer » (branches de `start_dispatch` et `org_limits` à garder : `private-fleet-sql.test.ts`), « La prendre » = `driver_take_ride` ; web : page `privateFleetPage`, action `refuseInPrivateFleet` (`private-fleet-guards.test.ts`).
 
 ## Design
 Sombre « radar », accent lime. Jamais de hex en dur : jetons `apps/web/app/globals.css` (@theme `--color-ink-*`, `fg`, `fg-muted`,

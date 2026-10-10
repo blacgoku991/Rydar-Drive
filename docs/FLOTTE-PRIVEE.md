@@ -1,7 +1,9 @@
 # Flotte Privée — spécification finale
 
-> **Statut : à implémenter** (aucun code écrit). Rédigée le 10/10/2026 sur `claude/confident-clarke-rpfwmo`
-> (HEAD `76847b8`, dernière migration `20260924007500_eligibility.sql`).
+> **Statut : livré** — lots L1 à L6 faits le 10/10/2026 (commits au § 15), recette de bout en bout (L7) à faire. Les
+> écarts entre cette spécification et le code livré sont listés au § 15.1 : là où ils divergent, le code fait foi.
+> Rédigée le 10/10/2026 sur `claude/confident-clarke-rpfwmo` (HEAD `76847b8`, dernière migration
+> `20260924007500_eligibility.sql`).
 >
 > Base retenue : conception 1 de l'arbitrage (drapeau `organizations.private_fleet`, modèle `fleet` conservé, une
 > migration principale, site externe relié par l'API v1), enrichie des greffes et des corrections de l'arbitrage. Chaque
@@ -1160,13 +1162,15 @@ ne modifier que les chemins autorisés ; pas de commit ni de push sans demande ;
 
 | Lot | Titre | Dépend de | Statut |
 |---|---|---|---|
-| L1 | Socle base de données, paquet partagé et worker | — | à faire |
-| L2 | Super admin (création, clé du site, bascule, passerelle contacts) | L1 | à faire |
-| L3 | Espace web du client Flotte Privée (menu, accueil, agenda web, gardes) | L1 | à faire |
-| L4 | API v1 du site (devis, prix attendu, limites par IP) + `docs/API.md` | L1 | à faire |
-| L5 | App chauffeur (Flotte Privée, agenda) | L1 | à faire |
-| L6 | Documentation | L1 à L5 | à faire |
+| L1 | Socle base de données, paquet partagé et worker | — | fait : `89b8401` ; revue : `dfc4f71` (SQL), `8e93b18`, `53394fb` |
+| L2 | Super admin (création, clé du site, bascule, passerelle contacts) | L1 | fait : `2b94c88` ; revue : `8e93b18` (admin et API), `53394fb` (conformité) |
+| L3 | Espace web du client Flotte Privée (menu, accueil, agenda web, gardes) | L1 | fait : `915f34b` ; revue : `df83c0e` (web du client) |
+| L4 | API v1 du site (devis, prix attendu, limites par IP) + `docs/API.md` | L1 | fait : `df72170` ; revue : `8e93b18` (débit des clés, limite du site) |
+| L5 | App chauffeur (Flotte Privée, agenda) | L1 | fait : `106dbc1` ; revue : `695f23a` (app) |
+| L6 | Documentation | L1 à L5 | fait : commit « Flotte Privée (lot 6) : documentation » |
 | L7 | Recette de bout en bout et contrôle final | L1 à L6 | à faire |
+
+Écarts entre la spécification et le code livré : § 15.1, après la description des lots.
 
 ### L1 — Socle base de données, paquet partagé et worker
 
@@ -1296,6 +1300,90 @@ ne modifier que les chemins autorisés ; pas de commit ni de push sans demande ;
   - `TEST_DATABASE_NAME=rydar_test_e2e pnpm test:db`
   - `pnpm build`
   - `pnpm --filter @rydar/driver export:check`
+
+### 15.1 Écarts entre la spécification et le code livré
+
+Relevés dans les comptes rendus des lots et vérifiés dans le code ; le code fait foi. Les sections citées gardent le texte
+d'origine.
+
+**Base (`007600`, § 4.3)**
+
+- Garde D : toute insertion d'une fiche alors qu'une autre n'est pas supprimée est refusée, même sans compte
+  (`user_id` nul) ; seul le détachement (UPDATE à `user_id` nul) passe sans contrôle. Drapeau lu sous le verrou de la
+  ligne de l'organisation (`for no key update`) au lieu d'un verrou consultatif.
+- Nouvelle garde `organization_users_private_fleet_guard` : une 2e adhésion non désactivée (insertion, réactivation,
+  invitation acceptée) → `PRIVATE_FLEET_RESTRICTED` ; pour une insertion ou une réactivation, `PLAN_LIMIT_ADMINS`
+  (`org_limits`) répond d'abord.
+- Garde E : verrou consultatif partagé (exclusif à l'entrée en Flotte Privée). `set_network_settings`,
+  `svc_network_approve` et `svc_network_suspend` commencent par une insertion « on conflict do nothing » qui déclenche
+  la garde : elle ne passe que si l'adhésion existe, donc `svc_network_suspend` sur une Flotte Privée **sans** adhésion
+  répond `PRIVATE_FLEET_RESTRICTED` (message clair sur `/admin/reseau`).
+- G, étape 5, et H : la notification initiale (« NOUVELLE RÉSERVATION », sonnerie à 15 min ou moins) est posée par le
+  déclencheur **H4** pour toute offre de la Flotte Privée, même recréée par le moteur ; **H5** (déclencheur différé,
+  `private.private_fleet_hold`) repousse le passage du tick à l'échéance annoncée quand la fenêtre de la flotte se
+  fermerait avant (délai de réponse de plus de 5 min, délai de confirmation allongé, bascule) ; **H6** réagit aux
+  réglages « Réservations » (échéances tenues, rappels replanifiés en gardant ceux déjà prévus ou dus). Rappels calculés
+  par `private.private_fleet_plan_reminders` (H1, H6), annulés d'abord même hors Flotte Privée.
+- I1 : refus `INVALID` (nom commercial, identifiant, ville obligatoire, fiche, véhicule) et `NOT_FOUND` (compte) ; taux
+  nuls ramenés à 0 ; réponse avec `fees` ; audit avec `owner_email` et `fees_code`.
+- I2 : refus `INVITATION_PENDING` (propriétaire encore invité), `ALREADY_REGISTERED`, `INVALID` ; plaque déjà connue de
+  l'organisation : véhicule repris.
+- I3 : paramètres `p_set_plan` / `p_plan_id` (offre de la sortie écrite après le drapeau, dans le même sous-bloc que les
+  frais ; audit `organization.plan_changed` en SQL) ; `INVALID` pour une entrée avec modèle, taux ou offre, ou pour un
+  état inchangé avec modèle ou taux ; `ORGANIZATION_INACTIVE` seulement pour une organisation archivée ; réponse avec
+  `open_rides`. Courses en recherche : une offre en attente garde son échéance (aucun `next_dispatch_at = now()`), les
+  autres repartent au passage suivant ; entrée : course en vagues GPS reprise à la vague 0 ; sortie : rappels « à
+  confirmer » en file annulés.
+- J1 : `UNCHANGED` renvoie aussi `ride_id`. Annexe A : `ORGANIZATION_INACTIVE` n'avait pas de libellé, il a été
+  ajouté à `ERROR_MESSAGES`.
+- Worker : regroupement iOS d'une `ride_unconfirmed` par `data.booking_id`.
+
+**API v1 (§ 11, lot L4 et revue)**
+
+- Limites d'une clé navigateur comptées **par organisation** (un visiteur abusif d'un site ne bloque pas les autres) ; en
+  plus, 60 réservations par heure pour l'organisation (toutes ses clés navigateur), vérifiée après la limite par
+  téléphone ; limite par téléphone comptée après la résolution des lieux.
+- Débit d'une clé navigateur compté à part pour les devis et pour les réservations ; réglable à la création de la clé
+  du site : clé serveur 60 par minute par défaut, clé navigateur 1 000 par défaut (300 au moins).
+- `Idempotency-Key` reconnue avant tout calcul (un renvoi ne répond jamais `PRICE_CHANGED`, ne compte dans aucune
+  limite par téléphone ou du site) ; clé serveur avec `price_cents` et `expected_price_cents` différents → 422 ; devis :
+  422 `PICKUP_IN_PAST` (plus de 10 min dans le passé) et `PICKUP_TOO_FAR` (plus de 400 jours) ; en-têtes CORS sur les
+  refus une fois l'origine vérifiée ; `bookingSitePrice` accepte une destination sans coordonnées (forfait seulement).
+
+**Super admin (§ 8, § 9.4)**
+
+- Création : identifiant, offre et adresse contrôlés **avant** tout compte Auth ; compte créé par
+  `createUser({ email_confirm: false })` (preuve qu'il est neuf), puis invitation ; compensation limitée à ce compte,
+  sans adhésion ni fiche, jamais sur `OWNER_NOT_NEW`, `ALREADY_REGISTERED`, `SELF_NOT_ALLOWED` ou `NOT_FOUND`.
+- « Renvoyer le lien d'accès » (propriétaire jamais connecté ; audit `member.invitation_resent`) ; un seul dialogue
+  « Changer d'offre de service » ; entrée en Flotte Privée refusée côté web si l'offre effective n'a pas l'API ; sortie
+  sans offre : case « Je l'assume » obligatoire ; `savePlan` refuse de retirer l'API d'une offre utilisée par une Flotte
+  Privée non archivée sans surcharge qui la lui rende ; passerelle des demandes : note existante gardée et complétée.
+
+**Espace web du client (§ 7)**
+
+- `driverId` dans la session : `requireOrg` ne le garde que pour l'organisation affichée ; `getOrgContext` le transmet
+  tel quel (aucune action ne s'en sert). `checkoutPlanAllowed` dans `app/api/billing/checkout/plan-access.ts` ; Checkout
+  en 503 si l'organisation est illisible.
+- Agenda ouvert sur « mois » ; Réservations ouvert sur « À traiter » s'il y en a, sinon « À venir » ; « Annulées »
+  comprend `NO_DRIVER_FOUND` ; motif d'annulation obligatoire (3 à 280 caractères) ; terminée en vert
+  (`AGENDA_KIND_META`), pas en `brand`. `declineOffer` et `updatePrivateBookingSettings` refusés hors Flotte Privée
+  (`PRIVATE_FLEET_ONLY`). Pastille de « Réservations » : non confirmées seulement (jamais un refus du chauffeur).
+- § 7.6 : `/api/billing/portal` ne choisit aucune configuration de portail Stripe ; celle par défaut sert à toutes les
+  organisations, et c'est par elle qu'une organisation déjà abonnée change d'offre. La régler « sans changement
+  d'offre » vaut donc pour toutes (choix décrit dans `docs/DEPLOYMENT.md` § 4, étape 6).
+
+**App chauffeur (§ 10)**
+
+- Détection : `driver_home` prime, `driver_account_state` seulement si l'accueil est illisible. Vue Liste : « Mes
+  courses » lues par `driver_rides_upcoming` (comme avant) ; `driver_agenda` alimente Jour, Semaine, Mois et « À
+  traiter ». Puce « Aujourd'hui » en Jour, Semaine et Mois seulement ; horloge de l'écran à 30 s.
+- Écran d'offre : une réservation urgente (15 min au plus) sonne et garde son compte à rebours mais reste différable
+  (« Plus tard », retour Android) ; seules les offres GPS et les fenêtres de 2 min au plus restent bloquantes ; refus
+  confirmé comme dans l'agenda.
+- Fiche du gérant : prix affiché partout (offres, course, gains, agenda), ni commission ni net par course, même après
+  une bascule en centrale. Suppression du compte : textes propres à la Flotte Privée (fiche et données supprimées,
+  compte et espace web gardés).
 
 ---
 

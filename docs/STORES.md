@@ -49,7 +49,10 @@ Apple et Google testent l'app : il leur faut un compte chauffeur qui fonctionne.
    - Les offres restent ouvertes jusqu'à la prise en charge moins le délai de bascule
      (`scheduled_dispatch_lead_minutes`, 60 min par défaut) : à 10 jours, elles tiennent toute la vérification.
    - Après la vérification, annuler les courses prises ou restantes et en recréer avant l'envoi suivant.
-5. Filmer une courte vidéo (YouTube non répertoriée) avec un vrai téléphone : offre **instantanée** avec sonnerie,
+5. « Démo App Review » reste une **flotte standard**, jamais une Flotte Privée : la note du § 7 décrit le Planning
+   standard (vue Liste, « Courses proposées », « Prendre cette course »), alors qu'un compte Flotte Privée ouvre
+   l'Agenda en vue Mois, avec des réservations « à confirmer ».
+6. Filmer une courte vidéo (YouTube non répertoriée) avec un vrai téléphone : offre **instantanée** avec sonnerie,
    téléphone verrouillé, app EN LIGNE en arrière-plan, guidage, suppression du compte (avec un compte de test
    jetable, pas celui de démonstration). La joindre à la note Apple
    (§ 7) et à « Accès à l'application » chez Google.
@@ -211,7 +214,7 @@ ni `ACCESS_BACKGROUND_LOCATION` ni exemption d'optimisation de la batterie.
 > How to test (works from any location):
 > 1. Sign in. If the Terms screen appears, tap "J'accepte" (see "Terms" below). Tap "Passer en ligne" (go online) and allow location "While Using the App".
 > 2. Tap the calendar icon at the top (Planning): scheduled rides are offered to the demo account. Tap "Prendre cette course" (take this ride).
-> 3. Under "Mes courses planifiées", open the ride and slide "Aller au départ" (go to pickup): in-app turn-by-turn navigation starts. Keep sliding through each step until the ride is completed.
+> 3. Under "Mes courses" (my rides), open the ride and slide "Aller au départ" (go to pickup): in-app turn-by-turn navigation starts. Keep sliding through each step until the ride is completed.
 > Instant ride offers (with a ringtone, even when the phone is locked) are only sent to drivers within 4 to 16 km of the pickup point, so the scheduled rides above are provided for the review; the attached video shows an instant offer.
 > Background location (UIBackgroundModes: location): while the driver is online, the app keeps sharing the driver's location, including when the app is in the background or the screen is locked, so that nearby rides can be offered and the company can follow the ride. The iOS location indicator is shown. Continuous location sharing stops when the driver goes offline or closes the app. "When In Use" permission only, requested after an in-app explanation.
 > Terms: every driver must accept our Terms of Use and Privacy Policy in the app, on a full-screen acceptance page shown at first sign-in and again for each new version; the sign-in screen links to them. The Terms (section 9) set the rules of the drivers' channel, with zero tolerance for objectionable content or abusive users.
@@ -272,6 +275,14 @@ du chauffeur, durées) après la relecture de la convention par un avocat, ainsi
 fois le réseau ouvert : `/cgu` article 6 (« Qui la voit » : ajouter l'organisation partenaire pendant sa course), FAQ
 « Où sont hébergées les données ? » (données « rapprochées » des autres centrales seulement contre la fraude) et page
 Services (« données cloisonnées »).
+
+**Flotte Privée** (`docs/FLOTTE-PRIVEE.md`) : changements de l'app en JavaScript seul (agenda Liste, Jour, Semaine,
+Mois ; réservations « à confirmer » ; écrans simplifiés pour le chauffeur d'une Flotte Privée), publiés par mise à jour à
+distance sur le runtime 1.1.0 après le déploiement du serveur ([DEPLOYMENT.md](DEPLOYMENT.md) § 7), puis intégrés à la
+1.2.0. Aucune déclaration à changer : aucune donnée collectée en plus (l'état des notifications, lu pour le bandeau
+« Notifications désactivées », reste sur le téléphone), App Privacy et Sécurité des données inchangées ; aucun lien
+d'achat, d'éligibilité ni vers l'espace web dans l'app. Un chauffeur standard garde le Planning en vue Liste par défaut :
+la note du § 7 reste valable.
 
 Nouvelle version des CGU ou de la politique de confidentialité (`LEGAL_VERSION`, `packages/shared/src/features.ts`) :
 l'app embarque cette valeur, donc une mise à jour à distance est nécessaire pour que les chauffeurs voient l'écran

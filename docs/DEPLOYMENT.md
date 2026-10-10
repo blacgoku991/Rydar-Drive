@@ -27,7 +27,7 @@ Architecture cible :
    - désactivez les inscriptions publiques (*Allow new users to sign up* : off) ;
    - *Site URL* = `https://app.votre-domaine` ;
    - *Redirect URLs* : `https://app.votre-domaine/auth/callback` et `/auth/set-password` ;
-   - SMTP personnalisé, pour les invitations des chauffeurs et des rattacheurs.
+   - SMTP personnalisé, pour les invitations des chauffeurs, des rattacheurs et des clients Flotte Privée (§ 7).
    - *Emails → Templates* : « Reset password » et « Invite user » en français, en gardant le lien `{{ .ConfirmationURL }}`.
      Le modèle « Reset password » doit contenir **le code `{{ .Token }}` et le lien `{{ .ConfirmationURL }}`** : dans l'app chauffeur,
      « Mot de passe oublié » demande le code reçu par e-mail puis le nouveau mot de passe (`POST /api/auth/driver-password-reset/confirm`) ;
@@ -482,6 +482,16 @@ Une course avec un numéro de vol est suivie de 24 h avant à 3 h après la pris
 5. Résiliation pour refus d'une hausse des frais ou d'une modification défavorable des CGV (CGV art. 7) : la part de
    l'abonnement payée d'avance pour la période restant à courir est remboursée au prorata — remboursement partiel à
    faire dans Stripe, à la date de résiliation choisie par l'organisation (au plus tard la veille de la date d'effet).
+6. **Portail client et Flotte Privée.** « Gérer » (Abonnement, `/api/billing/portal`) ouvre la configuration **par
+   défaut** du portail Stripe, la même pour toutes les organisations : le code n'en choisit aucune. C'est par lui qu'une
+   organisation déjà abonnée change d'offre (le Checkout refuse un second abonnement), et le webhook écrit alors la
+   nouvelle offre dans `plan_id`. Une Flotte Privée ne doit payer que l'offre que l'équipe lui a attribuée (Checkout
+   verrouillé : [FLOTTE-PRIVEE.md](FLOTTE-PRIVEE.md) § 7.6) ; tant que le portail permet de changer d'offre (Stripe ›
+   Réglages › Facturation › Portail client, section Abonnements), elle peut y en prendre une autre : ses 1 chauffeur et
+   1 accès restent imposés par la base, mais une offre sans API couperait son site. Avant la première Flotte Privée
+   payée par Stripe : désactiver ce changement d'offre (les autres organisations abonnées passent alors par l'équipe
+   Rydar pour changer d'offre), ou facturer la Flotte Privée hors Stripe — décision du propriétaire (FLOTTE-PRIVEE
+   § 16). Un portail propre aux Flottes Privées demanderait un changement de code (`/api/billing/portal`).
 
 ## 5. Application chauffeur (EAS)
 
@@ -503,6 +513,9 @@ eas submit -p ios
 | `GOOGLE_MAPS_ANDROID_KEY` | Carte Android (react-native-maps) |
 | `EXPO_PUBLIC_MAP_TILES_URL`, `EXPO_PUBLIC_MAP_GLYPHS_URL` | Carte de l'aperçu web uniquement |
 | `APP_LINK_DOMAIN` | (optionnel) domaine des liens `https://DOMAINE/rejoindre/{code}` qui ouvrent l'app ; par défaut, celui d'`EXPO_PUBLIC_API_URL` |
+
+Flotte Privée (agenda, réservations « à confirmer », écrans simplifiés) : JavaScript seul, publiée par mise à jour à
+distance sur le runtime 1.1.0 après le serveur (§ 7), puis intégrée à la version 1.2.0 des stores.
 
 La **localisation en arrière-plan** exige un *development build* ou un build de production : elle ne fonctionne pas dans Expo Go. Seule l'autorisation « Pendant l'utilisation » est demandée : app ouverte, le suivi continue en arrière-plan (service de premier plan Android avec la notification « Rydar Drive — EN LIGNE », indicateur de localisation iOS) ; fermer l'app met hors ligne.
 
@@ -648,7 +661,88 @@ Tant qu'un point n'est pas vérifié, la phrase correspondante des pages légale
   (correspondance d'empreintes) le cas échéant, base de la décision (règle des CGU ou loi enfreinte) et voies de
   recours (répondre à l'éditeur pour contester, juge compétent).
 
-## 7. Checklist de mise en production
+## 7. Flotte Privée : déploiement et création d'un client
+
+Pack décrit dans [FLOTTE-PRIVEE.md](FLOTTE-PRIVEE.md) ; fonctionnement : [ARCHITECTURE.md](ARCHITECTURE.md) § 14 ;
+sécurité : [SECURITY.md](SECURITY.md), « Flotte Privée » ; site du client :
+[API.md](API.md#site-dun-client-flotte-privée). Aucune variable d'environnement nouvelle, aucune donnée insérée : les
+organisations existantes restent standard (`private_fleet` à faux).
+
+### Ordre de déploiement
+
+1. **Migrations** `20260924007600_private_fleet` puis `20260924007700_private_fleet_owner_settlements`, livrées ensemble
+   (la seconde doit précéder toute bascule d'une Flotte Privée en centrale). Sur le VPS :
+   `cd /opt/rydar && bash deploy/update-production.sh` ; `deploy/install.sh` applique les migrations
+   (`deploy/migrate.sh`, une transaction par migration) **avant** de reconstruire le web et le worker, et s'arrête sans
+   rien reconstruire si l'une échoue.
+2. **Web et worker** (même commande, après les migrations). Jamais le web avant la base : la session lit
+   `organizations.private_fleet` à chaque page (colonne absente : tableau de bord en panne pour toutes les
+   organisations) et la gestion des clés API et des webhooks répond « Vérification impossible ». Le worker envoie
+   `ride_unconfirmed` sur le canal `ride-updates`.
+3. **App chauffeur** (JavaScript seul : ni module, ni permission, ni plugin, ni icône) : mise à jour à distance sur le
+   runtime 1.1.0, depuis `apps/driver`, **avant le premier client** :
+   `eas update --channel production --environment production --message "Flotte Privée : agenda, réservations à confirmer"`.
+   Sans elle, une réservation immédiate sonne mais ne s'ouvre pas en plein écran, et Messages, Réseau et « Signaler »
+   restent visibles (sans effet). Puis intégration à la version 1.2.0 des stores ([STORES.md](STORES.md) § 10).
+4. **Contrôle** : juste après le déploiement, `select count(*) from public.organizations where private_fleet;` renvoie
+   0 ; `/admin/organizations` affiche « Nouveau client Flotte Privée ».
+
+### Avant le premier client
+
+- **E-mails d'authentification** : le propriétaire reçoit l'e-mail « Invite user » de Supabase Auth (SMTP de Supabase,
+  modèle en français avec `{{ .ConfirmationURL }}`, *Redirect URLs* avec `/auth/set-password` : § 1) ; le lien vaut 1 h
+  (même réglage que les codes). Sans envoi d'e-mails, la création échoue proprement (compte supprimé, « Invitation
+  impossible ») : cocher alors « Mot de passe provisoire » (accès connu de l'équipe, transmis par un moyen sûr, que le
+  client change par « Mot de passe oublié »). « Renvoyer le lien d'accès » envoie l'e-mail « Reset password ».
+- **`/admin/legal`** rempli : sans l'identité de l'éditeur, le client ne peut pas accepter les CGV et l'accord de
+  traitement (`LEGAL_EDITOR_MISSING`), donc aucune clé du site.
+- **Offre** (facultative) : offre non publique créée dans `/admin/plans`, **avec l'accès à l'API** (sinon refusée), à
+  son prix décidé par le propriétaire (le code n'en propose aucun) ; payée par Stripe : ses prix Stripe renseignés
+  (§ 4, étape 3) et le portail client réglé (§ 4, étape 6). Sans offre : aucune limite d'offre, mais 1 chauffeur et
+  1 accès quand même, et l'Abonnement du client affiche « Abonnement géré par l'équipe Rydar ».
+- **Contrat** : conditions particulières Flotte Privée et contrat de prestations rédigés, relus et **signés avant toute
+  activation** ; leur référence est obligatoire à la création ([FLOTTE-PRIVEE.md](FLOTTE-PRIVEE.md) § 12 et § 16).
+
+### Créer un client
+
+1. Super admin, `/admin/organizations` › **Nouveau client Flotte Privée** — ou, depuis une demande du test
+   d'éligibilité, `/admin/contacts/<id>` › **Créer le client Flotte Privée** (formulaire prérempli ; la demande passe
+   « traitée » avec la note « Client créé : … »). Saisir :
+   - client : nom commercial, identifiant, e-mail, téléphone, ville ; raison sociale, SIRET et n° d'inscription au
+     registre VTC facultatifs ;
+   - chauffeur-propriétaire : prénom, nom, **e-mail de connexion sans compte Rydar**, téléphone, n° de carte VTC ;
+   - véhicule : marque, modèle, couleur, plaque, catégorie, places, bagages ;
+   - frais Rydar par course (0 par défaut), offre (facultative, avec l'API), référence du contrat signé.
+2. Refus sans rien créer : adresse qui a déjà un compte (demander une autre adresse au client), identifiant pris ou
+   réservé, offre sans API, saisie invalide, frais refusés par leurs règles. Une erreur après la création du compte de
+   connexion supprime ce compte (sinon, le message dit quoi vérifier).
+3. Le client choisit son mot de passe (lien de l'invitation), accepte les CGV et l'accord de traitement dans son espace
+   web (écran plein), puis se connecte à l'application chauffeur avec les **mêmes identifiants**. La carte Flotte
+   Privée de sa fiche suit chaque étape (invitation acceptée, CGV et accord, application utilisée).
+4. **Clé du site** (carte Flotte Privée, une fois les CGV et l'accord acceptés) : clé **serveur** (recommandée :
+   back-end du site, webhooks) ou **navigateur** (adresses https du site, variante www ajoutée) ; débit : 60 requêtes
+   par minute par défaut pour une clé serveur, 1 000 (300 au moins) pour une clé navigateur. La clé complète et
+   l'extrait d'intégration ne s'affichent **qu'une fois** : les transmettre à l'équipe du site par un moyen sûr
+   (jamais en clair par e-mail). Révocation immédiate depuis la même carte.
+5. Le site enregistre lui-même ses webhooks (`POST /api/v1/webhooks`, clé serveur) et suit
+   [API.md](API.md#site-dun-client-flotte-privée). Essai : un devis, une réservation de test, la notification
+   « NOUVELLE RÉSERVATION » sur le téléphone, « Confirmer », le webhook `ride.accepted` ; puis annuler la réservation de
+   test.
+
+### Ensuite
+
+- **Fiche chauffeur supprimée** depuis l'app (compte et espace web gardés) : les réservations arrivent « non
+  proposées » (alerte du tableau de bord) ; carte Flotte Privée › **Recréer la fiche chauffeur** (propriétaire actif).
+- **Changer d'offre de service** (même carte) : vers une flotte standard ou une centrale, et retour, sur place et sans
+  perte (courses, clients, prix, clés, webhooks, frais, acceptations). Note obligatoire : demande ou accord écrit du
+  client (date et forme, CGV art. 3) ; sortie : offre à choisir, ou « sans offre » assumée (aucune limite) ; frais :
+  hausse annoncée 30 jours avant ou sur accord écrit. Un refus (raisons d'un retour impossible, `SETTLEMENTS_OPEN`,
+  `TERMS_NOT_NOTIFIED`, `NO_EMAIL`…) n'écrit rien. En centrale, la fiche du gérant ne se doit jamais de commission
+  (migration 007700).
+- **Support** : l'équipe ne reçoit jamais d'accès au tableau de bord du client (« Donner un accès » refusé) ; elle lit
+  et agit depuis la fiche super admin.
+
+## 8. Checklist de mise en production
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
 - [ ] Supabase auto-hébergé : `GOTRUE_RATE_LIMIT_HEADER=X-Forwarded-For`, `DISABLE_SIGNUP=true`, aucun port publié
@@ -681,6 +775,10 @@ Tant qu'un point n'est pas vérifié, la phrase correspondante des pages légale
 - [ ] Copie chiffrée des sauvegardes hors du VPS (UE) et restauration testée, puis `/dpa` et `/confidentialite` mis à
       jour (§ 6)
 - [ ] Stripe : portail client en annulation à la fin de la période, sans remboursement ni prorata automatiques (CGV
-      art. 4) ; mentions légales des factures (SIREN, TVA, échéance, pénalités, indemnité de 40 €)
+      art. 4) ; changement d'offre réglé avant la première Flotte Privée payée par Stripe (§ 4, étape 6) ; mentions
+      légales des factures (SIREN, TVA, échéance, pénalités, indemnité de 40 €)
+- [ ] Flotte Privée (§ 7) : migrations 007600 et 007700 appliquées avant le web et le worker ; mise à jour EAS de l'app
+      publiée avant le premier client ; e-mails Auth (invitation) en place, sinon mot de passe provisoire ;
+      conditions particulières et contrat de prestations signés avant toute création
 - [ ] Mini-sites, avant de les rouvrir (`booking_sites_enabled()`) : conditions de chaque centrale renseignées
       (médiateur de la consommation, annulation, moyens de paiement), parcours relu par un juriste

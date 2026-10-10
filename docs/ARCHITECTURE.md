@@ -10,7 +10,7 @@ Rydar Drive repose sur un principe : **la base de données est l'arbitre**. Isol
 | **apps/web** | Dashboard rattacheur, Super Admin, API publique v1, mini-site de réservation, facturation | Next.js 16 (App Router, `proxy.ts`), React 19, Tailwind v4, Radix, MapLibre GL, Recharts, @supabase/ssr, Stripe |
 | **apps/worker** | Tick du dispatch (expirations, vagues suivantes, escalades), envoi des pushs et des relances WhatsApp, webhooks sortants des centrales (garde SSRF, signature, nouveaux essais), ménage (durées de conservation), reprise des suppressions de compte chauffeur | Node 22, `pg` (LISTEN/NOTIFY, `FOR UPDATE SKIP LOCKED`), Expo Push, FCM HTTP v1, APNs HTTP/2, API WhatsApp Cloud, API Storage et Auth de Supabase (clé service role) |
 | **mailer** (même image, `dist/mailer.js`) | E-mails du formulaire de contact : lit la file `email_outbox` (`private.claim_emails`, réveil `LISTEN rydar_emails`) et l'envoie au serveur mail du VPS (SMTP `127.0.0.1:25`, réseau de l'hôte), réessais espacés puis échec visible dans `/admin/contacts` | Node 22, `pg`, nodemailer |
-| **apps/driver** | Application chauffeur : EN LIGNE / HORS LIGNE, GPS, offres, cycle de course | Expo SDK 57, React Native 0.86, expo-router, expo-location (tâche de fond), expo-notifications, react-native-maps |
+| **apps/driver** | Application chauffeur : EN LIGNE / HORS LIGNE, GPS, offres, cycle de course, agenda | Expo SDK 57, React Native 0.86, expo-router, expo-location (tâche de fond), expo-notifications, react-native-maps |
 | **packages/shared** | Vocabulaire commun : statuts, transitions, catégories, schémas zod (messages FR), formatage | TypeScript, zod 4 |
 
 ## Modèle de données
@@ -60,6 +60,8 @@ Les paramètres de dispatch sont réglables par organisation (`organization_sett
 | `trust_after_rides` | 10 | Mode centrale : passage automatique « Confirmé » après N courses réglées |
 | `settlement_methods`, `settlement_link`, `settlement_instructions`, `settlement_payee_name`, `settlement_iban`, `settlement_bic` | lien, espèces | Mode centrale : moyens de paiement acceptés (lien, virement avec RIB, espèces, autre), lien prérempli (`{montant}`, `{montant_centimes}`, `{reference}`), consignes. Un moyen n'est proposé au chauffeur que s'il est renseigné (`private.settlement_methods_available`) ; sinon, espèces |
 
+Une Flotte Privée reçoit un autre profil de dispatch, posé par les RPC du super admin (§ 14).
+
 ## Moteur de dispatch
 
 ### 1. Création
@@ -102,6 +104,8 @@ Position en direct (migrations 003200 → 003400) — règle : **app ouverte = e
 ### 3. Course planifiée : offre à la flotte
 
 `private.offer_to_fleet` propose la course à toute la flotte éligible de l'organisation (actifs, en ligne ou non, catégorie compatible, places suffisantes), sans critère de distance. L'offre reste ouverte jusqu'à T-`scheduled_dispatch_lead_minutes`, et la flotte est re-balayée toutes les 5 min : un chauffeur ajouté ou réactivé entre-temps la reçoit aussi. Si personne ne l'a prise à T-lead, le tick **bascule en recherche GPS** (4 km d'abord). Quand un chauffeur est attribué, les rappels (24 h, 3 h, 1 h, 30 min) sont programmés dans l'outbox avec `scheduled_for`.
+
+Flotte Privée : toute réservation, même immédiate, passe par cette offre à la flotte (au seul chauffeur, avec une échéance de confirmation, des rappels et un dernier appel GPS de 100 km) : § 14.
 
 ### 4. Acceptation atomique
 
@@ -161,10 +165,10 @@ Pour « Relancer » : `DRIVER_CHANGED` est renvoyé si la course a changé de ch
 
 ### 10. Mode « Centrale à commission » (option 2)
 
-Le super admin choisit pour chaque compte un modèle d'exploitation (`organizations.dispatch_model`, sans aucun droit côté client) : **flotte** (option 1, tout ce qui précède) ou **centrale** (option 2 : réseau de chauffeurs indépendants, typiquement issus de groupes WhatsApp / Telegram). Le moteur de dispatch est le même ; le mode centrale ajoute :
+Le super admin choisit pour chaque compte un modèle d'exploitation (`organizations.dispatch_model`, sans aucun droit côté client) : **flotte** (option 1, tout ce qui précède) ou **centrale** (option 2 : réseau de chauffeurs indépendants, typiquement issus de groupes WhatsApp / Telegram). Une **Flotte Privée** est une flotte d'un seul chauffeur, le propriétaire, que le super admin peut faire passer en flotte standard ou en centrale, et revenir, sur place (§ 14). Le moteur de dispatch est le même ; le mode centrale ajoute :
 
 - **Répartition** (`rides.commission_cents`, `platform_fee_cents`, `driver_payout_cents`) calculée par le trigger `rides_centrale_split` : frais plateforme (% + fixe, super admin), commission de la centrale (% + fixe des réglages, ou saisie à la course), part chauffeur = le reste. Exemple : 59 € = 40 € chauffeur + 14 € commission + 5 € plateforme. `COMMISSION_TOO_HIGH` si la saisie dépasse ; prix obligatoire depuis le tableau de bord (`PRICE_REQUIRED`), toléré par l'API et le mini-site (répartition calculée dès que le prix est fixé). La notification d'offre et `driver_offers()` affichent « Vous gagnez 40 € ».
-- **Règlements** (`ride_settlements`, une ligne par course terminée, trigger `rides_d_settlement`) : si le client a payé le chauffeur (espèces, carte à bord), le chauffeur doit commission + frais (`driver_owes`) ; si le client a payé la centrale (en ligne, facture, compte), la centrale doit la part chauffeur (`centrale_owes`). Statuts `due` → `declared` (« J'ai payé », `driver_declare_payment`) → `paid` (« Reçu », `confirm_settlements`) ; `disputed` (« Pas reçu », `dispute_settlement`), `waived` (`waive_settlement`), réouverture (`reopen_settlement`). Référence `C{numéro}` et lien de paiement prérempli. Prix et commission sont verrouillés dès que le règlement n'est plus « à régler » (`SETTLEMENT_LOCKED`). Relances : manuelle (`remind_driver_settlements`, une toutes les 30 min) et automatique (`private.settlement_reminders()`, worker, une par chauffeur toutes les 24 h, 3 au plus).
+- **Règlements** (`ride_settlements`, une ligne par course terminée, trigger `rides_d_settlement` ; aucune pour une course de la fiche du gérant d'une ancienne Flotte Privée, `drivers.owner_driver`, migration 007700, § 14) : si le client a payé le chauffeur (espèces, carte à bord), le chauffeur doit commission + frais (`driver_owes`) ; si le client a payé la centrale (en ligne, facture, compte), la centrale doit la part chauffeur (`centrale_owes`). Statuts `due` → `declared` (« J'ai payé », `driver_declare_payment`) → `paid` (« Reçu », `confirm_settlements`) ; `disputed` (« Pas reçu », `dispute_settlement`), `waived` (`waive_settlement`), réouverture (`reopen_settlement`). Référence `C{numéro}` et lien de paiement prérempli. Prix et commission sont verrouillés dès que le règlement n'est plus « à régler » (`SETTLEMENT_LOCKED`). Relances : manuelle (`remind_driver_settlements`, une toutes les 30 min) et automatique (`private.settlement_reminders()`, worker, une par chauffeur toutes les 24 h, 3 au plus).
 - **Blocages** (`private.centrale_blocker`) appliqués aux vagues GPS, à l'offre à la flotte et à l'acceptation (`DRIVER_BLOCKED`) : commission en retard ou contestée (`unpaid`), encours au-delà du plafond (`credit_limit`), chauffeur « Nouveau » au-dessus du prix plafond (`new_driver`). Un paiement déclaré débloque tout de suite ; la centrale peut le contester. Passage automatique « Confirmé » après `trust_after_rides` courses réglées sans impayé.
 - **Bannissement définitif** (`ban_driver`, owner / admin) : compte suspendu, courses non commencées remises en recherche, offres fermées, et identités **hachées** (sha256 de la valeur normalisée : téléphone, e-mail avec variantes Gmail, carte VTC, permis, pièce d'identité, identifiant d'appareil, plaque en option) enregistrées dans `banned_identities`. Des triggers refusent ensuite ces identités à toute création ou inscription (`IDENTITY_BANNED`) et interdisent la réactivation (`DRIVER_BANNED`) ; un appareil déjà utilisé par un banni suspend le nouveau compte et alerte la centrale (`driver.flagged`), de même que les autres fiches de la centrale déjà enregistrées sur cet appareil au moment du bannissement (vérification requise). Le bannissement vaut pour la centrale ; un signalement (`fraud_reports`) permet au super admin de bannir de **toute la plateforme** (`svc_platform_ban`, migration 004600) ou de lever (`svc_platform_unban`). Avant de décider, il voit les fiches qui partagent une identité du signalement (`admin_fraud_report_matches`, avec la date de la dernière saisie de chaque identité par la centrale qui signale) : le chauffeur signalé et les fiches de sa centrale sont bannis de la plateforme, mais une fiche d'une **autre** centrale ne l'est que si le super admin la coche ; une identité portée par une fiche non cochée n'est pas bannie de la plateforme (elle reste refusée dans la centrale qui signale). Au niveau plateforme, le compte de connexion (Auth) des fiches bannies est verrouillé, sauf s'il sert aussi à gérer une centrale ou la plateforme. La levée rend à chaque centrale le bannissement qu'elle avait elle-même posé (compte toujours verrouillé) ; les autres fiches sont débannies, compte déverrouillé, mais restent suspendues jusqu'à la décision de leur centrale.
 - **Inscription par lien** (`/rejoindre/{code}`, `set_join_link`) : la route serveur vérifie l'identité (`svc_identity_check`), crée le compte Auth puis la candidature (`svc_driver_apply` : chauffeur « inactif », `application_status = 'pending'`, niveau « Nouveau »). La centrale valide (`approve_driver_application`, limites de l'offre vérifiées) ou refuse ; validation automatique possible. Le candidat se connecte à l'app avant validation (`driver_account_state()`) et peut déjà déposer ses documents. **Aussi pour les flottes** (migration 006300) : même parcours et mêmes contrôles (identités bannies, empreintes d'un débiteur, limite de chauffeurs, compte déjà rattaché), menu « Inscriptions » au lieu de « Réseau » (même page `/dashboard/network`), textes sans commission ni « centrale » (`svc_join_info.dispatch_model`, `components/network/join-copy.ts` ; réponse sans modèle → centrale, `joinInfoModel`), candidat validé par un owner / admin « Confirmé » comme un chauffeur créé par la flotte ; entré par la validation automatique, il reste « Nouveau » (sans effet en flotte, plafonné si le compte passe en centrale : personne ne l'a vérifié). Un changement de modèle par le super admin ne coupe plus le lien : code, état, validation automatique et candidatures en attente sont conservés.
@@ -217,6 +221,110 @@ facture (facture récapitulative de chaque cycle : tâche manuelle du propriéta
 facturer » de `/admin/frais/<org>` — `admin_platform_invoice_lines`, frais pris en compte pendant le cycle :
 enregistrement ou baisse acceptée, jamais dans un cycle déjà clos).
 
+Flotte Privée (§ 14) : règles du modèle flotte ; taux fixés à la création (`svc_platform_set_fees` en mode « initial »,
+0 par défaut : aucun montant proposé par le code), puis changés depuis la fiche ou par la bascule, avec les mêmes règles
+de hausse ; frais toujours dus pour les courses de la fiche du gérant, même en centrale.
+
+### 14. Flotte Privée (migrations 007600, 007700)
+
+Pack vendu à un chauffeur VTC indépendant (spécification et écarts livrés : [FLOTTE-PRIVEE.md](FLOTTE-PRIVEE.md)) :
+une organisation **flotte** (`dispatch_model = 'fleet'`) marquée `organizations.private_fleet`, dont le propriétaire
+(`owner`) est aussi l'**unique fiche chauffeur**, sur le même compte (fiche `drivers.owner_driver`, gardée après une
+bascule). Son site, construit hors de ce dépôt, réserve par l'API v1 ([API.md](API.md#site-dun-client-flotte-privée) :
+devis `POST /api/v1/quotes`, `expected_price_cents`, limites des clés navigateur) ; chaque réservation arrive dans son
+application, rien que pour lui. Organisations standard : comportement identique (chaque branche est conditionnée par le
+drapeau).
+
+**Invariants en base** (le web et l'app ne font que masquer et expliquer) :
+
+- drapeau lisible par colonne, jamais écrit par un client : seules `svc_platform_create_private_fleet` et
+  `svc_platform_set_private_fleet` l'écrivent, après le marqueur de transaction `rydar.private_fleet_change` (sinon
+  `PRIVATE_FLEET_LOCKED`) ;
+- contrainte `organizations_private_fleet_check` (modèle flotte, lien d'inscription fermé) et garde
+  `organizations_private_fleet_guard` (`PRIVATE_FLEET_MODEL`, `PRIVATE_FLEET_RESTRICTED`, entrée refusée par
+  `PRIVATE_FLEET_NOT_ELIGIBLE` tant qu'une raison de `private.private_fleet_blockers` existe : modèle, membres, fiches,
+  fiche du propriétaire, candidature, réseau partagé) ;
+- `drivers_aa_private_fleet_guard` : une seule fiche non supprimée, candidatures comprises
+  (`PRIVATE_FLEET_SINGLE_DRIVER`), sur le compte d'une adhésion owner active (`PRIVATE_FLEET_DRIVER_OWNER`) ;
+  `organization_users_private_fleet_guard` : un seul accès ; `network_memberships_private_fleet_guard` : ni adhésion,
+  ni partage, ni demande au réseau partagé (une adhésion existante reste suspendable) ;
+- `private.org_limits` impose `max_drivers` 1 et `max_admins` 1 **après** l'offre et la surcharge : ni une offre, ni
+  `limits_override`, ni un achat Stripe ne les lèvent. `api_access` n'est pas forcé : une offre sans API est refusée à
+  la création, à l'entrée et à l'attribution, et l'API ne peut pas être retirée d'une offre qu'une Flotte Privée utilise
+  sans surcharge qui la lui rende.
+
+**Dispatch** : `private.start_dispatch` (redéfinie en 007600 ; toute redéfinition garde la branche, contrôlée par
+`packages/shared/src/private-fleet-sql.test.ts`) appelle `private.private_fleet_dispatch` **avant** le test
+`auto_dispatch` ; le moteur (`offer_to_fleet`, `run_geo_wave`, `dispatch_tick`, `accept_ride_offer`,
+`decline_ride_offer`, `assign_ride`) n'est pas recopié.
+
+- Profil posé par les RPC (`private.dispatch_profile`, `PRIVATE_FLEET_DISPATCH_PROFILE`) : seuil instantané 0 (seule une
+  course « maintenant » est immédiate), confirmation au plus tard 60 min avant la prise en charge, 300 s pour répondre à
+  une immédiate, un dernier appel GPS (`{100000}`) sans relance. Le chauffeur règle lui-même, dans Réglages ›
+  Réservations, le délai de confirmation (30 min à 24 h), le délai de réponse (60 à 600 s), ses rappels et le paiement
+  par défaut.
+- Aucune fiche active (supprimée, suspendue, désactivée) : `NO_DRIVER_FOUND` tout de suite (`dispatch.private_no_driver`).
+  Réservation saisie par lui au tableau de bord : attribuée d'office dans la même transaction (`assign_ride`, sa
+  notification « attribuée » annulée, `dispatch.private_self`).
+- Sinon offre `fleet` **« à confirmer »** par `private.offer_to_fleet`, en ligne ou non, sans condition de position ni de
+  distance ; échéance = prise en charge − délai de confirmation, au moins maintenant + délai de réponse. Notification
+  « NOUVELLE RÉSERVATION » (déclencheur H4, `kind private_new`) : type `ride_offer` (sonnerie, plein écran possible) si
+  la réponse est attendue dans 15 min au plus, sinon `ride_offer_scheduled`. Véhicule incompatible (catégorie, places) :
+  aucune offre, notification `ride_unconfirmed` « RÉSERVATION À VÉRIFIER » (`dispatch.private_incompatible`).
+- Rappels « RÉSERVATION À CONFIRMER » (H1, `private.private_fleet_plan_reminders`) : prise en charge − chaque rappel de
+  course, plus l'échéance − 30 min ; de maintenant + 20 min à l'échéance − 5 min, 15 min d'écart, 4 au plus ; replanifiés
+  quand l'échéance change (vol retardé) ou que les rappels changent (H6).
+- Refus d'une offre en attente : « Refusée » tout de suite (H2 : `NO_DRIVER_FOUND`, `dispatch.private_declined`, webhook
+  `ride.no_driver_found`, aucune notification). Sans réponse : le tick ferme l'offre à l'échéance annoncée (H5,
+  `private.private_fleet_hold` : le passage n'a jamais lieu avant elle), lance un dernier appel GPS de 100 km (s'il est
+  en ligne avec une position récente), puis `NO_DRIVER_FOUND` → notification « RÉSERVATION NON CONFIRMÉE » (H3) si sa
+  dernière offre n'est pas un refus.
+- Rattrapage jusqu'à 6 h après l'heure prévue (`RIDE_TOO_LATE` au-delà) : `driver_take_ride` (« Confirmer » / « La
+  prendre » dans l'app, « Je la prends » sur le web, jamais `assign_ride` depuis le web) accepte l'offre en attente, sinon
+  (`DRIVER_BUSY`, offre expirée, aucune offre) attribue la course par `assign_ride` (sans contrôle de catégorie,
+  enchaînée à la fin de la course en cours) ; notification « attribuée » vers lui annulée, journal
+  `ride.taken_by_driver`. « Annuler la réservation » : `cancel_ride` avec motif. `reassign_ride` n'est pas bloqué
+  (suspension, bannissement de la fiche).
+
+**Notifications** : `ride_unconfirmed` (raison `to_check` ou `not_confirmed`) part sur le canal Android `ride-updates`,
+niveau « active », regroupée par `data.booking_id` ; jamais de `data.ride_id` (l'app 1.1.0 ouvrirait une course qui
+n'est pas la sienne). Titres : `PRIVATE_FLEET_TITLES` de `@rydar/shared` (comparés au SQL par un test).
+
+**Agenda** : `driver_agenda(p_from, p_to)` (62 jours au plus, sinon `AGENDA_RANGE_INVALID`) renvoie ses courses de la
+période (une course close seulement si elle a changé depuis moins de 24 h ou s'il est membre de l'organisation ; liste
+blanche `private.driver_ride_json`) et, pour une Flotte Privée seulement, `unassigned` : réservations sans chauffeur à
+traiter, quelle que soit la période (`to_confirm`, `to_check`, `declined`, `not_confirmed`). Index
+`rides_driver_pickup_idx`. Logique commune au web et à l'app dans `packages/shared/src/agenda.ts` (grilles jour, semaine
+et mois commençant le lundi, fenêtre de lecture, regroupement par jour dans le fuseau de l'organisation,
+chevauchements, couleurs `AGENDA_KIND_META`). App : route `/planning` (Liste, Jour, Semaine, Mois ; Liste par défaut
+pour un chauffeur standard, Mois en Flotte Privée) ; web : `/dashboard/agenda` (toute organisation ; entrée de menu en
+Flotte Privée seulement).
+
+**Lectures de l'app** : `driver_home()` ajoute `organization.private_fleet`, `driver.owner_driver` et, en Flotte Privée
+seulement, `private.unassigned` (réservations à vérifier ou non confirmées) ; `driver_account_state()` ajoute
+`organization.private_fleet`. Clé absente = organisation standard : l'app 1.1.0 l'ignore. En Flotte Privée, l'app
+masque Messages, « Signaler », Commissions et Réseau partagé, et montre le prix (jamais « votre part ») sur la fiche du
+gérant.
+
+**Espace web** (`lib/private-fleet.ts`, menu `components/shell/dashboard-nav.ts`) : Accueil (réservations à traiter,
+prochaines courses, chiffres, site, premiers pas), Agenda, Réservations, Mon site (lecture seule), Mon profil chauffeur,
+Activité, Frais Rydar (s'il y a des frais), Réglages (Mon entreprise, Tarifs, Réservations, Abonnement). Toute autre
+page est redirigée ou en 404 (`privateFleetPage`, avant toute lecture) et ses actions serveur refusées
+(`refuseInPrivateFleet`, avant toute écriture) ; un test statique (`components/shell/private-fleet-guards.test.ts`) le
+vérifie. Clés API et webhooks : gérés par l'équipe Rydar depuis la fiche super admin. Super admin
+(`app/admin/flotte-privee/actions.ts`, `components/admin/private-fleet*.tsx`) : création, badge et filtre
+`?type=flotte-privee` sur `/admin/organizations`, carte Flotte Privée de la fiche (état, clés du site, fiche du gérant
+recréée, lien d'accès renvoyé, changement d'offre de service), création depuis une demande « eligibility » de
+`/admin/contacts`.
+
+**Bascule** (`svc_platform_set_private_fleet`) : sur place et sans perte (`organization_id` immuable), en une
+transaction ; note d'accord du client obligatoire. Entrée : lien fermé, profil Flotte Privée, `owner_driver` posé.
+Sortie vers une flotte ou une centrale : profil standard, offre choisie (ou aucune, assumée : aucune limite), modèle et
+taux par `svc_platform_set_fees` dans le même sous-bloc (son refus annule tout). Aucune offre en attente fermée ;
+diffusion `platform.updated` (`model`) sur `org:{id}` et `driver.updated` sur `driver:{id}`. En centrale, la migration
+007700 exempte la fiche du gérant : `private.sync_ride_settlement` n'ouvre aucun règlement pour ses courses (il ne se
+doit jamais de commission ; les autres chauffeurs suivent les règles de la centrale).
+
 ## Temps réel
 
 Des triggers publient les changements avec `realtime.send` (Supabase Realtime, canaux **privés**) :
@@ -224,7 +332,7 @@ Des triggers publient les changements avec `realtime.send` (Supabase Realtime, c
 | Topic | Événements | Abonnés |
 | --- | --- | --- |
 | `org:{organization_id}` | `driver.location`, `driver.updated`, `ride.updated`, `ride.event`, `offer.updated`, `ride.alert`, `chat.message`, `chat.report`, `chat.read`, `chat.moderation`, `driver.document`, `settlement.updated`, `driver.application`, `driver.flagged`, `platform.updated` | Dashboard (carte, listes, timeline, alertes, messagerie et modération, encaissements, candidatures, frais plateforme) |
-| `driver:{driver_id}` | `offer.updated`, `ride.updated`, `ride.unassigned`, `chat.message`, `chat.read`, `driver.document`, `settlement.updated` | App chauffeur |
+| `driver:{driver_id}` | `driver.updated` (l'app relit `driver_home`, par exemple après une bascule de Flotte Privée), `offer.updated`, `ride.updated`, `ride.unassigned`, `chat.message`, `chat.read`, `driver.document`, `settlement.updated` | App chauffeur |
 | `fleet:{organization_id}` | `chat.message` (fil flotte), `chat.report`, `chat.removed` (message retiré par la centrale) | Chauffeurs et membres de l'organisation |
 
 La policy RLS sur `realtime.messages` n'autorise l'écoute d'un topic qu'aux membres de l'organisation, ou au chauffeur concerné. `fleet:{org}` est ouvert aux chauffeurs de l'organisation, mais **jamais** `org:{org}` : ce topic transporte les données clients. Le dashboard garde un rafraîchissement de secours toutes les 6 s en cas de coupure du WebSocket.
@@ -267,6 +375,8 @@ ses courses ; contrat public dans [API.md](API.md#webhooks).
 
 Gestion : API v1 (`/api/v1/webhooks`, permission `webhooks:manage`) et Dashboard → Intégrations (owner / admin), toutes
 deux par les RPC `svc_webhook_*` (service role) qui revérifient l'appartenance à la centrale et écrivent `audit_logs`.
+Flotte Privée : Intégrations est fermé au client ; le site enregistre ses adresses par l'API avec la clé serveur créée
+par l'équipe Rydar (§ 14).
 Tests et renvois bornés : un `ping` en attente par adresse (`WEBHOOK_TEST_PENDING`), 10 par minute et par centrale
 (`WEBHOOK_TEST_RATE_LIMITED`, aussi compté côté web dans Redis).
 
@@ -278,8 +388,8 @@ L'app envoie sa position avec `update_driver_location`. La fonction répond avec
 
 | Rôle | Portée | Peut |
 | --- | --- | --- |
-| Super Admin (`users.is_super_admin`) | Plateforme | Créer, suspendre et archiver des organisations, choisir leur modèle (flotte / centrale) et les frais plateforme, donner les accès, gérer les offres et les limites, voir l'activité de toutes les organisations, bannir de toute la plateforme |
-| `owner` / `admin` | Une organisation | Tout gérer dans l'organisation : chauffeurs, réglages, clés API, équipe, abonnement, lien d'inscription et candidatures (flotte comme centrale), bannissements ; en mode centrale : annulation de dettes |
+| Super Admin (`users.is_super_admin`) | Plateforme | Créer, suspendre et archiver des organisations, choisir leur modèle (flotte / centrale) et les frais plateforme, donner les accès, gérer les offres et les limites, voir l'activité de toutes les organisations, bannir de toute la plateforme ; créer un client Flotte Privée, gérer les clés de son site, le faire passer en flotte ou en centrale (et revenir) |
+| `owner` / `admin` | Une organisation | Tout gérer dans l'organisation : chauffeurs, réglages, clés API, équipe, abonnement, lien d'inscription et candidatures (flotte comme centrale), bannissements ; en mode centrale : annulation de dettes. Flotte Privée : le propriétaire, seul membre, est aussi l'unique chauffeur ; ni équipe, ni chauffeurs, ni clés API, ni lien d'inscription |
 | `dispatcher` | Une organisation | Créer, attribuer et annuler des courses, suivre la flotte ; en mode centrale : confirmer ou contester les paiements, relancer |
 | Chauffeur (`drivers.user_id`) | Ses offres et ses courses | Passer EN LIGNE / HORS LIGNE, envoyer sa position, accepter ou refuser, faire avancer **ses** courses |
 

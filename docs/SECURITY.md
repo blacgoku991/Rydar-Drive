@@ -38,7 +38,7 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 
 ## Authentification et sessions
 
-- **Supabase Auth (JWT)**. Pas d'inscription libre : les rattacheurs et leurs accès sont créés par le Super Admin, les chauffeurs par leur rattacheur (invitation ou mot de passe). Seule exception, pour une centrale comme pour une flotte (migration 006300) : le lien d'inscription `/rejoindre/{code}` (code aléatoire de 64 bits, désactivable et régénérable, créé par un owner / admin). La route serveur limite le débit, contrôle l'identité contre les bannissements avant de créer le compte, et la candidature reste « en attente » sans aucun accès aux courses jusqu'à la validation par la centrale (ou validation automatique choisie par elle).
+- **Supabase Auth (JWT)**. Pas d'inscription libre : les rattacheurs et leurs accès sont créés par le Super Admin, les chauffeurs par leur rattacheur (invitation ou mot de passe), un client Flotte Privée (propriétaire et chauffeur sur un même compte, toujours neuf) par le Super Admin (section « Flotte Privée »). Seule exception, pour une centrale comme pour une flotte (migration 006300) : le lien d'inscription `/rejoindre/{code}` (code aléatoire de 64 bits, désactivable et régénérable, créé par un owner / admin). La route serveur limite le débit, contrôle l'identité contre les bannissements avant de créer le compte, et la candidature reste « en attente » sans aucun accès aux courses jusqu'à la validation par la centrale (ou validation automatique choisie par elle).
 - **Anti brute force** : sur 15 min, 30 tentatives par IP (IPv6 regroupée par /64), 6 par couple (adresse, IP) et un plafond global par adresse (60 pour la connexion web, `lib/login-limits.ts` ; 50 pour la connexion chauffeur, `/api/auth/driver-login`, compteur partagé avec la suppression de compte). Un tiers qui connaît une adresse ne bloque donc pas son titulaire depuis une autre IP. Compteurs partagés dans Redis. Ces compteurs ne couvrent que les routes Rydar : l'API Auth de Supabase reste appelable directement avec la clé publique (limites par IP seulement ; en auto-hébergé, seulement si `GOTRUE_RATE_LIMIT_HEADER` est réglé : [DEPLOYMENT.md](DEPLOYMENT.md) § 3, « Exposition du serveur ») ; d'où le code e-mail à 8 chiffres (valable 1 h, 3600 s : délai partagé avec les liens d'invitation des membres ; 100 millions de possibilités, hors de portée du devinage même depuis de nombreuses IP) ([DEPLOYMENT.md](DEPLOYMENT.md) § 1).
 - **Mot de passe oublié (app chauffeur)** : `/api/auth/driver-password-reset` répond toujours de la même façon, que le compte existe ou non (l'e-mail part après la réponse, rien ne se lit dans le temps de réponse) : par heure, 10 demandes par IP, 3 par couple (adresse, IP) et 20 par adresse. Le code reçu est vérifié par `/api/auth/driver-password-reset/confirm` (sur 15 min : 20 par IP, 8 par couple (adresse, IP), 60 par adresse). Le lien de secours ouvre `/auth/set-password?app=driver`, dans un client sans cookie : la session d'un compte déjà connecté au dashboard dans ce navigateur n'est jamais utilisée.
 - **Limitation de débit** : IP d'abord, compte ensuite (une requête refusée pour son IP ne consomme pas le quota du compte visé) ; clés de longueur fixe (empreinte SHA-256) ; adresse e-mail limitée à 254 caractères. L'IP est celle de la connexion vue par Caddy (`X-Forwarded-For` réécrit, `X-Real-IP` imposé, `CF-Connecting-IP` retiré) : un client ne peut pas la choisir.
@@ -60,7 +60,7 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 ## Clés API
 
 - Format `rdk_live_{préfixe}_{secret}`. Seul un **HMAC-SHA-256** poivré (`API_KEY_PEPPER`) est stocké, dans `api_key_secrets`, une table inaccessible à tout rôle client. La comparaison se fait en temps constant.
-- Permissions par clé, date d'expiration, révocation immédiate, débit par minute propre à chaque clé (Redis) ; les requêtes non authentifiées (clé absente, inconnue ou invalide) sont limitées par IP (IPv6 regroupée par /64), et leurs échecs journalisés dans une limite fixe. Une clé d'idempotence rejouée par une autre clé renvoie 409 (`IDEMPOTENCY_KEY_CONFLICT`), jamais la course d'une autre intégration. Une clé avec des origines autorisées (clé « navigateur », lisible par tout visiteur) ne sert qu'à créer une course, depuis une origine listée (`ORIGIN_NOT_ALLOWED`), avec le prix et le paiement fixés par la centrale ([API.md](API.md)).
+- Permissions par clé, date d'expiration, révocation immédiate, débit par minute propre à chaque clé (Redis) ; les requêtes non authentifiées (clé absente, inconnue ou invalide) sont limitées par IP (IPv6 regroupée par /64), et leurs échecs journalisés dans une limite fixe. Une clé d'idempotence rejouée par une autre clé renvoie 409 (`IDEMPOTENCY_KEY_CONFLICT`), jamais la course d'une autre intégration. Une clé avec des origines autorisées (clé « navigateur », lisible par tout visiteur) ne sert qu'à créer une course et à demander un devis (`BROWSER_KEY_SCOPES` : `rides:create`, `rides:quote` ; toute autre route : `INSUFFICIENT_SCOPE`), depuis une origine listée (`ORIGIN_NOT_ALLOWED`), avec le prix et le paiement fixés par la centrale (un prix affiché au client se vérifie par `expected_price_cents` : prix recalculé différent → 409 `PRICE_CHANGED`, rien n'est créé). Elle a en plus des limites par adresse IP, par téléphone et pour l'organisation, comptées organisation par organisation et vérifiées avant son débit, lui-même compté à part pour les devis et pour les réservations ([API.md](API.md#limites-dune-clé--navigateur-)).
 - Chaque requête est journalisée (`api_logs`) : clé, statut, durée, code d'erreur, IP.
 
 ## Webhooks sortants
@@ -159,7 +159,78 @@ Chacune de ces lignes est un test automatisé (`tests/db/rls.test.ts`, lancé pa
 
 ## Limites des offres
 
-Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domaine personnalisé sont vérifiés **par des triggers en base** (`PLAN_LIMIT_*`, `PLAN_FEATURE_*`). Contourner l'interface ne permet pas de les dépasser.
+Chauffeurs, courses mensuelles, administrateurs, accès API, mini-site et domaine personnalisé sont vérifiés **par des triggers en base** (`PLAN_LIMIT_*`, `PLAN_FEATURE_*`). Contourner l'interface ne permet pas de les dépasser. Flotte Privée : 1 chauffeur et 1 accès imposés par `private.org_limits` après l'offre et la surcharge (section suivante).
+
+## Flotte Privée (migrations 007600, 007700)
+
+Client chauffeur VTC indépendant : une organisation flotte dont le propriétaire est l'unique fiche chauffeur, sur le
+même compte ([ARCHITECTURE.md](ARCHITECTURE.md) § 14, [FLOTTE-PRIVEE.md](FLOTTE-PRIVEE.md)). Les limites du pack sont
+des **invariants en base** ; le web et l'app ne font que masquer et expliquer.
+
+- **Drapeau** `organizations.private_fleet` : lisible par les membres (droit par colonne), absent de tout droit UPDATE
+  client, comme `drivers.owner_driver`. Seules deux RPC réservées au service role l'écrivent,
+  `svc_platform_create_private_fleet` et `svc_platform_set_private_fleet` (auteur super admin revérifié par
+  `private.assert_platform_actor`, audit écrit en SQL). Leur marqueur de transaction `rydar.private_fleet_change`
+  (identifiant de l'organisation) écarte une écriture involontaire, même en service role (`PRIVATE_FLEET_LOCKED`,
+  42501) ; ce n'est qu'une intention : la sécurité repose sur l'absence de droit client et sur ces RPC réservées.
+- **Gardes** (dernier rempart pour tous les chemins, service role compris) : modèle flotte et lien d'inscription fermé
+  (contrainte et `organizations_private_fleet_guard` : `PRIVATE_FLEET_MODEL`, `PRIVATE_FLEET_RESTRICTED`) ; une seule
+  fiche, celle du propriétaire actif (`drivers_aa_private_fleet_guard` : `PRIVATE_FLEET_SINGLE_DRIVER`,
+  `PRIVATE_FLEET_DRIVER_OWNER`) ; un seul accès au tableau de bord (`organization_users_private_fleet_guard` et
+  `org_limits`) ; aucun réseau partagé (`network_memberships_private_fleet_guard`). Le drapeau y est relu sous verrou
+  (ligne de l'organisation pour une fiche ou un nouvel accès, verrou consultatif pour le réseau) : une entrée en Flotte
+  Privée en cours est attendue. Entrée refusée tant qu'une raison existe (`PRIVATE_FLEET_NOT_ELIGIBLE`).
+- **Limites et Checkout verrouillé** : `private.org_limits` impose 1 chauffeur et 1 accès APRÈS l'offre et la surcharge
+  du super admin : ni une offre, ni une surcharge, ni un achat Stripe ne les lèvent. `/api/billing/checkout` relit
+  `private_fleet` en service role (jamais d'après la session) et n'accepte que l'offre attribuée par l'équipe
+  (`checkoutPlanAllowed`, jamais une offre publique) ; organisation illisible : 503. Reste le portail client Stripe
+  (« Gérer ») : sa configuration par défaut sert à toutes les organisations ; s'il permet de changer d'offre, une Flotte
+  Privée abonnée par Stripe peut y en prendre une autre, que le webhook écrit dans `plan_id` (1 chauffeur et 1 accès
+  toujours imposés, mais l'API peut se perdre) : réglage et choix dans [DEPLOYMENT.md](DEPLOYMENT.md) § 4, étape 6.
+  Une offre sans API est refusée à la création, à l'entrée en Flotte Privée et à l'attribution, et l'API ne peut pas
+  être retirée d'une offre qu'une Flotte Privée utilise (son site ne pourrait plus réserver).
+- **Web, masqué ET bloqué** : chaque page hors du pack est redirigée ou en 404 avant toute lecture
+  (`privateFleetPage`), chaque action serveur correspondante refusée avant toute écriture, création de compte ou appel
+  externe (`refuseInPrivateFleet` : chauffeurs, inscriptions, réseau partagé, équipe, messagerie, réglages de dispatch,
+  de centrale et WhatsApp, attribution, relance et retrait d'une course). Test statique
+  `components/shell/private-fleet-guards.test.ts` : toute nouvelle page ou action du tableau de bord y est classée.
+- **Clés du site gérées par l'équipe** : les actions de clés et de webhooks du tableau de bord relisent elles-mêmes
+  `organizations.private_fleet` et refusent (`PRIVATE_FLEET_RESTRICTED` ; drapeau illisible : « Vérification
+  impossible »). Le super admin crée la clé du site (serveur ou navigateur, débit réglable) seulement pour une Flotte
+  Privée active dont les CGV et l'accord de traitement en vigueur sont acceptés ; clé complète affichée une seule fois,
+  jamais stockée (HMAC poivré) ; révocation immédiate ; audit `api_key.created` / `api_key.revoked` (acteur
+  `super_admin`) ; garde `PLAN_FEATURE_API`. Le client voit ses clés en lecture seule (« Mon site » : type, préfixe,
+  origines, dernière utilisation).
+- **Refus avant toute création de compte Auth** : la création d'un client contrôle l'adresse du propriétaire
+  (recherche par égalité, jokers échappés ; lecture en échec = refus), l'identifiant et l'offre AVANT tout compte et tout
+  e-mail : une adresse qui a déjà un compte Rydar est refusée (« demandez une autre adresse au client »). Côté client,
+  `createDriver` et `inviteMember` refusent en Flotte Privée avant toute recherche ou création de compte (test
+  statique).
+- **Défense « compte neuf »** : le compte est créé par `createUser` sans confirmation, qui refuse toute adresse déjà
+  connue d'Auth (même jamais confirmée), puis invité par e-mail ; la RPC refuse en plus un compte qui a déjà une adhésion
+  ou plus d'une heure d'existence (`OWNER_NOT_NEW`), une fiche chauffeur (`ALREADY_REGISTERED`), le super admin
+  lui-même (`SELF_NOT_ALLOWED`). Raison : `private.current_driver_id()` ne vérifie ni l'adhésion ni
+  `private.jwt_issued_after` ; une fiche active sur un compte existant donnerait accès aux clients sans preuve par
+  e-mail. Rattacher un compte existant n'est pas livré (phase 2). Échec après la création du compte : seul ce compte
+  est supprimé, et seulement s'il n'a ni adhésion ni fiche (relu), jamais sur un refus qui le dit déjà utilisé. Mot de
+  passe provisoire seulement derrière une case explicite (accès connu de l'équipe, à changer par « Mot de passe
+  oublié ») ; « Renvoyer le lien d'accès » seulement pour un propriétaire jamais connecté (audit
+  `member.invitation_resent`).
+- **Support** : l'équipe ne devient jamais membre (« Donner un accès » refusé en Flotte Privée) ; elle lit par la RLS
+  du super admin et agit par les cartes de la fiche.
+- **Réservations et agenda** : `driver_take_ride` ne prend qu'une réservation de SON organisation (`RIDE_NOT_FOUND`
+  sinon), au plus 6 h après l'heure prévue ; sur le web, « Je la prends » l'appelle avec le jeton du propriétaire,
+  jamais `assign_ride` (refusé en Flotte Privée). `driver_agenda` ne renvoie une course close qu'au chauffeur membre de
+  l'organisation (sinon seulement si elle a changé depuis moins de 24 h, comme la RLS), par la liste blanche
+  `private.driver_ride_json`, et `unassigned` seulement à ce membre. La notification `ride_unconfirmed` ne contient
+  jamais `ride_id`.
+- **Bascule** (`svc_platform_set_private_fleet`) : une transaction, note d'accord du client obligatoire
+  (`CONSENT_REQUIRED`), un refus des frais annule tout ; audit `organization.private_fleet_enabled` / `_disabled`
+  (gravité warning) ; temps réel `platform.updated` (`model`, identifiants seulement) et `driver.updated`.
+- **Contrat** : CGV, DPA et CGU inchangés par ce pack. La référence des conditions particulières et du contrat de
+  prestations signés est obligatoire à la création (`CONSENT_REQUIRED`) et gardée dans l'audit
+  `organization.private_fleet_created` ; ces textes restent à faire rédiger et signer avant toute activation
+  ([FLOTTE-PRIVEE.md](FLOTTE-PRIVEE.md) § 12).
 
 ## Formulaire de contact et e-mails
 

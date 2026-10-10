@@ -1,4 +1,50 @@
-# Travail en cours (04/10/2026)
+# Travail en cours (10/10/2026)
+
+## Flotte Privée : pack livré, lots L1 à L6 faits (10/10/2026) — recette L7 à faire
+
+Spécification, statuts des lots (commits) et écarts livrés : `docs/FLOTTE-PRIVEE.md` (§ 15 et § 15.1). Migrations
+`20260924007600_private_fleet` et `20260924007700_private_fleet_owner_settlements` **pas encore poussées** (modifiables
+jusqu'au push) ; la migration du copilote (`007500` sur sa branche, en collision avec `007500_eligibility`) prendra
+`20260924007800` ou plus à sa fusion.
+
+- **Livré** : organisation flotte marquée `organizations.private_fleet`, dont le propriétaire est l'unique chauffeur
+  (même compte, fiche `owner_driver`) ; ni équipe, ni lien d'inscription, ni réseau, ni centrale (gardes en base +
+  `org_limits` : 1 chauffeur, 1 accès) ; réservations du site (API v1) proposées « à confirmer » en ligne ou non, quelle
+  que soit la distance, avec rappels, « Refusée », dernier appel GPS puis « Non confirmée », « La prendre » jusqu'à 6 h
+  après l'heure ; agenda (app `/planning` : Liste, Jour, Semaine, Mois ; web `/dashboard/agenda`) ; espace web épuré
+  (le reste masqué ET refusé) ; super admin : création (compte neuf, invitation), clé du site, bascule flotte / centrale
+  et retour, création depuis une demande « eligibility » ; API : `POST /api/v1/quotes`, `expected_price_cents`
+  (409 `PRICE_CHANGED`), limites des clés navigateur ; en centrale, le gérant ne se doit jamais de commission (007700).
+  Documentation : ARCHITECTURE § 14, SECURITY « Flotte Privée », API « Site d'un client Flotte Privée », DEPLOYMENT § 7
+  (ordre de déploiement, création d'un client), STORES § 10 ; CLAUDE.md (ligne « Métier » soumise au propriétaire).
+- **Déploiement** (DEPLOYMENT § 7) : migrations, puis web et worker (`bash deploy/update-production.sh`, dans cet
+  ordre), puis mise à jour EAS de l'app (runtime 1.1.0, JS seul) avant le premier client, puis 1.2.0 des stores.
+- **Contrôles** : chaque lot a fait passer les siens (typecheck, unitaires, base réelle, builds, export de l'app) ; lot 6
+  (documentation seule) : `pnpm test` vert (146 fichiers, 1 560 tests).
+- **Reste** :
+  1. L7 : recette de bout en bout (FLOTTE-PRIVEE § 13.3) sur la pile locale, puis sur appareil (frise du jour sous
+     Android, feuille d'annulation avec le clavier).
+  2. Propriétaire (FLOTTE-PRIVEE § 16, valeurs « proposées » appliquées) : prix et facturation du pack, contrat
+     (conditions particulières et contrat de prestations à faire rédiger et **signer avant toute activation** ;
+     acceptation en ligne plus tard, § 12.2), hébergement du site, nom commercial, délais par défaut, plage de silence
+     des rappels, entrée « Agenda » du menu des flottes et centrales standard, etc. Portail Stripe : le régler sans
+     changement d'offre le retire à toutes les organisations (DEPLOYMENT § 4, étape 6), ou facturer la Flotte Privée hors
+     Stripe. `/eligibilite` promet un « suivi des réservations venues de tes pubs » (l. 48) que Rydar ne fournit pas : à
+     retirer ou à prévoir.
+  3. Points ouverts des lots, hors de leurs chemins :
+     - `apps/web/components/dashboard-integrations.tsx` : textes « création de courses uniquement » pour une clé
+       navigateur, qui reçoit aussi les devis (`BROWSER_KEY_SCOPES`) ;
+     - `/api/billing/portal` : aucune configuration de portail propre aux Flottes Privées (voir ci-dessus) ;
+     - `apps/web/lib/org-context.ts` : `getOrgContext` transmet la fiche chauffeur du compte sans la filtrer par
+       organisation (aucune action ne s'en sert ; `requireOrg` filtre) ;
+     - app : une réservation « à vérifier » n'est signalée que par sa notification ; chauffeur hors ligne avec les
+       notifications refusées, l'accueil et l'agenda ne se relisent qu'au retour dans l'app (option : `driver.updated`
+       à la mise en file de `ride_unconfirmed`) ;
+     - app : `app/account.tsx` (compte en attente, suspendu, refusé) sans texte Flotte Privée (« votre centrale » y
+       désigne sa propre entreprise) : à confirmer par le propriétaire ;
+     - recréer la fiche suppose une vraie suppression de compte (e-mail de la fiche vidé), sinon l'index
+       `drivers_org_email_uidx` refuse avec un message générique ;
+     - app : `new Intl.DateTimeFormat` au rendu dans `messages.tsx` et `earnings.tsx` (antérieur au chantier).
 
 ## Flotte Privée : page du test d'éligibilité (09/10/2026)
 

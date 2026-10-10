@@ -425,6 +425,39 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
     de navigation au clic inchangé (médianes 944-1 600 ms des deux côtés).
   - Barre latérale : commentaire « rendre le préchargement si un app/dashboard/loading.tsx arrive ».
 
+- [x] **Flotte Privée (10/2026, migrations 007600 et 007700 ; spécification, statuts et écarts : `docs/FLOTTE-PRIVEE.md`)**
+  — pack vendu à un chauffeur VTC indépendant : son site (API v1) lui envoie ses réservations, rien que pour lui. Lots :
+  L1 socle (`89b8401`), L4 API (`df72170`), L5 app (`106dbc1`), L2 super admin (`2b94c88`), L3 espace web (`915f34b`),
+  revue (`dfc4f71` SQL, `df83c0e` web du client, `8e93b18` admin et API, `695f23a` app, `53394fb` conformité), L6
+  documentation.
+  - Base : `organizations.private_fleet` (contrainte : modèle flotte, lien fermé ; lecture par colonne ; écrit par les
+    seules RPC du super admin, marqueur `rydar.private_fleet_change`), `drivers.owner_driver`, index
+    `rides_driver_pickup_idx` ; gardes (organisations, fiches `drivers_aa_private_fleet_guard`, adhésions, réseau
+    partagé) ; `private.org_limits` (1 chauffeur, 1 accès après l'offre et la surcharge ; dernière définition : 007600) ;
+    `private.start_dispatch` (dernière définition : 007600, branche `private.private_fleet_dispatch` avant
+    `auto_dispatch`) ; déclencheurs H1 rappels « à confirmer », H2 refus = « Refusée », H3 « Non confirmée », H4
+    notification « NOUVELLE RÉSERVATION », H5 échéance annoncée tenue (`private.private_fleet_hold`), H6 réglages
+    « Réservations » ; `driver_home` et `driver_account_state` (dernières définitions : 007600) ;
+    `private.sync_ride_settlement` (dernière définition : 007700, aucun règlement pour la fiche du gérant).
+  - Web : super admin (`app/admin/flotte-privee/actions.ts`, `components/admin/private-fleet*.tsx` : création par
+    `createUser` puis invitation, compensation limitée au compte créé ; clé du site serveur ou navigateur, débit réglable ;
+    recréation de la fiche ; lien d'accès ; « Changer d'offre de service » ; passerelle `/admin/contacts/[id]` ; badge et
+    filtre `?type=flotte-privee`) ; `lib/api-keys-server.ts` (`insertKey`) ; espace du client (`lib/private-fleet.ts`,
+    `components/shell/dashboard-nav.ts`, `components/private-fleet/*`, `components/agenda/*`, pages `/dashboard/agenda`,
+    `/dashboard/site`, `/dashboard/profil`, onglet Réglages › Réservations, actions `takeBooking` → `driver_take_ride` et
+    `declineOffer`, Checkout limité à l'offre attribuée) ; API v1 (`POST /api/v1/quotes`, `lib/api/trip.ts` = même calcul
+    que la réservation et le mini-site, `expected_price_cents` / 409 `PRICE_CHANGED`, limites des clés navigateur par
+    adresse IP, téléphone et organisation).
+  - App (JS seul, EAS Update) : `privateFleet` / `ownerDriver` (`src/lib/driver-mode.ts`), agenda `/planning`
+    (`src/components/agenda/*`, `src/lib/agenda-view.ts`), urgence d'une réservation (`src/lib/offer-urgency.ts`), écrans
+    réduits (`use-private-fleet-guard`), textes de suppression (`src/lib/account-deletion.ts`), `ride_unconfirmed` →
+    agenda.
+  - Worker : `ride_unconfirmed` sur le canal `ride-updates` (niveau « active »). Paquet partagé : `private-fleet.ts`,
+    `agenda.ts`, portée `rides:quote`, `BROWSER_KEY_SCOPES`, `apiQuoteSchema`.
+  - Tests : `tests/db/private-fleet*.test.ts` (base réelle), `private-fleet-sql.test.ts` (SQL = paquet partagé, branches
+    de `start_dispatch` et `org_limits` gardées), `private-fleet-guards.test.ts` (pages et actions refusées),
+    `private-fleet-admin.test.ts`, `api-v1-quotes.test.ts`, `api-v1-browser-keys.test.ts`, agenda (paquet, web, app).
+
 ## Notes / prochaines étapes
 - Seed : bypass via GUC `rydar.bypass_ride_rules=on` (connexion directe seulement). Comptes démo en tête de `supabase/seed.sql`.
 - Toute nouvelle fonction SQL : revoke/grant explicites (cf. 0900). `api_key_secrets` = service_role only.
@@ -453,3 +486,8 @@ Fonts Geist + Geist Mono (chiffres). Carte centrale (dashboard = command center)
 - Webhooks sortants (006000, 006100) : service role svc_webhook_upsert/delete/set_enabled/rotate_secret/ping/redeliver ;
   worker private.claim_webhook_deliveries(n), private.complete_webhook_delivery(id, ok, code, erreur),
   private.purge_webhook_deliveries() (toutes les heures) ; LISTEN rydar_webhooks.
+- Flotte Privée (007600) : service role svc_platform_create_private_fleet, svc_platform_attach_private_fleet_driver,
+  svc_platform_set_private_fleet ; chauffeur driver_take_ride (« La prendre »), driver_agenda (62 jours) ; driver_home
+  (+ organization.private_fleet, driver.owner_driver, private.unassigned) et driver_account_state
+  (+ organization.private_fleet) ; aides private.is_private_fleet, private_fleet_driver, private_fleet_blockers,
+  dispatch_profile, private_fleet_unassigned, private_fleet_hold, private_fleet_plan_reminders.
