@@ -37,12 +37,13 @@ describe("sous-domaines réservés (mini-site, identifiant de centrale)", () => 
 describe("clé API « navigateur » (origines autorisées)", () => {
   const base = { name: "Site web", rateLimitPerMinute: 60 };
 
-  it("création de courses seule quand des origines sont saisies", () => {
+  it("création de courses et devis seuls quand des origines sont saisies", () => {
     const res = apiKeyCreateSchema.safeParse({ ...base, scopes: ["rides:create", "rides:read"], allowedOrigins: ["https://www.centrale.fr"] });
     expect(res.success).toBe(false);
-    expect(res.error?.issues[0]?.message).toMatch(/seule la création de courses/);
+    expect(res.error?.issues[0]?.message).toMatch(/seules la création de courses et les devis/);
     expect(apiKeyCreateSchema.safeParse({ ...base, scopes: ["rides:cancel", "rides:create"], allowedOrigins: ["https://www.centrale.fr"] }).success).toBe(false);
     expect(apiKeyCreateSchema.safeParse({ ...base, scopes: ["rides:create"], allowedOrigins: ["https://www.centrale.fr"] }).success).toBe(true);
+    expect(apiKeyCreateSchema.safeParse({ ...base, scopes: ["rides:create", "rides:quote"], allowedOrigins: ["https://www.centrale.fr"] }).success).toBe(true);
   });
 
   it("clé serveur (sans origine) : toutes les portées restent possibles", () => {

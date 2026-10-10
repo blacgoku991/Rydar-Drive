@@ -16,3 +16,5 @@ export * from "./eligibility";
 export * from "./api-ride";
 export * from "./webhooks";
 export * from "./network";
+export * from "./private-fleet";
+export * from "./agenda";

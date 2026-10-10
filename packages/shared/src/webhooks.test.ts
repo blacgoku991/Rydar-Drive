@@ -174,7 +174,7 @@ describe("permission webhooks:manage", () => {
   it("permission disponible avec un libellé, jamais pour une clé « navigateur »", () => {
     expect(API_SCOPES).toContain("webhooks:manage");
     expect(API_SCOPE_LABELS["webhooks:manage"]).toBe("Webhooks");
-    expect(BROWSER_KEY_SCOPES).toEqual(["rides:create"]);
+    expect(BROWSER_KEY_SCOPES).toEqual(["rides:create", "rides:quote"]);
     expect(apiKeyCreateSchema.safeParse({ ...base, scopes: ["rides:create", "webhooks:manage"] }).success).toBe(true);
     expect(
       apiKeyCreateSchema.safeParse({ ...base, scopes: ["rides:create", "webhooks:manage"], allowedOrigins: ["https://www.centrale.fr"] }).success,

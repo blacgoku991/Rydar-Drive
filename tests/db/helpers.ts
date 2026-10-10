@@ -367,3 +367,125 @@ export function networkTermsJson(t: { price: number; method?: string; commission
     amount_cents: collects ? cut : payout,
   };
 }
+
+// -----------------------------------------------------------------------------
+// Flotte Privée (20260924007600) : super admin, client créé par svc_platform_create_private_fleet, jeton récent
+// -----------------------------------------------------------------------------
+
+/** Compte super admin (public.users.is_super_admin). */
+export async function superAdmin(): Promise<string> {
+  const id = await createAuthUser(`sa-${randomUUID().slice(0, 8)}@rydar.dev`, "Super Admin");
+  await sql(`update public.users set is_super_admin = true where id = $1`, [id]);
+  return id;
+}
+
+/**
+ * Comme `as` (rôle authenticated), avec un jeton émis maintenant (claim « iat ») : exigé par une adhésion activée
+ * (organization_users.activated_at, 20260924005300), comme celle du propriétaire d'une Flotte Privée.
+ */
+export async function asFresh<T>(
+  sub: string,
+  fn: (q: <R extends pg.QueryResultRow = any>(text: string, params?: unknown[]) => Promise<R[]>) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub, role: "authenticated", iat: Math.floor(Date.now() / 1000) + 2 }),
+    ]);
+    await client.query("set local role authenticated");
+    const result = await fn(async (text, params = []) => (await client.query(text, params)).rows);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export type PrivateFleet = Org & { driverId: string; vehicleId: string; actor: string };
+
+/**
+ * Client Flotte Privée créé comme par le super admin : compte NEUF du propriétaire, puis svc_platform_create_private_fleet
+ * (organisation, adhésion owner activée, fiche du gérant sur le même compte, profil de dispatch, frais initiaux). Fiche
+ * hors ligne et sans position par défaut ; `at` : position récente, fiche disponible (ou `presence`). Offre par défaut :
+ * sans limite.
+ */
+export async function createPrivateFleet(
+  name: string,
+  opts: {
+    actor?: string;
+    plan?: string | null;
+    category?: "standard" | "business" | "first" | "van" | "green";
+    seats?: number;
+    at?: [number, number];
+    presence?: "offline" | "available";
+    locationAgeSeconds?: number;
+    percent?: number;
+    fixedCents?: number;
+    org?: Record<string, unknown>;
+  } = {},
+): Promise<PrivateFleet> {
+  const actor = opts.actor ?? (await superAdmin());
+  const slug = `pf-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30)}-${randomUUID().slice(0, 6)}`;
+  const ownerId = await createAuthUser(`owner-${slug}@test.dev`, `Owner ${name}`);
+  const phone = `+336${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`;
+  const plate = `PF-${randomUUID().slice(0, 3)}-${randomUUID().slice(0, 2)}`.toUpperCase();
+  const plan = opts.plan === undefined ? await unlimitedPlan() : opts.plan;
+  const [row] = await as({ role: "service_role" }, (q) =>
+    q(
+      `select public.svc_platform_create_private_fleet($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) as r`,
+      [
+        actor, ownerId,
+        JSON.stringify({ name, slug, email: `contact@${slug}.test`, phone, city: "Paris", ...opts.org }),
+        JSON.stringify({ first_name: name.split(" ")[0] ?? name, last_name: "Gérant", phone, vtc_card_number: null }),
+        JSON.stringify({ brand: "Mercedes", model: "Classe E", plate, category: opts.category ?? "business", seats: opts.seats ?? 4 }),
+        plan,
+        opts.percent ?? 0, opts.fixedCents ?? 0, "CP-TEST-0001", "2026-10-02", null, "https://app.rydar.test",
+      ],
+    ),
+  );
+  const res = row.r as { ok: boolean; code: string; organization_id: string; driver_id: string };
+  if (!res.ok) throw new Error(`createPrivateFleet : ${JSON.stringify(res)}`);
+  const [driver] = await sql(`select vehicle_id from public.drivers where id = $1`, [res.driver_id]);
+  if (opts.at) {
+    const age = opts.locationAgeSeconds ?? 5;
+    await sql(`update public.drivers set presence = $2 where id = $1`, [res.driver_id, opts.presence ?? "available"]);
+    await sql(
+      `insert into public.driver_locations (driver_id, organization_id, lat, lng, recorded_at, updated_at)
+       values ($1, $2, $3, $4, now() - make_interval(secs => $5), now() - make_interval(secs => $5))`,
+      [res.driver_id, res.organization_id, opts.at[0], opts.at[1], age],
+    );
+  }
+  return { id: res.organization_id, slug, ownerId, driverId: res.driver_id, vehicleId: driver.vehicle_id, actor };
+}
+
+/** Réservation reçue par l'API v1 (site du client : insertion service role, source « api »), Orly → Paris. */
+export async function createApiRide(orgId: string, overrides: Record<string, unknown> = {}) {
+  const ride = {
+    organization_id: orgId,
+    source: "api",
+    pickup_address: "Aéroport d'Orly, 94390 Orly",
+    pickup_lat: 48.7262,
+    pickup_lng: 2.3652,
+    dropoff_address: "8 Rue de Rivoli, 75004 Paris",
+    dropoff_lat: 48.8556,
+    dropoff_lng: 2.3601,
+    customer_name: "Client Site",
+    customer_phone: "+33611223344",
+    passengers: 2,
+    vehicle_category: "business",
+    price_cents: 8500,
+    ...overrides,
+  };
+  const cols = Object.keys(ride);
+  const [row] = await as({ role: "service_role" }, (q) =>
+    q(
+      `insert into public.rides (${cols.join(", ")}) values (${cols.map((_, i) => `$${i + 1}`).join(", ")}) returning id, number, type`,
+      Object.values(ride),
+    ),
+  );
+  return row as { id: string; number: number; type: string };
+}

@@ -330,6 +330,26 @@ export const ERROR_MESSAGES: Record<string, string> = {
   LEGAL_EDITOR_MISSING: "Conditions momentanément indisponibles : identité de l'éditeur à compléter.",
   WHATSAPP_OPTED_OUT:
     "Le propriétaire a refusé les messages WhatsApp de Rydar : relancez sans WhatsApp (rappel affiché dans son tableau de bord).",
+  // Flotte Privée (20260924007600, docs/FLOTTE-PRIVEE.md annexe A) — espaces insécables avant « : »
+  PRIVATE_FLEET_LOCKED: "Flotte Privée\u00a0: changement réservé à l'équipe Rydar.",
+  PRIVATE_FLEET_MODEL: "Flotte Privée\u00a0: modèle flotte imposé. Sortez d'abord de la Flotte Privée.",
+  PRIVATE_FLEET_RESTRICTED: "Fonction non incluse dans la Flotte Privée.",
+  PRIVATE_FLEET_SINGLE_DRIVER:
+    "Flotte Privée\u00a0: un seul chauffeur, vous. Pour ajouter des chauffeurs, demandez le passage en flotte à l'équipe Rydar.",
+  PRIVATE_FLEET_DRIVER_OWNER: "Flotte Privée\u00a0: la fiche chauffeur doit être celle du propriétaire du compte.",
+  PRIVATE_FLEET_NOT_ELIGIBLE:
+    "Passage en Flotte Privée impossible\u00a0: un seul membre (le propriétaire), une seule fiche (la sienne), aucune candidature, aucun réseau partagé, modèle flotte.",
+  AGENDA_RANGE_INVALID: "Période d'agenda invalide (62 jours au plus).",
+  PRIVATE_FLEET_ONLY: "Réservé à la Flotte Privée.",
+  PRIVATE_FLEET_PLAN_INVALID: "Offre sans accès à l'API\u00a0: le site du client ne pourrait pas réserver.",
+  PRIVATE_FLEET_HAS_DRIVER: "Cette Flotte Privée a déjà une fiche chauffeur.",
+  OWNER_NOT_NEW: "Compte déjà utilisé\u00a0: la Flotte Privée exige un compte neuf (phase 1).",
+  SELF_NOT_ALLOWED: "Impossible de vous désigner vous-même.",
+  SLUG_TAKEN: "Ce slug est déjà utilisé.",
+  ALREADY_REGISTERED: "Ce compte est déjà rattaché à une fiche chauffeur.",
+  RIDE_TOO_LATE: "Heure de prise en charge dépassée depuis plus de 6\u00a0h.",
+  // Code existant (création de course, API v1) aussi renvoyé par svc_platform_set_private_fleet
+  ORGANIZATION_INACTIVE: "Organisation suspendue ou archivée.",
 };
 
 /** Extrait un code métier (ex. « PLAN_LIMIT_DRIVERS ») d'un message d'erreur PostgreSQL. */

@@ -33,8 +33,11 @@ export const MESSAGES_CHANNEL = "messages";
 export const FLEET_REPORTS_CHANNEL = "fleet-reports";
 export const DEFAULT_CHANNEL = "default";
 
-/** Types liés à une course en cours (canal « ride-updates »). */
-const RIDE_UPDATE_TYPES = new Set(["ride_cancelled", "ride_assigned", "ride_unassigned", "flight_update"]);
+/**
+ * Types liés à une course (canal « ride-updates ») ; ride_unconfirmed : réservation d'une Flotte Privée non confirmée
+ * ou à vérifier (20260924007600), niveau « active ».
+ */
+const RIDE_UPDATE_TYPES = new Set(["ride_cancelled", "ride_assigned", "ride_unassigned", "flight_update", "ride_unconfirmed"]);
 /**
  * Événements vol qui déplacent la prise en charge ou l'annulent (data.event, cf. apply_flight_status) :
  * le chauffeur doit agir → time-sensitive. Atterrissage, terminal, retard au départ (heure inchangée) : « active ».
@@ -72,13 +75,16 @@ function channelFor(type: string) {
   return DEFAULT_CHANNEL; // documents (document_expiring / document_expired / document_reviewed), rappels…
 }
 
-/** Regroupement iOS (thread-id) : par course, fil de messagerie, signalements, documents. */
+/**
+ * Regroupement iOS (thread-id) : par course, fil de messagerie, signalements, documents. Réservation d'une Flotte
+ * Privée (ride_unconfirmed : booking_id, jamais ride_id) regroupée avec les offres de la même course.
+ */
 export function threadId(payload: PushPayload): string {
   const d = payload.data;
   if (payload.type === "chat_message") return `chat:${String(d.thread ?? "dispatch")}`;
   if (payload.type === "fleet_report") return "fleet-reports";
   if (payload.type.startsWith("document_")) return "documents";
-  return String(d.ride_id ?? payload.type);
+  return String(d.ride_id ?? d.booking_id ?? payload.type);
 }
 
 /**

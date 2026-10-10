@@ -102,16 +102,30 @@ const apiPlace = z.strictObject({
   lng: lng.optional(),
 });
 
+/** Heure de prise en charge de l'API : pickup_at (ISO avec fuseau) OU date + time (fuseau de l'organisation). */
+const apiPickupFields = {
+  pickup_at: z.iso.datetime({ offset: true }).nullish(),
+  date: z.iso.date().optional(),
+  time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Format HH:MM attendu")
+    .optional(),
+};
+
+function refineApiPickup(v: { pickup_at?: string | null; date?: string; time?: string }, ctx: z.RefinementCtx) {
+  if ((v.date && !v.time) || (!v.date && v.time)) {
+    ctx.addIssue({ code: "custom", path: ["time"], message: "date et time doivent être fournis ensemble" });
+  }
+  if (v.pickup_at && v.date) {
+    ctx.addIssue({ code: "custom", path: ["pickup_at"], message: "Utilisez pickup_at OU date + time" });
+  }
+}
+
 export const apiRideCreateSchema = z
   .strictObject({
     pickup: apiPlace,
     dropoff: apiPlace,
-    pickup_at: z.iso.datetime({ offset: true }).nullish(),
-    date: z.iso.date().optional(),
-    time: z
-      .string()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Format HH:MM attendu")
-      .optional(),
+    ...apiPickupFields,
     customer: z.strictObject({
       name: z.string().trim().min(1).max(120),
       phone: phoneSchema,
@@ -125,15 +139,35 @@ export const apiRideCreateSchema = z
     comment: optionalText(2000),
     flight_number: flightNumber.optional(),
     external_reference: optionalText(100),
+    // Prix affiché au client par le site avant la commande (centimes, devis de POST /api/v1/quotes) : recalculé par le
+    // serveur, différent → 409 PRICE_CHANGED (rien n'est créé). Absent : comportement inchangé.
+    expected_price_cents: z.number().int().min(0).max(10_000_000).nullish(),
   })
-  .superRefine((v, ctx) => {
-    if ((v.date && !v.time) || (!v.date && v.time)) {
-      ctx.addIssue({ code: "custom", path: ["time"], message: "date et time doivent être fournis ensemble" });
-    }
-    if (v.pickup_at && v.date) {
-      ctx.addIssue({ code: "custom", path: ["pickup_at"], message: "Utilisez pickup_at OU date + time" });
-    }
-  });
+  .superRefine(refineApiPickup);
+
+/** POST /api/v1/quotes : devis du site (même calcul que la réservation), aucune course créée. */
+export const apiQuoteSchema = z
+  .strictObject({
+    pickup: apiPlace,
+    dropoff: apiPlace,
+    ...apiPickupFields,
+    passengers: z.number().int().min(1).max(20).default(1),
+    luggage: z.number().int().min(0).max(30).default(0),
+    vehicle_category: vehicleCategorySchema.default("standard"),
+  })
+  .superRefine(refineApiPickup);
+
+/** Réponse de POST /api/v1/quotes (« data »). price_cents null : pas de grille tarifaire pour cette catégorie. */
+export interface ApiQuote {
+  price_cents: number | null;
+  currency: string;
+  /** Forfait de la grille reconnu (trajet), sinon prix au compteur */
+  fixed_fare: boolean;
+  estimated_distance_m: number | null;
+  estimated_duration_s: number | null;
+  vehicle_category: (typeof VEHICLE_CATEGORIES)[number];
+  pickup_at: string;
+}
 
 export const apiRideCancelSchema = z.strictObject({ reason: optionalText(300) });
 
@@ -410,17 +444,21 @@ export function bookingSiteSchemaFor(currentSubdomain: string | null | undefined
 /** Sans sous-domaine enregistré : tout nom réservé est refusé. */
 export const bookingSiteSchema = bookingSiteSchemaFor(null);
 
-export const API_SCOPES = ["rides:create", "rides:read", "rides:cancel", "webhooks:manage"] as const;
+export const API_SCOPES = ["rides:create", "rides:read", "rides:cancel", "rides:quote", "webhooks:manage"] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 /** Libellés des permissions (Dashboard → Intégrations). */
 export const API_SCOPE_LABELS: Record<ApiScope, string> = {
   "rides:create": "Créer des courses",
   "rides:read": "Lire le statut",
   "rides:cancel": "Annuler",
+  "rides:quote": "Devis",
   "webhooks:manage": "Webhooks",
 };
-/** Seule portée permise à une clé « navigateur » (origines autorisées) : la clé est lisible par tout visiteur du site. */
-export const BROWSER_KEY_SCOPES = ["rides:create"] as const;
+/**
+ * Seules portées permises à une clé « navigateur » (origines autorisées) : la clé est lisible par tout visiteur du site
+ * → création de courses et devis (POST /api/v1/quotes), jamais la lecture, l'annulation ni les webhooks.
+ */
+export const BROWSER_KEY_SCOPES = ["rides:create", "rides:quote"] as const;
 export const apiKeyCreateSchema = z
   .object({
     name: z.string().trim().min(2).max(80),
@@ -434,7 +472,7 @@ export const apiKeyCreateSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["scopes"],
-        message: "Clé utilisée depuis le navigateur (origines autorisées) : seule la création de courses est permise.",
+        message: "Clé utilisée depuis le navigateur (origines autorisées) : seules la création de courses et les devis sont permis.",
       });
     }
   });

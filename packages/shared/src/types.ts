@@ -3,7 +3,8 @@ import type {
   DriverPresence, DriverStatus, OfferStatus, OrgRole, OrgStatus, PaymentMethod, RideSource, RideStatus, RideType,
   VehicleCategory,
 } from "./domain";
-import type { DriverDeletionNetworkDebt, DriverHomeNetwork, SettlementNetworkInfo } from "./network";
+import type { DriverDeletionNetworkDebt, DriverHomeNetwork, DriverRide, SettlementNetworkInfo } from "./network";
+import type { PrivateFleetBookingState } from "./private-fleet";
 
 export type Uuid = string;
 export type Iso = string;
@@ -22,6 +23,8 @@ export interface Organization {
   logo_url: string | null;
   brand_color: string | null;
   created_at: Iso;
+  /** Flotte Privée (20260924007600) : un seul chauffeur, le propriétaire */
+  private_fleet?: boolean;
 }
 
 export interface Driver {
@@ -41,6 +44,8 @@ export interface Driver {
   online_since: Iso | null;
   last_seen_at: Iso | null;
   created_at: Iso;
+  /** Fiche du gérant d'une Flotte Privée (même compte que le propriétaire), gardée après une bascule (20260924007600) */
+  owner_driver?: boolean;
 }
 
 export interface Ride {
@@ -154,8 +159,14 @@ export interface DriverHome {
   driver: {
     id: Uuid; number: number; first_name: string; last_name: string; presence: DriverPresence; photo_url: string | null;
     current_ride_id: Uuid | null; trust_level?: TrustLevel;
+    /** Fiche du gérant d'une Flotte Privée : prix affiché, jamais « votre part » (20260924007600 ; absent : non) */
+    owner_driver?: boolean;
   };
-  organization: { id: Uuid; name: string; logo_url: string | null; phone: string | null; timezone: string; dispatch_model?: DispatchModel };
+  organization: {
+    id: Uuid; name: string; logo_url: string | null; phone: string | null; timezone: string; dispatch_model?: DispatchModel;
+    /** Flotte Privée (20260924007600 ; absent d'un serveur plus ancien : standard) */
+    private_fleet?: boolean;
+  };
   vehicle: { brand: string | null; model: string; plate: string; color: string | null; category: VehicleCategory; seats: number } | null;
   /** net_cents : part chauffeur du jour (mode centrale), null en mode flotte */
   today: { rides: number; revenue_cents: number; net_cents?: number | null };
@@ -168,6 +179,11 @@ export interface DriverHome {
   model?: DispatchModel;
   /** Mode centrale : commissions à régler, gains à recevoir, blocage éventuel (null en mode flotte) */
   settlement?: DriverSettlementSummary | null;
+  /**
+   * Flotte Privée seulement (clé absente sinon) : réservations sans chauffeur à traiter (à vérifier, non confirmées ;
+   * sans les offres en attente ni les refus), comme driver_agenda().unassigned.
+   */
+  private?: { unassigned: number } | null;
 }
 
 // -----------------------------------------------------------------------------
@@ -808,7 +824,11 @@ export interface DriverAccountState {
   state: DriverAccountStateKind;
   message?: string;
   driver?: { id: Uuid; number: number; first_name: string; last_name: string; applied_at: Iso | null; trust_level: TrustLevel };
-  organization?: { id: Uuid; name: string; logo_url: string | null; phone: string | null; email: string | null; dispatch_model: DispatchModel };
+  organization?: {
+    id: Uuid; name: string; logo_url: string | null; phone: string | null; email: string | null; dispatch_model: DispatchModel;
+    /** Flotte Privée (20260924007600 ; absent d'un serveur plus ancien : standard) */
+    private_fleet?: boolean;
+  };
   reason?: string | null;
   can_submit_documents?: boolean;
   /**
@@ -953,6 +973,29 @@ export interface DriverHome {
 export interface DriverDeletionDebt {
   network?: DriverDeletionNetworkDebt[];
 }
+/**
+ * Élément de driver_agenda().unassigned (Flotte Privée, chauffeur membre) : réservation de son organisation sans
+ * chauffeur, quelle que soit la période — mêmes champs qu'une course de driver_ride (liste blanche, client compris),
+ * son offre en attente (null sinon) et l'état à traiter.
+ */
+export type AgendaBooking = DriverRide & {
+  offer_id: Uuid | null;
+  offer_expires_at: Iso | null;
+  state: PrivateFleetBookingState;
+};
+
+/** RPC driver_agenda(p_from, p_to) — période de 62 jours au plus (AGENDA_RANGE_INVALID). */
+export interface DriverAgenda {
+  timezone: string;
+  private_fleet: boolean;
+  from: Iso;
+  to: Iso;
+  /** Ses courses de la période (pickup_at dans [from, to[), tous statuts ; 500 au plus */
+  rides: DriverRide[];
+  /** Flotte Privée et chauffeur membre de son organisation ; null sinon. 100 au plus */
+  unassigned: AgendaBooking[] | null;
+}
+
 /** driver_earnings().recent : course partenaire → nom de l'organisation qui l'a confiée (net = termes figés). */
 export interface EarningsRide {
   network_giver?: string | null;

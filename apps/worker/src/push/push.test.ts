@@ -277,6 +277,20 @@ describe("nouveaux types (messagerie, signalements, vols, documents, retrait)", 
     expect(p).toMatchObject({ channelId: "ride-updates", interruptionLevel: "time-sensitive", threadId: "r3", categoryId: undefined });
   });
 
+  it("Flotte Privée : réservation non confirmée ou à vérifier → « ride-updates », niveau « active », regroupée avec la réservation", () => {
+    for (const reason of ["not_confirmed", "to_check"]) {
+      const p = presentation(n("ride_unconfirmed", { type: "ride_unconfirmed", reason, booking_id: "b7", number: 1042 }), NOW);
+      expect(p, reason).toMatchObject({
+        channelId: "ride-updates", interruptionLevel: "active", threadId: "b7", categoryId: undefined, sound: "default", ttlSeconds: 3600,
+      });
+    }
+    const m = fcmMessage("t", n("ride_unconfirmed", { type: "ride_unconfirmed", reason: "not_confirmed", booking_id: "b7", number: 1042 }), NOW);
+    expect(m.android).toMatchObject({ priority: "HIGH", notification: { channel_id: "ride-updates", sound: "default" } });
+    expect(apnsPayload(n("ride_unconfirmed", { reason: "to_check", booking_id: "b7" }), NOW).aps).toMatchObject({
+      "thread-id": "b7", "interruption-level": "active",
+    });
+  });
+
   it("Expo : canal, fil et niveau transmis", async () => {
     const { client } = fakeExpo();
     await expoProvider(client).send([{ token: "ExponentPushToken[z]", provider: "expo", platform: "ios" }], chat);
