@@ -60,18 +60,21 @@ export const DRIVER_FLOW: Partial<Record<RideStatus, { next: RideStatus; label: 
  */
 export const UNSTARTED_RIDE_EXPIRY_HOURS = 6;
 
-/** Filtres de l'écran Courses (dashboard). */
+/**
+ * Filtres de l'écran Courses (tableau de bord) : statuts dans l'ordre du suivi (« Sans chauffeur » en tête, à traiter),
+ * puis le type (Immédiates, Planifiées). Les clés (`?filter=`) ne changent jamais : alertes, e-mails et favoris.
+ */
 export const RIDE_FILTERS = [
   { key: "all", label: "Toutes" },
-  { key: "instant", label: "Instantanées" },
-  { key: "scheduled", label: "Planifiées" },
+  { key: "no_driver", label: "Sans chauffeur" },
   { key: "searching", label: "En recherche" },
   { key: "offered", label: "Proposées" },
   { key: "assigned", label: "Attribuées" },
   { key: "ongoing", label: "En cours" },
   { key: "completed", label: "Terminées" },
   { key: "cancelled", label: "Annulées" },
-  { key: "no_driver", label: "Sans chauffeur" },
+  { key: "instant", label: "Immédiates" },
+  { key: "scheduled", label: "Planifiées" },
 ] as const;
 export type RideFilterKey = (typeof RIDE_FILTERS)[number]["key"];
 
@@ -150,14 +153,15 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 
 export const RIDE_SOURCES = ["dashboard", "api", "booking_site"] as const;
 export type RideSource = (typeof RIDE_SOURCES)[number];
+/** Source d'une course, à l'écran (web) : saisie au tableau de bord, site de l'organisation (API), mini-site. */
 export const RIDE_SOURCE_LABELS: Record<RideSource, string> = {
-  dashboard: "Dashboard",
-  api: "Site (API)",
+  dashboard: "Saisie manuelle",
+  api: "Votre site",
   booking_site: "Mini-site",
 };
 
 export type RideType = "instant" | "scheduled";
-export const RIDE_TYPE_LABELS: Record<RideType, string> = { instant: "Instantanée", scheduled: "Planifiée" };
+export const RIDE_TYPE_LABELS: Record<RideType, string> = { instant: "Immédiate", scheduled: "Planifiée" };
 
 export type OfferStatus = "pending" | "accepted" | "declined" | "expired" | "closed";
 export const OFFER_STATUS_META: Record<OfferStatus, { label: string; tone: Tone }> = {

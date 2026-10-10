@@ -3,7 +3,7 @@ import {
   decodePolyline, driverCollects, formatDistance, formatDuration, formatPrice, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, VEHICLE_CATEGORIES,
   VEHICLE_CATEGORY_META, type Coord, type PricingRule, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowDownUp, Banknote, CalendarClock, Car, Clock3, Landmark, Minus, MousePointerClick, Plane, Plus, Route, Users, Zap } from "lucide-react";
+import { ArrowDownUp, Banknote, CalendarClock, Car, Clock3, Landmark, Luggage, Minus, MousePointerClick, Plane, Plus, Route, Users, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createRide } from "@/app/dashboard/rides/actions";
@@ -14,8 +14,9 @@ import { useCentrale } from "@/components/settlements/centrale-context";
 import { SplitPreview, centsToInput, eurosToCents, useSplitPreview } from "@/components/settlements/split-preview";
 import { Button } from "@/components/ui/button";
 import { Dialog, WorkspaceContent } from "@/components/ui/dialog";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
-import { FAVORITE_PLACES } from "@/lib/places";
+import { isAirport as airportIn, quickPlaces } from "@/lib/places";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
 
@@ -37,22 +38,45 @@ type Quote = {
   };
 };
 
-const QUICK_PLACES = ["Aéroport CDG — Terminal 2E", "Aéroport d'Orly — Terminal 4", "Gare de Lyon", "Gare du Nord", "La Défense — Parvis"]
-  .map((l) => FAVORITE_PLACES.find((p) => p.label === l))
-  .filter((p): p is (typeof FAVORITE_PLACES)[number] => !!p);
-
-function Stepper({ value, onChange, min, max, label, icon: Icon }: { value: number; onChange: (v: number) => void; min: number; max: number; label: string; icon: typeof Users }) {
+/**
+ * Compteur (passagers, bagages). Sous 420 px, libellé court visible (« Pers. », « Bag. ») ; le libellé entier reste
+ * lu par les lecteurs d'écran (nom du groupe et des boutons).
+ */
+function Stepper({
+  value,
+  onChange,
+  min,
+  max,
+  label,
+  short,
+  icon: Icon,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  label: string;
+  short: string;
+  icon: typeof Users;
+}) {
+  const lower = label.toLowerCase();
   return (
-    <div className="flex h-10 min-w-0 items-center justify-between rounded-lg border border-line bg-ink-800 pl-3 pr-1">
+    <div role="group" aria-label={label} className="flex h-10 min-w-0 items-center justify-between rounded-lg border border-line bg-ink-800 pl-3 pr-1">
       <span className="flex min-w-0 items-center gap-2 text-[13px] text-fg-muted" title={label}>
-        <Icon className="size-4 shrink-0" /> <span className="truncate max-[419px]:sr-only">{label}</span>
+        <Icon aria-hidden className="size-4 shrink-0" />
+        <span className="truncate max-[419px]:sr-only">{label}</span>
+        <span aria-hidden className="min-[420px]:hidden">
+          {short}
+        </span>
       </span>
       <span className="flex shrink-0 items-center">
-        <button type="button" aria-label={`Moins de ${label}`} onClick={() => onChange(Math.max(min, value - 1))} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5 hover:text-fg">
+        <button type="button" aria-label={`Moins de ${lower}`} onClick={() => onChange(Math.max(min, value - 1))} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5 hover:text-fg">
           <Minus className="size-3.5" />
         </button>
-        <span className="w-5 text-center text-[14px] font-semibold tabular-nums">{value}</span>
-        <button type="button" aria-label={`Plus de ${label}`} onClick={() => onChange(Math.min(max, value + 1))} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5 hover:text-fg">
+        <span aria-live="polite" className="w-5 text-center text-[14px] font-semibold tabular-nums">
+          {value}
+        </span>
+        <button type="button" aria-label={`Plus de ${lower}`} onClick={() => onChange(Math.min(max, value + 1))} className="grid size-8 place-items-center rounded-md text-fg-muted hover:bg-white/5 hover:text-fg">
           <Plus className="size-3.5" />
         </button>
       </span>
@@ -152,7 +176,12 @@ export function NewRideSheet({
     !privateFleet && quote && quote.nearby.total === 0 && quote.nearby.available > 0
       ? ([...VEHICLE_CATEGORIES].filter((c) => quote.nearby.byCategory[c] > 0).sort((a, b) => quote.nearby.byCategory[b] - quote.nearby.byCategory[a])[0] ?? null)
       : null;
-  const isAirport = /a[ée]roport|terminal|cdg|orly|bourget|beauvais/i.test(`${pickup.address} ${dropoff.address}`);
+  const isAirport = airportIn(pickup.address, dropoff.address);
+  // Raccourcis parisiens (aéroports, gares) seulement pour une activité en Île-de-France (centre de la flotte, sinon le
+  // départ déjà choisi)
+  const shortcuts = useMemo(() => quickPlaces(center ?? pickupPt), [center?.lat, center?.lng, pickupPt?.lat, pickupPt?.lng]);
+  // Vol, e-mail et note : repliés, ouverts d'office pour un aéroport ou une erreur sur l'un d'eux
+  const extrasError = !!(errors.flightNumber || errors.customerEmail || errors.comment);
   const finalPrice = price.trim() ? Math.round(Number(price.replace(",", ".")) * 100) : suggested;
   const commissionCents = eurosToCents(commission);
   const commissionValid = commissionCents == null || Number.isFinite(commissionCents);
@@ -207,7 +236,7 @@ export function NewRideSheet({
       if (finalPrice == null) e.priceCents = "Prix obligatoire en mode centrale";
       else if (!Number.isFinite(finalPrice)) e.priceCents = "Montant en euros (ex. 59 ou 59,50)";
       if (!commissionValid) e.commissionCents = "Montant en euros (ex. 14 ou 14,50)";
-      else if (split.data?.error === "COMMISSION_TOO_HIGH") e.commissionCents = "Commission + frais plateforme > prix";
+      else if (split.data?.error === "COMMISSION_TOO_HIGH") e.commissionCents = "Commission et frais Rydar supérieurs au prix";
       if (Object.keys(e).length) {
         setErrors(e);
         toast.error(finalPrice == null ? "Indiquez le prix : le chauffeur voit sa part avant d'accepter." : Object.values(e)[0]!);
@@ -243,7 +272,7 @@ export function NewRideSheet({
           description: privateFleet
             ? "Elle vous est attribuée directement."
             : when === "now"
-              ? "Les chauffeurs les plus proches sont notifiés."
+              ? "Les chauffeurs les plus proches sont prévenus."
               : "Proposée à votre flotte.",
         },
       );
@@ -288,16 +317,17 @@ export function NewRideSheet({
                     <ArrowDownUp className="size-3.5" />
                   </button>
                 </div>
-                {(!pickupPt || !dropoffPt) && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {QUICK_PLACES.map((p) => (
+                {(!pickupPt || !dropoffPt) && shortcuts.length > 0 && (
+                  <div role="group" aria-label={!pickupPt ? "Raccourcis pour le départ" : "Raccourcis pour la destination"} className="flex flex-wrap gap-1.5 pt-1">
+                    {shortcuts.map((p) => (
                       <button
                         key={p.label}
                         type="button"
+                        title={p.address}
                         onClick={() => (!pickupPt ? setPickup : setDropoff)({ address: p.address, lat: p.lat, lng: p.lng })}
-                        className="rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
+                        className="min-h-8 rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
                       >
-                        {p.label.replace("Aéroport ", "")}
+                        {p.short}
                       </button>
                     ))}
                   </div>
@@ -305,7 +335,7 @@ export function NewRideSheet({
               </section>
 
               <section className="space-y-3">
-                <div className="grid grid-cols-2 gap-1 rounded-xl bg-ink-800 p-1">
+                <div role="radiogroup" aria-label="Heure de prise en charge" className="grid grid-cols-2 gap-1 rounded-xl bg-ink-800 p-1">
                   {(
                     [
                       { k: "now", label: "Maintenant", icon: Zap },
@@ -315,13 +345,15 @@ export function NewRideSheet({
                     <button
                       key={k}
                       type="button"
+                      role="radio"
+                      aria-checked={when === k}
                       onClick={() => setWhen(k)}
                       className={cn(
                         "flex h-9 items-center justify-center gap-2 rounded-lg text-[13px] font-medium transition-colors",
                         when === k ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg",
                       )}
                     >
-                      <Icon className={cn("size-4", when === k && (k === "now" ? "text-brand" : "text-violet"))} />
+                      <Icon aria-hidden className={cn("size-4", when === k && (k === "now" ? "text-brand" : "text-violet"))} />
                       {label}
                     </button>
                   ))}
@@ -344,11 +376,13 @@ export function NewRideSheet({
               </section>
 
               <section className="space-y-2">
-                <div className="grid grid-cols-5 gap-1.5">
+                <div role="radiogroup" aria-label="Catégorie de véhicule" className="grid grid-cols-5 gap-1.5">
                   {VEHICLE_CATEGORIES.map((c) => (
                     <button
                       key={c}
                       type="button"
+                      role="radio"
+                      aria-checked={category === c}
                       onClick={() => setCategory(c)}
                       className={cn(
                         "flex h-14 flex-col items-center justify-center rounded-lg border text-center transition-colors",
@@ -357,11 +391,11 @@ export function NewRideSheet({
                     >
                       <span className="text-[12.5px] font-semibold">{VEHICLE_CATEGORY_META[c].label}</span>
                       {quote && !privateFleet ? (
-                        <span className={cn("text-[11px] tabular-nums", quote.nearby.byCategory[c] > 0 ? "text-brand" : "text-fg-subtle")}>
+                        <span className={cn("text-[12px] tabular-nums", quote.nearby.byCategory[c] > 0 ? "text-brand" : "text-fg-subtle")}>
                           {quote.nearby.byCategory[c]} dispo.
                         </span>
                       ) : (
-                        <span className="text-[11px] text-fg-subtle">{VEHICLE_CATEGORY_META[c].seats} pl.</span>
+                        <span className="text-[12px] text-fg-subtle">{VEHICLE_CATEGORY_META[c].seats} pl.</span>
                       )}
                     </button>
                   ))}
@@ -378,8 +412,8 @@ export function NewRideSheet({
                   </p>
                 )}
                 <div className="grid grid-cols-2 gap-2">
-                  <Stepper value={passengers} onChange={setPassengers} min={1} max={20} label="Passagers" icon={Users} />
-                  <Stepper value={luggage} onChange={setLuggage} min={0} max={30} label="Bagages" icon={Car} />
+                  <Stepper value={passengers} onChange={setPassengers} min={1} max={20} label="Passagers" short="Pers." icon={Users} />
+                  <Stepper value={luggage} onChange={setLuggage} min={0} max={30} label="Bagages" short="Bag." icon={Luggage} />
                 </div>
               </section>
 
@@ -388,15 +422,9 @@ export function NewRideSheet({
                   <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} autoComplete="off" aria-invalid={!!errors.customerName} />
                 </Field>
                 <Field label="Téléphone" error={errors.customerPhone} className="col-span-2 sm:col-span-1">
-                  <Input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} inputMode="tel" autoComplete="off" aria-invalid={!!errors.customerPhone} />
+                  <Input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} type="tel" inputMode="tel" autoComplete="off" aria-invalid={!!errors.customerPhone} />
                 </Field>
-                <Field label="N° de vol" optional error={errors.flightNumber} className="col-span-2 sm:col-span-1">
-                  <div className="relative">
-                    <Plane aria-hidden className={cn("pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2", isAirport ? "text-cyan" : "text-fg-subtle")} />
-                    <Input value={flight} onChange={(e) => setFlight(e.target.value.toUpperCase())} placeholder={isAirport ? "Départ d'un aéroport" : "AF1234"} className="pl-9" />
-                  </div>
-                </Field>
-                <Field label="Paiement" className="col-span-2 sm:col-span-1">
+                <Field label="Paiement" className="col-span-2">
                   <NativeSelect value={payment} onChange={(e) => setPayment(e.target.value)}>
                     {PAYMENT_METHODS.map((m) => (
                       <option key={m} value={m}>
@@ -408,31 +436,52 @@ export function NewRideSheet({
                 {centrale && (
                   <div className="col-span-2 space-y-1 rounded-lg bg-white/[0.03] px-3 py-2 text-[12px] leading-[18px]" aria-live="polite">
                     <p className={cn("flex items-start gap-2", driverCollects(payment) ? "text-fg" : "text-fg-subtle")}>
-                      <Banknote className={cn("mt-0.5 size-3.5 shrink-0", driverCollects(payment) ? "text-amber" : "text-fg-subtle")} />
+                      <Banknote aria-hidden className={cn("mt-0.5 size-3.5 shrink-0", driverCollects(payment) ? "text-amber" : "text-fg-subtle")} />
                       <span>
-                        <span className="font-medium">Espèces / carte à bord</span> : le chauffeur encaisse et vous doit la commission.
+                        <span className="font-medium">Espèces / carte à bord</span>&nbsp;: le chauffeur encaisse et vous doit la commission.
                       </span>
                     </p>
                     <p className={cn("flex items-start gap-2", !driverCollects(payment) ? "text-fg" : "text-fg-subtle")}>
-                      <Landmark className={cn("mt-0.5 size-3.5 shrink-0", !driverCollects(payment) ? "text-violet" : "text-fg-subtle")} />
+                      <Landmark aria-hidden className={cn("mt-0.5 size-3.5 shrink-0", !driverCollects(payment) ? "text-violet" : "text-fg-subtle")} />
                       <span>
-                        <span className="font-medium">En ligne / facture</span> : vous encaissez et lui versez sa part.
+                        <span className="font-medium">En ligne / facture</span>&nbsp;: vous encaissez et lui versez sa part.
                       </span>
                     </p>
                   </div>
                 )}
-                <Field label="E-mail du client" optional className="col-span-2" error={errors.customerEmail}>
-                  <Input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} type="email" autoComplete="off" />
-                </Field>
-                <Field
-                  label="Note pour le chauffeur"
-                  optional
-                  className="col-span-2"
-                  // Réseau partagé (partage demandé) : le commentaire suit la course chez un chauffeur partenaire (S18)
-                  hint={org?.network?.shareOut ? "Visible par un chauffeur partenaire si la course part au réseau partagé." : undefined}
+                <Disclosure
+                  title="Ajouter un vol, un e-mail ou une note"
+                  hint={flight || customerEmail || comment ? "renseigné" : undefined}
+                  forceOpen={isAirport || extrasError}
+                  className="col-span-2 rounded-lg border border-line px-3"
+                  contentClassName="grid grid-cols-2 gap-2 pb-3"
                 >
-                  <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Pancarte, siège bébé…" className="min-h-[64px]" />
-                </Field>
+                  <Field label="N° de vol" optional error={errors.flightNumber} className="col-span-2 sm:col-span-1">
+                    <div className="relative">
+                      <Plane aria-hidden className={cn("pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2", isAirport ? "text-cyan" : "text-fg-subtle")} />
+                      <Input
+                        value={flight}
+                        onChange={(e) => setFlight(e.target.value.toUpperCase())}
+                        placeholder={isAirport ? "ex.\u00a0: AF1234 (départ d'un aéroport)" : "ex.\u00a0: AF1234"}
+                        autoComplete="off"
+                        className="pl-9"
+                      />
+                    </div>
+                  </Field>
+                  <Field label="E-mail du client" optional className="col-span-2 sm:col-span-1" error={errors.customerEmail}>
+                    <Input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} type="email" inputMode="email" autoComplete="off" />
+                  </Field>
+                  <Field
+                    label="Note pour le chauffeur"
+                    optional
+                    className="col-span-2"
+                    error={errors.comment}
+                    // Réseau partagé (partage demandé) : le commentaire suit la course chez un chauffeur partenaire (S18)
+                    hint={org?.network?.shareOut ? "Visible par un chauffeur partenaire si la course part au réseau partagé." : undefined}
+                  >
+                    <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={"ex.\u00a0: pancarte, siège bébé"} className="min-h-[64px]" />
+                  </Field>
+                </Disclosure>
               </section>
             </div>
 
@@ -477,7 +526,7 @@ export function NewRideSheet({
                       label={
                         <span className="flex items-center gap-1.5">
                           Commission
-                          {!commission.trim() && <span className="rounded bg-white/[0.06] px-1 text-[10.5px] font-medium text-fg-subtle">auto</span>}
+                          {!commission.trim() && <span className="rounded bg-white/[0.06] px-1 text-[12px] font-medium text-fg-muted">auto</span>}
                         </span>
                       }
                       error={errors.commissionCents}
@@ -500,7 +549,7 @@ export function NewRideSheet({
                   </div>
                   <SplitPreview state={split} priceCents={finalPrice != null && Number.isFinite(finalPrice) ? finalPrice : null} />
                   <Button type="submit" variant="primary" size="lg" loading={pending} className="w-full">
-                    {when === "now" ? "Créer et dispatcher" : "Planifier la course"}
+                    {when === "now" ? "Créer la course" : "Planifier la course"}
                   </Button>
                 </>
               ) : (
@@ -511,14 +560,14 @@ export function NewRideSheet({
                         value={price}
                         onChange={(e) => setPrice(e.target.value)}
                         inputMode="decimal"
-                        placeholder={suggested != null ? String(suggested / 100) : undefined}
+                        placeholder={suggested != null ? centsToInput(suggested) : undefined}
                         className="h-11 pr-7 text-[16px] font-semibold"
                       />
                       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle">€</span>
                     </div>
                   </Field>
                   <Button type="submit" variant="primary" size="lg" loading={pending} className="flex-1">
-                    {privateFleet ? "Enregistrer la réservation" : when === "now" ? "Créer et dispatcher" : "Planifier la course"}
+                    {privateFleet ? "Enregistrer la réservation" : when === "now" ? "Créer la course" : "Planifier la course"}
                   </Button>
                 </div>
               )}
@@ -564,7 +613,7 @@ export function NewRideSheet({
                 )}
               </div>
               {quote?.route?.approximate && (
-                <p className="mt-2 text-center text-[11.5px] text-fg-subtle">Itinéraire estimé (service de routage indisponible)</p>
+                <p className="mt-2 text-center text-[12px] text-fg-muted">Itinéraire estimé (service de routage indisponible)</p>
               )}
             </div>
           </div>
@@ -581,7 +630,7 @@ function Metric({ icon: Icon, label, value, hint, accent, loading }: { icon: typ
         <Icon className="size-3.5" /> {label}
       </p>
       <p className={cn("mt-1 text-[20px] font-semibold tracking-tight", accent ? "text-brand" : "text-fg", loading && "opacity-50")}>{value}</p>
-      {hint && <p className="truncate text-[11.5px] text-fg-muted">{hint}</p>}
+      {hint && <p className="truncate text-[12px] text-fg-muted">{hint}</p>}
     </div>
   );
 }

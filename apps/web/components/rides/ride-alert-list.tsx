@@ -59,14 +59,14 @@ export function RideAlertList({
                   <span className={cn("font-semibold", !open && "text-fg-muted")} style={open ? { color } : undefined}>
                     {alertLabel(a.kind)}
                   </span>
-                  {open && a.severity === "critical" && <span className="rounded bg-red/15 px-1.5 py-px text-[10.5px] font-semibold uppercase tracking-wide text-red">urgent</span>}
-                  <span className="ml-auto shrink-0 text-[11.5px] tabular-nums text-fg-subtle" title={agoFr(a.created_at, now)}>
+                  {open && a.severity === "critical" && <span className="rounded bg-red/15 px-1.5 py-px text-[12px] font-semibold text-red">urgent</span>}
+                  <span className="ml-auto shrink-0 text-[12px] tabular-nums text-fg-muted" title={agoFr(a.created_at, now)}>
                     {formatTime(a.created_at, timeZone)}
                   </span>
                 </p>
                 <p className={cn("mt-0.5 text-[12.5px] leading-[18px]", open ? "text-fg" : "text-fg-muted")}>{a.message}</p>
                 {!open && (
-                  <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-fg-subtle">
+                  <p className="mt-1 flex items-center gap-1.5 text-[12px] text-fg-muted">
                     {a.status === "acknowledged" ? <BellOff className="size-3" /> : <CheckCircle2 className="size-3 text-green" />}
                     {a.status === "acknowledged"
                       ? `Gardé — sourdine jusqu'à ${formatTime(a.muted_until, timeZone)}`

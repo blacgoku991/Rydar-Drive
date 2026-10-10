@@ -21,7 +21,7 @@
 // réservation (pas de carte du command center), ni « Relancer » ni « Réattribuer » (refusés en Flotte Privée), ni
 // messagerie ; réservation à vérifier ou non proposée (journal dispatch.private_*) signalée.
 import {
-  DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatDate, formatPhone, formatPrice, formatRideDate, formatTime,
+  DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, dateTimeFormat, fleetReportTitle, formatDate, formatPhone, formatPrice, formatRideDate, formatTime,
   platformFeeScopeText, shortAddress,
   type ChatMessage, type ChatModerationEvent, type DispatchModel, type DriverApplicationEvent, type DriverDocumentEvent, type DriverFlaggedEvent,
   type OrgPlatformAccount, type PaymentMethod, type PlatformAccount, type PlatformEvent,
@@ -211,10 +211,11 @@ function dueWhen(iso: string, timeZone?: string) {
   return `avant ${label.startsWith("Aujourd'hui ") ? label.slice(12) : label.charAt(0).toLowerCase() + label.slice(1)}`;
 }
 
+/** Source d'une course (mêmes mots que RIDE_SOURCE_LABELS) : saisie au tableau de bord, site de l'organisation, mini-site. */
 const SOURCE: Record<string, { label: string; icon: typeof Globe }> = {
-  api: { label: "Site web (API)", icon: KeyRound },
+  api: { label: "Votre site", icon: KeyRound },
   booking_site: { label: "Mini-site", icon: Globe },
-  dashboard: { label: "Dashboard", icon: Monitor },
+  dashboard: { label: "Saisie manuelle", icon: Monitor },
 };
 
 /** « sa carte VTC », « son permis de conduire » : pour « Mehdi a envoyé … — à valider ». */
@@ -620,8 +621,8 @@ export function AlertsProvider({ scope, children, privateFleet = false }: { scop
     // Les courses saisies au dashboard sont déjà sous les yeux de leur auteur : pas d'alerte sonore
     if (p.op === "insert" && p.source !== "dashboard") {
       const own = privateRef.current;
-      // Flotte Privée : la réservation vient de son site
-      const via = own && p.source === "api" ? "Votre site" : (SOURCE[p.source]?.label ?? "API");
+      // Source dans les mots du métier (« Votre site », « Mini-site »), Flotte Privée comprise
+      const via = SOURCE[p.source]?.label ?? "Votre site";
       push({
         id: `new:${p.id}`,
         kind: "new",
@@ -825,7 +826,7 @@ export function AlertsProvider({ scope, children, privateFleet = false }: { scop
       title: `${who} a envoyé ${what} — à valider`,
       body: [
         e.driver ? `${e.driver.first_name} ${e.driver.last_name} · #${e.driver.number}` : null,
-        doc.expires_at ? `échéance ${new Intl.DateTimeFormat("fr-FR").format(new Date(doc.expires_at))}` : null,
+        doc.expires_at ? `échéance ${dateTimeFormat("fr-FR").format(new Date(doc.expires_at))}` : null,
       ].filter(Boolean).join(" · "),
       href: `/dashboard/drivers/${doc.driver_id}`,
       cta: "Vérifier",

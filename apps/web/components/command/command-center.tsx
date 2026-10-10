@@ -1,14 +1,15 @@
 "use client";
 import {
-  PRESENCE_META, RIDE_STATUS_META, decodePolyline, formatPhone, formatTime, haversine, initials, shortAddress,
+  PRESENCE_META, RIDE_STATUS_META, decodePolyline, formatNumber, formatPhone, formatTime, haversine, initials, shortAddress,
   type ChatMessage, type Coord, type FleetReportUpdate, type OrgKpis, type PricingRule, type RideAlertBroadcast, type RideStatus,
 } from "@rydar/shared";
-import { Crosshair, Eye, EyeOff, MessageSquareText, Moon, Phone, Plus, Radar, Search, Siren, Sun, Tag, X } from "lucide-react";
+import { Crosshair, MessageSquareText, Phone, Plus, Radar, Search, Siren, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Popover as P } from "radix-ui";
+import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FleetPanel } from "@/components/command/fleet-panel";
-import { KpiStrip } from "@/components/command/kpi-strip";
+import { KpiLine, KpiStrip } from "@/components/command/kpi-strip";
 import { ON_BOARD, reducer } from "@/components/command/live-state";
 import { RideFocus } from "@/components/command/ride-focus";
 import { RideRow, SEARCHING, TERMINAL } from "@/components/command/ride-row";
@@ -18,15 +19,27 @@ import { liveNetworkLabel, liveNetworkLock, livePartner } from "@/components/net
 import { useRealtimeEvent, useRealtimeStatus } from "@/components/realtime/realtime-provider";
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { NewRideSheet } from "@/components/rides/new-ride-sheet";
+import { timelineLabel } from "@/components/rides/timeline-labels";
 import { useCentrale } from "@/components/settlements/centrale-context";
 import { Button } from "@/components/ui/button";
-import { Tooltip } from "@/components/ui/misc";
+import { Switch, Tooltip } from "@/components/ui/misc";
 import { useNow } from "@/hooks/use-now";
 import type { LiveAlert, LiveRide, LiveSnapshot } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
+import { plural } from "@/lib/wording";
 
-type FeedEvent = { id: number; message: string; level: string; created_at: string; ride_id: string | null; category: string };
-type Tab = "live" | "upcoming" | "alerts";
+type FeedEvent = {
+  id: number;
+  type?: string;
+  message: string;
+  level: string;
+  created_at: string;
+  ride_id: string | null;
+  category: string;
+  data?: Record<string, unknown> | null;
+};
+/** Listes du panneau ; « drivers » : la flotte dans le panneau, sous 1280 px (au-delà, elle a son propre panneau à droite). */
+type Tab = "live" | "upcoming" | "alerts" | "drivers";
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1 };
 
@@ -104,7 +117,9 @@ export function CommandCenter({
       if (v) setSelectedReport(null);
       return !v;
     });
-  // Marges de cadrage de la carte selon la mise en page (panneaux flottants sur grand écran, carte seule sur mobile)
+  // Marges de cadrage de la carte selon la mise en page (panneaux flottants sur grand écran, carte seule sur mobile).
+  // Téléphone : outils de la carte en haut à droite (≈ 50 px), zoom et mentions en bas à droite ; le bandeau des frais
+  // n'y flotte plus (dans le flux, au-dessus de la carte).
   const [layout, setLayout] = useState<"mobile" | "lg" | "xl">("xl");
   useEffect(() => {
     const lg = window.matchMedia("(min-width: 1024px)");
@@ -121,7 +136,7 @@ export function CommandCenter({
   const mapPadding = useMemo(
     () =>
       layout === "mobile"
-        ? { top: 64, bottom: 36, left: 36, right: 36 }
+        ? { top: 60, bottom: 40, left: 28, right: 56 }
         : { top: 110, bottom: 60, left: 420, right: layout === "xl" ? 360 : 60 },
     [layout],
   );
@@ -310,12 +325,15 @@ export function CommandCenter({
     return { live: [...live, ...recent], upcoming, alerts };
   }, [rides, now, alertByRide]);
 
+  // Flotte dans le panneau seulement sous 1280 px : au-delà, elle a son panneau à droite (retour à « En cours »)
+  const showFleet = tab === "drivers" && layout !== "xl";
+  const listTab = tab === "drivers" ? "live" : tab;
   const visibleList = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = lists[tab];
+    const list = lists[listTab];
     if (!q) return list;
     return list.filter((r) => `#${r.number} ${r.number} ${r.customer_name} ${r.pickup_address} ${r.dropoff_address} ${r.flight_number ?? ""}`.toLowerCase().includes(q));
-  }, [lists, tab, query]);
+  }, [lists, listTab, query]);
 
   const ride = selectedRide ? state.rides[selectedRide] : null;
   const rideDriver = ride?.driver_id ? state.drivers[ride.driver_id] : undefined;
@@ -486,6 +504,13 @@ export function CommandCenter({
   }, [drivers]);
   const rideFeed = useMemo(() => (ride ? feed.filter((e) => e.ride_id === ride.id) : []), [feed, ride]);
   const alertCount = lists.alerts.length;
+  const onlineCount = useMemo(() => drivers.filter((d) => d.presence !== "offline").length, [drivers]);
+  const panelTabs = [
+    { k: "live", label: "En cours", n: lists.live.filter((r) => !TERMINAL.has(r.status)).length, a11y: (n: number) => plural(n, "course en cours", "courses en cours") },
+    { k: "upcoming", label: "À venir", n: lists.upcoming.length, a11y: (n: number) => plural(n, "course à venir", "courses à venir") },
+    { k: "alerts", label: "À traiter", n: alertCount, a11y: (n: number) => plural(n, "course à traiter", "courses à traiter") },
+    { k: "drivers", label: "Chauffeurs", n: onlineCount, a11y: (n: number) => plural(n, "chauffeur en ligne", "chauffeurs en ligne") },
+  ] as const;
 
   return (
     <div className="relative flex h-[calc(100dvh-56px)] flex-col overflow-hidden lg:h-dvh">
@@ -513,37 +538,35 @@ export function CommandCenter({
         />
       </div>
 
-      {/* Indicateurs + outils (haut droite) */}
+      {/* Indicateurs + outils (haut droite) : « Signalements » et « Recentrer » visibles, le reste dans « Affichage » */}
       <div className="pointer-events-none absolute right-3 top-3 z-20 flex items-start gap-2">
         <KpiStrip kpis={state.kpis} className="pointer-events-auto hidden min-[1400px]:flex" />
         <div className="glass pointer-events-auto flex items-center gap-0.5 rounded-2xl p-1 lg:p-1.5">
           <Tooltip content={showReports ? "Masquer les signalements" : "Afficher les signalements"}>
-            <Button variant="ghost" size="icon-sm" onClick={toggleReports} aria-label="Signalements de la flotte" aria-pressed={showReports} className="relative">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggleReports}
+              aria-label={showReports && reports.length > 0 ? `Signalements de la flotte (${plural(reports.length, "actif")})` : "Signalements de la flotte"}
+              aria-pressed={showReports}
+              className="relative"
+            >
               <Siren className={cn(showReports && "text-amber")} />
               {showReports && reports.length > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-amber px-0.5 text-[9.5px] font-bold tabular-nums text-ink-950">
+                <span aria-hidden className="absolute -right-1 -top-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-amber px-1 text-[12px] font-bold leading-none tabular-nums text-ink-950">
                   {reports.length}
                 </span>
               )}
             </Button>
           </Tooltip>
-          <span className="hidden lg:contents">
-            <Tooltip content={showLabels ? "Masquer les noms" : "Afficher les noms"}>
-              <Button variant="ghost" size="icon-sm" onClick={() => setShowLabels((v) => !v)} aria-label="Noms des chauffeurs">
-                <Tag className={cn(showLabels && "text-brand")} />
-              </Button>
-            </Tooltip>
-            <Tooltip content={showOffline ? "Masquer les hors ligne" : "Afficher les hors ligne"}>
-              <Button variant="ghost" size="icon-sm" onClick={() => setShowOffline((v) => !v)} aria-label="Chauffeurs hors ligne">
-                {showOffline ? <Eye className="text-brand" /> : <EyeOff />}
-              </Button>
-            </Tooltip>
-            <Tooltip content={mapTheme === "night" ? "Carte claire" : "Carte sombre"}>
-              <Button variant="ghost" size="icon-sm" onClick={toggleTheme} aria-label="Thème de la carte">
-                {mapTheme === "night" ? <Sun /> : <Moon />}
-              </Button>
-            </Tooltip>
-          </span>
+          <MapDisplayMenu
+            showLabels={showLabels}
+            onShowLabels={setShowLabels}
+            showOffline={showOffline}
+            onShowOffline={setShowOffline}
+            dayTheme={mapTheme === "day"}
+            onDayTheme={(day) => (day !== (mapTheme === "day") ? toggleTheme() : undefined)}
+          />
           <Tooltip content="Recentrer sur la flotte">
             <Button variant="ghost" size="icon-sm" onClick={() => mapRef.current?.fitAll()} aria-label="Recentrer">
               <Crosshair />
@@ -554,21 +577,25 @@ export function CommandCenter({
 
       {/* Panneau courses (gauche) */}
       <aside className="z-10 flex min-h-0 flex-1 flex-col bg-ink-850 lg:glass lg:absolute lg:bottom-3 lg:left-3 lg:top-3 lg:w-[392px] lg:flex-none lg:rounded-2xl">
-        <div className="flex items-center gap-3 border-b border-white/[0.05] px-4 py-3">
-          <span className="relative grid size-2 place-items-center">
-            {realtime === "live" && <span className="absolute size-2 animate-ping rounded-full bg-brand/60" />}
-            <span className={cn("size-2 rounded-full", realtime === "live" ? "bg-brand" : "bg-amber")} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13.5px] font-semibold tracking-tight">{orgName}</p>
-            <p className="flex items-center gap-1.5">
-              <LiveClock />
-              <span className="text-[12px] text-fg-subtle">· {realtime === "live" ? "temps réel" : "synchronisation"}</span>
-            </p>
+        <div className="space-y-1.5 border-b border-white/[0.05] px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="relative grid size-2 place-items-center">
+              {realtime === "live" && <span className="absolute size-2 animate-ping rounded-full bg-brand/60" />}
+              <span className={cn("size-2 rounded-full", realtime === "live" ? "bg-brand" : "bg-amber")} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13.5px] font-semibold tracking-tight">{orgName}</p>
+              <p className="flex items-center gap-1.5">
+                <LiveClock />
+                <span className="text-[12px] text-fg-subtle">· {realtime === "live" ? "temps réel" : "synchronisation"}</span>
+              </p>
+            </div>
+            <Button variant="primary" size="sm" onClick={() => setNewRideOpen(true)}>
+              <Plus /> Nouvelle course
+            </Button>
           </div>
-          <Button variant="primary" size="sm" onClick={() => setNewRideOpen(true)}>
-            <Plus /> Nouvelle course
-          </Button>
+          {/* Chiffres du jour en une ligne sous 1400 px (au-delà : la bande d'indicateurs en haut à droite) */}
+          <KpiLine kpis={state.kpis} className="min-[1400px]:hidden" />
         </div>
 
         {ride ? (
@@ -591,72 +618,105 @@ export function CommandCenter({
         ) : (
           <>
             <div className="space-y-2.5 px-3 pb-2 pt-3">
-              <div className="grid grid-cols-3 gap-1 rounded-xl bg-white/[0.035] p-1">
-                {(
-                  [
-                    { k: "live", label: "En cours", n: lists.live.filter((r) => !TERMINAL.has(r.status)).length },
-                    { k: "upcoming", label: "À venir", n: lists.upcoming.length },
-                    { k: "alerts", label: "Alertes", n: alertCount },
-                  ] as const
-                ).map(({ k, label, n }) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setTab(k)}
-                    className={cn("flex h-8 items-center justify-center gap-1.5 rounded-lg text-[12.5px] font-medium transition-colors", tab === k ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg")}
-                  >
-                    {label}
-                    {k === "alerts" && n > 0 ? (
-                      <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-red/15 px-1 text-[11px] font-semibold tabular-nums text-red">{n}</span>
-                    ) : (
-                      <span className="tabular-nums text-fg-subtle">{n}</span>
-                    )}
-                  </button>
-                ))}
+              {/* Largeurs selon le libellé (« Chauffeurs 10 » est le plus long) : rien n'est coupé à 390 px ni dans le panneau */}
+              <div role="group" aria-label="Listes du panneau" className="flex gap-1 rounded-xl bg-white/[0.035] p-1">
+                {panelTabs.map(({ k, label, n, a11y }) => {
+                  const active = k === "drivers" ? showFleet : tab === k || (k === "live" && tab === "drivers" && !showFleet);
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setTab(k)}
+                      aria-pressed={active}
+                      className={cn(
+                        "flex h-9 min-w-0 flex-auto items-center justify-center gap-1.5 rounded-lg px-2 text-[12.5px] font-medium transition-colors",
+                        active ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg",
+                        k === "drivers" && "xl:hidden",
+                      )}
+                    >
+                      <span className="truncate">{label}</span>
+                      {k === "alerts" && n > 0 ? (
+                        <span className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-red/15 px-1 text-[12px] font-semibold tabular-nums text-red">
+                          <span aria-hidden>{n}</span>
+                        </span>
+                      ) : (
+                        <span aria-hidden className="shrink-0 tabular-nums text-fg-subtle">
+                          {formatNumber(n)}
+                        </span>
+                      )}
+                      <span className="sr-only">, {a11y(n)}</span>
+                    </button>
+                  );
+                })}
               </div>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="N° de course, client, adresse, vol"
-                  aria-label="Rechercher une course" title="Rechercher une course"
-                  className="h-8 w-full rounded-lg border border-line-field bg-white/[0.04] pl-8 pr-2 text-[12.5px] outline-none placeholder:text-fg-subtle focus:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-brand/70"
-                />
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
-              {visibleList.length === 0 ? (
-                <div className="flex flex-col items-center px-6 py-14 text-center">
-                  <Radar className="mb-3 size-6 text-fg-subtle" />
-                  <p className="text-[13px] font-medium">Aucune course {tab === "alerts" ? "en alerte" : tab === "upcoming" ? "à venir" : "en cours"}</p>
-                  <p className="mt-1 text-[12px] text-fg-subtle">
-                    {tab === "alerts" ? "Retards, GPS muets, vols annulés et courses sans chauffeur s'afficheront ici." : "Les nouvelles courses apparaissent ici instantanément."}
-                  </p>
-                  {tab !== "alerts" && (
-                    <Button variant="secondary" size="sm" className="mt-4" onClick={() => setNewRideOpen(true)}>
-                      <Plus /> Nouvelle course <kbd className="kbd ml-1">N</kbd>
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                visibleList.map((r) => (
-                  <RideRow
-                    key={r.id}
-                    ride={r}
-                    driver={r.driver_id ? state.drivers[r.driver_id] : undefined}
-                    offers={offersByRide[r.id] ?? 0}
-                    selected={false}
-                    onSelect={onRowSelect}
-                    now={now}
-                    timeout={offerTimeout}
-                    alert={alertByRide[r.id]}
-                    networkLabel={networkOf(r)}
+              {!showFleet && (
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="N° de course, client, adresse, vol"
+                    aria-label="Rechercher une course" title="Rechercher une course"
+                    className="h-9 w-full rounded-lg border border-line-field bg-white/[0.04] pl-8 pr-2 text-[13px] outline-none placeholder:text-fg-subtle focus:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-brand/70"
                   />
-                ))
+                </div>
               )}
             </div>
+            {showFleet ? (
+              <FleetPanel
+                embedded
+                drivers={drivers}
+                rides={state.rides}
+                selectedId={selectedDriver}
+                onSelect={onFleetSelect}
+                now={serverNow}
+                staleMs={locationMaxAgeS * 1000}
+                className="flex-1"
+              />
+            ) : (
+              <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+                {visibleList.length === 0 ? (
+                  <div className="flex flex-col items-center px-6 py-14 text-center">
+                    <Radar className="mb-3 size-6 text-fg-subtle" />
+                    <p className="text-[13px] font-medium">
+                      {query.trim()
+                        ? "Aucune course ne correspond à cette recherche"
+                        : listTab === "alerts"
+                          ? "Rien à traiter"
+                          : listTab === "upcoming"
+                            ? "Aucune course à venir"
+                            : "Aucune course en cours"}
+                    </p>
+                    <p className="mt-1 text-[12px] text-fg-muted">
+                      {listTab === "alerts"
+                        ? "Retards, GPS muets, vols annulés et courses sans chauffeur s'afficheront ici."
+                        : "Les nouvelles courses apparaissent ici dès leur création."}
+                    </p>
+                    {listTab !== "alerts" && !query.trim() && (
+                      <Button variant="secondary" size="sm" className="mt-4" onClick={() => setNewRideOpen(true)}>
+                        <Plus /> Nouvelle course <kbd className="kbd ml-1">N</kbd>
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  visibleList.map((r) => (
+                    <RideRow
+                      key={r.id}
+                      ride={r}
+                      driver={r.driver_id ? state.drivers[r.driver_id] : undefined}
+                      offers={offersByRide[r.id] ?? 0}
+                      selected={false}
+                      onSelect={onRowSelect}
+                      now={now}
+                      timeout={offerTimeout}
+                      alert={alertByRide[r.id]}
+                      networkLabel={networkOf(r)}
+                    />
+                  ))
+                )}
+              </div>
+            )}
           </>
         )}
       </aside>
@@ -693,7 +753,12 @@ export function CommandCenter({
                 {driver.vehicle ? `${driver.vehicle.brand ?? ""} ${driver.vehicle.model} · ${driver.vehicle.plate}` : "Sans véhicule"}
               </p>
             </div>
-            <button type="button" onClick={() => setSelectedDriver(null)} className="rounded-md p-1 text-fg-subtle hover:bg-white/5 hover:text-fg" aria-label="Fermer">
+            <button
+              type="button"
+              onClick={() => setSelectedDriver(null)}
+              className="-mr-1 -mt-1 grid size-8 shrink-0 place-items-center rounded-md text-fg-subtle hover:bg-white/5 hover:text-fg"
+              aria-label={`Fermer la fiche de ${driver.first_name}`}
+            >
               <X className="size-4" />
             </button>
           </div>
@@ -720,7 +785,9 @@ export function CommandCenter({
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm">
-              <Link href={`/dashboard/drivers/${driver.id}`} prefetch={false}>Profil</Link>
+              <Link href={`/dashboard/drivers/${driver.id}`} prefetch={false} aria-label={`Fiche de ${driver.first_name} ${driver.last_name}`}>
+                Fiche
+              </Link>
             </Button>
           </div>
         </div>
@@ -735,7 +802,7 @@ export function CommandCenter({
                 <li key={e.id} className="flex animate-rise gap-2.5 text-[12px]">
                   <span className="shrink-0 tabular-nums text-fg-subtle">{formatTime(e.created_at, tz, true)}</span>
                   <span className={cn("truncate", e.level === "error" ? "text-red" : e.level === "warning" ? "text-amber" : e.level === "success" ? "text-brand" : "text-fg-muted")}>
-                    {e.message}
+                    {timelineLabel({ type: e.type ?? "", message: e.message, level: e.level, data: e.data }, { timeZone: tz })}
                   </span>
                 </li>
               ))}
@@ -757,5 +824,78 @@ export function CommandCenter({
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Panneau « Affichage » des outils de la carte : noms des chauffeurs, chauffeurs hors ligne, carte claire. Interrupteurs
+ * libellés (nom accessible = le libellé) ; le thème garde sa clé de stockage (`rydar.mapTheme`), rien de nouveau n'est
+ * mémorisé.
+ */
+function MapDisplayMenu({
+  showLabels,
+  onShowLabels,
+  showOffline,
+  onShowOffline,
+  dayTheme,
+  onDayTheme,
+}: {
+  showLabels: boolean;
+  onShowLabels: (on: boolean) => void;
+  showOffline: boolean;
+  onShowOffline: (on: boolean) => void;
+  dayTheme: boolean;
+  onDayTheme: (on: boolean) => void;
+}) {
+  const rows = [
+    { title: "Noms des chauffeurs", hint: "Prénom et plaque sous chaque véhicule", checked: showLabels, set: onShowLabels },
+    { title: "Chauffeurs hors ligne", hint: "À leur dernière position connue", checked: showOffline, set: onShowOffline },
+    { title: "Carte claire", hint: "Plus lisible en plein jour", checked: dayTheme, set: onDayTheme },
+  ];
+  return (
+    <P.Root>
+      <Tooltip content="Affichage de la carte">
+        <P.Trigger asChild>
+          <Button variant="ghost" size="sm" aria-label="Affichage de la carte" className="h-8 gap-1.5 px-2 text-fg-muted">
+            <SlidersHorizontal />
+            <span className="hidden sm:inline">Affichage</span>
+          </Button>
+        </P.Trigger>
+      </Tooltip>
+      <P.Portal>
+        <P.Content
+          align="end"
+          side="bottom"
+          sideOffset={8}
+          collisionPadding={12}
+          className="z-[60] w-[300px] max-w-[calc(100vw-24px)] rounded-2xl border border-line-strong bg-ink-700 p-2 shadow-float data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+        >
+          <p className="px-2 pb-1 pt-1.5 text-[13px] font-semibold text-fg">Affichage de la carte</p>
+          <div className="space-y-0.5">
+            {rows.map((r) => (
+              <DisplaySwitch key={r.title} {...r} />
+            ))}
+          </div>
+        </P.Content>
+      </P.Portal>
+    </P.Root>
+  );
+}
+
+/** Ligne d'interrupteur : nom accessible = le titre, aide reliée en description (comme SwitchRow). */
+function DisplaySwitch({ title, hint, checked, set }: { title: string; hint: string; checked: boolean; set: (on: boolean) => void }) {
+  const id = useId();
+  return (
+    <label className="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-white/[0.04]">
+      <span className="min-w-0">
+        <span id={`${id}-t`} className="block text-[13px] font-medium text-fg">
+          {title}
+        </span>
+        <span id={`${id}-h`} className="block text-[12px] text-fg-muted">
+          {hint}
+        </span>
+      </span>
+      <Switch checked={checked} onCheckedChange={set} aria-labelledby={`${id}-t`} aria-describedby={`${id}-h`} />
+    </label>
   );
 }

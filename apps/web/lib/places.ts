@@ -43,6 +43,32 @@ export const FAVORITE_PLACES: Place[] = [
   { label: "Monaco — Place du Casino", address: "Place du Casino, 98000 Monaco", lat: 43.7392, lng: 7.4277, kind: "poi" },
 ];
 
+/** Adresse d'aéroport (départ ou arrivée) : « Nouvelle course » propose alors d'ajouter le numéro de vol. */
+export function isAirport(...addresses: (string | null | undefined)[]): boolean {
+  return /a[ée]roport|terminal|cdg|orly|bourget|beauvais/i.test(addresses.filter(Boolean).join(" "));
+}
+
+/** Point en Île-de-France (rectangle de la région, à quelques kilomètres près). */
+export function inIleDeFrance(p: { lat: number; lng: number } | null | undefined): boolean {
+  return !!p && p.lat >= 48.1 && p.lat <= 49.25 && p.lng >= 1.43 && p.lng <= 3.57;
+}
+
+/** Raccourcis d'adresses de « Nouvelle course » (Paris et sa région) et leur libellé court (« Orly — Terminal 4 »). */
+const QUICK_PLACE_LABELS = ["Aéroport CDG — Terminal 2E", "Aéroport d'Orly — Terminal 4", "Gare de Lyon", "Gare du Nord", "La Défense — Parvis"];
+
+export type QuickPlace = Place & { short: string };
+
+/**
+ * Raccourcis affichés seulement pour une flotte d'Île-de-France (`center` : centre de la flotte ou départ déjà choisi) :
+ * ailleurs, ces lieux parisiens n'auraient aucun sens. Libellés courts sans « Aéroport » ni « d' ».
+ */
+export function quickPlaces(center: { lat: number; lng: number } | null | undefined): QuickPlace[] {
+  if (!inIleDeFrance(center)) return [];
+  return QUICK_PLACE_LABELS.map((label) => FAVORITE_PLACES.find((p) => p.label === label))
+    .filter((p): p is Place => !!p)
+    .map((p) => ({ ...p, short: p.label.replace(/^Aéroport (d'|de )?/, "") }));
+}
+
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /** Lieux favoris correspondant à la saisie ; avec `near`, seulement ceux à moins de 80 km, du plus proche au plus loin. */

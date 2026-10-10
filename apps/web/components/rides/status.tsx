@@ -24,12 +24,12 @@ export function PresenceBadge({ presence, className }: { presence: DriverPresenc
 
 export function RideTypeTag({ type }: { type: "instant" | "scheduled" | string }) {
   return type === "instant" ? (
-    <span className="inline-flex items-center gap-1 text-[11.5px] text-fg-subtle">
-      <Zap className="size-3" /> Immédiate
+    <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] text-fg-muted">
+      <Zap aria-hidden className="size-3" /> Immédiate
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 text-[11.5px] text-violet">
-      <CalendarClock className="size-3" /> Planifiée
+    <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] text-violet">
+      <CalendarClock aria-hidden className="size-3" /> Planifiée
     </span>
   );
 }

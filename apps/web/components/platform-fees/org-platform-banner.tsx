@@ -190,7 +190,8 @@ export function OrgPlatformBanner({
       className={cn(
         "flex items-center gap-3 text-[13px]",
         floating
-          ? cn("pointer-events-auto rounded-xl border px-3.5 py-2.5 shadow-float backdrop-blur-xl", t.bar, "bg-ink-800/95")
+          ? // En direct : dans le flux au-dessus de la carte sous 1024 px (jamais sur les outils de la carte), flottant au-delà
+            cn("border-b px-4 py-2.5 sm:px-6", t.bar, "lg:pointer-events-auto lg:rounded-xl lg:border lg:bg-ink-800/95 lg:px-3.5 lg:shadow-float lg:backdrop-blur-xl")
           : cn("border-b px-4 py-2.5 sm:px-6 lg:px-10", t.bar),
       )}
     >
@@ -219,11 +220,12 @@ export function OrgPlatformBanner({
     </div>
   );
 
-  // Command center : carte plein écran, bandeau flottant entre le panneau des courses et la flotte
+  // Command center : à partir de 1024 px, bandeau flottant entre le panneau des courses et la flotte, sous les outils
+  // de la carte ; en dessous, dans le flux au-dessus de la carte (il ne recouvre ni « Signalements » ni « Recentrer »)
   if (floating) {
     return (
-      <div className="pointer-events-none fixed inset-x-3 top-[64px] z-30 lg:left-[648px] lg:right-4 lg:top-[76px] xl:right-[340px]">
-        <div className="mx-auto max-w-[560px]">{body}</div>
+      <div className="lg:pointer-events-none lg:fixed lg:left-[648px] lg:right-4 lg:top-[76px] lg:z-30 xl:right-[340px]">
+        <div className="lg:mx-auto lg:max-w-[560px]">{body}</div>
       </div>
     );
   }

@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, Radar, Timer } from "lucide-react";
+import { formatDuration } from "@rydar/shared";
+import { AlertTriangle, CircleX, Radar, Timer } from "lucide-react";
 import type { Metadata } from "next";
 import { DispatchJournal, type JournalEvent } from "@/components/dispatch/dispatch-journal";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
@@ -31,22 +32,34 @@ export default async function DispatchPage() {
   const errors = (counters ?? []).filter((c) => c.level === "error").length;
   const warnings = (counters ?? []).filter((c) => c.level === "warning").length;
   const k = kpis as any;
+  const searching = (k?.searching ?? 0) + (k?.offered ?? 0);
 
   return (
     <>
       <PageHeader
-        eyebrow="Opérations"
         title="Journal du dispatch"
-        description="Trace technique complète : tenant, GPS de départ, rayons, chauffeurs compatibles, notifications, verrous d'attribution."
+        description="Ce qui s'est passé pour chaque course : chauffeurs prévenus, refus, attributions, alertes."
       />
       <PageBody className="space-y-6">
+        {/* Couleur réservée à ce qui demande une action : rien en couleur à zéro */}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <StatCard label="Recherches en cours" value={(k?.searching ?? 0) + (k?.offered ?? 0)} icon={<Radar />} tone="amber" />
-          <StatCard label="Attribution moyenne" value={k?.avg_assign_seconds_today != null ? `${Math.round(k.avg_assign_seconds_today)} s` : "—"} sub="aujourd'hui" icon={<Timer />} />
-          <StatCard label="Alertes 24 h" value={warnings} icon={<AlertTriangle />} tone={warnings ? "amber" : undefined} />
-          <StatCard label="Erreurs 24 h" value={errors} sub={errors ? "courses sans chauffeur" : "aucune"} icon={<CheckCircle2 />} tone={errors ? "red" : "brand"} />
+          <StatCard label="Recherches en cours" value={searching} icon={<Radar />} tone={searching > 0 ? "amber" : undefined} />
+          <StatCard
+            label="Attribution moyenne"
+            value={k?.avg_assign_seconds_today != null ? formatDuration(k.avg_assign_seconds_today) : "—"}
+            sub="aujourd'hui"
+            icon={<Timer />}
+          />
+          <StatCard label={"Avertissements (24\u00a0h)"} value={warnings} icon={<AlertTriangle />} tone={warnings > 0 ? "amber" : undefined} />
+          <StatCard
+            label={"Échecs (24\u00a0h)"}
+            value={errors}
+            sub="courses restées sans chauffeur"
+            icon={<CircleX />}
+            tone={errors > 0 ? "red" : undefined}
+          />
         </div>
-        <DispatchJournal initial={(events ?? []) as JournalEvent[]} tenant={ctx.org.name} timeZone={ctx.org.timezone} rideNumbers={numbers} />
+        <DispatchJournal initial={(events ?? []) as JournalEvent[]} timeZone={ctx.org.timezone} rideNumbers={numbers} />
       </PageBody>
     </>
   );

@@ -164,7 +164,7 @@ export const AddressInput = asFieldControl(function AddressInput({
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-[13px] text-fg">{r.label}</span>
-                  {r.label !== r.address && <span className="block truncate text-[11.5px] text-fg-subtle">{r.address}</span>}
+                  {r.label !== r.address && <span className="block truncate text-[12px] text-fg-muted">{r.address}</span>}
                 </span>
               </li>
             );

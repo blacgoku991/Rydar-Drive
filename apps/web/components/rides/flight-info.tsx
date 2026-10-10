@@ -34,7 +34,7 @@ export function FlightChip({ ride, timeZone, className }: { ride: FlightRide; ti
   const Icon = ride.flight_status === "landed" ? PlaneLanding : Plane;
   return (
     <span
-      className={cn("inline-flex h-5 max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-[11px] font-medium tabular-nums", toneBg[b.tone], toneText[b.tone], className)}
+      className={cn("inline-flex h-5 max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-[12px] font-medium tabular-nums", toneBg[b.tone], toneText[b.tone], className)}
       title={ride.flight_status ? `Vol ${flightCode(ride.flight_number)} · ${FLIGHT_STATUS_META[ride.flight_status].label}` : `Vol ${flightCode(ride.flight_number)} · suivi en attente`}
     >
       <Icon className="size-3 shrink-0" />
@@ -120,14 +120,14 @@ export function FlightDetails({ ride, timeZone, now = Date.now(), className }: {
             <span className="inline-flex items-baseline gap-1.5">
               <s className="text-fg-subtle">{t(ride.pickup_at_original)}</s>
               <span className="text-amber">{t(ride.pickup_at)}</span>
-              <span className="text-[11.5px] font-normal text-fg-subtle">({formatDelay(shift)})</span>
+              <span className="text-[12px] font-normal text-fg-muted">({formatDelay(shift)})</span>
             </span>
           ) : (
             t(ride.pickup_at)
           )}
         </Row>
       </div>
-      <p className="border-t border-line px-3.5 py-2 text-[11.5px] text-fg-subtle">
+      <p className="border-t border-line px-3.5 py-2 text-[12px] text-fg-muted">
         {departure
           ? "Vol au départ : information seulement, la prise en charge ne bouge pas."
           : shift

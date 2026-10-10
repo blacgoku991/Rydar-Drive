@@ -6,8 +6,21 @@ import { useState } from "react";
 import { NewRideSheet } from "@/components/rides/new-ride-sheet";
 import { Button } from "@/components/ui/button";
 
-/** `privateFleet` : « Nouvelle réservation (téléphone) », attribuée d'office au chauffeur-propriétaire. */
-export function NewRideButton({ pricing, defaultPayment, privateFleet = false }: { pricing: PricingRule[]; defaultPayment?: string; privateFleet?: boolean }) {
+/**
+ * `privateFleet` : « Nouvelle réservation (téléphone) », attribuée d'office au chauffeur-propriétaire. `center` : centre
+ * de l'activité (proximité des suggestions d'adresses, raccourcis parisiens seulement en Île-de-France).
+ */
+export function NewRideButton({
+  pricing,
+  defaultPayment,
+  privateFleet = false,
+  center,
+}: {
+  pricing: PricingRule[];
+  defaultPayment?: string;
+  privateFleet?: boolean;
+  center?: { lat: number; lng: number } | null;
+}) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
   return (
@@ -21,6 +34,7 @@ export function NewRideButton({ pricing, defaultPayment, privateFleet = false }:
         pricing={pricing}
         defaultPayment={defaultPayment}
         privateFleet={privateFleet}
+        center={center}
         onCreated={(r) => router.push(`/dashboard/rides/${r.id}`)}
       />
     </>

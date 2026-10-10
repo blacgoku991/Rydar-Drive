@@ -1,7 +1,7 @@
 "use client";
 import {
   DEFAULT_DISPATCH_RADII_M, PAYMENT_METHOD_LABELS, RIDE_STATUS_META, VEHICLE_CATEGORY_META, canCancel, formatDistance, formatDuration, formatPhone, formatPrice, formatRideDate,
-  formatTime, haversine, initials, networkCancelBlocked, type DriverPresence, type PaymentMethod, type RideStatus, type VehicleCategory,
+  formatTime, initials, networkCancelBlocked, type PaymentMethod, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeft, BellOff, ExternalLink, Luggage, MessageSquareText, Phone, Users } from "lucide-react";
 import Link from "next/link";
@@ -10,16 +10,19 @@ import { ALERT_ICON, AlertActionBar, agoFr, alertLabel, severityColor } from "@/
 import { PRESENCE_COLOR } from "@/components/map/map-theme";
 import { LivePartnerCard } from "@/components/network-share/live-partner";
 import { FlightDetails, PickupTime } from "@/components/rides/flight-info";
-import { RideActions, type AssignableDriver } from "@/components/rides/ride-actions";
+import { assignableDrivers } from "@/components/rides/assignable";
+import { RideActions } from "@/components/rides/ride-actions";
+import { timelineLabel } from "@/components/rides/timeline-labels";
 import { useCentrale, useIsCentrale } from "@/components/settlements/centrale-context";
 import { RideMoneyPanel } from "@/components/settlements/ride-money";
 import { toneDot, toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { LiveAlert, LiveDriver, LiveRide } from "@/lib/queries/live";
 import { cn } from "@/lib/utils";
+import { orgWords } from "@/lib/wording";
 import { SEARCHING, TERMINAL } from "./ride-row";
 
-type Event = { id: number; level: string; message: string; created_at: string; category: string };
+type Event = { id: number; level: string; message: string; created_at: string; category: string; type?: string; data?: Record<string, unknown> | null };
 
 const ETA_STATUSES = new Set(["ACCEPTED", "DRIVER_EN_ROUTE"]);
 const DEFAULT_TZ = "Europe/Paris";
@@ -30,13 +33,16 @@ const LEVEL_DOT: Record<string, string> = { success: "bg-brand", warning: "bg-am
 /** Bandeau d'alerte de suivi : type, message du serveur, âge + Relancer / Réattribuer / Garder / Appeler. */
 function AlertBanner({ alert, ride, driver, now, onAssign }: { alert: LiveAlert; ride: LiveRide; driver?: LiveDriver; now: number; onAssign: () => void }) {
   const Icon = ALERT_ICON[alert.kind];
-  const tz = useCentrale()?.timeZone || DEFAULT_TZ;
+  const org = useCentrale();
+  const tz = org?.timeZone || DEFAULT_TZ;
   if (alert.status !== "open") {
+    // « gardé par la centrale » chez une centrale ; « chauffeur gardé » chez une flotte (jamais « la centrale »)
+    const kept = orgWords(org?.model).noun === "centrale" ? "gardé par la centrale" : "chauffeur gardé";
     return (
       <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.035] px-3.5 py-2.5 text-[12.5px] text-fg-muted">
-        <BellOff className="size-4 shrink-0 text-fg-subtle" />
+        <BellOff aria-hidden className="size-4 shrink-0 text-fg-subtle" />
         <span className="min-w-0 flex-1">
-          <span className="font-medium text-fg">{alertLabel(alert.kind)}</span> · gardé par la centrale
+          <span className="font-medium text-fg">{alertLabel(alert.kind)}</span> · {kept}
           {alert.muted_until ? `, sourdine jusqu'à ${formatTime(alert.muted_until, tz)}` : ""}
         </span>
       </div>
@@ -57,8 +63,8 @@ function AlertBanner({ alert, ride, driver, now, onAssign }: { alert: LiveAlert;
         <div className="min-w-0 flex-1">
           <p className="flex items-baseline gap-2 text-[13.5px] font-semibold" style={{ color }}>
             <span className="truncate">{alertLabel(alert.kind)}</span>
-            {alert.severity === "critical" && <span className="shrink-0 rounded bg-red/15 px-1.5 py-px text-[10.5px] font-semibold uppercase tracking-wide text-red">urgent</span>}
-            <span className="ml-auto shrink-0 text-[11.5px] font-normal text-fg-subtle">{agoFr(alert.created_at, now)}</span>
+            {alert.severity === "critical" && <span className="shrink-0 rounded bg-red/15 px-1.5 py-px text-[12px] font-semibold text-red">urgent</span>}
+            <span className="ml-auto shrink-0 text-[12px] font-normal text-fg-muted">{agoFr(alert.created_at, now)}</span>
           </p>
           <p className="mt-0.5 text-[12.5px] leading-[18px] text-fg">{alert.message}</p>
         </div>
@@ -131,17 +137,8 @@ export function RideFocus({
     .sort((a, b) => b.id - a.id)
     .slice(0, 8);
 
-  const assignable: AssignableDriver[] = drivers
-    .filter((d) => d.status === "active" && d.presence !== "offline" && d.id !== ride.driver_id)
-    .map((d) => ({
-      id: d.id,
-      name: `${d.first_name} ${d.last_name}`,
-      number: d.number,
-      presence: d.presence as DriverPresence,
-      vehicle: d.vehicle ? `${d.vehicle.model} · ${d.vehicle.plate}` : "Sans véhicule",
-      distance_m: d.location ? haversine(d.location, { lat: ride.pickup_lat, lng: ride.pickup_lng }) : null,
-    }))
-    .sort((a, b) => (a.distance_m ?? 1e9) - (b.distance_m ?? 1e9));
+  // Même liste que la fiche course : disponibles, occupés, hors ligne (replié), chacun du plus proche au plus loin
+  const assignable = assignableDrivers(drivers, ride);
 
   const eta = ETA_STATUSES.has(status) && approachS != null ? approachS : null;
   const openAssign = () => onAssignOpenChange?.(true);
@@ -205,13 +202,13 @@ export function RideFocus({
           </div>
           <div className="min-w-0 flex-1 space-y-3">
             <div>
-              <p className="text-[11.5px] text-fg-subtle">
+              <p className="text-[12px] text-fg-muted">
                 Départ · <PickupTime ride={ride} timeZone={tz} />
               </p>
               <p className="text-[13.5px] leading-snug text-fg">{ride.pickup_address}</p>
             </div>
             <div>
-              <p className="text-[11.5px] text-fg-subtle">Destination</p>
+              <p className="text-[12px] text-fg-muted">Destination</p>
               <p className="text-[13.5px] leading-snug text-fg">{ride.dropoff_address}</p>
             </div>
           </div>
@@ -227,8 +224,8 @@ export function RideFocus({
             ["Prix", formatPrice(ride.price_cents)],
           ].map(([k, v]) => (
             <div key={k} className="bg-ink-800 px-3 py-2.5">
-              <p className="text-[11.5px] text-fg-subtle">{k}</p>
-              <p className={cn("text-[15px] font-semibold tracking-tight", k === "Prix" ? "text-brand" : "text-fg")}>{v}</p>
+              <p className="text-[12px] text-fg-muted">{k}</p>
+              <p className="whitespace-nowrap text-[15px] font-semibold tracking-tight text-fg">{v}</p>
             </div>
           ))}
         </div>
@@ -321,14 +318,14 @@ export function RideFocus({
               {timeline.map((e) => (
                 <li key={e.id} className="flex items-start gap-2.5 text-[12.5px]">
                   <span className="w-11 shrink-0 tabular-nums text-fg-subtle">{formatTime(e.created_at, tz)}</span>
-                  <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", LEVEL_DOT[e.level] ?? "bg-fg-subtle")} />
-                  <span className="text-fg-muted">{e.message}</span>
+                  <span aria-hidden className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", LEVEL_DOT[e.level] ?? "bg-fg-subtle")} />
+                  <span className="text-fg-muted">{timelineLabel({ type: e.type ?? "", message: e.message, level: e.level, data: e.data }, { timeZone: tz })}</span>
                 </li>
               ))}
             </ol>
           </div>
         )}
-        <p className="text-[11.5px] text-fg-subtle">Paiement : {ride.payment_method ? (PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod] ?? ride.payment_method) : "—"}</p>
+        <p className="text-[12px] text-fg-muted">Paiement&nbsp;: {ride.payment_method ? (PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod] ?? ride.payment_method) : "—"}</p>
       </div>
     </div>
   );
