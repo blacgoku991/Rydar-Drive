@@ -767,7 +767,7 @@ function Legend() {
 function OrgLink({ org }: { org: AdminLiveOrg | undefined }) {
   if (!org) return null;
   return (
-    <Link href={`/admin/organizations/${org.id}`} className="mt-3 flex items-center gap-2.5 rounded-xl bg-white/[0.04] px-3 py-2 transition-colors hover:bg-white/[0.07]">
+    <Link href={`/admin/organizations/${org.id}`} prefetch={false} className="mt-3 flex items-center gap-2.5 rounded-xl bg-white/[0.04] px-3 py-2 transition-colors hover:bg-white/[0.07]">
       <OrgTag org={org} size="md" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-fg">{org.name}</span>

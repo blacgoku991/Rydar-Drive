@@ -53,7 +53,7 @@ export default async function PlatformFeesPage() {
         description="Ce que les centrales et les flottes doivent régler à Rydar : frais de chaque course terminée, paiements déclarés à confirmer, retards et relances."
         actions={
           <Button asChild variant="secondary" size="sm">
-            <Link href="/admin/centrales">
+            <Link href="/admin/centrales" prefetch={false}>
               <Network /> Centrales
             </Link>
           </Button>

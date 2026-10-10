@@ -141,7 +141,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
       <div className="border-b border-line">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
           <div className="min-w-0">
-            <Link href="/admin/organizations" className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg"><ArrowLeft className="size-3.5" /> Rattacheurs</Link>
+            <Link href="/admin/organizations" prefetch={false} className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg"><ArrowLeft className="size-3.5" /> Rattacheurs</Link>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <h1 className="text-[26px] font-semibold tracking-tight">{org.name}</h1>
               <Badge tone={ORG_STATUS_META[status].tone}>{ORG_STATUS_META[status].label}</Badge>

@@ -81,7 +81,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
       <div id="top" className="border-b border-line">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
           <div className="min-w-0">
-            <Link href="/admin/frais" className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
+            <Link href="/admin/frais" prefetch={false} className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
               <ArrowLeft className="size-3.5" /> Frais plateforme
             </Link>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -127,7 +127,7 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
           </div>
           <div className="flex flex-col items-start gap-2 sm:items-end">
             <AccountActions orgId={orgId} orgName={org.name} account={a} timeZone={tz} />
-            <Link href={`/admin/organizations/${orgId}`} className="inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
+            <Link href={`/admin/organizations/${orgId}`} prefetch={false} className="inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
               <Building2 className="size-3.5" /> Fiche du rattacheur
             </Link>
           </div>

@@ -2,10 +2,55 @@
 import { X } from "lucide-react";
 import { Dialog as D } from "radix-ui";
 import * as React from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export const Dialog = D.Root;
 export const DialogClose = D.Close;
+
+/**
+ * Pied de fenêtre (docs/REFONTE-PANELS.md § 3.6) : « Retour » (ferme sans rien faire) puis l'action ; côte à côte à
+ * droite à partir de 640 px, empilés pleine largeur en dessous, action en haut. `sticky` : collé en bas des longues
+ * fenêtres sur téléphone (l'action reste à portée sans tout faire défiler). « Annuler » n'est jamais un bouton de
+ * fermeture : c'est une action métier suivie de son objet (« Annuler la course »).
+ */
+export function DialogFooter({
+  children,
+  backLabel = "Retour",
+  hideBack = false,
+  backDisabled = false,
+  sticky = false,
+  className,
+}: {
+  /** L'action (ou les actions), après « Retour » */
+  children?: React.ReactNode;
+  backLabel?: string;
+  /** Sans bouton « Retour » (fenêtre d'information qui n'a qu'un bouton de fermeture) */
+  hideBack?: boolean;
+  /** Envoi en cours : « Retour » inactif (la croix et Échap ferment toujours) */
+  backDisabled?: boolean;
+  sticky?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        sticky && "max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:-mx-6 max-sm:-mb-6 max-sm:border-t max-sm:border-line max-sm:bg-ink-850 max-sm:px-6 max-sm:pb-6 max-sm:pt-4",
+        className,
+      )}
+    >
+      {!hideBack && (
+        <D.Close asChild>
+          <Button type="button" variant="secondary" disabled={backDisabled}>
+            {backLabel}
+          </Button>
+        </D.Close>
+      )}
+      {children}
+    </div>
+  );
+}
 
 type ContentProps = React.ComponentProps<typeof D.Content>;
 

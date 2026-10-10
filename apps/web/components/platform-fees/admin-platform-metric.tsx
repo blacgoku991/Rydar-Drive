@@ -35,7 +35,7 @@ export function Metric({
   const base = "surface relative block min-w-0 overflow-hidden rounded-xl px-4 py-3.5";
   if (href) {
     return (
-      <Link href={href} className={cn(base, "transition-colors hover:border-line-strong hover:bg-ink-700/60", className)}>
+      <Link href={href} prefetch={false} className={cn(base, "transition-colors hover:border-line-strong hover:bg-ink-700/60", className)}>
         {body}
       </Link>
     );

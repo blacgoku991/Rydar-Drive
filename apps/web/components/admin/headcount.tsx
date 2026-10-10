@@ -110,7 +110,7 @@ export function HeadcountCards({ hc }: { hc: PlatformHeadcount }) {
           ))}
         </dl>
         <div className="mt-auto pt-3">
-          <Link href="/admin/carte" className="inline-flex h-8 items-center gap-1 text-[12.5px] font-medium text-brand hover:underline">
+          <Link href="/admin/carte" prefetch={false} className="inline-flex h-8 items-center gap-1 text-[12.5px] font-medium text-brand hover:underline">
             Voir sur la carte en direct <ChevronRight className="size-3.5" />
           </Link>
         </div>
@@ -151,7 +151,7 @@ export function OrgHeadcountTable({ rows }: { rows: OrgHeadcount[] }) {
         title="Effectifs par organisation"
         description="Membres des tableaux de bord et chauffeurs de chaque flotte ou centrale, triés par chauffeurs en ligne. Occupés : en route, sur place ou en course."
         action={
-          <Link href="/admin/carte" className="text-[12.5px] text-brand hover:underline">
+          <Link href="/admin/carte" prefetch={false} className="text-[12.5px] text-brand hover:underline">
             Carte en direct
           </Link>
         }
@@ -174,7 +174,7 @@ export function OrgHeadcountTable({ rows }: { rows: OrgHeadcount[] }) {
           {sorted.map((o) => (
             <TR key={o.id} className="relative">
               <TD>
-                <Link href={`/admin/organizations/${o.id}`} className="absolute inset-0" aria-label={o.name} />
+                <Link href={`/admin/organizations/${o.id}`} prefetch={false} className="absolute inset-0" aria-label={o.name} />
                 <span className="flex items-center gap-3">
                   <Swatch org={o} />
                   <span className="min-w-0">
@@ -197,6 +197,7 @@ export function OrgHeadcountTable({ rows }: { rows: OrgHeadcount[] }) {
                 {o.drivers_online > 0 ? (
                   <Link
                     href={`/admin/carte?org=${o.id}`}
+                    prefetch={false}
                     className="relative z-10 inline-flex h-8 min-w-8 items-center justify-center rounded-md px-1.5 font-medium text-brand hover:bg-brand/10"
                     title="Voir ses chauffeurs sur la carte en direct"
                     aria-label={`${formatNumber(o.drivers_online)} en ligne : voir ses chauffeurs sur la carte en direct`}

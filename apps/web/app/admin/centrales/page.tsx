@@ -81,6 +81,7 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
               <Link
                 key={k}
                 href={k === current ? "/admin/centrales" : `/admin/centrales?mois=${k}`}
+                prefetch={false}
                 className={cn(
                   "shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-[12.5px] font-medium",
                   k === month ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg",
@@ -103,7 +104,7 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
           <StatCard label="Volume" value={formatCompactPrice(totals.volume_cents)} sub={`${formatCompactPrice(commissionTotal)} de commissions`} icon={<Banknote />} />
           <StatCard label="Frais plateforme" value={formatPrice(totals.platform_fee_cents)} sub={`total ${monthLabel(month)}`} tone="brand" />
           <StatCard label="Dû par les chauffeurs" value={formatCompactPrice(outstandingTotal)} sub={overdueTotal ? `${formatCompactPrice(overdueTotal)} en retard` : "aucun retard"} tone={overdueTotal ? "amber" : undefined} icon={<AlertTriangle />} />
-          <Link href="/admin/frais" className="block h-full rounded-xl transition-opacity hover:opacity-90 [&>div]:h-full" aria-label="Dû à Rydar : ouvrir les frais plateforme">
+          <Link href="/admin/frais" prefetch={false} className="block h-full rounded-xl transition-opacity hover:opacity-90 [&>div]:h-full" aria-label="Dû à Rydar : ouvrir les frais plateforme">
             <StatCard
               label="Dû à Rydar"
               value={formatPrice(totals.platform_due_cents)}
@@ -141,7 +142,7 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
               icon={<Network />}
               title="Aucune centrale"
               description="Passez un rattacheur en « Option 2 — Centrale » depuis sa fiche pour l'ajouter ici."
-              action={<Link href="/admin/organizations" className="text-[13px] font-medium text-brand hover:underline">Voir les rattacheurs</Link>}
+              action={<Link href="/admin/organizations" prefetch={false} className="text-[13px] font-medium text-brand hover:underline">Voir les rattacheurs</Link>}
             />
           ) : (
             <Table>
@@ -162,7 +163,7 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
                 {rows.map((o) => (
                   <TR key={o.id} className="relative">
                     <TD>
-                      <Link href={`/admin/organizations/${o.id}`} className="absolute inset-0" aria-label={o.name} />
+                      <Link href={`/admin/organizations/${o.id}`} prefetch={false} className="absolute inset-0" aria-label={o.name} />
                       <p className="whitespace-nowrap text-[13.5px] font-medium">{o.name}</p>
                       <p className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap text-[11.5px] text-fg-subtle">
                         <span className={cn("size-1.5 rounded-full", o.join_enabled ? "bg-green" : "bg-fg-subtle")} />
@@ -202,6 +203,7 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
                     <TD className="whitespace-nowrap text-right">
                       <Link
                         href={`/admin/frais/${o.id}`}
+                        prefetch={false}
                         className="relative z-10 -mx-1.5 inline-block rounded-md px-1.5 py-0.5 text-right hover:bg-white/[0.05]"
                         title="Frais plateforme de cette centrale"
                       >

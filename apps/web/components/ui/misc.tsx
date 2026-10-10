@@ -130,7 +130,37 @@ export function Avatar({
   );
 }
 
-export function EmptyState({ icon, title, description, action, className }: { icon?: React.ReactNode; title: string; description?: string; action?: React.ReactNode; className?: string }) {
+/**
+ * État vide (§ 3.9) : dit pourquoi c'est vide et quoi faire ensuite. Grand format seulement pour une page entièrement
+ * vide ; dans une carte, `size="compact"` (une ligne : titre, explication, action).
+ */
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+  className,
+  size = "default",
+}: {
+  icon?: React.ReactNode;
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+  className?: string;
+  size?: "default" | "compact";
+}) {
+  if (size === "compact") {
+    return (
+      <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-4 text-[13px]", className)}>
+        {icon && <span aria-hidden className="text-fg-subtle [&_svg]:size-4">{icon}</span>}
+        <p className="min-w-0 flex-1 text-fg-muted">
+          <span className="font-medium text-fg">{title}</span>
+          {description && <> {description}</>}
+        </p>
+        {action && <div className="shrink-0">{action}</div>}
+      </div>
+    );
+  }
   return (
     <div className={cn("flex flex-col items-center justify-center px-6 py-14 text-center", className)}>
       {icon && (

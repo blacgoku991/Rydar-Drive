@@ -1,8 +1,11 @@
-// Menu du tableau de bord (barre latérale) : fonction pure, testée (dashboard-nav.test.ts). Organisation standard :
-// menu historique, à l'identique (flotte ou centrale, rôle, compteurs, réseau partagé, mini-sites, frais Rydar).
-// Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.2) : « Mon activité » et « Mon entreprise », rien d'autre (les pages
-// absentes sont aussi refusées, lib/private-fleet.ts). Module pur : ni « use client » ni « server-only ».
+// Menu du tableau de bord (barre latérale) : fonction pure, testée (dashboard-nav.test.ts). Organisation standard
+// (docs/REFONTE-PANELS.md, R1) : « Au quotidien » et « Gestion » (+ « Plateforme »), mêmes libellés, mêmes adresses et
+// mêmes conditions qu'avant ; « API & site web » et « Mini-site » réservés au propriétaire et aux administrateurs (pages
+// sans action pour un dispatcher, toujours accessibles par leur adresse). Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.2) :
+// « Mon activité » et « Mon entreprise », rien d'autre (les pages absentes sont aussi refusées, lib/private-fleet.ts).
+// Module pur : ni « use client » ni « server-only ».
 import type { DispatchModel } from "@rydar/shared";
+import { plural } from "../../lib/wording";
 import { joinNavLabel } from "../network/join-copy";
 import type { NetworkNavItem } from "../network-share/nav";
 import { platformFeesPaths } from "../platform-fees/org-platform-paths";
@@ -52,8 +55,6 @@ export type DashboardNavInput = {
   flags?: DashboardNavFlags;
 };
 
-const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
-
 export function dashboardNav(input: DashboardNavInput): NavSection[] {
   return input.privateFleet ? privateFleetNav(input) : standardNav(input);
 }
@@ -66,10 +67,14 @@ export function sidebarOrgCaption(privateFleet: boolean): string | null {
   return privateFleet ? "Flotte Privée" : null;
 }
 
-/** Menu des flottes et des centrales (inchangé). */
+/**
+ * Menu des flottes et des centrales : « Au quotidien » (les écrans du jour), « Gestion » (pilotage, canaux, réglages),
+ * « Plateforme » (compte super admin aussi membre).
+ */
 function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput): NavSection[] {
   const isCentrale = model === "centrale";
   const isAdmin = role === "owner" || role === "admin";
+  const alerts = counts.alerts ?? 0;
   const unread = counts.unread ?? 0;
   const openReports = counts.openReports ?? 0;
   const pendingDocuments = counts.pendingDocuments ?? 0;
@@ -90,7 +95,7 @@ function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput
     : unreadLabel;
   return [
     {
-      title: "Opérations",
+      title: "Au quotidien",
       items: [
         { href: "/dashboard", label: "En direct", icon: "radar", exact: true },
         {
@@ -101,7 +106,15 @@ function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput
           badgeTone: openReports ? "amber" : "brand",
           badgeLabel: messagesLabel,
         },
-        { href: "/dashboard/rides", label: "Courses", icon: "route", badge: counts.alerts },
+        {
+          href: "/dashboard/rides",
+          label: "Courses",
+          icon: "route",
+          badge: alerts,
+          badgeTone: "red",
+          // Même fenêtre que la lecture du layout (NO_DRIVER_FOUND, prise en charge depuis 6 h ou à venir)
+          badgeLabel: `${plural(alerts, "course sans chauffeur", "courses sans chauffeur")} (6 dernières heures et à venir)`,
+        },
         ...(isCentrale
           ? [
               {
@@ -122,7 +135,7 @@ function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput
           icon: "users",
           badge: pendingDocuments,
           badgeTone: "amber",
-          badgeLabel: `${pendingDocuments} document${pendingDocuments > 1 ? "s" : ""} à valider`,
+          badgeLabel: plural(pendingDocuments, "document à valider", "documents à valider"),
         },
         // Lien d'inscription + candidatures : « Réseau » en centrale, « Inscriptions » en flotte (même page), juste
         // sous « Chauffeurs », avec le nombre de candidatures à traiter ; « Inscriptions » pour les deux quand le réseau
@@ -135,20 +148,16 @@ function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput
           badgeTone: "brand",
           badgeLabel: plural(applications, "candidature en attente", "candidatures en attente"),
         },
+      ],
+    },
+    {
+      title: "Gestion",
+      items: [
+        { href: "/dashboard/stats", label: "Statistiques", icon: "chart" },
         { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
-      ],
-    },
-    { title: "Pilotage", items: [{ href: "/dashboard/stats", label: "Statistiques", icon: "chart" }] },
-    {
-      title: "Canaux",
-      items: [
-        { href: "/dashboard/integrations", label: "API & site web", icon: "key" },
-        ...(flags.bookingSites ? [{ href: "/dashboard/booking-site", label: "Mini-site", icon: "globe" as const }] : []),
-      ],
-    },
-    {
-      title: "Organisation",
-      items: [
+        // Canaux : réglages des clés, webhooks et du mini-site, sans action pour un dispatcher (lecture seule par l'adresse)
+        ...(isAdmin ? [{ href: "/dashboard/integrations", label: "API & site web", icon: "key" as const }] : []),
+        ...(isAdmin && flags.bookingSites ? [{ href: "/dashboard/booking-site", label: "Mini-site", icon: "globe" as const }] : []),
         ...(fleetFees ? [{ href: platformFeesPaths(model).page, label: "Frais Rydar", icon: "landmark" as const }] : []),
         { href: "/dashboard/settings", label: "Réglages", icon: "settings" },
       ],

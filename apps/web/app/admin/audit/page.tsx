@@ -23,7 +23,7 @@ export default async function AdminAuditPage({ searchParams }: { searchParams: P
       <PageBody className="space-y-4">
         <div className="flex gap-1 rounded-xl border border-line bg-ink-850 p-1 sm:w-fit">
           {[["all", "Tout"], ["security", "Alertes de sécurité"]].map(([k, l]) => (
-            <Link key={k} href={`/admin/audit${k === "all" ? "" : "?severity=security"}`} className={cn("rounded-lg px-3 py-1.5 text-[12.5px]", (severity ?? "all") === k ? "bg-ink-600 text-fg" : "text-fg-muted")}>{l}</Link>
+            <Link key={k} href={`/admin/audit${k === "all" ? "" : "?severity=security"}`} prefetch={false} className={cn("rounded-lg px-3 py-1.5 text-[12.5px]", (severity ?? "all") === k ? "bg-ink-600 text-fg" : "text-fg-muted")}>{l}</Link>
           ))}
         </div>
         <Card className="overflow-hidden">

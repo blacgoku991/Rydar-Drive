@@ -47,7 +47,7 @@ export default async function AdminOverview() {
         description="Tous les rattacheurs, leurs effectifs, leur activité et la santé du dispatch."
         actions={
           <Button asChild variant="secondary" size="sm">
-            <Link href="/admin/carte">
+            <Link href="/admin/carte" prefetch={false}>
               <Globe /> Carte en direct
             </Link>
           </Button>
@@ -62,7 +62,7 @@ export default async function AdminOverview() {
                 "Sans raison sociale, siège et immatriculation, aucune centrale ne peut accepter les CGV ni l'accord de traitement\u00a0: le propriétaire et les administrateurs d'une organisation qui ne les a jamais acceptés restent bloqués sur l'écran d'acceptation. "}
               {legalGaps > 0 &&
                 `${legalGaps} mention${legalGaps > 1 ? "s" : ""} obligatoire${legalGaps > 1 ? "s" : ""} manquante${legalGaps > 1 ? "s" : ""}\u00a0: les mentions légales affichent «\u00a0à compléter\u00a0». `}
-              <Link href="/admin/legal" className="text-fg underline underline-offset-2">
+              <Link href="/admin/legal" prefetch={false} className="text-fg underline underline-offset-2">
                 Compléter les informations légales
               </Link>
             </p>
@@ -115,7 +115,7 @@ export default async function AdminOverview() {
         </div>
 
         <Card className="overflow-hidden">
-          <CardHeader title="Activité des rattacheurs" description="Courses, dispatch et dernière activité par tenant." action={<Link href="/admin/organizations" className="text-[12.5px] text-brand hover:underline">Tout gérer</Link>} />
+          <CardHeader title="Activité des rattacheurs" description="Courses, dispatch et dernière activité par tenant." action={<Link href="/admin/organizations" prefetch={false} className="text-[12.5px] text-brand hover:underline">Tout gérer</Link>} />
           <Table>
             <THead>
               <tr>
@@ -127,7 +127,7 @@ export default async function AdminOverview() {
               {(o.organizations ?? []).map((org: any) => (
                 <TR key={org.id} className="relative">
                   <TD>
-                    <Link href={`/admin/organizations/${org.id}`} className="absolute inset-0" aria-label={org.name} />
+                    <Link href={`/admin/organizations/${org.id}`} prefetch={false} className="absolute inset-0" aria-label={org.name} />
                     <p className="text-[13.5px] font-medium">{org.name}</p>
                     <p className="text-[12px] text-fg-subtle">{org.city ?? org.slug}</p>
                   </TD>

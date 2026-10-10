@@ -122,7 +122,7 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
     <>
       <PageHeader
         eyebrow={
-          <Link href="/admin/contacts" className="inline-flex items-center gap-1.5 hover:text-fg">
+          <Link href="/admin/contacts" prefetch={false} className="inline-flex items-center gap-1.5 hover:text-fg">
             <ArrowLeft className="size-3.5" aria-hidden /> Demandes de contact
           </Link>
         }

@@ -1,15 +1,30 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
 import { networkNavItem } from "../network-share/nav";
 import { NETWORK_SHARE_PATH } from "../network-share/paths";
 import { dashboardNav, sidebarOrgCaption } from "./dashboard-nav";
 
-// Menu du tableau de bord (docs/FLOTTE-PRIVEE.md § 7.2) : organisation standard → menu historique À L'IDENTIQUE
-// (instantané écrit d'après le tableau de dashboard-shell.tsx avant son extraction) ; Flotte Privée → « Mon activité »
-// et « Mon entreprise » exactement, « Frais Rydar » seulement avec des frais (owner / admin).
+// Rendu de la barre latérale (bloc d'organisation, zone défilante, liens légaux) : modules « @/ » résolus à la main
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  usePathname: () => "/admin/notifications",
+}));
+vi.mock("@/lib/utils", async () => await import("../../lib/utils"));
+vi.mock("@/components/brand/logo", async () => await import("../brand/logo"));
+vi.mock("@/components/ui/misc", async () => await import("../ui/misc"));
+vi.mock("@/components/legal/legal-links", async () => await import("../legal/legal-links"));
 
-describe("menu standard : identique au menu historique", () => {
+// Menu du tableau de bord. Organisation standard (docs/REFONTE-PANELS.md, R1) : « Au quotidien » et « Gestion »
+// (+ « Plateforme »), mêmes libellés, adresses, pastilles et conditions que le menu historique ; « API & site web » et
+// « Mini-site » réservés au propriétaire et aux administrateurs. Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.2) → « Mon
+// activité » et « Mon entreprise » exactement, « Frais Rydar » seulement avec des frais (owner / admin).
+
+const COURSES_LABEL = (n: number) => `${n} ${n > 1 ? "courses" : "course"} sans chauffeur (6 dernières heures et à venir)`;
+
+describe("menu standard : « Au quotidien » et « Gestion »", () => {
   it("flotte, propriétaire, sans réseau ni mini-site ni frais", () => {
     const nav = dashboardNav({
       privateFleet: false,
@@ -20,19 +35,24 @@ describe("menu standard : identique au menu historique", () => {
     });
     expect(nav).toEqual([
       {
-        title: "Opérations",
+        title: "Au quotidien",
         items: [
           { href: "/dashboard", label: "En direct", icon: "radar", exact: true },
           { href: "/dashboard/messages", label: "Messages", icon: "message", badge: 3, badgeTone: "brand", badgeLabel: "3 messages non lus" },
-          { href: "/dashboard/rides", label: "Courses", icon: "route", badge: 2 },
+          { href: "/dashboard/rides", label: "Courses", icon: "route", badge: 2, badgeTone: "red", badgeLabel: COURSES_LABEL(2) },
           { href: "/dashboard/drivers", label: "Chauffeurs", icon: "users", badge: 1, badgeTone: "amber", badgeLabel: "1 document à valider" },
           { href: "/dashboard/network", label: "Inscriptions", icon: "userPlus", badge: 0, badgeTone: "brand", badgeLabel: "0 candidature en attente" },
-          { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
         ],
       },
-      { title: "Pilotage", items: [{ href: "/dashboard/stats", label: "Statistiques", icon: "chart" }] },
-      { title: "Canaux", items: [{ href: "/dashboard/integrations", label: "API & site web", icon: "key" }] },
-      { title: "Organisation", items: [{ href: "/dashboard/settings", label: "Réglages", icon: "settings" }] },
+      {
+        title: "Gestion",
+        items: [
+          { href: "/dashboard/stats", label: "Statistiques", icon: "chart" },
+          { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
+          { href: "/dashboard/integrations", label: "API & site web", icon: "key" },
+          { href: "/dashboard/settings", label: "Réglages", icon: "settings" },
+        ],
+      },
     ]);
   });
 
@@ -48,7 +68,7 @@ describe("menu standard : identique au menu historique", () => {
     });
     expect(nav).toEqual([
       {
-        title: "Opérations",
+        title: "Au quotidien",
         items: [
           { href: "/dashboard", label: "En direct", icon: "radar", exact: true },
           {
@@ -59,7 +79,7 @@ describe("menu standard : identique au menu historique", () => {
             badgeTone: "amber",
             badgeLabel: "1 message signalé à traiter · 2 messages non lus",
           },
-          { href: "/dashboard/rides", label: "Courses", icon: "route", badge: 0 },
+          { href: "/dashboard/rides", label: "Courses", icon: "route", badge: 0, badgeTone: "red", badgeLabel: COURSES_LABEL(0) },
           {
             href: "/dashboard/settlements",
             label: "Encaissements",
@@ -78,18 +98,18 @@ describe("menu standard : identique au menu historique", () => {
           },
           { href: "/dashboard/drivers", label: "Chauffeurs", icon: "users", badge: 0, badgeTone: "amber", badgeLabel: "0 document à valider" },
           { href: "/dashboard/network", label: "Inscriptions", icon: "userPlus", badge: 4, badgeTone: "brand", badgeLabel: "4 candidatures en attente" },
-          { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
         ],
       },
-      { title: "Pilotage", items: [{ href: "/dashboard/stats", label: "Statistiques", icon: "chart" }] },
       {
-        title: "Canaux",
+        title: "Gestion",
         items: [
+          { href: "/dashboard/stats", label: "Statistiques", icon: "chart" },
+          { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
           { href: "/dashboard/integrations", label: "API & site web", icon: "key" },
           { href: "/dashboard/booking-site", label: "Mini-site", icon: "globe" },
+          { href: "/dashboard/settings", label: "Réglages", icon: "settings" },
         ],
       },
-      { title: "Organisation", items: [{ href: "/dashboard/settings", label: "Réglages", icon: "settings" }] },
       { title: "Plateforme", items: [{ href: "/admin", label: "Espace super admin", icon: "shield" }] },
     ]);
   });
@@ -110,15 +130,72 @@ describe("menu standard : identique au menu historique", () => {
     expect(items.find((i) => i.href === "/dashboard/messages")).toMatchObject({ badge: 0, badgeLabel: "0 message non lu" });
   });
 
+  it("dispatcher : ni « API & site web » ni « Mini-site » (même mini-sites ouverts), le reste comme le propriétaire", () => {
+    const flags = { bookingSites: true, rydarFees: true, superAdmin: false, networkNav: null };
+    const labels = (model: "fleet" | "centrale", role: string) =>
+      dashboardNav({ privateFleet: false, model, role, flags }).map((s) => `${s.title} : ${s.items.map((i) => i.label).join(", ")}`);
+    expect(labels("fleet", "dispatcher")).toEqual([
+      "Au quotidien : En direct, Messages, Courses, Chauffeurs, Inscriptions",
+      "Gestion : Statistiques, Journal du dispatch, Réglages",
+    ]);
+    expect(labels("centrale", "dispatcher")).toEqual([
+      "Au quotidien : En direct, Messages, Courses, Encaissements, Chauffeurs, Réseau",
+      "Gestion : Statistiques, Journal du dispatch, Réglages",
+    ]);
+    // Propriétaire et administrateur : les deux entrées, à leur place
+    for (const role of ["owner", "admin"]) {
+      expect(labels("centrale", role)[1]).toBe("Gestion : Statistiques, Journal du dispatch, API & site web, Mini-site, Réglages");
+    }
+    expect(labels("fleet", "owner")[1]).toBe("Gestion : Statistiques, Journal du dispatch, API & site web, Mini-site, Frais Rydar, Réglages");
+    // Mini-sites coupés par la plateforme : jamais l'entrée, quel que soit le rôle
+    expect(
+      dashboardNav({ privateFleet: false, model: "fleet", role: "owner", flags: { ...flags, bookingSites: false } })
+        .flatMap((s) => s.items)
+        .map((i) => i.href),
+    ).not.toContain("/dashboard/booking-site");
+  });
+
+  it("pastille de « Courses » : ce qu'elle compte, en toutes lettres (singulier, pluriel, absente)", () => {
+    const rides = (alerts?: number) =>
+      dashboardNav({ privateFleet: false, model: "fleet", role: "owner", counts: alerts === undefined ? {} : { alerts } })[0]!.items.find(
+        (i) => i.href === "/dashboard/rides",
+      );
+    expect(rides(1)).toMatchObject({ badge: 1, badgeTone: "red", badgeLabel: "1 course sans chauffeur (6 dernières heures et à venir)" });
+    expect(rides(7)).toMatchObject({ badge: 7, badgeTone: "red", badgeLabel: "7 courses sans chauffeur (6 dernières heures et à venir)" });
+    expect(rides()).toMatchObject({ badge: 0, badgeLabel: "0 course sans chauffeur (6 dernières heures et à venir)" });
+  });
+
   it("flotte avec des frais Rydar : entrée « Frais Rydar » pour owner / admin seulement", () => {
     const fees = (role: string) =>
-      dashboardNav({ privateFleet: false, model: "fleet", role, flags: { rydarFees: true } }).find((s) => s.title === "Organisation")!.items;
+      dashboardNav({ privateFleet: false, model: "fleet", role, flags: { rydarFees: true } }).find((s) => s.title === "Gestion")!.items;
     expect(fees("owner")).toEqual([
+      { href: "/dashboard/stats", label: "Statistiques", icon: "chart" },
+      { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
+      { href: "/dashboard/integrations", label: "API & site web", icon: "key" },
       { href: "/dashboard/rydar", label: "Frais Rydar", icon: "landmark" },
       { href: "/dashboard/settings", label: "Réglages", icon: "settings" },
     ]);
-    expect(fees("admin").map((i) => i.label)).toEqual(["Frais Rydar", "Réglages"]);
-    expect(fees("dispatcher").map((i) => i.label)).toEqual(["Réglages"]);
+    expect(fees("admin").map((i) => i.label)).toEqual(["Statistiques", "Journal du dispatch", "API & site web", "Frais Rydar", "Réglages"]);
+    expect(fees("dispatcher").map((i) => i.label)).toEqual(["Statistiques", "Journal du dispatch", "Réglages"]);
+  });
+
+  it("au plus quatre sections métier, chaque adresse une seule fois, mêmes adresses qu'avant", () => {
+    const nav = dashboardNav({
+      privateFleet: false,
+      model: "centrale",
+      role: "owner",
+      flags: { bookingSites: true, rydarFees: true, superAdmin: true, networkNav: networkNavItem({ badge: 0, toConfirm: 0, overdue: 0, toCheck: 0 }) },
+    });
+    expect(nav.map((s) => s.title)).toEqual(["Au quotidien", "Gestion", "Plateforme"]);
+    const hrefs = nav.flatMap((s) => s.items).map((i) => i.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+    expect([...hrefs].sort()).toEqual(
+      [
+        "/dashboard", "/dashboard/messages", "/dashboard/rides", "/dashboard/settlements", NETWORK_SHARE_PATH, "/dashboard/drivers",
+        "/dashboard/network", "/dashboard/stats", "/dashboard/dispatch", "/dashboard/integrations", "/dashboard/booking-site",
+        "/dashboard/settings", "/admin",
+      ].sort(),
+    );
   });
 });
 
@@ -210,5 +287,98 @@ describe("sous-titre de la barre latérale (§ 7.2)", () => {
     const read = (f: string) => readFileSync(join(import.meta.dirname, f), "utf8");
     expect(read("dashboard-shell.tsx")).toMatch(/orgCaption=\{sidebarOrgCaption\(!!privateFleet\)\}/);
     expect(read("sidebar.tsx")).toMatch(/\{orgCaption \?\? ORG_ROLE_LABELS\[current\.role as OrgRole\] \?\? current\.role\}/);
+  });
+});
+
+// Import au chargement du fichier (jamais dans un test : le chargement de Radix et des icônes compterait dans son délai)
+const sidebarModule = await import("./sidebar");
+
+describe("barre latérale (R1)", () => {
+  const sidebar = async () => sidebarModule;
+  const base = {
+    sections: [
+      { title: "Au quotidien", items: [{ href: "/dashboard", label: "En direct", icon: "radar" as const, exact: true }] },
+      { title: "Gestion", items: [{ href: "/dashboard/settings", label: "Réglages", icon: "settings" as const }] },
+    ],
+    subtitle: "Dispatch",
+    user: { name: "Nadia Benhamou", email: "direction@elite-paris.fr" },
+    signOut: () => undefined,
+  };
+  const render = async (props: Record<string, unknown>) => {
+    const { Sidebar } = await sidebar();
+    return renderToStaticMarkup(createElement(Sidebar, { ...base, ...props } as never));
+  };
+
+  it("une seule organisation : bloc statique (nom, rôle), ni chevron ni menu « Organisations »", async () => {
+    const html = await render({ orgs: [{ id: "o1", name: "Élite Chauffeurs Paris", role: "owner" }], currentOrgId: "o1" });
+    expect(html).toContain("Élite Chauffeurs Paris");
+    expect(html).toContain("Propriétaire");
+    // Seul le menu du compte ouvre un menu
+    expect(html.match(/aria-haspopup="menu"/g)).toHaveLength(1);
+    expect(html).not.toContain("Organisations");
+    expect(html).not.toContain("lucide-chevrons-up-down");
+  });
+
+  it("plusieurs organisations : sélecteur inchangé (bouton à chevron qui ouvre « Organisations »)", async () => {
+    const html = await render({
+      orgs: [
+        { id: "o1", name: "Élite Chauffeurs Paris", role: "owner" },
+        { id: "o2", name: "Centrale Express Paris", role: "dispatcher" },
+      ],
+      currentOrgId: "o2",
+      orgCaption: null,
+    });
+    expect(html.match(/aria-haspopup="menu"/g)).toHaveLength(2);
+    expect(html).toContain("lucide-chevrons-up-down");
+    expect(html).toContain("Centrale Express Paris");
+    expect(html).toContain("Dispatcher");
+  });
+
+  it("Flotte Privée : sous-titre à la place du rôle", async () => {
+    const html = await render({ orgs: [{ id: "o1", name: "Lambert VTC", role: "owner" }], currentOrgId: "o1", orgCaption: "Flotte Privée" });
+    expect(html).toContain("Flotte Privée");
+    expect(html).not.toContain("Propriétaire");
+  });
+
+  it("une seule zone défilante : menu, information cookies puis les 8 liens légaux compacts, avant le compte", async () => {
+    const html = await render({ notice: createElement("div", { "data-testid": "notice" }, "Cookies nécessaires uniquement") });
+    const zone = html.indexOf("data-sidebar-scroll");
+    const nav = html.indexOf('aria-label="Menu principal"');
+    const notice = html.indexOf("Cookies nécessaires uniquement");
+    const legal = html.indexOf('aria-label="Informations légales"');
+    const account = html.indexOf("direction@elite-paris.fr");
+    expect(zone).toBeGreaterThan(0);
+    expect(zone).toBeLessThan(nav);
+    expect(nav).toBeLessThan(notice);
+    expect(notice).toBeLessThan(legal);
+    expect(legal).toBeLessThan(account);
+    expect(html.match(/overflow-y-auto/g)).toHaveLength(1);
+    const legalNav = html.slice(legal, html.indexOf("</nav>", legal));
+    expect(legalNav.match(/<a /g)).toHaveLength(8);
+    expect(legalNav).toContain("text-[12px]");
+    expect(legalNav).toContain("·");
+  });
+
+  it("entrée active : adresse, sous-page ou préfixe de `match` (pages regroupées)", async () => {
+    const { navItemActive } = await sidebar();
+    const supervision = { href: "/admin/dispatch", match: ["/admin/notifications", "/admin/emails", "/admin/audit"] };
+    expect(navItemActive(supervision, "/admin/dispatch")).toBe(true);
+    expect(navItemActive(supervision, "/admin/notifications")).toBe(true);
+    expect(navItemActive(supervision, "/admin/audit/123")).toBe(true);
+    expect(navItemActive(supervision, "/admin/auditeurs")).toBe(false);
+    expect(navItemActive({ href: "/dashboard", exact: true }, "/dashboard/rides")).toBe(false);
+    expect(navItemActive({ href: "/dashboard/rides" }, "/dashboard/rides/42")).toBe(true);
+    const html = await render({
+      sections: [{ title: "Plateforme", items: [{ href: "/admin/dispatch", label: "Supervision", icon: "radar", match: supervision.match }] }],
+    });
+    expect(html).toMatch(/<a [^>]*href="\/admin\/dispatch"[^>]*aria-current="page"|<a [^>]*aria-current="page"[^>]*href="\/admin\/dispatch"/);
+  });
+
+  it("pastille : nombre visible et ce qu'il compte en toutes lettres (aria-label)", async () => {
+    const html = await render({
+      sections: [{ title: "Au quotidien", items: [{ href: "/dashboard/rides", label: "Courses", icon: "route", badge: 2, badgeTone: "red", badgeLabel: "2 courses sans chauffeur (6 dernières heures et à venir)" }] }],
+    });
+    expect(html).toContain('aria-label="2 courses sans chauffeur (6 dernières heures et à venir)"');
+    expect(html).toMatch(/text-\[12px\][^"]*"[^>]*>2<\/span>/);
   });
 });

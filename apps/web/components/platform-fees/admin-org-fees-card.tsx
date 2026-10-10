@@ -44,7 +44,7 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
         }
         action={
           <Button asChild variant="outline" size="sm" className="max-sm:hidden">
-            <Link href={`/admin/frais/${orgId}`}>
+            <Link href={`/admin/frais/${orgId}`} prefetch={false}>
               Ouvrir le compte <ArrowRight />
             </Link>
           </Button>
@@ -82,7 +82,7 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
         </span>
         <span className="text-fg-subtle">{a.last_payment_at ? `Dernier paiement ${ago(a.last_payment_at)}` : "Aucun paiement reçu"}</span>
         <Button asChild variant="outline" size="sm" className="w-full sm:hidden">
-          <Link href={`/admin/frais/${orgId}`}>
+          <Link href={`/admin/frais/${orgId}`} prefetch={false}>
             Ouvrir le compte <ArrowRight />
           </Link>
         </Button>

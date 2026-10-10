@@ -101,12 +101,12 @@ export default async function AdminLegalPage() {
               />
               <CardBody className="space-y-1.5 text-[13px]">
                 {LEGAL_LINKS.map((l) => (
-                  <Link key={l.href} href={l.href} target="_blank" className="block text-brand hover:underline">
+                  <Link key={l.href} href={l.href} prefetch={false} target="_blank" className="block text-brand hover:underline">
                     {l.label} <span aria-hidden>↗</span>
                     <NewTabHint />
                   </Link>
                 ))}
-                <Link href="/suppression-compte" target="_blank" className="block text-brand hover:underline">
+                <Link href="/suppression-compte" prefetch={false} target="_blank" className="block text-brand hover:underline">
                   Supprimer son compte <span aria-hidden>↗</span>
                   <NewTabHint />
                 </Link>
@@ -144,7 +144,7 @@ export default async function AdminLegalPage() {
                     <ul className="space-y-1">
                       {missing.slice(0, 30).map((o) => (
                         <li key={o.id}>
-                          <Link href={`/admin/organizations/${o.id}`} className="hover:text-fg">
+                          <Link href={`/admin/organizations/${o.id}`} prefetch={false} className="hover:text-fg">
                             {o.name}
                           </Link>
                           {o.state === "updated" ? " · version antérieure acceptée" : " · aucune version acceptée"}

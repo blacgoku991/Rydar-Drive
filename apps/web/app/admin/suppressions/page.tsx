@@ -36,12 +36,12 @@ export default async function AdminDeletionsPage() {
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber" />
             <span>
               Aucune adresse de contact n&apos;est renseignée : la page publique{" "}
-              <Link href="/suppression-compte" target="_blank" className="text-fg underline underline-offset-2">
+              <Link href="/suppression-compte" prefetch={false} target="_blank" className="text-fg underline underline-offset-2">
                 Supprimer son compte
                 <NewTabHint />
               </Link>{" "}
               ne peut pas indiquer où écrire. Renseignez le contact « données personnelles » dans{" "}
-              <Link href="/admin/legal" className="text-fg underline underline-offset-2">
+              <Link href="/admin/legal" prefetch={false} className="text-fg underline underline-offset-2">
                 Informations légales
               </Link>
               .

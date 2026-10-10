@@ -3,6 +3,7 @@ import { useTransition } from "react";
 import { CookieNotice } from "@/components/legal/cookie-notice";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { SkipToContent } from "@/components/shell/skip-to-content";
+import { Badge } from "@/components/ui/badge";
 import { signOut } from "@/app/login/actions";
 import { runAction } from "@/lib/run-action";
 
@@ -107,10 +108,12 @@ export function AdminShell({
         user={user}
         signOut={() => start(() => runAction(() => signOut()))}
         notice={<CookieNotice href="/cookies" placement="sidebar" />}
-        footer={
-          <div className="rounded-xl border border-brand/20 bg-brand/[0.05] px-3 py-2.5 text-[12px] text-fg-muted">
-            <span className="font-semibold text-brand">Mode plateforme</span> — accès en lecture à tous les tenants, écritures journalisées.
-          </div>
+        // Espace de la plateforme : un badge à côté du logo (barre et barre du haut sur téléphone), plus d'encadré
+        // technique dans le menu
+        headerAction={
+          <Badge tone="brand" dot={false}>
+            Super admin
+          </Badge>
         }
       />
       <div className="lg:pl-[232px]">

@@ -137,6 +137,7 @@ export default async function AdminContactsPage({ searchParams }: { searchParams
                   <Link
                     key={f.key}
                     href={f.key === FILTERS[0]!.key ? "/admin/contacts" : `/admin/contacts?filtre=${f.key}`}
+                    prefetch={false}
                     aria-current={active ? "page" : undefined}
                     className={cn(
                       "inline-flex h-9 items-center gap-2 rounded-full border px-3.5 text-[13px] transition-colors",
@@ -169,6 +170,7 @@ export default async function AdminContactsPage({ searchParams }: { searchParams
                       <li key={r.id}>
                         <Link
                           href={`/admin/contacts/${r.id}`}
+                          prefetch={false}
                           className="flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-white/[0.025] sm:flex-row sm:items-center sm:justify-between"
                         >
                           <div className="min-w-0">
@@ -342,7 +344,7 @@ function EmailList({ emails, now, paused }: { emails: Email[]; now: number; paus
               <div className="flex flex-wrap items-center gap-3 pt-1">
                 {e.status === "failed" && <RetryEmailButton emailId={e.id} contactRequestId={e.contact_request_id ?? undefined} />}
                 {e.contact_request_id && (
-                  <Link href={`/admin/contacts/${e.contact_request_id}`} className="text-[12px] text-brand hover:underline">
+                  <Link href={`/admin/contacts/${e.contact_request_id}`} prefetch={false} className="text-[12px] text-brand hover:underline">
                     Voir la demande
                   </Link>
                 )}

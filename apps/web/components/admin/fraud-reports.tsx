@@ -148,7 +148,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
                   </div>
                   <p className="text-[12.5px] text-fg-muted">
                     {r.organization ? (
-                      <Link href={`/admin/organizations/${r.organization.id}`} className="font-medium text-fg hover:text-brand">{r.organization.name}</Link>
+                      <Link href={`/admin/organizations/${r.organization.id}`} prefetch={false} className="font-medium text-fg hover:text-brand">{r.organization.name}</Link>
                     ) : (
                       "Centrale supprimée"
                     )}

@@ -101,7 +101,7 @@ export function Field({
       {label && (
         <Label htmlFor={htmlFor || wired.id || undefined} className="flex items-center justify-between">
           <span>{label}</span>
-          {optional && <span className="text-[11px] font-normal text-fg-subtle">optionnel</span>}
+          {optional && <span className="text-[12px] font-normal text-fg-subtle">optionnel</span>}
         </Label>
       )}
       {wired.node}

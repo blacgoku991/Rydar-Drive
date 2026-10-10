@@ -97,7 +97,7 @@ export function PaymentsToConfirm({
               <li key={p.id} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center md:gap-6">
                 <div className="min-w-0 space-y-1">
                   {!orgName && (
-                    <Link href={`/admin/frais/${p.organization_id}`} className="text-[14px] font-medium text-fg hover:underline">
+                    <Link href={`/admin/frais/${p.organization_id}`} prefetch={false} className="text-[14px] font-medium text-fg hover:underline">
                       {name}
                     </Link>
                   )}
@@ -160,7 +160,7 @@ export function PendingReductions({ entries, orgName, timeZone = "Europe/Paris" 
                   <p className="text-[14px] font-medium text-fg">
                     {!orgName && (
                       <>
-                        <Link href={`/admin/frais/${e.organization_id}`} className="hover:underline">
+                        <Link href={`/admin/frais/${e.organization_id}`} prefetch={false} className="hover:underline">
                           {name}
                         </Link>
                         <span className="text-fg-subtle"> · </span>
@@ -270,7 +270,7 @@ export function CentralesTable({ rows }: { rows: AdminPlatformRow[] }) {
         title="Aucun compte"
         description="Les frais plateforme apparaissent dès qu'un rattacheur passe en « Option 2 — Centrale », ou qu'une flotte a des frais Rydar par course (fiche du rattacheur)."
         action={
-          <Link href="/admin/centrales" className="text-[13px] font-medium text-brand hover:underline">
+          <Link href="/admin/centrales" prefetch={false} className="text-[13px] font-medium text-brand hover:underline">
             Voir les centrales
           </Link>
         }
@@ -288,7 +288,7 @@ export function CentralesTable({ rows }: { rows: AdminPlatformRow[] }) {
           const late = overdueInfo(r);
           return (
             <li key={r.id}>
-              <Link href={`/admin/frais/${r.id}`} className="flex items-start gap-3 px-4 py-3.5 active:bg-white/[0.03]">
+              <Link href={`/admin/frais/${r.id}`} prefetch={false} className="flex items-start gap-3 px-4 py-3.5 active:bg-white/[0.03]">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-1.5 text-[14px] font-medium text-fg">
                     <span className="truncate">{r.name}</span> <OrgFlags row={r} />
@@ -349,7 +349,7 @@ export function CentralesTable({ rows }: { rows: AdminPlatformRow[] }) {
               return (
                 <TR key={r.id} className="relative">
                   <TD className="py-2.5">
-                    <Link href={`/admin/frais/${r.id}`} className="absolute inset-0" aria-label={`Compte de ${r.name}`} />
+                    <Link href={`/admin/frais/${r.id}`} prefetch={false} className="absolute inset-0" aria-label={`Compte de ${r.name}`} />
                     <p className="flex items-center gap-1.5 whitespace-nowrap text-[13.5px] font-medium">
                       {r.name} <OrgFlags row={r} />
                     </p>
