@@ -1,4 +1,5 @@
-// Fiche rattacheur (super admin) : résumé des frais plateforme dus à Rydar, lien vers le compte détaillé.
+// Fiche d'un client (super admin) : résumé des frais Rydar (« frais plateforme » des CGV) dus à Rydar, lien vers le
+// compte détaillé. Couleur réservée à ce qui demande une action (retard en rouge, échu ou à confirmer en ambre).
 import { formatPrice, platformDueSummary, type PlatformAccount } from "@rydar/shared";
 import { ArrowRight, CircleDollarSign } from "lucide-react";
 import Link from "next/link";
@@ -6,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { plural } from "@/lib/wording";
 import { ago, overdueInfo } from "./admin-platform-format";
 
 export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Paris" }: { orgId: string; account: PlatformAccount; timeZone?: string }) {
@@ -15,26 +17,32 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
     {
       label: "Solde",
       value: formatPrice(a.balance_cents, a.currency),
-      cls: a.balance_cents > 0 ? "text-amber" : a.balance_cents < 0 ? "text-green" : "text-fg",
+      cls: "text-fg",
+      sub: a.balance_cents < 0 ? "avance du client" : null,
     },
     {
-      label: "Échu",
+      label: "À payer maintenant",
       value: formatPrice(a.due_cents, a.currency),
       cls: late ? "text-red" : a.due_cents > 0 ? "text-amber" : "text-fg",
       sub: late ? late.text : null,
     },
-    { label: "À confirmer", value: formatPrice(a.declared_cents, a.currency), cls: a.declared_count ? "text-blue" : "text-fg" },
+    {
+      label: "À confirmer",
+      value: formatPrice(a.declared_cents, a.currency),
+      cls: a.declared_count ? "text-amber" : "text-fg",
+      sub: a.declared_count ? plural(a.declared_count, "paiement déclaré", "paiements déclarés") : null,
+    },
     {
       label: "Frais du mois",
       value: formatPrice(a.month.fees_cents, a.currency),
-      cls: "text-violet",
-      sub: `${a.month.rides} course${a.month.rides > 1 ? "s" : ""}`,
+      cls: "text-fg",
+      sub: plural(a.month.rides, "course"),
     },
   ];
   return (
     <Card>
       <CardHeader
-        title="Frais plateforme"
+        title="Frais Rydar"
         icon={<CircleDollarSign />}
         description={
           <>
@@ -50,12 +58,13 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
           </Button>
         }
       />
-      <div className="grid grid-cols-2 gap-px bg-line sm:grid-cols-4">
+      {/* Quatre cases côte à côte quand la carte a la largeur de la page ; deux par ligne dans la colonne de la fiche */}
+      <div className="grid grid-cols-2 gap-px bg-line sm:grid-cols-4 xl:grid-cols-2">
         {cells.map((c) => (
           <div key={c.label} className="bg-ink-800 px-5 py-3.5">
             <p className="text-[12px] text-fg-subtle">{c.label}</p>
             <p className={cn("num mt-1 text-[18px] font-semibold tracking-tight", c.cls)}>{c.value}</p>
-            {c.sub && <p className={cn("text-[11.5px]", late && c.label === "Échu" ? "text-red" : "text-fg-subtle")}>{c.sub}</p>}
+            {c.sub && <p className={cn("mt-0.5 text-[12px]", late && c.label === "À payer maintenant" ? "text-red" : "text-fg-muted")}>{c.sub}</p>}
           </div>
         ))}
       </div>
@@ -77,10 +86,10 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
             : a.block_suspended
               ? "Blocage suspendu (paiement déclaré à confirmer)"
               : a.block_after_days
-                ? `Blocage après ${a.block_after_days} j de retard`
-                : "Blocage désactivé"}
+                ? `Courses bloquées après ${a.block_after_days}\u00a0j de retard`
+                : "Blocage des courses désactivé"}
         </span>
-        <span className="text-fg-subtle">{a.last_payment_at ? `Dernier paiement ${ago(a.last_payment_at)}` : "Aucun paiement reçu"}</span>
+        <span className="text-fg-muted">{a.last_payment_at ? `Dernier paiement ${ago(a.last_payment_at)}` : "Aucun paiement reçu"}</span>
         <Button asChild variant="outline" size="sm" className="w-full sm:hidden">
           <Link href={`/admin/frais/${orgId}`} prefetch={false}>
             Ouvrir le compte <ArrowRight />

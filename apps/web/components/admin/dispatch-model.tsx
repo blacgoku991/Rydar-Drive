@@ -1,28 +1,32 @@
 "use client";
-// Super admin : modèle d'exploitation d'un compte (option 1 Flotte / option 2 Centrale à commission)
-// et frais plateforme Rydar dus sur chaque course terminée, dans les deux modèles (20260924006400) :
+// Super admin : modèle d'exploitation d'un client (Flotte ou Centrale à commission)
+// et frais Rydar dus sur chaque course terminée, dans les deux modèles (20260924006400) :
 // centrale → calculés sur le prix (plafonnés au prix) ; flotte → % du prix (0 sans prix) + fixe, facturés à la flotte.
 // Changement des frais par course (20260924006600, svc_platform_set_fees) : baisse tout de suite ; HAUSSE annoncée au
 // moins 30 jours à l'avance par e-mail (et pas avant l'entrée en vigueur des CGV non acceptées ; impossible sans CGV
 // acceptées ni annoncées, ou sans adresse e-mail), ou tout de suite sur accord écrit de l'organisation ; hausse annoncée
 // annulable ; historique des changements. Changement de modèle : seulement à la demande de l'organisation ou avec son
-// accord écrit, noté (CGV art. 3).
+// accord écrit, noté (CGV art. 3). Fiche du client (docs/REFONTE-PANELS.md, R4) : formulaire déplié par « Modifier le
+// modèle ou les frais » ; propriétés, confirmations et envoi inchangés.
 import {
   DISPATCH_MODEL_META, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, PLATFORM_FEE_CHANGE_MODE_META, PLATFORM_FEE_CHANGE_STATUS_META,
   PLATFORM_FEE_MIN_REASON_LABEL, addIsoDays, fleetPlatformFee, formatDate, formatPrice, isoDayLabel, legalDateLabel, type AdminPlatformFeeSchedule,
   type DispatchModel, type LegalAcceptanceState, type PlatformFeeChangeRow,
 } from "@rydar/shared";
-import { AlertTriangle, CalendarClock, Check, Network, ShieldCheck, Truck, X } from "lucide-react";
+import { CalendarClock, Check, Network, ShieldCheck, Truck, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { cancelPlatformFeeChange, updateDispatchModel } from "@/app/admin/actions";
 import { feeChangePlan, type FeePlan } from "@/components/admin/fee-change-plan";
 import { centsToInput, eurosToCents, formatPlatformFee, parsePercent, percentToInput, platformFee, readFees } from "@/components/admin/fees";
-import { feeTermsText, frSpaces } from "@/components/platform-fees/org-platform-format";
+import { noticeLate, ratesText } from "@/components/admin/org-watch";
+import { frSpaces } from "@/components/platform-fees/org-platform-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Callout } from "@/components/ui/callout";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
@@ -53,10 +57,7 @@ export function DispatchModelPicker({ value, onChange, disabled }: { value: Disp
               <span className={cn("grid size-8 shrink-0 place-items-center rounded-lg border", active ? "border-brand/40 bg-brand/10 text-brand" : "border-line-strong bg-ink-700 text-fg-muted")}>
                 <Icon className="size-4" />
               </span>
-              <span className="min-w-0">
-                <span className="block text-[11px] font-medium uppercase tracking-[0.08em] text-fg-subtle">{m === "fleet" ? "Option 1" : "Option 2"}</span>
-                <span className="block text-[14px] font-semibold text-fg">{meta.label}</span>
-              </span>
+              <span className="min-w-0 text-[14px] font-semibold text-fg">{meta.label}</span>
               {active && (
                 <span className="ml-auto grid size-5 place-items-center rounded-full bg-brand text-brand-fg">
                   <Check className="size-3" strokeWidth={3} />
@@ -95,13 +96,13 @@ export function FeeFields({
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Frais plateforme (%)" error={errors?.percent} hint="0 à 50 % du prix">
+        <Field label="Frais plateforme (%)" error={errors?.percent} hint={"0 à 50\u00a0% du prix"}>
           <div className="relative">
             <Input inputMode="decimal" value={percent} onChange={(e) => onPercent(e.target.value)} disabled={disabled} className="num pr-8" aria-invalid={!!errors?.percent} />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-fg-subtle">%</span>
           </div>
         </Field>
-        <Field label="Frais fixes par course" error={errors?.fixed} hint="0 à 1 000 €">
+        <Field label="Frais fixes par course" error={errors?.fixed} hint={"0 à 1\u00a0000\u00a0€"}>
           <div className="relative">
             <Input inputMode="decimal" value={fixed} onChange={(e) => onFixed(e.target.value)} disabled={disabled} className="num pr-8" aria-invalid={!!errors?.fixed} />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-fg-subtle">€</span>
@@ -111,7 +112,7 @@ export function FeeFields({
       {example != null &&
         (model === "fleet" ? (
           <p className="text-[12px] text-fg-muted">
-            Exemple&nbsp;: course à <span className="num">59 €</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> dus par la flotte à Rydar
+            Exemple&nbsp;: course à <span className="num">59&nbsp;€</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> dus par la flotte à Rydar
             {f > 0 && p > 0 ? (
               <>
                 &nbsp;; course sans prix&nbsp;: <span className="num font-medium text-fg">{formatPrice(f)}</span> (frais fixes seuls)
@@ -120,8 +121,8 @@ export function FeeFields({
             .
           </p>
         ) : (
-          <p className="text-[12px] text-fg-subtle">
-            Exemple : course à <span className="num text-fg-muted">59 €</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> de frais plateforme, déduits avant la part chauffeur et la commission.
+          <p className="text-[12px] text-fg-muted">
+            Exemple{"\u00a0"}: course à <span className="num">59{"\u00a0"}€</span> → <span className="num font-medium text-fg">{formatPrice(example)}</span> de frais Rydar, déduits avant la part chauffeur et la commission.
           </p>
         ))}
     </div>
@@ -216,9 +217,9 @@ export function DispatchModelForm({
   const noticeBlocked = !schedule
     ? null
     : schedule.terms && !schedule.terms.accepted && !schedule.terms.notified_at
-      ? `CGV du ${legalDateLabel(ORG_LEGAL_VERSION)} ni acceptées par l'organisation ni annoncées par e-mail : prévenez-la d'abord (Informations légales, « Prévenir par e-mail »), ou choisissez « Accord écrit reçu ».`
+      ? `CGV du ${legalDateLabel(ORG_LEGAL_VERSION)} ni acceptées par le client ni annoncées par e-mail : prévenez-le d'abord (Informations légales, « Prévenir par e-mail »), ou choisissez « Accord écrit reçu ».`
       : schedule.email_recipients === 0
-        ? "Aucune adresse e-mail valide pour le propriétaire ni pour l'organisation : corrigez l'adresse pour annoncer la hausse, ou choisissez « Accord écrit reçu »."
+        ? "Aucune adresse e-mail valide pour le propriétaire ni pour le client : corrigez l'adresse pour annoncer la hausse, ou choisissez « Accord écrit reçu »."
         : null;
 
   const reset = () => {
@@ -258,7 +259,7 @@ export function DispatchModelForm({
         return void toast.error(res.error);
       }
       setConfirm(false);
-      toast.success(value !== model ? `Modèle : ${DISPATCH_MODEL_META[value].label}` : res.code === "SCHEDULED" ? "Hausse programmée" : "Frais plateforme enregistrés", {
+      toast.success(value !== model ? frSpaces(`Modèle : ${DISPATCH_MODEL_META[value].label}`) : res.code === "SCHEDULED" ? "Hausse programmée" : "Frais Rydar enregistrés", {
         description: frSpaces([res.message, value !== model && joinEnabled ? "Le lien d'inscription des chauffeurs reste actif." : ""].filter(Boolean).join(" ")),
         duration: res.code === "SCHEDULED" || res.emailsQueued > 0 ? 10_000 : undefined,
       });
@@ -271,7 +272,7 @@ export function DispatchModelForm({
     if (needsNote && consentNote.trim().length < 3) {
       return void setErrors({
         consentNote: modelChanged && !(increase && mode === "consent")
-          ? "Précisez la demande ou l'accord écrit de l'organisation pour ce changement de modèle (date et forme : e-mail, courrier…)"
+          ? "Précisez la demande ou l'accord écrit du client pour ce changement de modèle (date et forme\u00a0: e-mail, courrier…)"
           : "Précisez la date et la forme de l'accord écrit (e-mail, courrier…)",
       });
     }
@@ -285,22 +286,31 @@ export function DispatchModelForm({
 
   return (
     <div className="space-y-5">
-      <DispatchModelPicker value={value} onChange={setValue} disabled={pending || modelLocked} />
-      {modelLocked && (
-        <p className="-mt-3 text-[12px] text-fg-muted">
-          Flotte Privée{"\u00a0"}: modèle flotte imposé. Sortez d&apos;abord de la Flotte Privée («{"\u00a0"}Passer en flotte standard{"\u00a0"}» ou «{"\u00a0"}Passer en
-          centrale{"\u00a0"}», carte Flotte Privée){"\u00a0"}; les frais par course restent réglables ici.
-        </p>
+      {modelLocked ? (
+        // Flotte Privée : le modèle flotte est imposé (pas de choix grisé) ; la sortie passe par le changement d'offre de service
+        <div className="text-[13px] leading-relaxed">
+          <p className="text-fg">
+            Modèle{"\u00a0"}: flotte (imposé par la Flotte Privée).
+          </p>
+          <p className="mt-0.5 text-fg-muted">
+            Pour en changer, passez d&apos;abord en flotte standard ou en centrale («{"\u00a0"}Offre de service et réseau partagé{"\u00a0"}», plus bas sur cette
+            fiche){"\u00a0"}; les frais par course restent réglables ici.
+          </p>
+        </div>
+      ) : (
+        <DispatchModelPicker value={value} onChange={setValue} disabled={pending} />
       )}
       {errors.dispatchModel && <p className="-mt-3 text-xs text-red">{errors.dispatchModel}</p>}
       <div className="space-y-3.5 rounded-xl border border-line bg-white/[0.015] p-4">
         <div>
-          <p className="mb-1 text-[13px] font-medium text-fg">Frais plateforme Rydar</p>
-          <p className="text-[12px] text-fg-muted">{feeRule(value)}</p>
-          <p className="mt-1 text-[12px] text-fg-muted">
-            Changement{"\u00a0"}: une baisse s&apos;applique tout de suite{"\u00a0"}; une hausse est annoncée par e-mail au propriétaire au moins
-            30{"\u00a0"}jours à l&apos;avance, ou appliquée tout de suite sur son accord écrit.
-          </p>
+          <p className="text-[13px] font-medium text-fg">Frais Rydar par course</p>
+          <Disclosure title="Règles des frais" summaryClassName="text-[13px] text-fg-muted hover:text-fg" contentClassName="space-y-1 pb-1 text-[12.5px] leading-relaxed text-fg-muted">
+            <p>{feeRule(value)}</p>
+            <p>
+              Changement{"\u00a0"}: une baisse s&apos;applique tout de suite{"\u00a0"}; une hausse est annoncée par e-mail au propriétaire au moins
+              30{"\u00a0"}jours à l&apos;avance, ou appliquée tout de suite sur son accord écrit.
+            </p>
+          </Disclosure>
         </div>
         <TermsLine terms={terms} today={today} />
         {scheduled && <ScheduledFeeChange orgId={orgId} change={scheduled} currentText={currentText} timeZone={timeZone} />}
@@ -355,7 +365,7 @@ export function DispatchModelForm({
                 name={`${formId}-mode`}
                 checked={mode === "consent"}
                 onSelect={() => setMode("consent")}
-                title="Accord écrit de l'organisation reçu : appliquer maintenant"
+                title="Accord écrit du client reçu : appliquer maintenant"
                 description="Appliquée dès l'enregistrement ; le propriétaire reçoit un e-mail de confirmation. L'accord est gardé dans l'historique et le journal d'audit."
               />
               {mode === "consent" && (
@@ -380,10 +390,10 @@ export function DispatchModelForm({
           )}
           {modelChanged && !(increase && mode === "consent") && (
             <Field
-              label="Demande ou accord écrit de l'organisation"
+              label="Demande ou accord écrit du client"
               htmlFor={`${formId}-model-note`}
               error={errors.consentNote}
-              hint={frSpaces(`Changement de modèle : seulement à la demande de l'organisation ou avec son accord écrit (CGV, article 3). Date et forme (ex. « e-mail du propriétaire du 3 octobre 2026 »). ${consentNote.length}/500`)}
+              hint={frSpaces(`Changement de modèle : seulement à la demande du client ou avec son accord écrit (CGV, article 3). Date et forme (ex. « e-mail du propriétaire du 3 octobre 2026 »). ${consentNote.length}/500`)}
             >
               <Textarea
                 id={`${formId}-model-note`}
@@ -401,32 +411,29 @@ export function DispatchModelForm({
         {schedule && schedule.history.length > 0 && <FeeChangeHistory history={schedule.history} timeZone={timeZone} />}
       </div>
       {toFleet && (
-        <p className="flex items-start gap-2 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] text-amber">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span>
-            Retour au mode flotte{"\u00a0"}: plus de commission ni de règlement sur les nouvelles courses. Le lien d&apos;inscription des chauffeurs est
-            conservé{joinEnabled ? " (actif)" : ""}, sans mention de commission{"\u00a0"}; les chauffeurs déjà inscrits restent rattachés.
-            {fixedAfter > 0 && (
-              <>
-                {" "}
-                Frais fixes de {formatPrice(fixedAfter)}{"\u00a0"}: en flotte, ils sont dus même pour une course sans prix (et le pourcentage n&apos;est plus
-                plafonné au prix) — à faire seulement à la demande de l&apos;organisation.
-              </>
-            )}
-          </span>
-        </p>
+        <Callout tone="warning" className="text-[13px]">
+          Retour au mode flotte{"\u00a0"}: plus de commission ni de règlement sur les nouvelles courses. Le lien d&apos;inscription des chauffeurs est
+          conservé{joinEnabled ? " (actif)" : ""}, sans mention de commission{"\u00a0"}; les chauffeurs déjà inscrits restent rattachés.
+          {fixedAfter > 0 && (
+            <>
+              {" "}
+              Frais fixes de {formatPrice(fixedAfter)}{"\u00a0"}: en flotte, ils sont dus même pour une course sans prix (et le pourcentage n&apos;est plus
+              plafonné au prix) — à faire seulement à la demande du client.
+            </>
+          )}
+        </Callout>
       )}
       {toCentrale && (
-        <p className="rounded-lg border border-line bg-white/[0.015] px-3 py-2.5 text-[12.5px] text-fg-muted">
+        <Callout className="text-[13px]">
           Passage en centrale{"\u00a0"}: les chauffeurs entrés par la validation automatique du lien d&apos;inscription (jamais vérifiés)
           seront au niveau «{"\u00a0"}Nouveau{"\u00a0"}» (courses plafonnées) jusqu&apos;à leur confirmation dans «{"\u00a0"}Réseau{"\u00a0"}»{"\u00a0"}; ceux
           créés ou validés par la flotte sont «{"\u00a0"}Confirmés{"\u00a0"}».
-        </p>
+        </Callout>
       )}
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {dirty && (
           <Button type="button" variant="ghost" disabled={pending} onClick={reset}>
-            Annuler
+            Annuler les modifications
           </Button>
         )}
         <Button type="submit" form={formId} variant="primary" disabled={!dirty} loading={pending && !confirm}>
@@ -459,7 +466,7 @@ export function DispatchModelForm({
                   <span className="text-amber">•</span> Frais Rydar{"\u00a0"}: ceux réglés ci-dessus s&apos;appliquent aux courses terminées en flotte{"\u00a0"}; les frais déjà dus restent dus.
                 </li>
                 <li className="flex gap-2">
-                  <span className="text-amber">•</span> Repasser en centrale{"\u00a0"}: seulement à la demande de l&apos;organisation ou avec son accord écrit (CGV, article 3).
+                  <span className="text-amber">•</span> Repasser en centrale{"\u00a0"}: seulement à la demande du client ou avec son accord écrit (CGV, article 3).
                 </li>
               </>
             )}
@@ -467,7 +474,7 @@ export function DispatchModelForm({
               <li className="flex gap-2">
                 <span className="text-amber">•</span>
                 <span>
-                  Changement de modèle à la demande de l&apos;organisation ou avec son accord écrit (CGV, article 3), gardé au journal d&apos;audit{"\u00a0"}:
+                  Changement de modèle à la demande du client ou avec son accord écrit (CGV, article 3), gardé au journal d&apos;audit{"\u00a0"}:
                   «{"\u00a0"}{consentNote.trim()}{"\u00a0"}».
                 </span>
               </li>
@@ -494,15 +501,12 @@ export function DispatchModelForm({
                   00:00 ({timeZone}){"\u00a0"}; d&apos;ici là, les frais actuels restent appliqués.
                 </li>
                 <li className="flex gap-2">
-                  <span className="text-amber">•</span> L&apos;organisation peut résilier sans frais avant cette date{"\u00a0"}; vous pouvez annuler la hausse tant qu&apos;elle n&apos;est pas appliquée.
+                  <span className="text-amber">•</span> Le client peut résilier sans frais avant cette date{"\u00a0"}; vous pouvez annuler la hausse tant qu&apos;elle n&apos;est pas appliquée.
                 </li>
               </>
             ))}
           </ul>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button type="button" variant="ghost" disabled={pending} onClick={() => setConfirm(false)}>
-              Annuler
-            </Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="button" variant={toFleet ? "danger" : "primary"} loading={pending} onClick={save}>
               {toFleet
                 ? "Passer en mode flotte"
@@ -510,9 +514,9 @@ export function DispatchModelForm({
                   ? "Passer en centrale"
                   : mode === "consent" && increase
                     ? "Appliquer maintenant"
-                    : "Programmer"}
+                    : "Programmer la hausse"}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -536,7 +540,7 @@ function RadioRow({ name, checked, onSelect, title, description }: { name: strin
 function TermsLine({ terms, today }: { terms: OrgTermsStatus | null; today: string }) {
   const version = legalDateLabel(ORG_LEGAL_VERSION);
   const limit = legalDateLabel(ORG_LEGAL_EFFECTIVE_AT);
-  if (!terms) return <p className="text-[12px] text-fg-subtle">Acceptation des CGV du {version} indisponible.</p>;
+  if (!terms) return <p className="text-[12px] text-fg-muted">Acceptation des CGV du {version} illisible pour le moment.</p>;
   if (terms.state === "accepted") {
     return (
       <p className="flex items-start gap-1.5 text-[12px] text-fg-muted">
@@ -548,10 +552,9 @@ function TermsLine({ terms, today }: { terms: OrgTermsStatus | null; today: stri
     );
   }
   return (
-    <p className="flex items-start gap-1.5 rounded-lg border border-amber/25 bg-amber/[0.06] px-3 py-2 text-[12px] text-fg-muted">
-      <AlertTriangle className="mt-px size-3.5 shrink-0 text-amber" />
+    <Callout tone="warning" className="px-3 py-2 text-[12.5px]">
       <span>
-        <span className="font-medium text-amber">CGV du {version} pas encore acceptées</span> (
+        <span className="font-medium text-fg">CGV du {version} pas encore acceptées</span> (
         {terms.state === "updated" ? "version antérieure acceptée" : "aucune version acceptée"}
         {terms.notifiedAt ? `, annoncées par e-mail le ${formatDate(terms.notifiedAt)}` : ", pas encore annoncées par e-mail"})
         {!terms.notifiedAt ? (
@@ -571,7 +574,7 @@ function TermsLine({ terms, today }: { terms: OrgTermsStatus | null; today: stri
           </>
         )}
       </span>
-    </p>
+    </Callout>
   );
 }
 
@@ -607,10 +610,6 @@ function PlanPreview({
   return <p className={cn("text-[12px] leading-[18px]", plan.kind === "increase" ? "text-fg" : "text-fg-muted")}>{frSpaces(text)}</p>;
 }
 
-/** « 2 € par course terminée », « 10 % du prix + 0,50 € par course terminée », « aucuns frais par course ». */
-const ratesText = (percent: number, fixedCents: number) =>
-  feeTermsText({ fee_percent: percent, fee_fixed_cents: fixedCents, currency: "EUR" }, "aucuns frais par course");
-
 /** Hausse annoncée, pas encore appliquée : taux, date d'effet, annonce envoyée, annulation. */
 function ScheduledFeeChange({ orgId, change, currentText, timeZone }: { orgId: string; change: PlatformFeeChangeRow; currentText: string; timeZone: string }) {
   const router = useRouter();
@@ -623,29 +622,28 @@ function ScheduledFeeChange({ orgId, change, currentText, timeZone }: { orgId: s
   const late = noticeLate(change);
 
   return (
-    <div className="rounded-lg border border-amber/25 bg-amber/[0.06] px-3.5 py-3 text-[12.5px]" role="status">
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0">
-          <p className="flex items-center gap-1.5 font-medium text-fg">
-            <CalendarClock className="size-3.5 shrink-0 text-amber" /> Hausse programmée le {isoDayLabel(change.effective_on)}
-          </p>
-          <p className="mt-0.5 text-fg-muted">
-            {frSpaces(`À partir du ${isoDayLabel(change.effective_on)} à 00:00 (${timeZone}) : ${target}. Actuellement : ${currentText}.`)}
-          </p>
-          <p className="mt-0.5 text-fg-muted">
-            Annoncée le {formatDate(change.created_at, timeZone)}
-            {change.created_by_name ? ` par ${change.created_by_name}` : ""} · <span className={mail.tone}>{mail.text}</span>
-          </p>
-          {late && (
-            <p className="mt-0.5 text-red">
-              {frSpaces("E-mail d'annonce pas parti au moins 30 jours avant la date d'effet : la hausse ne sera pas appliquée (annulée à cette date). Annulez-la et reprogrammez-la, ou appliquez-la sur accord écrit.")}
-            </p>
-          )}
-        </div>
+    <Callout
+      tone={late ? "danger" : "warning"}
+      role="status"
+      icon={<CalendarClock />}
+      title={`Hausse programmée le ${isoDayLabel(change.effective_on)}`}
+      className="px-3.5 py-3 text-[12.5px]"
+      action={
         <Button type="button" variant="outline" size="xs" onClick={() => setOpen(true)}>
           <X /> Annuler ce changement
         </Button>
-      </div>
+      }
+    >
+      <p>{frSpaces(`À partir du ${isoDayLabel(change.effective_on)} à 00:00 (${timeZone}) : ${target}. Actuellement : ${currentText}.`)}</p>
+      <p className="mt-0.5">
+        Annoncée le {formatDate(change.created_at, timeZone)}
+        {change.created_by_name ? ` par ${change.created_by_name}` : ""} · <span className={mail.tone}>{mail.text}</span>
+      </p>
+      {late && (
+        <p className="mt-0.5 font-medium text-fg">
+          {frSpaces("E-mail d'annonce pas parti au moins 30 jours avant la date d'effet : la hausse ne sera pas appliquée (annulée à cette date). Annulez-la et reprogrammez-la, ou appliquez-la sur accord écrit.")}
+        </p>
+      )}
       <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
         <DialogContent
           title="Annuler la hausse programmée ?"
@@ -669,29 +667,16 @@ function ScheduledFeeChange({ orgId, change, currentText, timeZone }: { orgId: s
             <Field label="Motif" optional htmlFor={`cancel-${change.id}`} error={error ?? undefined} hint={`Gardé dans l'historique. ${reason.length}/300`}>
               <Textarea id={`cancel-${change.id}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} className="min-h-[64px]" />
             </Field>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button type="button" variant="ghost" disabled={pending} onClick={() => setOpen(false)}>
-                Garder la hausse
-              </Button>
+            <DialogFooter backLabel="Garder la hausse" backDisabled={pending}>
               <Button type="submit" variant="danger" loading={pending}>
                 Annuler la hausse
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </Callout>
   );
-}
-
-/**
- * Hausse programmée dont l'e-mail d'annonce n'est pas (ou ne sera plus) parti au moins 30 jours avant la date d'effet :
- * le ménage l'annulera (private.apply_platform_fee_changes). Envoi encore possible à temps : pas d'alerte.
- */
-function noticeLate(c: Pick<PlatformFeeChangeRow, "status" | "mode" | "effective_at" | "notice_sent_at">, now = Date.now()): boolean {
-  if (c.status !== "scheduled" || c.mode !== "notice") return false;
-  const limit = Date.parse(c.effective_at) - 30 * 86_400_000;
-  return c.notice_sent_at ? Date.parse(c.notice_sent_at) > limit : now > limit;
 }
 
 /** E-mails d'un changement (annonce, confirmation, annulation) : envoyés, en attente, en échec, ou aucune adresse. */
@@ -700,12 +685,12 @@ function emailsSummary(c: Pick<PlatformFeeChangeRow, "emails" | "emails_queued">
   if (!list.length) {
     return c.emails_queued > 0
       ? { text: `${c.emails_queued} e-mail${c.emails_queued > 1 ? "s" : ""} mis en file`, tone: "text-fg-muted" }
-      : { text: "aucune adresse e-mail valide\u00a0: prévenez l'organisation vous-même", tone: "text-amber" };
+      : { text: "aucune adresse e-mail valide\u00a0: prévenez le client vous-même", tone: "text-fg" };
   }
   const failed = list.filter((e) => e.status === "failed").length;
   const waiting = list.filter((e) => e.status === "pending" || e.status === "sending").length;
   const sent = list.length - failed - waiting;
-  if (failed) return { text: `${failed} e-mail${failed > 1 ? "s" : ""} en échec\u00a0: prévenez l'organisation vous-même`, tone: "text-red" };
+  if (failed) return { text: `${failed} e-mail${failed > 1 ? "s" : ""} en échec\u00a0: prévenez le client vous-même`, tone: "text-red" };
   if (waiting) return { text: `${waiting} e-mail${waiting > 1 ? "s" : ""} en attente d'envoi`, tone: "text-fg-muted" };
   return { text: `e-mail envoyé${sent > 1 ? ` (${sent})` : ""}`, tone: "text-fg-muted" };
 }
@@ -713,10 +698,12 @@ function emailsSummary(c: Pick<PlatformFeeChangeRow, "emails" | "emails_queued">
 /** 20 derniers changements des frais par course (création, baisses, hausses annoncées ou sur accord écrit). */
 function FeeChangeHistory({ history, timeZone }: { history: PlatformFeeChangeRow[]; timeZone: string }) {
   return (
-    <details className="group rounded-lg border border-line">
-      <summary className="cursor-pointer select-none px-3.5 py-2.5 text-[12.5px] font-medium text-fg-muted hover:text-fg">
-        Historique des frais par course ({history.length})
-      </summary>
+    <Disclosure
+      title="Historique des frais par course"
+      hint={String(history.length)}
+      className="rounded-lg border border-line"
+      summaryClassName="px-3.5 text-[13px] text-fg-muted hover:text-fg"
+    >
       <ul className="divide-y divide-line border-t border-line">
         {history.map((h) => {
           const status = PLATFORM_FEE_CHANGE_STATUS_META[h.status];
@@ -730,7 +717,7 @@ function FeeChangeHistory({ history, timeZone }: { history: PlatformFeeChangeRow
                 <Badge tone={status.tone} dot={false} className="h-[18px]">
                   {status.label}
                 </Badge>
-                <span className="text-fg-subtle">{PLATFORM_FEE_CHANGE_MODE_META[h.mode].label}</span>
+                <span className="text-fg-muted">{PLATFORM_FEE_CHANGE_MODE_META[h.mode].label}</span>
               </p>
               <p className="text-fg-muted">
                 {h.mode === "notice" ? `Effet le ${isoDayLabel(h.effective_on)}` : `Appliqué le ${formatDate(h.applied_at ?? h.created_at, timeZone)}`} · réglé le{" "}
@@ -745,7 +732,7 @@ function FeeChangeHistory({ history, timeZone }: { history: PlatformFeeChangeRow
               </p>
               {h.consent_note && <p className="text-fg-muted">Accord écrit{"\u00a0"}: «{"\u00a0"}{h.consent_note}{"\u00a0"}»</p>}
               {h.close_reason && (
-                <p className="text-fg-subtle">
+                <p className="text-fg-muted">
                   {h.close_reason}
                   {h.closed_by_name ? ` (${h.closed_by_name})` : ""}
                 </p>
@@ -754,6 +741,6 @@ function FeeChangeHistory({ history, timeZone }: { history: PlatformFeeChangeRow
           );
         })}
       </ul>
-    </details>
+    </Disclosure>
   );
 }

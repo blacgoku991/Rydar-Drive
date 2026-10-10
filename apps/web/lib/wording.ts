@@ -131,6 +131,10 @@ export const NOTIFICATION_ERRORS: Record<string, string> = {
   EXPO_BAD_RESPONSE: INCOMPLETE,
   NO_RESULT: INCOMPLETE,
   ExpoError: INCOMPLETE,
+  // Annulées avant l'envoi par le ménage (statut « cancelled », migrations) : proposition déjà close (prise, refusée,
+  // expirée ou annulée), réveil de position périmé
+  offer_closed: "Proposition close avant l'envoi",
+  wake_expired: "Demande de position expirée avant l'envoi",
 };
 
 /** Code d'une erreur brute : « DeviceNotRegistered: … », « PUSH_TIMEOUT: expo (20000 ms) », « NOT_FOUND/UNREGISTERED: … ». */

@@ -1,12 +1,13 @@
 "use client";
-import { DISPATCH_MODEL_META, slugify, type DispatchModel } from "@rydar/shared";
+import { DISPATCH_MODEL_META, formatNumber, slugify, type DispatchModel } from "@rydar/shared";
 import { useRouter } from "next/navigation";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createOrganization, savePlan, setOrganizationStatus, updateOrganizationPlan } from "@/app/admin/actions";
 import { FeeFields, feeRule } from "@/components/admin/dispatch-model";
 import { readFees } from "@/components/admin/fees";
-import { NO_PLAN_LIMITS, limitEnabled } from "@/components/admin/private-fleet-state";
+import { PLAN_NUMBER_LIMITS, PLAN_OPTION_LIMITS, planSummary } from "@/components/admin/org-watch";
+import { NO_PLAN_LIMITS, effectiveLimits, limitEnabled } from "@/components/admin/private-fleet-state";
 import { frSpaces } from "@/components/platform-fees/org-platform-format";
 import { Columns, DataTable } from "@/components/charts/charts";
 import { Button } from "@/components/ui/button";
@@ -14,10 +15,10 @@ import { Dialog, DialogContent, DialogFooter, SheetContent } from "@/components/
 import { Disclosure } from "@/components/ui/disclosure";
 import { FormSection } from "@/components/ui/form-section";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
-import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import type { SuspensionBasis } from "@/lib/suspension";
 import { cn, submitWith } from "@/lib/utils";
+import { plural } from "@/lib/wording";
 
 const dayLabel = (v: string) => {
   const d = new Date(v);
@@ -236,10 +237,15 @@ export function CreateOrganizationSheet({
 const SUSPENSION_BASES = [
   { value: "notice", label: "Mise en demeure restée sans effet (8 jours au moins)" },
   { value: "urgent", label: "Urgence : fraude, usage illicite ou atteinte à la sécurité du service" },
-  { value: "request", label: "Demande écrite de la centrale" },
+  { value: "request", label: "Demande écrite du client" },
 ] as const;
 
-export function OrganizationStatusActions({ orgId, status }: { orgId: string; status: string }) {
+/**
+ * Statut d'un client (fiche du super admin, docs/REFONTE-PANELS.md R4) : « Réactiver » dans l'en-tête (`part` =
+ * « reactivate », client suspendu ou archivé), « Suspendre » et « Archiver » en bas de la fiche (`part` = « sensitive » :
+ * zone sensible, rien pour un client archivé). Mêmes dialogues, mêmes champs, même action serveur.
+ */
+export function OrganizationStatusActions({ orgId, status, part }: { orgId: string; status: string; part: "reactivate" | "sensitive" }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
@@ -251,23 +257,55 @@ export function OrganizationStatusActions({ orgId, status }: { orgId: string; st
     start(() => runAction(async () => {
       const res = await setOrganizationStatus(orgId, s, reason, basis ? { kind: basis, noticeDate: noticeDate || null } : undefined);
       if (!res.ok) return void toast.error(res.error);
-      toast.success(s === "active" ? "Rattacheur réactivé" : s === "suspended" ? "Rattacheur suspendu — accès coupés" : "Rattacheur archivé");
+      toast.success(s === "active" ? "Client réactivé" : s === "suspended" ? "Client suspendu\u00a0: accès coupés" : "Client archivé");
       setOpen(false);
       setArchiving(false);
       router.refresh();
     }));
+
+  if (part === "reactivate") {
+    return status !== "active" ? (
+      <Button variant="primary" loading={pending} onClick={() => run("active")}>
+        Réactiver
+      </Button>
+    ) : null;
+  }
+  if (status === "archived") return null;
   return (
-    <>
-      {status !== "active" && <Button variant="primary" loading={pending} onClick={() => run("active")}>Réactiver</Button>}
-      {status === "active" && <Button variant="danger" onClick={() => setOpen(true)}>Suspendre</Button>}
-      {status !== "archived" && <Button variant="outline" onClick={() => setArchiving(true)}>Archiver</Button>}
+    <section aria-labelledby={`zone-sensible-${orgId}`} className="rounded-xl border border-red/25">
+      <div className="border-b border-line px-5 py-4">
+        <h2 id={`zone-sensible-${orgId}`} className="text-[14px] font-semibold tracking-tight text-fg">
+          Zone sensible
+        </h2>
+        <p className="mt-0.5 text-[12.5px] text-fg-muted">Ces actions coupent l&apos;accès du client à son espace et à ses chauffeurs.</p>
+      </div>
+      <ul className="divide-y divide-line">
+        {status === "active" && (
+          <SensitiveRow
+            title="Suspendre le client"
+            consequence="Membres et chauffeurs perdent immédiatement l'accès aux données ; les courses ne sont plus dispatchées. Fondement et motif obligatoires (CGV, article 7)."
+          >
+            <Button variant="danger" onClick={() => setOpen(true)}>
+              Suspendre
+            </Button>
+          </SensitiveRow>
+        )}
+        <SensitiveRow
+          title="Archiver le client"
+          consequence="Membres et chauffeurs perdent l'accès, les courses ne sont plus dispatchées ; données et registre des frais conservés, réactivation possible."
+        >
+          <Button variant="danger" onClick={() => setArchiving(true)}>
+            Archiver
+          </Button>
+        </SensitiveRow>
+      </ul>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          title="Suspendre ce rattacheur"
+          title="Suspendre ce client ?"
           description="Membres et chauffeurs perdent immédiatement l'accès aux données ; les courses ne sont plus dispatchées. Le propriétaire et les administrateurs peuvent encore se connecter pour voir la suspension et régler les frais dus."
         >
           <div className="space-y-4">
-            <Field label="Fondement" hint="Article 7 des CGV. Le fondement et le motif sont enregistrés et affichés au propriétaire et aux administrateurs de la centrale.">
+            <Field label="Fondement" hint="Article 7 des CGV. Le fondement et le motif sont enregistrés et affichés au propriétaire et aux administrateurs du client.">
               <NativeSelect value={basis} onChange={(e) => setBasis(e.target.value as "" | SuspensionBasis["kind"])}>
                 <option value="">Choisir…</option>
                 {SUSPENSION_BASES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
@@ -275,44 +313,61 @@ export function OrganizationStatusActions({ orgId, status }: { orgId: string; st
             </Field>
             {basis === "notice" && (
               <Field label="Date de la mise en demeure" hint="Envoyée par écrit au propriétaire, il y a 8 jours au moins.">
-                <Input type="date" value={noticeDate} onChange={(e) => setNoticeDate(e.target.value)} />
+                <Input type="date" value={noticeDate} onChange={(e) => setNoticeDate(e.target.value)} className="[color-scheme:dark]" />
               </Field>
             )}
             <Field label="Motif" hint="Faits reprochés, 10 caractères au moins.">
-              <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Frais impayés depuis le…, fraude constatée le…" />
+              <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder={"ex.\u00a0: frais impayés depuis le…, fraude constatée le…"} />
             </Field>
           </div>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
-            <Button variant="danger" loading={pending} onClick={() => run("suspended")}>Suspendre</Button>
-          </div>
+          <DialogFooter backDisabled={pending}>
+            <Button variant="danger" loading={pending} onClick={() => run("suspended")}>Suspendre le client</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={archiving} onOpenChange={setArchiving}>
-        <DialogContent title="Archiver ce rattacheur ?" description="Il disparaît des centrales actives : membres et chauffeurs perdent l'accès, les courses ne sont plus dispatchées. Les données et le registre des frais sont conservés ; vous pourrez le réactiver.">
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setArchiving(false)}>Annuler</Button>
-            <Button variant="danger" loading={pending} onClick={() => run("archived")}>Archiver</Button>
-          </div>
+        <DialogContent
+          title="Archiver ce client ?"
+          description="Il disparaît des clients actifs : membres et chauffeurs perdent l'accès, les courses ne sont plus dispatchées. Les données et le registre des frais sont conservés ; vous pourrez le réactiver."
+        >
+          <DialogFooter backDisabled={pending}>
+            <Button variant="danger" loading={pending} onClick={() => run("archived")}>Archiver le client</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </section>
   );
 }
 
-const LIMIT_FIELDS = [
-  { key: "max_drivers", label: "Chauffeurs max.", type: "number" },
-  { key: "max_rides_per_month", label: "Courses / mois", type: "number" },
-  { key: "max_admins", label: "Administrateurs", type: "number" },
-  { key: "api_access", label: "API", type: "bool" },
-  { key: "booking_site", label: "Mini-site", type: "bool" },
-  { key: "custom_domain", label: "Domaine perso.", type: "bool" },
-  { key: "advanced_stats", label: "Stats avancées", type: "bool" },
-] as const;
+/** Ligne de la zone sensible : l'action, sa conséquence en une phrase, puis le bouton (dessous sur téléphone). */
+function SensitiveRow({ title, consequence, children }: { title: string; consequence: string; children: React.ReactNode }) {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 py-4">
+      <div className="min-w-0 flex-1 basis-[min(100%,20rem)]">
+        <p className="text-[13.5px] font-medium text-fg">{title}</p>
+        <p className="mt-0.5 text-[12.5px] leading-relaxed text-fg-muted">{frSpaces(consequence)}</p>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </li>
+  );
+}
 
 /** Flotte Privée : limites imposées par private.org_limits APRÈS l'offre et la surcharge. */
-const PRIVATE_FLEET_FIXED: Record<string, string> = { max_drivers: "1", max_admins: "1" };
+const PRIVATE_FLEET_FIXED: Record<string, number> = { max_drivers: 1, max_admins: 1 };
 
+type OptionChoice = "plan" | "on" | "off";
+
+/** Mêmes ajustements (ordre des clés indifférent). */
+const sameLimits = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+  Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => k in b && a[k] === b[k]);
+
+/**
+ * Offre et limites d'un client (fiche du super admin) : résumé des limites EFFECTIVES (offre, ajustements, puis
+ * Flotte Privée), offre, puis « Ajuster une limite pour ce client (facultatif) » replié. Nombre vide = valeur de
+ * l'offre (clé retirée) ; option « Selon l'offre » = clé retirée, « Forcer : oui / non » = vrai / faux. Même structure
+ * envoyée qu'avant (updateOrganizationPlan : offre + surcharge). Flotte Privée : 1 chauffeur et 1 accès imposés par la
+ * base (champs verrouillés, valeur enregistrée inchangée) ; offre sans API refusée par le serveur.
+ */
 export function OrganizationPlanForm({
   orgId,
   plans,
@@ -321,28 +376,51 @@ export function OrganizationPlanForm({
   privateFleet = false,
 }: {
   orgId: string;
-  plans: { id: string; name: string; limits: any }[];
+  plans: { id: string; name: string; limits: Record<string, unknown> | null }[];
   planId: string | null;
-  override: Record<string, any>;
+  override: Record<string, unknown>;
   /** Flotte Privée : 1 chauffeur et 1 accès imposés ; offre (et surcharge) sans accès à l'API refusée */
   privateFleet?: boolean;
 }) {
   const router = useRouter();
+  const uid = useId();
   const [pending, start] = useTransition();
   const [plan, setPlan] = useState(planId ?? "");
-  const [o, setO] = useState<Record<string, any>>(override ?? {});
+  const [o, setO] = useState<Record<string, unknown>>(override ?? {});
+  const chosen = plans.find((p) => p.id === plan) ?? null;
   // Sans offre : aucune limite, toutes les options (comme private.org_limits)
-  const base = plan ? (plans.find((p) => p.id === plan)?.limits ?? {}) : NO_PLAN_LIMITS;
+  const base: Record<string, unknown> = plan ? (chosen?.limits ?? {}) : NO_PLAN_LIMITS;
+  const limits = effectiveLimits({ planId: plan || null, planLimits: chosen?.limits, override: o, privateFleet });
+  const adjusted = Object.keys(o).filter((k) => [...PLAN_NUMBER_LIMITS, ...PLAN_OPTION_LIMITS].some((f) => f.key === k)).length;
+  const dirty = (plan || null) !== (planId || null) || !sameLimits(o, override ?? {});
+  const setKey = (key: string, value: unknown | undefined) =>
+    setO((c) => {
+      const n = { ...c };
+      if (value === undefined) delete n[key];
+      else n[key] = value;
+      return n;
+    });
+  const choiceOf = (key: string): OptionChoice => (!(key in o) ? "plan" : limitEnabled(o[key]) ? "on" : "off");
+  const baseText = (key: string) => {
+    const v = base[key];
+    return typeof v === "number" ? formatNumber(v) : "illimité";
+  };
+
   return (
     <div className="space-y-4">
-      {privateFleet && (
-        <p className="rounded-lg border border-brand/25 bg-brand/[0.05] px-3 py-2 text-[12.5px] text-fg-muted">
-          1 chauffeur et 1 accès imposés par la Flotte Privée, quelles que soient l&apos;offre et les surcharges. Offre avec l&apos;accès à l&apos;API
-          exigée (le site du client réserve par l&apos;API).
-        </p>
-      )}
-      <Field label="Offre" hint={plan ? undefined : "Sans offre : aucune limite, toutes les options"}>
-        <NativeSelect value={plan} onChange={(e) => setPlan(e.target.value)}>
+      <p className="text-[13px] leading-relaxed text-fg">{planSummary(chosen?.name ?? null, limits)}</p>
+      <Field
+        label="Offre"
+        htmlFor={`${uid}-plan`}
+        hint={
+          privateFleet
+            ? "Flotte Privée\u00a0: l'offre doit inclure l'API de réservation (le site du client réserve par l'API)."
+            : plan
+              ? undefined
+              : "Sans offre\u00a0: aucune limite, toutes les options."
+        }
+      >
+        <NativeSelect id={`${uid}-plan`} value={plan} onChange={(e) => setPlan(e.target.value)} disabled={pending}>
           <option value="">Sans offre</option>
           {plans.map((p) => (
             <option key={p.id} value={p.id}>
@@ -351,34 +429,79 @@ export function OrganizationPlanForm({
           ))}
         </NativeSelect>
       </Field>
-      <p className="text-[12px] text-fg-subtle">Surcharges spécifiques (vide = valeur de l&apos;offre)</p>
-      <div className="grid grid-cols-2 gap-3">
-        {LIMIT_FIELDS.map((f) =>
-          f.type === "number" ? (
-            <Field key={f.key} label={f.label} hint={privateFleet && PRIVATE_FLEET_FIXED[f.key] ? `imposé : ${PRIVATE_FLEET_FIXED[f.key]} (Flotte Privée)` : `offre : ${base[f.key] ?? "∞"}`}>
-              <Input
-                type="number"
-                value={o[f.key] ?? ""}
-                placeholder="—"
-                onChange={(e) => setO((c) => { const n = { ...c }; if (e.target.value === "") delete n[f.key]; else n[f.key] = Number(e.target.value); return n; })}
-                className="num"
-              />
+      <Disclosure
+        title="Ajuster une limite pour ce client (facultatif)"
+        hint={adjusted ? plural(adjusted, "limite ajustée", "limites ajustées") : undefined}
+        className="rounded-xl border border-line px-4"
+        contentClassName="space-y-4 pb-4 pt-1"
+      >
+        <p className="text-[12.5px] text-fg-muted">Vide ou «{"\u00a0"}Selon l&apos;offre{"\u00a0"}»{"\u00a0"}: la valeur de l&apos;offre s&apos;applique.</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {PLAN_NUMBER_LIMITS.map((f) => {
+            const fixed = privateFleet ? PRIVATE_FLEET_FIXED[f.key] : undefined;
+            const value = o[f.key];
+            return (
+              <Field
+                key={f.key}
+                label={f.label}
+                hint={fixed !== undefined ? `Imposé\u00a0: ${fixed} (Flotte Privée)` : `${plan ? "Selon l'offre" : "Sans offre"}\u00a0: ${baseText(f.key)}`}
+              >
+                {fixed !== undefined ? (
+                  // Affichage seulement : la valeur enregistrée (renvoyée telle quelle) n'a aucun effet, la base impose 1
+                  <Input type="number" value={fixed} disabled readOnly className="num" />
+                ) : (
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={typeof value === "number" ? value : ""}
+                    placeholder="—"
+                    onChange={(e) => setKey(f.key, e.target.value === "" ? undefined : Number(e.target.value))}
+                    disabled={pending}
+                    className="num"
+                  />
+                )}
+              </Field>
+            );
+          })}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {PLAN_OPTION_LIMITS.map((f) => (
+            <Field key={f.key} label={f.label}>
+              <NativeSelect
+                value={choiceOf(f.key)}
+                onChange={(e) => {
+                  const v = e.target.value as OptionChoice;
+                  setKey(f.key, v === "plan" ? undefined : v === "on");
+                }}
+                disabled={pending}
+              >
+                <option value="plan">{`${plan ? "Selon l'offre" : "Sans offre"} (${limitEnabled(base[f.key]) ? "oui" : "non"})`}</option>
+                <option value="on">{"Forcer\u00a0: oui"}</option>
+                <option value="off">{"Forcer\u00a0: non"}</option>
+              </NativeSelect>
             </Field>
-          ) : (
-            <label key={f.key} className="flex items-center justify-between rounded-lg border border-line px-3 py-2 text-[12.5px]">
-              <span>{f.label} <span className="text-fg-subtle">({base[f.key] ? "oui" : "non"})</span></span>
-              <Switch checked={o[f.key] ?? Boolean(base[f.key])} onCheckedChange={(v) => setO((c) => ({ ...c, [f.key]: v }))} />
-            </label>
-          ),
-        )}
-      </div>
+          ))}
+        </div>
+      </Disclosure>
       <div className="flex justify-end">
         <Button
           variant="primary"
           loading={pending}
-          onClick={() => start(() => runAction(async () => { const r = await updateOrganizationPlan(orgId, plan || null, o); if (r.ok) { toast.success("Offre mise à jour"); router.refresh(); } else toast.error(r.error); }))}
+          disabled={!dirty}
+          onClick={() =>
+            start(() =>
+              runAction(async () => {
+                const r = await updateOrganizationPlan(orgId, plan || null, o);
+                if (r.ok) {
+                  toast.success("Offre mise à jour");
+                  router.refresh();
+                } else toast.error(r.error);
+              }),
+            )
+          }
         >
-          Enregistrer
+          Enregistrer l&apos;offre
         </Button>
       </div>
     </div>

@@ -59,7 +59,8 @@ export function Disclosure({
           summaryClassName,
         )}
       >
-        <ChevronRight aria-hidden className="size-4 shrink-0 text-fg-subtle transition-transform group-open/disclosure:rotate-90" />
+        {/* Rotation selon l'état de CE repli (jamais group-open : un repli imbriqué dans un repli ouvert paraîtrait ouvert) */}
+        <ChevronRight aria-hidden className={cn("size-4 shrink-0 text-fg-subtle transition-transform", open && "rotate-90")} />
         <span className="min-w-0 flex-1">{title}</span>
         {hint && <span className="shrink-0 text-[12.5px] font-normal text-fg-muted">{hint}</span>}
       </summary>

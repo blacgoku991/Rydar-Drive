@@ -73,6 +73,15 @@ describe("Disclosure", () => {
   it("aucun état mémorisé (pas de nouvelle clé de stockage)", () => {
     expect(source("disclosure.tsx")).not.toMatch(/localStorage|sessionStorage/);
   });
+
+  it("repli imbriqué : son chevron suit SON état, pas celui du repli ouvert qui le contient", () => {
+    const inner = createElement(Disclosure, { title: "Intérieur", children: "x" });
+    const out = html(createElement(Disclosure, { title: "Extérieur", defaultOpen: true, children: inner }));
+    const chevrons = [...out.matchAll(/<svg[^>]*class="([^"]*)"/g)].map((m) => m[1]!);
+    expect(chevrons).toHaveLength(2);
+    expect(chevrons[0]).toContain("rotate-90");
+    expect(chevrons[1]).not.toContain("rotate-90");
+  });
 });
 
 describe("FilterTabs", () => {

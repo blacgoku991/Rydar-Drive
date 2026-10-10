@@ -1,9 +1,11 @@
 import "server-only";
-// Super admin — fiche d'une organisation (docs/FLOTTE-PRIVEE.md § 8.3) : carte « Flotte Privée » en tête (chauffeur =
-// propriétaire, état de sa fiche, application utilisée, invitation acceptée, CGV et accord de traitement, offre et accès
-// à l'API, référence du contrat, site du client avec ses clés et ses dernières réservations, fiche recréée, changement
-// d'offre de service) ; organisation standard : « Passer en Flotte Privée » avec les conditions, à titre indicatif (la
-// RPC fait foi). Lectures du super admin par la RLS ; compte Auth du propriétaire et conditions par le service role.
+// Super admin — fiche d'un client (docs/FLOTTE-PRIVEE.md § 8.3, docs/REFONTE-PANELS.md R4) : carte « Flotte Privée » en
+// tête (chauffeur = propriétaire, état de sa fiche, application utilisée, invitation acceptée, CGV et accord de
+// traitement, offre et accès à l'API, référence du contrat, site du client avec ses clés et ses dernières réservations,
+// fiche recréée) ; changement d'offre de service plus bas, dans le repli « Offre de service et réseau partagé » :
+// Flotte Privée → « Passer en flotte standard » / « Passer en centrale » (PrivateFleetExitCard) ; client standard →
+// « Passer en Flotte Privée » avec les conditions, à titre indicatif (PrivateFleetEntryCard, la RPC fait foi). Lectures
+// du super admin par la RLS ; compte Auth du propriétaire et conditions par le service role.
 import {
   ORG_LEGAL_VERSION, PRESENCE_META, RIDE_STATUS_META, formatDate, formatPrice, formatRelative, formatRideDate, legalDateLabel,
   type AdminPlatformFeeSchedule, type DriverPresence, type NetworkMembership, type PrivateFleetBlocker, type RideStatus, type VehicleCategory,
@@ -76,10 +78,10 @@ const relative = (iso: string | null | undefined, now: Date) => (iso ? formatRel
 // -----------------------------------------------------------------------------
 // Flotte Privée
 // -----------------------------------------------------------------------------
-export async function PrivateFleetCard({ db, org, members, plans, schedule, today, timeZone, terms }: Common & { terms: OrgTermsStatus | null }) {
+export async function PrivateFleetCard({ db, org, members, plans, timeZone, terms }: Omit<Common, "schedule" | "today"> & { terms: OrgTermsStatus | null }) {
   const now = new Date();
   const owner = members.find((m) => m.role === "owner" && m.status === "active") ?? members.find((m) => m.role === "owner") ?? null;
-  const [drivers, vehicles, keys, rides, history, openRides, account] = await Promise.all([
+  const [drivers, vehicles, keys, rides, history, account] = await Promise.all([
     db
       .from("drivers")
       .select("id, number, first_name, last_name, phone, vtc_card_number, status, presence, deleted_at, owner_driver, user_id, last_seen_at, vehicle_id, created_at")
@@ -115,7 +117,6 @@ export async function PrivateFleetCard({ db, org, members, plans, schedule, toda
       .in("action", ["organization.private_fleet_created", "organization.private_fleet_enabled"])
       .order("created_at", { ascending: false })
       .limit(10),
-    db.from("rides").select("id", { count: "exact", head: true }).eq("organization_id", org.id).in("status", OPEN_STATUSES),
     owner
       ? createAdminClient()
           .auth.admin.getUserById(owner.user_id)
@@ -185,11 +186,11 @@ export async function PrivateFleetCard({ db, org, members, plans, schedule, toda
   }));
   const keyBlocked =
     org.status !== "active"
-      ? "Organisation suspendue ou archivée : aucune clé ne peut être créée."
+      ? "Client suspendu ou archivé : aucune clé ne peut être créée."
       : !termsAccepted
         ? `CGV et accord de traitement du ${legalDateLabel(ORG_LEGAL_VERSION)} pas encore acceptés par le client (espace web) : la clé du site se crée après leur acceptation.`
         : !api
-          ? "Offre sans accès à l'API : changez d'abord l'offre (« Offre & limites »)."
+          ? "Offre sans accès à l'API : changez d'abord l'offre (« Offre et limites », plus bas sur cette fiche)."
           : null;
   const apiRides = (rides.data ?? []) as {
     id: string; number: number; status: RideStatus; pickup_at: string; created_at: string; price_cents: number | null; currency: string | null;
@@ -201,20 +202,6 @@ export async function PrivateFleetCard({ db, org, members, plans, schedule, toda
         icon={<Sparkles className="text-brand" />}
         title="Flotte Privée"
         description={frSpaces("Un chauffeur indépendant : une seule fiche (la sienne, sur son compte), les réservations de son site rien que pour lui.")}
-        action={
-          <PackConversionButtons
-            orgId={org.id}
-            targets={["fleet", "centrale"]}
-            plans={planOptions(plans, org.plan_id)}
-            planId={org.plan_id}
-            feePercent={Number(org.platform_fee_percent ?? 0)}
-            feeFixedCents={Number(org.platform_fee_fixed_cents ?? 0)}
-            schedule={schedule}
-            today={today}
-            timeZone={timeZone}
-            openRides={openRides.count ?? 0}
-          />
-        }
       />
       <CardBody className="grid gap-6 xl:grid-cols-2">
         <div className="min-w-0">
@@ -316,6 +303,39 @@ export async function PrivateFleetCard({ db, org, members, plans, schedule, toda
 }
 
 // -----------------------------------------------------------------------------
+// Flotte Privée : sortie vers une flotte standard ou une centrale
+// -----------------------------------------------------------------------------
+/** « Passer en flotte standard » / « Passer en centrale » (même dialogue « Changer d'offre de service »). */
+export async function PrivateFleetExitCard({ db, org, plans, schedule, today, timeZone }: Omit<Common, "members">) {
+  const openRides = await db.from("rides").select("id", { count: "exact", head: true }).eq("organization_id", org.id).in("status", OPEN_STATUSES);
+  return (
+    <Card>
+      <CardHeader
+        icon={<Sparkles />}
+        title="Changer d'offre de service"
+        description={frSpaces(
+          "Sortie de la Flotte Privée, à la demande ou avec l'accord écrit du client : sur place, sans perte de données (courses, clients, tarifs, clés du site).",
+        )}
+      />
+      <CardBody>
+        <PackConversionButtons
+          orgId={org.id}
+          targets={["fleet", "centrale"]}
+          plans={planOptions(plans, org.plan_id)}
+          planId={org.plan_id}
+          feePercent={Number(org.platform_fee_percent ?? 0)}
+          feeFixedCents={Number(org.platform_fee_fixed_cents ?? 0)}
+          schedule={schedule}
+          today={today}
+          timeZone={timeZone}
+          openRides={openRides.count ?? 0}
+        />
+      </CardBody>
+    </Card>
+  );
+}
+
+// -----------------------------------------------------------------------------
 // Organisation standard : passage en Flotte Privée
 // -----------------------------------------------------------------------------
 export async function PrivateFleetEntryCard({
@@ -373,20 +393,25 @@ export async function PrivateFleetEntryCard({
             "Conditions affichées à titre indicatif : la base fait foi au moment du passage (un seul membre, une seule fiche sur le compte du propriétaire, aucune candidature, aucun réseau partagé, modèle flotte).",
           )}
         </p>
-        <PackConversionButtons
-          orgId={org.id}
-          targets={["private_fleet"]}
-          plans={planOptions(plans, org.plan_id)}
-          planId={org.plan_id}
-          feePercent={Number(org.platform_fee_percent ?? 0)}
-          feeFixedCents={Number(org.platform_fee_fixed_cents ?? 0)}
-          schedule={schedule}
-          today={today}
-          timeZone={timeZone}
-          openRides={openRides.count ?? 0}
-          blockers={blockers}
-          apiAccess={api}
-        />
+        {/* Action rare, jamais l'action principale de la fiche (docs/REFONTE-PANELS.md § 2.2, R4) : bouton en contour. Le
+            bouton vient de PackConversionButtons (private-fleet.tsx, en lime pour cette cible) : seule son apparence
+            change ici ; le dialogue, rendu dans un portail, n'est pas concerné. */}
+        <div className="[&_button]:border [&_button]:border-line-strong [&_button]:bg-transparent [&_button]:font-medium [&_button]:text-fg [&_button]:shadow-none [&_button:hover]:border-white/20 [&_button:hover]:bg-white/[0.04]">
+          <PackConversionButtons
+            orgId={org.id}
+            targets={["private_fleet"]}
+            plans={planOptions(plans, org.plan_id)}
+            planId={org.plan_id}
+            feePercent={Number(org.platform_fee_percent ?? 0)}
+            feeFixedCents={Number(org.platform_fee_fixed_cents ?? 0)}
+            schedule={schedule}
+            today={today}
+            timeZone={timeZone}
+            openRides={openRides.count ?? 0}
+            blockers={blockers}
+            apiAccess={api}
+          />
+        </div>
       </CardBody>
     </Card>
   );

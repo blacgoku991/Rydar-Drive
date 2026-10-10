@@ -1,5 +1,6 @@
-// Super admin — fiche organisation : carte « Réseau partagé » (état des deux sens, validation, convention, suspension)
-// avec un lien vers /admin/reseau. Affichée quand le réseau est ouvert ou que l'organisation y a déjà participé.
+// Super admin — fiche d'un client : carte « Réseau partagé » (état des deux sens, validation, convention, suspension)
+// avec un lien vers /admin/reseau. Affichée quand le réseau est ouvert ou que l'organisation y a déjà participé ; sur
+// la fiche, dans le repli « Offre de service et réseau partagé » (docs/REFONTE-PANELS.md, R4).
 import { formatDate, formatPrice, type NetworkMembership } from "@rydar/shared";
 import { ArrowLeftRight } from "lucide-react";
 import Link from "next/link";
@@ -10,7 +11,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5 text-[12.5px]">
-      <span className="shrink-0 text-fg-subtle">{label}</span>
+      <span className="shrink-0 text-fg-muted">{label}</span>
       <span className="min-w-0 text-right text-fg [overflow-wrap:anywhere]">{children}</span>
     </div>
   );
@@ -59,7 +60,7 @@ export function OrgNetworkCard({
                       : "—"}
             </Row>
             {m.approved_at && (
-              <Row label="Instantané validé">
+              <Row label="Identité validée">
                 {m.approved_legal_name} · <span className="mono">{m.approved_siret}</span> · <span className="mono">{m.approved_vtc_registration}</span>
               </Row>
             )}
@@ -76,8 +77,8 @@ export function OrgNetworkCard({
             )}
           </div>
         )}
-        <Link href={`/admin/reseau#org-${orgId}`} prefetch={false} className="inline-block text-[12.5px] text-fg-muted underline-offset-2 hover:text-fg hover:underline">
-          Réseau partagé de la plateforme <span aria-hidden>→</span>
+        <Link href={`/admin/reseau#org-${orgId}`} prefetch={false} className="inline-flex min-h-8 items-center gap-1 text-[13px] text-fg-muted underline-offset-2 hover:text-fg hover:underline">
+          Voir le réseau partagé de la plateforme <span aria-hidden>→</span>
         </Link>
       </CardBody>
     </Card>

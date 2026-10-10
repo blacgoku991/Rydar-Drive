@@ -109,6 +109,11 @@ describe("notifications", () => {
     for (const label of Object.values(NOTIFICATION_ERRORS)) expect(label).not.toMatch(/_|Expo|FCM|APNs|push\b/i);
   });
 
+  it("annulées avant l'envoi (offer_closed, wake_expired écrits par le ménage) : la raison, jamais « Échec de l'envoi »", () => {
+    expect(notificationErrorLabel("offer_closed")).toBe("Proposition close avant l'envoi");
+    expect(notificationErrorLabel("wake_expired")).toBe("Demande de position expirée avant l'envoi");
+  });
+
   it("erreur inconnue : « Échec de l'envoi » ; aucune erreur : null", () => {
     expect(notificationErrorLabel("WeirdNewCode: boom")).toBe("Échec de l'envoi");
     expect(notificationErrorLabel("::: |")).toBe("Échec de l'envoi");
