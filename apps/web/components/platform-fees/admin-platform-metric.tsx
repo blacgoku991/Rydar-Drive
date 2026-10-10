@@ -1,4 +1,5 @@
-// Tuile de chiffre des frais plateforme (même rendu que StatCard, avec toutes les couleurs de statut et un lien).
+// Tuile de chiffre des frais Rydar (même rendu que StatCard, avec un lien possible). Chiffre en couleur neutre ; `tone`
+// seulement pour ce qui demande une action (docs/REFONTE-PANELS.md § 3.3 : rouge = retard ou blocage, ambre = à faire).
 import type { Tone } from "@rydar/shared";
 import Link from "next/link";
 import type * as React from "react";
@@ -26,10 +27,10 @@ export function Metric({
     <>
       <div className="flex items-start justify-between gap-2">
         <span className="text-[12.5px] leading-snug text-fg-subtle">{label}</span>
-        {icon && <span className="shrink-0 text-fg-subtle max-sm:hidden [&_svg]:size-4">{icon}</span>}
+        {icon && <span aria-hidden className="shrink-0 text-fg-subtle max-sm:hidden [&_svg]:size-4">{icon}</span>}
       </div>
       <div className={cn("num mt-1.5 truncate text-[24px] font-semibold leading-none tracking-tight", tone ? toneText[tone] : "text-fg")}>{value}</div>
-      {sub && <div className="mt-1.5 text-[12px] leading-snug text-fg-subtle">{sub}</div>}
+      {sub && <div className="mt-1.5 text-[12px] leading-snug text-fg-muted">{sub}</div>}
     </>
   );
   const base = "surface relative block min-w-0 overflow-hidden rounded-xl px-4 py-3.5";
@@ -61,7 +62,7 @@ export function MoneyLine({
     <div className="flex items-baseline justify-between gap-3 py-1.5">
       <span className="min-w-0 text-[13px] text-fg-muted">
         {label}
-        {hint && <span className="block text-[11.5px] text-fg-subtle">{hint}</span>}
+        {hint && <span className="block text-[12px] text-fg-muted">{hint}</span>}
       </span>
       <span className={cn("mono shrink-0 text-[13.5px]", strong && "text-[15px] font-semibold", tone ? toneText[tone] : "text-fg")}>{value}</span>
     </div>

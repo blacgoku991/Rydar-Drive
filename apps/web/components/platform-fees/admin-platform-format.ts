@@ -1,12 +1,15 @@
-// Frais plateforme (super admin) : formats, libellés et calculs d'affichage.
-// Module neutre (ni « use client » ni « server-only ») : pages serveur, composants client et export CSV.
+// Frais Rydar (« frais plateforme » des CGV), super admin : formats, libellés et calculs d'affichage.
+// Module neutre (ni « use client » ni « server-only ») : pages serveur, composants client et export CSV. Dates par les
+// formateurs mémorisés de @rydar/shared (dateTimeFormat : aucun formateur Intl construit au rendu, mêmes sorties).
 import {
   PAYMENT_METHOD_LABELS,
+  PLATFORM_CYCLE_META,
   PLATFORM_ENTRY_KIND_META,
   platformEntryStatusMeta,
   PLATFORM_PAYMENT_METHOD_META,
   PLATFORM_PAYMENT_STATUS_META,
   addIsoDays,
+  dateTimeFormat,
   formatPrice,
   localIsoDay,
   settlementStatusLabel,
@@ -31,22 +34,23 @@ export const PLATFORM_METHOD_ICON: Record<PlatformPaymentMethod, LucideIcon> = {
 
 export const platformMethodLabel = (m: string | null | undefined) => (m ? (PLATFORM_PAYMENT_METHOD_META[m as PlatformPaymentMethod]?.label ?? "Autre") : "—");
 
-/** « 5 oct. 2026 » dans le fuseau de la centrale. */
+/** « 5 oct. 2026 » dans le fuseau du client (un jour « AAAA-MM-JJ » est déjà local : lu tel quel). */
 export function formatDay(iso: string | Date | null | undefined, timeZone = "Europe/Paris", withYear = true) {
   if (!iso) return "—";
-  const d = typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(`${iso}T12:00:00Z`) : new Date(iso);
-  return new Intl.DateTimeFormat("fr-FR", {
+  const dayOnly = typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const d = dayOnly ? new Date(`${iso}T12:00:00Z`) : new Date(iso);
+  return dateTimeFormat("fr-FR", {
     day: "numeric",
     month: "short",
     year: withYear ? "numeric" : undefined,
-    timeZone: typeof iso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? "UTC" : timeZone,
+    timeZone: dayOnly ? "UTC" : timeZone,
   }).format(d);
 }
 
 /** « 25/09 14:32 » dans le fuseau donné. */
 export function formatDayTime(iso: string | null | undefined, timeZone = "Europe/Paris") {
   if (!iso) return "—";
-  return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso));
+  return dateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(iso));
 }
 
 /** « il y a 3 h », « il y a 2 j », « à l'instant ». */
@@ -70,12 +74,12 @@ export function signedPrice(cents: number, currency = "EUR") {
 // ---------------------------------------------------------------------------- mois
 /** « 2026-09 » (mois courant dans le fuseau donné). */
 export function monthKey(d: Date, timeZone = "Europe/Paris") {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit" }).format(d).slice(0, 7);
+  return dateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit" }).format(d).slice(0, 7);
 }
 
 /** « septembre 2026 » */
 export function monthLabel(key: string) {
-  return new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${key}-15T12:00:00Z`));
+  return dateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${key}-15T12:00:00Z`));
 }
 
 export const capitalize = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
@@ -277,4 +281,96 @@ export function paymentStatusLabel(p: Pick<PlatformPayment, "status" | "received
 export function paymentTone(p: Pick<PlatformPayment, "status" | "received_cents" | "amount_cents">): Tone {
   if (p.status === "confirmed" && p.received_cents != null && p.received_cents < p.amount_cents) return "amber";
   return PLATFORM_PAYMENT_STATUS_META[p.status].tone;
+}
+
+// ---------------------------------------------------------------------------- page d'un compte (super admin)
+const NB = " ";
+/** « 1 jour », « 5 jours » (0 et 1 au singulier, espace insécable). */
+const jours = (n: number) => `${n}${NB}jour${Math.abs(n) >= 2 ? "s" : ""}`;
+
+/**
+ * Conditions du compte en une ligne (carte « Conditions », formulaire replié) : « Mensuel · 5 jours de délai · blocage
+ * désactivé ». Le réglage seulement : l'état du moment (création bloquée, blocage suspendu) est dans l'en-tête.
+ */
+export function termsSummary(a: Pick<PlatformAccount, "cycle" | "payment_days" | "block_after_days">): string {
+  return [
+    PLATFORM_CYCLE_META[a.cycle]?.label ?? a.cycle,
+    `${jours(a.payment_days)} de délai`,
+    a.block_after_days ? `courses bloquées après ${jours(a.block_after_days)} de retard` : "blocage désactivé",
+  ].join(" · ");
+}
+
+/**
+ * État du compte vu par Rydar (badge de l'en-tête) : même règle que platformDueSummary (texte affiché au client), mais
+ * court (un badge ne passe pas à la ligne) et du point de vue de Rydar : « Avance du client », jamais « en votre
+ * faveur ». Le montant de la prochaine échéance est dans son chiffre.
+ */
+export function accountStateBadge(
+  a: Pick<PlatformAccount, "balance_cents" | "due_cents" | "days_overdue" | "overdue_since" | "next_due_at">,
+  timeZone = "Europe/Paris",
+): { text: string; tone: Tone } {
+  if (a.due_cents > 0 && a.overdue_since) {
+    const n = a.days_overdue;
+    return { text: n <= 0 ? "Échéance dépassée aujourd'hui" : `En retard depuis ${jours(n)}`, tone: "red" };
+  }
+  if (a.balance_cents > 0 && a.next_due_at) {
+    const day = dateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone }).format(new Date(a.next_due_at));
+    return { text: `À régler au plus tard le ${day}`, tone: "amber" };
+  }
+  if (a.balance_cents < 0) return { text: "Avance du client", tone: "green" };
+  if (a.balance_cents > 0) return { text: "Solde à régler", tone: "amber" };
+  return { text: "Rien à régler", tone: "green" };
+}
+
+/**
+ * Compte sans frais ni historique : taux à 0, rien comptabilisé, reçu ni déclaré, aucune baisse en attente, aucune hausse
+ * annoncée, aucun paiement. La page du compte affiche alors un état vide qui renvoie à la fiche du client (où se
+ * règlent les frais) ; ses actions restent accessibles.
+ */
+export function accountIsEmpty(
+  a: Pick<
+    PlatformAccount,
+    | "fee_percent" | "fee_fixed_cents" | "posted_cents" | "received_cents" | "declared_cents" | "declared_count" | "balance_cents"
+    | "pending_reductions_count" | "scheduled_change"
+  >,
+  paymentsCount: number,
+): boolean {
+  return (
+    Number(a.fee_percent) === 0 &&
+    Number(a.fee_fixed_cents) === 0 &&
+    a.posted_cents === 0 &&
+    a.received_cents === 0 &&
+    a.declared_cents === 0 &&
+    a.declared_count === 0 &&
+    a.balance_cents === 0 &&
+    a.pending_reductions_count === 0 &&
+    !a.scheduled_change &&
+    paymentsCount === 0
+  );
+}
+
+/**
+ * Lignes affichées de « D'où vient l'argent » : « Ajustements » seulement s'il y en a ; flotte (ses courses sont
+ * encaissées par elle-même, sans règlement chauffeur) : sans les lignes propres aux centrales restées à zéro
+ * (« Encore chez les chauffeurs », « Annulé par la centrale »), montrées dès qu'elles ont un montant (historique).
+ */
+export function visibleOriginParts(a: PlatformAccount) {
+  const fleet = a.dispatch_model === "fleet";
+  return originParts(a).filter((p) => p.cents !== 0 || (p.key !== "other" && !(fleet && (p.key === "drivers" || p.key === "waived"))));
+}
+
+/** Relevé : lignes montrées d'emblée ; les suivantes sont dans un repli (moreLinesLabel). */
+export const STATEMENT_FIRST_LINES = 15;
+
+/** Titre du repli des lignes suivantes du relevé : « Afficher les 32 autres lignes », « Afficher la dernière ligne ». */
+export function moreLinesLabel(n: number): string {
+  return n === 1 ? "Afficher la dernière ligne" : `Afficher les ${n} autres lignes`;
+}
+
+/**
+ * Solde d'ouverture ou de clôture du relevé, dans les mots du lexique : « Reste dû au 1er octobre 2026 », « Reste dû à
+ * ce jour » ; négatif : « Avance du client … » (le montant s'affiche alors sans signe).
+ */
+export function balanceLabel(cents: number, when: string): string {
+  return `${cents < 0 ? "Avance du client" : "Reste dû"} ${when}`;
 }

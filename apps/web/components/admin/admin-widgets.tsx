@@ -508,15 +508,82 @@ export function OrganizationPlanForm({
   );
 }
 
+/** Limites d'une offre (nombre vide = illimité), dans l'ordre de la fenêtre ; noms de champs inchangés. */
+const PLAN_LIMIT_FIELDS = [
+  { name: "max_drivers", label: "Chauffeurs max." },
+  { name: "max_rides_per_month", label: "Courses par mois" },
+  { name: "max_admins", label: "Administrateurs max." },
+  { name: "history_days", label: "Historique en jours" },
+] as const;
+
+/** Options de l'offre, aux libellés des cartes des offres. */
+const PLAN_OPTION_FIELDS = [
+  { name: "api_access", label: "API de réservation" },
+  { name: "booking_site", label: "Mini-site" },
+  { name: "custom_domain", label: "Domaine personnalisé" },
+  { name: "advanced_stats", label: "Statistiques avancées" },
+] as const;
+
+/** Visibilité : ce que fait chaque case (lu dans le code : création d'un client, page Tarifs, abonnement, paiement). */
+const PLAN_VISIBILITY_FIELDS = [
+  { name: "is_active", label: "Offre active", hint: "Proposée à la création d'un client et à la souscription en ligne ; inactive, elle ne l'est plus." },
+  { name: "is_public", label: "Visible publiquement", hint: "Affichée sur la page Tarifs du site et dans l'abonnement des clients." },
+  { name: "highlighted", label: "Mise en avant", hint: "Présentée comme l'offre recommandée (page Tarifs, abonnement des clients)." },
+] as const;
+
+/** Ce qu'attend chaque champ, dit sous le champ quand le serveur le refuse (message du schéma trop technique). */
+const PLAN_FIELD_HELP: Record<string, string> = {
+  name: "Entre 2 et 60 caractères.",
+  description: "300 caractères au plus.",
+  price_monthly_cents: "Un montant positif, ex.\u00a0: 49 ou 49,90.",
+  price_yearly_cents: "Un montant positif, ex.\u00a0: 490.",
+  features: "20 points forts au plus, 120 caractères chacun.",
+  code: "Minuscules, chiffres et «\u00a0_\u00a0» seulement (ex.\u00a0: pro).",
+};
+const PLAN_LIMIT_HELP = "Un nombre entier, 1 au moins (vide = illimité).";
+
+/**
+ * Création et modification d'une offre (« Offres & limites », docs/REFONTE-PANELS.md R5) : présentation et prix, limites
+ * (vide = illimité), options, visibilité, puis points forts et code (identifiant technique, en dernier). Mêmes champs
+ * (attributs name) et même charge envoyée à savePlan qu'avant ; erreurs sous le champ concerné.
+ */
 export function PlanEditor({ plan }: { plan: any | null }) {
   const router = useRouter();
+  const uid = useId();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const l = plan?.limits ?? {};
+  /** Case cochée à l'ouverture (même règle qu'avant : options lues dans les limites, nouvelle offre active et publique). */
+  const checked = (k: string) => (k in l ? Boolean(l[k]) : Boolean(plan?.[k] ?? (k === "is_active" || k === "is_public")));
+  /** Erreur d'un champ : ce qu'il attend (PLAN_FIELD_HELP), sinon le message du serveur. */
+  const fieldError = (key: string) => (errors[key] ? (PLAN_FIELD_HELP[key] ?? errors[key]) : undefined);
+  const featuresError = Object.keys(errors).some((k) => k === "features" || k.startsWith("features.")) ? PLAN_FIELD_HELP.features : undefined;
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <Button variant={plan ? "outline" : "primary"} size={plan ? "sm" : "md"} onClick={() => setOpen(true)}>{plan ? "Modifier" : "Nouvelle offre"}</Button>
-      <DialogContent title={plan ? `Offre ${plan.name}` : "Nouvelle offre"} size="lg">
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (pending) return;
+        setOpen(o);
+        if (o) setErrors({});
+      }}
+    >
+      <Button
+        variant={plan ? "outline" : "primary"}
+        size={plan ? "sm" : "md"}
+        aria-label={plan ? `Modifier l'offre ${plan.name}` : undefined}
+        onClick={() => {
+          setErrors({});
+          setOpen(true);
+        }}
+      >
+        {plan ? "Modifier" : "Nouvelle offre"}
+      </Button>
+      <DialogContent
+        title={plan ? `Offre ${plan.name}` : "Nouvelle offre"}
+        description="Ce que comprend l'abonnement : prix, limites et options."
+        size="lg"
+      >
         <form
           onSubmit={submitWith((f) =>
             start(() => runAction(async () => {
@@ -532,37 +599,111 @@ export function PlanEditor({ plan }: { plan: any | null }) {
                 features: String(f.get("features") ?? "").split("\n").map((s) => s.trim()).filter(Boolean),
                 is_active: f.get("is_active") === "on", is_public: f.get("is_public") === "on", highlighted: f.get("highlighted") === "on",
               });
-              if (!res.ok) return void toast.error(res.error);
+              if (!res.ok) {
+                const fe = res.fieldErrors ?? {};
+                setErrors(fe);
+                // Saisie refusée : chaque erreur est sous son champ, le message résume ; refus métier (API retirée à des
+                // clients Flotte Privée) ou code déjà utilisé : le message du serveur, tel quel
+                const onlyFields = Object.keys(fe).length > 0 && !("limits.api_access" in fe);
+                return void toast.error(onlyFields ? "Vérifiez les champs signalés." : res.error);
+              }
+              setErrors({});
               toast.success("Offre enregistrée");
               setOpen(false);
               router.refresh();
             })),
           )}
-          className="grid gap-4 sm:grid-cols-2"
+          className="space-y-7"
         >
-          <Field label="Code"><Input name="code" defaultValue={plan?.code ?? ""} required className="num" /></Field>
-          <Field label="Nom"><Input name="name" defaultValue={plan?.name ?? ""} required /></Field>
-          <Field label="Description" className="sm:col-span-2"><Input name="description" defaultValue={plan?.description ?? ""} /></Field>
-          <Field label="Prix mensuel HT (€)"><Input name="monthly" type="number" step="0.01" defaultValue={(plan?.price_monthly_cents ?? 0) / 100} className="num" /></Field>
-          <Field label="Prix annuel HT (€)"><Input name="yearly" type="number" step="0.01" defaultValue={(plan?.price_yearly_cents ?? 0) / 100} className="num" /></Field>
-          <Field label="Chauffeurs max." hint="vide = illimité"><Input name="max_drivers" type="number" defaultValue={l.max_drivers ?? ""} className="num" /></Field>
-          <Field label="Courses / mois" hint="vide = illimité"><Input name="max_rides_per_month" type="number" defaultValue={l.max_rides_per_month ?? ""} className="num" /></Field>
-          <Field label="Administrateurs max."><Input name="max_admins" type="number" defaultValue={l.max_admins ?? ""} className="num" /></Field>
-          <Field label="Historique (jours)"><Input name="history_days" type="number" defaultValue={l.history_days ?? ""} className="num" /></Field>
-          <div className="grid grid-cols-2 gap-2 sm:col-span-2">
-            {[["api_access", "API"], ["booking_site", "Mini-site"], ["custom_domain", "Domaine personnalisé"], ["advanced_stats", "Statistiques avancées"], ["is_active", "Offre active"], ["is_public", "Visible publiquement"], ["highlighted", "Mise en avant"]].map(([k, label]) => (
-              <label key={k} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-[12.5px]">
-                <input type="checkbox" name={k} defaultChecked={k in l ? Boolean(l[k]) : Boolean(plan?.[k] ?? (k === "is_active" || k === "is_public"))} className="accent-[var(--color-brand)]" /> {label}
-              </label>
-            ))}
+          <FormSection title="Présentation et prix">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Nom" className="sm:col-span-2" error={fieldError("name")}>
+                <Input name="name" defaultValue={plan?.name ?? ""} required maxLength={60} placeholder={"ex.\u00a0: Pro"} autoComplete="off" />
+              </Field>
+              <Field label="Description" optional className="sm:col-span-2" hint="Une phrase affichée sous le nom de l'offre." error={fieldError("description")}>
+                <Input name="description" defaultValue={plan?.description ?? ""} maxLength={300} autoComplete="off" />
+              </Field>
+              <Field label="Prix mensuel HT (€)" error={fieldError("price_monthly_cents")}>
+                <Input name="monthly" type="number" step="0.01" inputMode="decimal" defaultValue={(plan?.price_monthly_cents ?? 0) / 100} className="num" />
+              </Field>
+              <Field label="Prix annuel HT (€)" error={fieldError("price_yearly_cents")}>
+                <Input name="yearly" type="number" step="0.01" inputMode="decimal" defaultValue={(plan?.price_yearly_cents ?? 0) / 100} className="num" />
+              </Field>
+            </div>
+          </FormSection>
+
+          <FormSection title="Limites">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {PLAN_LIMIT_FIELDS.map((f) => (
+                <Field key={f.name} label={f.label} hint="vide = illimité" error={errors[`limits.${f.name}`] ? PLAN_LIMIT_HELP : undefined}>
+                  <Input name={f.name} type="number" inputMode="numeric" defaultValue={l[f.name] ?? ""} className="num" />
+                </Field>
+              ))}
+            </div>
+          </FormSection>
+
+          <FormSection title="Options">
+            <div className="grid gap-2 sm:grid-cols-2">
+              {PLAN_OPTION_FIELDS.map((f) => (
+                <PlanCheckbox key={f.name} id={`${uid}-${f.name}`} name={f.name} label={f.label} defaultChecked={checked(f.name)} />
+              ))}
+            </div>
+            {errors["limits.api_access"] && <p className="text-xs text-red">API de réservation{"\u00a0"}: {errors["limits.api_access"]}</p>}
+          </FormSection>
+
+          <FormSection title="Visibilité">
+            <div className="grid gap-2">
+              {PLAN_VISIBILITY_FIELDS.map((f) => (
+                <PlanCheckbox key={f.name} id={`${uid}-${f.name}`} name={f.name} label={f.label} hint={f.hint} defaultChecked={checked(f.name)} />
+              ))}
+            </div>
+          </FormSection>
+
+          <div className="grid gap-4">
+            <Field label="Points forts affichés (1 par ligne)" optional hint="Sur la carte de l'offre (page Tarifs, abonnement des clients), 20 au plus." error={featuresError}>
+              <Textarea name="features" defaultValue={(plan?.features ?? []).join("\n")} />
+            </Field>
+            <Field
+              label="Code"
+              hint={"Identifiant technique (minuscules, chiffres et «\u00a0_\u00a0», ex.\u00a0: pro), utilisé par les liens du site et le paiement en ligne\u00a0: évitez de le changer."}
+              error={fieldError("code")}
+            >
+              <Input name="code" defaultValue={plan?.code ?? ""} required className="num" autoComplete="off" spellCheck={false} />
+            </Field>
           </div>
-          <Field label="Arguments (1 par ligne)" className="sm:col-span-2"><Textarea name="features" defaultValue={(plan?.features ?? []).join("\n")} /></Field>
-          <div className="flex justify-end gap-2 sm:col-span-2">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
-            <Button type="submit" variant="primary" loading={pending}>Enregistrer</Button>
-          </div>
+
+          {/* Collé en bas sur téléphone : décalé de la marge intérieure de la fenêtre (p-6), qui défile elle-même */}
+          <DialogFooter sticky backDisabled={pending} className="max-sm:-bottom-6">
+            <Button type="submit" variant="primary" loading={pending}>
+              {plan ? "Enregistrer l'offre" : "Créer l'offre"}
+            </Button>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Case à cocher d'une offre (option ou visibilité) : toute la ligne est cliquable, cible de 44 px, aide reliée. */
+function PlanCheckbox({ id, name, label, hint, defaultChecked }: { id: string; name: string; label: string; hint?: string; defaultChecked: boolean }) {
+  return (
+    <label htmlFor={id} className="flex min-h-11 cursor-pointer items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand/50">
+      <input
+        id={id}
+        type="checkbox"
+        name={name}
+        defaultChecked={defaultChecked}
+        aria-describedby={hint ? `${id}-hint` : undefined}
+        className="mt-0.5 size-4 shrink-0 accent-brand"
+      />
+      <span className="min-w-0">
+        <span className="block text-[13px] text-fg">{label}</span>
+        {hint && (
+          <span id={`${id}-hint`} className="mt-0.5 block text-[12.5px] leading-snug text-fg-muted">
+            {hint}
+          </span>
+        )}
+      </span>
+    </label>
   );
 }

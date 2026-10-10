@@ -1,6 +1,7 @@
 "use client";
-// Super admin : décisions sur les frais plateforme — « Reçu » (montant reçu, partiel possible), « Pas reçu »,
-// « Rouvrir », baisse de frais acceptée / refusée. Chaque action passe par app/admin/frais/actions.ts.
+// Super admin : décisions sur les frais Rydar (« frais plateforme » des CGV) — « Reçu » (montant reçu, partiel possible),
+// « Pas reçu », « Rouvrir », baisse de frais acceptée / refusée. Chaque action passe par app/admin/frais/actions.ts.
+// Fenêtres fermées par « Retour » (DialogFooter) ; le client (flotte ou centrale) est nommé « le client ».
 import { PLATFORM_PAYMENT_METHODS, formatPrice, type PlatformEntry, type PlatformPayment, type PlatformPaymentMethod } from "@rydar/shared";
 import { Check, CircleSlash, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -15,7 +16,8 @@ import {
 } from "@/app/admin/frais/actions";
 import { centsToInput, eurosToCents } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Callout } from "@/components/ui/callout";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Textarea, asFieldControl } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
@@ -131,7 +133,7 @@ function PaymentSummary({ payment: p, orgName, currency }: { payment: PlatformPa
       </div>
       <div className="shrink-0 text-right">
         <p className="mono text-[20px] font-semibold tracking-tight text-fg">{formatPrice(p.amount_cents, currency)}</p>
-        <p className="text-[11.5px] text-fg-subtle">
+        <p className="text-[12px] text-fg-muted">
           {p.status === "confirmed" && p.received_cents != null ? `reçu ${formatPrice(p.received_cents, currency)}` : "déclaré"}
         </p>
       </div>
@@ -179,10 +181,12 @@ function PaymentDialogs({
   return (
     <>
       <Dialog open={mode === "confirm"} onOpenChange={(o) => !o && close()}>
-        <DialogContent size="sm" title="Paiement reçu" description="Le montant reçu est déduit de ce que doit la centrale, qui est prévenue.">
+        <DialogContent size="sm" title="Paiement reçu" description="Le montant reçu est déduit de ce que doit le client, qui est prévenu.">
           <PaymentSummary payment={p} orgName={orgName} currency={currency} />
           {p.note && (
-            <p className="mb-4 rounded-lg border border-blue/25 bg-blue/[0.07] px-3 py-2 text-[12.5px] text-fg-muted">Note de la centrale&nbsp;: «&nbsp;{p.note}&nbsp;»</p>
+            <Callout tone="info" role={null} icon={false} className="mb-4 [overflow-wrap:anywhere]">
+              Note du client&nbsp;: «&nbsp;{p.note}&nbsp;»
+            </Callout>
           )}
           <form
             onSubmit={submitWith((fd) => {
@@ -204,9 +208,9 @@ function PaymentDialogs({
                 !valid ? undefined : diff < 0 ? (
                   <span className="text-amber">Paiement partiel&nbsp;: {formatPrice(-diff, currency)} resteront dus.</span>
                 ) : diff > 0 ? (
-                  <span className="text-blue">Plus que déclaré&nbsp;: l&apos;excédent réduit les prochains frais.</span>
+                  <span className="text-fg-muted">Plus que déclaré&nbsp;: l&apos;excédent réduit les prochains frais.</span>
                 ) : (
-                  "Montant déclaré par la centrale. Modifiez-le si vous avez reçu moins."
+                  "Montant déclaré par le client. Modifiez-le si vous avez reçu moins."
                 )
               }
             >
@@ -220,16 +224,13 @@ function PaymentDialogs({
               />
             </Field>
             <Field label="Note" optional htmlFor="pf-note">
-              <Input id="pf-note" name="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Ex. virement reçu le 26/09" />
+              <Input id="pf-note" name="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder={"ex.\u00a0: virement reçu le 26/09"} />
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" onClick={close}>
-                Annuler
-              </Button>
+            <DialogFooter backDisabled={pending}>
               <Button type="submit" variant="primary" loading={pending} disabled={!valid}>
                 <Check /> {diff < 0 ? "Reçu en partie" : "Confirmer la réception"}
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -238,7 +239,7 @@ function PaymentDialogs({
         <DialogContent
           size="sm"
           title="Paiement non reçu"
-          description="La centrale est prévenue avec votre motif et le montant reste dû. Vous pourrez rouvrir en cas d'erreur."
+          description="Le client est prévenu avec votre motif et le montant reste dû. Vous pourrez rouvrir en cas d'erreur."
         >
           <PaymentSummary payment={p} orgName={orgName} currency={currency} />
           <form onSubmit={submitWith(() => run(() => rejectPlatformPayment(p.id, reason), { onDone: close }))}>
@@ -248,7 +249,7 @@ function PaymentDialogs({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 maxLength={500}
-                placeholder="Ex. aucun virement reçu à ce jour"
+                placeholder={"ex.\u00a0: aucun virement reçu à ce jour"}
                 className="min-h-[72px]"
                 autoFocus
               />
@@ -256,14 +257,11 @@ function PaymentDialogs({
             <div className="mt-2.5">
               <Chips options={REJECT_REASONS} onPick={setReason} />
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={close}>
-                Retour
-              </Button>
+            <DialogFooter backDisabled={pending}>
               <Button type="submit" variant="danger" loading={pending} disabled={reason.trim().length < 3}>
                 <CircleSlash /> Pas reçu
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -286,7 +284,7 @@ function PaymentDialogs({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 maxLength={500}
-                placeholder="Ex. montant saisi par erreur"
+                placeholder={"ex.\u00a0: montant saisi par erreur"}
                 className="min-h-[72px]"
                 autoFocus
               />
@@ -294,14 +292,11 @@ function PaymentDialogs({
             <div className="mt-2.5">
               <Chips options={REOPEN_REASONS} onPick={setReason} />
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={close}>
-                Retour
-              </Button>
+            <DialogFooter backDisabled={pending}>
               <Button type="submit" variant="primary" loading={pending} disabled={reason.trim().length < 3}>
-                <RotateCcw /> Rouvrir
+                <RotateCcw /> Rouvrir le paiement
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -347,7 +342,7 @@ export function PaymentActions({
 }
 
 // ---------------------------------------------------------------------------- baisses de frais
-const REFUSE_REASONS = ["Prix non justifié", "Course effectuée au prix initial", "Aucune explication de la centrale"] as const;
+const REFUSE_REASONS = ["Prix non justifié", "Course effectuée au prix initial", "Aucune explication fournie"] as const;
 
 function EntrySummary({ entry: e, orgName, currency }: { entry: PlatformEntry; orgName: string; currency: string }) {
   return (
@@ -398,7 +393,7 @@ export function ReductionActions({
         <DialogContent
           size="sm"
           title="Accepter la baisse"
-          description={`Les frais de cette course baissent de ${amount} : la centrale doit ${amount} de moins.`}
+          description={`Les frais de cette course baissent de ${amount}\u00a0: le client doit ${amount} de moins.`}
         >
           <EntrySummary entry={entry} orgName={orgName} currency={currency} />
           <form onSubmit={submitWith(() => run(() => reviewPlatformReduction(entry.id, true, note), { onDone: close }))}>
@@ -408,23 +403,20 @@ export function ReductionActions({
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 maxLength={500}
-                placeholder="Ex. geste commercial validé avec la centrale"
+                placeholder={"ex.\u00a0: geste commercial validé avec le client"}
               />
             </Field>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={close}>
-                Retour
-              </Button>
+            <DialogFooter backDisabled={pending}>
               <Button type="submit" variant="primary" loading={pending}>
                 <Check /> Accepter la baisse
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
       <Dialog open={mode === "refuse"} onOpenChange={(o) => !o && close()}>
-        <DialogContent size="sm" title="Refuser la baisse" description="Les frais restent dus au montant initial ; la centrale voit votre motif.">
+        <DialogContent size="sm" title="Refuser la baisse" description={"Les frais restent dus au montant initial\u00a0; le client voit votre motif."}>
           <EntrySummary entry={entry} orgName={orgName} currency={currency} />
           <form onSubmit={submitWith(() => run(() => reviewPlatformReduction(entry.id, false, note), { onDone: close }))}>
             <Field label="Motif" htmlFor="pf-refuse-note">
@@ -433,7 +425,7 @@ export function ReductionActions({
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 maxLength={500}
-                placeholder="Ex. la course a bien été facturée 62 €"
+                placeholder={"ex.\u00a0: la course a bien été facturée 62\u00a0€"}
                 className="min-h-[72px]"
                 autoFocus
               />
@@ -441,14 +433,11 @@ export function ReductionActions({
             <div className="mt-2.5">
               <Chips options={REFUSE_REASONS} onPick={setNote} />
             </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={close}>
-                Retour
-              </Button>
+            <DialogFooter backDisabled={pending}>
               <Button type="submit" variant="danger" loading={pending} disabled={note.trim().length < 3}>
                 <CircleSlash /> Refuser la baisse
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

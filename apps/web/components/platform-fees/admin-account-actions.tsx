@@ -1,6 +1,9 @@
 "use client";
-// Super admin, compte d'une centrale ou d'une flotte : paiement reçu directement, avoir / frais ajoutés, relance, conditions.
-import { PLATFORM_CYCLE_META, formatPrice, formatTime, type PlatformAccount, type PlatformBillingCycle, type PlatformPaymentMethod } from "@rydar/shared";
+// Super admin, compte d'un client (centrale ou flotte) : paiement reçu directement, avoir / frais ajoutés, relance,
+// conditions (formulaire inchangé, déplié depuis la carte « Conditions »). Fenêtres fermées par « Retour ».
+import {
+  PLATFORM_CYCLE_META, formatPrice, formatTime, localIsoDay, type PlatformAccount, type PlatformBillingCycle, type PlatformPaymentMethod,
+} from "@rydar/shared";
 import { BellRing, CalendarClock, Check, HandCoins, Minus, Plus, Scale } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -9,7 +12,7 @@ import {
 } from "@/app/admin/frais/actions";
 import { centsToInput, eurosToCents } from "@/components/admin/fees";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
 import { cn, submitWith } from "@/lib/utils";
@@ -26,9 +29,9 @@ type AccountLite = Pick<
 /** « flotte » / « centrale » (textes des dialogues ; modèle inconnu : centrale, comme avant les frais des flottes). */
 const who = (a: Pick<PlatformAccount, "dispatch_model">) => (a.dispatch_model === "fleet" ? "flotte" : "centrale");
 
-/** Aujourd'hui (AAAA-MM-JJ) dans le fuseau donné. */
+/** Aujourd'hui (AAAA-MM-JJ) dans le fuseau donné (formateur mémorisé de @rydar/shared, même sortie). */
 function today(timeZone: string) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  return localIsoDay(new Date(), timeZone);
 }
 
 // ---------------------------------------------------------------------------- paiement reçu directement
@@ -116,16 +119,13 @@ function RecordPaymentDialog({
             </Field>
           </div>
           <Field label="Note" optional htmlFor="rp-note" error={errors.note}>
-            <Input id="rp-note" name="note" maxLength={500} placeholder="Ex. espèces remises au bureau" />
+            <Input id="rp-note" name="note" maxLength={500} placeholder={"ex.\u00a0: espèces remises au bureau"} />
           </Field>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Annuler
-            </Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="primary" loading={pending}>
-              <Check /> Enregistrer
+              <Check /> Enregistrer le paiement
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -171,7 +171,7 @@ function AdjustDialog({
       <DialogContent
         size="sm"
         title="Avoir ou frais ajoutés"
-        description={`Écriture manuelle sur le compte de ${orgName}, visible par la ${who(account)} avec son motif.`}
+        description={`Ligne ajoutée au relevé de ${orgName}, visible par la ${who(account)} avec son motif.`}
       >
         <form
           noValidate
@@ -206,7 +206,7 @@ function AdjustDialog({
                   <o.icon className={cn("size-4 shrink-0", on ? "text-brand" : "text-fg-subtle")} />
                   <span className="min-w-0">
                     <span className={cn("block text-[13px] font-medium", on ? "text-fg" : "text-fg-muted")}>{o.label}</span>
-                    <span className="block text-[11.5px] text-fg-subtle">{o.hint}</span>
+                    <span className="block text-[12px] text-fg-muted">{o.hint}</span>
                   </span>
                 </button>
               );
@@ -233,7 +233,7 @@ function AdjustDialog({
               onChange={(e) => setReason(e.target.value)}
               maxLength={500}
               className="min-h-[72px]"
-              placeholder={kind === "credit" ? "Ex. geste commercial pour septembre" : "Ex. erreur de calcul des frais de la course 1692"}
+              placeholder={kind === "credit" ? "ex.\u00a0: geste commercial pour septembre" : "ex.\u00a0: erreur de calcul des frais de la course 1692"}
               aria-invalid={!!errors.reason || undefined}
             />
           </Field>
@@ -241,17 +241,14 @@ function AdjustDialog({
           {kind === "charge" && (
             <p className="text-[12px] leading-relaxed text-fg-muted">
               CGV, article 5{"\u00a0"}: des frais ajoutés corrigent une erreur de calcul des frais{"\u00a0"}; tout autre montant
-              demande l&apos;accord écrit de l&apos;organisation (date et forme dans le motif).
+              demande l&apos;accord écrit du client (date et forme dans le motif).
             </p>
           )}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Annuler
-            </Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="primary" loading={pending} disabled={signed == null || reason.trim().length < 3}>
               <Check /> {kind === "credit" ? "Accorder l'avoir" : "Ajouter les frais"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -328,7 +325,7 @@ function RemindDialog({
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-fg">{orgName}</p>
             <p className="text-[12px] text-fg-subtle" suppressHydrationWarning>
-              {account.due_cents > 0 ? "Échu" : "Solde"}
+              {account.due_cents > 0 ? "En retard" : "Solde"}
               {account.reminded_at ? ` · dernière relance ${ago(account.reminded_at)}` : " · jamais relancée"}
             </p>
           </div>
@@ -365,14 +362,14 @@ function RemindDialog({
               onChange={(e) => setNote(e.target.value)}
               maxLength={300}
               className="min-h-[72px]"
-              placeholder="Ex. merci de régler les frais de septembre avant vendredi"
+              placeholder={"ex.\u00a0: merci de régler les frais de septembre avant vendredi"}
               autoFocus
             />
           </Field>
-          <label className={cn("mt-4 flex items-center justify-between gap-4 rounded-xl border border-line bg-white/[0.02] px-4 py-3", !waOk && "opacity-70")}>
+          <label className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-line bg-white/[0.02] px-4 py-3">
             <span className="min-w-0">
               <span className="block text-[13.5px] font-medium">Envoyer aussi par WhatsApp</span>
-              <span className="block text-[12px] text-fg-subtle">
+              <span className="block text-[12px] text-fg-muted">
                 {wa == null
                   ? "Vérification…"
                   : waOk
@@ -382,7 +379,7 @@ function RemindDialog({
                       : wa.reason === "OPTED_OUT"
                         ? `Le propriétaire a refusé les messages WhatsApp de Rydar${wa.refused_at ? ` (noté le ${formatDay(wa.refused_at, timeZone, false)})` : ""} : la relance reste affichée dans son tableau de bord.`
                         : wa.reason === "NOT_CONFIGURED"
-                        ? "Reliez le numéro WhatsApp de Rydar (Frais plateforme › WhatsApp)."
+                        ? "Reliez le numéro WhatsApp de Rydar (Réglages de la plateforme)."
                         : `Aucun numéro valide pour le propriétaire ni pour la ${who(account)}.`}
               </span>
             </span>
@@ -395,35 +392,36 @@ function RemindDialog({
               </Button>
             </div>
           )}
-          <div className="mt-6 flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Annuler
-            </Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="primary" loading={pending} disabled={tooSoon}>
-              <BellRing /> Relancer
+              <BellRing /> Envoyer la relance
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
   );
 }
 
-/** Boutons d'en-tête du compte : paiement reçu, avoir / frais, relance. */
+/**
+ * Boutons d'en-tête du compte : paiement reçu (action principale, pleine largeur sous 640 px), avoir / frais ajoutés,
+ * relance (inactive quand rien n'est à régler).
+ */
 export function AccountActions({ orgId, orgName, account, timeZone }: { orgId: string; orgName: string; account: AccountLite; timeZone: string }) {
   const [open, setOpen] = useState<"record" | "adjust" | "remind" | null>(null);
   const set = (k: typeof open) => (o: boolean) => setOpen(o ? k : null);
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button variant="primary" size="sm" onClick={() => setOpen("record")}>
+    <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
+      <Button variant="primary" size="sm" className="max-sm:h-11 max-sm:w-full" onClick={() => setOpen("record")}>
         <HandCoins /> Enregistrer un paiement reçu
       </Button>
-      <Button variant="outline" size="sm" onClick={() => setOpen("adjust")}>
+      <Button variant="outline" size="sm" className="max-sm:h-11" onClick={() => setOpen("adjust")}>
         <Scale /> Avoir / frais ajoutés
       </Button>
       <Button
         variant="outline"
         size="sm"
+        className="max-sm:h-11"
         onClick={() => setOpen("remind")}
         disabled={account.balance_cents <= 0}
         title={account.balance_cents <= 0 ? "Rien à régler" : undefined}
@@ -512,7 +510,7 @@ export function TermsForm({
                 <span className={cn("flex items-center gap-2 text-[13px] font-medium", on ? "text-fg" : "text-fg-muted")}>
                   <CalendarClock className={cn("size-4", on ? "text-brand" : "text-fg-subtle")} /> {PLATFORM_CYCLE_META[c].label}
                 </span>
-                <span className="mt-0.5 block text-[11.5px] leading-snug text-fg-subtle">{PLATFORM_CYCLE_META[c].hint}</span>
+                <span className="mt-0.5 block text-[12px] leading-snug text-fg-subtle">{PLATFORM_CYCLE_META[c].hint}</span>
               </button>
             );
           })}

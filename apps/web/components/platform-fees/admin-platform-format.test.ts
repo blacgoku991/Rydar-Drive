@@ -1,8 +1,9 @@
 import type { PlatformAccount, PlatformEntry } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
-  ISO_DAY_RE, NETWORK_CONTEST_NOTE, csvText, invoiceCycles, isNetworkContest, monthSignals, originParts, pendingReductionsDescription,
-  rideSettlementLabel, zeroPriceText,
+  ISO_DAY_RE, NETWORK_CONTEST_NOTE, STATEMENT_FIRST_LINES, accountIsEmpty, accountStateBadge, balanceLabel, csvText, formatDay, formatDayTime,
+  invoiceCycles, isNetworkContest, lastMonths, monthKey, monthLabel, monthSignals, moreLinesLabel, originParts, pendingReductionsDescription,
+  rideSettlementLabel, termsSummary, visibleOriginParts, zeroPriceText,
 } from "./admin-platform-format";
 
 describe("invoiceCycles : cycles de la facture récapitulative (frais à facturer)", () => {
@@ -122,5 +123,92 @@ describe("baisses de frais à valider : contestation d'une course partagée (ré
     expect(mixed).toContain("sans décision dans les 30 jours, la baisse est acceptée automatiquement (CGV, article 5).");
     expect(mixed).toMatch(/Course partagée contestée : à vous de décider, jamais acceptée automatiquement/);
     expect(nb(NETWORK_CONTEST_NOTE)).toBe("Course partagée contestée : jamais acceptée automatiquement, décision requise");
+  });
+});
+
+// Refonte R5 (docs/REFONTE-PANELS.md) : formateurs mémorisés (mêmes sorties qu'avec un formateur construit à chaque
+// appel), résumés de la page d'un compte, état vide, lignes de « D'où vient l'argent », relevé.
+describe("dates et mois : mêmes sorties avec les formateurs mémorisés de @rydar/shared", () => {
+  const nb = (t: string) => t.replace(/[\u00a0\u202f]/g, " ");
+  it("jour, jour et heure, mois", () => {
+    expect(formatDay("2026-10-05")).toBe("5 oct. 2026");
+    expect(formatDay("2026-10-05", "America/New_York", false)).toBe("5 oct.");
+    // Instant lu dans le fuseau du client : 23:30 UTC le 31 octobre = 1er novembre à Paris
+    expect(formatDay("2026-10-31T23:30:00Z", "Europe/Paris")).toBe("1 nov. 2026");
+    expect(formatDay(null)).toBe("—");
+    expect(nb(formatDayTime("2026-10-01T08:08:00Z", "Europe/Paris"))).toBe("01/10 10:08");
+    expect(formatDayTime(undefined)).toBe("—");
+    expect(monthKey(new Date("2026-09-30T22:30:00Z"))).toBe("2026-10");
+    expect(monthKey(new Date("2026-09-30T22:30:00Z"), "UTC")).toBe("2026-09");
+    expect(monthLabel("2026-08")).toBe("août 2026");
+    expect(lastMonths("2026-01", 3)).toEqual(["2026-01", "2025-12", "2025-11"]);
+  });
+});
+
+describe("page d'un compte : résumés", () => {
+  const nb = (t: string) => t.replace(/[\u00a0\u202f]/g, " ");
+  it("conditions en une ligne : cycle, délai, blocage", () => {
+    expect(nb(termsSummary({ cycle: "monthly", payment_days: 5, block_after_days: null }))).toBe("Mensuel · 5 jours de délai · blocage désactivé");
+    expect(nb(termsSummary({ cycle: "weekly", payment_days: 1, block_after_days: 15 }))).toBe(
+      "Hebdomadaire · 1 jour de délai · courses bloquées après 15 jours de retard",
+    );
+    expect(nb(termsSummary({ cycle: "monthly", payment_days: 0, block_after_days: 1 }))).toBe("Mensuel · 0 jour de délai · courses bloquées après 1 jour de retard");
+  });
+
+  it("état du compte vu par Rydar : retard, échéance, avance du client (jamais « en votre faveur »), rien à régler", () => {
+    const base = { balance_cents: 0, due_cents: 0, days_overdue: 0, overdue_since: null, next_due_at: null };
+    expect(accountStateBadge({ ...base, balance_cents: 33000, due_cents: 9500, days_overdue: 4, overdue_since: "2026-10-06T00:00:00Z" })).toEqual({
+      text: "En retard depuis 4\u00a0jours",
+      tone: "red",
+    });
+    expect(accountStateBadge({ ...base, balance_cents: 500, due_cents: 500, overdue_since: "2026-10-10T00:00:00Z" }).text).toBe("Échéance dépassée aujourd'hui");
+    expect(accountStateBadge({ ...base, balance_cents: 23500, next_due_at: "2026-11-05T22:59:59Z" }, "Europe/Paris")).toEqual({
+      text: "À régler au plus tard le 5 novembre",
+      tone: "amber",
+    });
+    expect(accountStateBadge({ ...base, balance_cents: -500 })).toEqual({ text: "Avance du client", tone: "green" });
+    expect(accountStateBadge(base)).toEqual({ text: "Rien à régler", tone: "green" });
+    for (const a of [{ ...base, balance_cents: -500 }, base]) expect(accountStateBadge(a).text).not.toMatch(/votre/);
+  });
+
+  it("compte sans frais ni historique : état vide ; un taux, un montant, une hausse annoncée ou un paiement suffisent à l'éviter", () => {
+    const zero = {
+      fee_percent: 0, fee_fixed_cents: 0, posted_cents: 0, received_cents: 0, declared_cents: 0, declared_count: 0, balance_cents: 0,
+      pending_reductions_count: 0, scheduled_change: null,
+    };
+    expect(accountIsEmpty(zero, 0)).toBe(true);
+    // Taux lu en texte (numeric de PostgreSQL) : « 0.00 » reste un taux nul
+    expect(accountIsEmpty({ ...zero, fee_percent: "0.00" as unknown as number }, 0)).toBe(true);
+    expect(accountIsEmpty({ ...zero, fee_fixed_cents: 500 }, 0)).toBe(false);
+    expect(accountIsEmpty({ ...zero, fee_percent: 2.5 }, 0)).toBe(false);
+    expect(accountIsEmpty({ ...zero, posted_cents: 500 }, 0)).toBe(false);
+    expect(accountIsEmpty({ ...zero, received_cents: 1000, balance_cents: -1000 }, 1)).toBe(false);
+    expect(accountIsEmpty({ ...zero, declared_count: 1, declared_cents: 1000 }, 1)).toBe(false);
+    expect(accountIsEmpty(zero, 1)).toBe(false);
+    expect(
+      accountIsEmpty(
+        { ...zero, scheduled_change: { id: "c", percent: 0, fixed_cents: 500, from_percent: 0, from_fixed_cents: 0, effective_at: "", effective_on: "2026-11-12", announced_at: "" } },
+        0,
+      ),
+    ).toBe(false);
+  });
+
+  it("d'où vient l'argent : flotte sans les lignes des centrales restées à zéro ; centrale inchangée", () => {
+    const a = { posted_cents: 600, collected_by_centrale_cents: 600, with_drivers_cents: 0, waived_by_centrale_cents: 0 } as PlatformAccount;
+    expect(visibleOriginParts({ ...a, dispatch_model: "fleet" }).map((p) => p.key)).toEqual(["collected"]);
+    expect(visibleOriginParts({ ...a, dispatch_model: "centrale" }).map((p) => p.key)).toEqual(["collected", "drivers", "waived"]);
+    // Flotte passée par le modèle centrale : ses montants hérités restent affichés
+    expect(visibleOriginParts({ ...a, posted_cents: 900, with_drivers_cents: 300, dispatch_model: "fleet" }).map((p) => p.key)).toEqual(["collected", "drivers"]);
+    // Ajustements seulement s'il y en a (comme avant)
+    expect(visibleOriginParts({ ...a, posted_cents: 400, dispatch_model: "centrale" }).map((p) => p.key)).toEqual(["collected", "drivers", "waived", "other"]);
+  });
+
+  it("relevé : 15 lignes d'emblée, repli des suivantes, reste dû ou avance du client", () => {
+    expect(STATEMENT_FIRST_LINES).toBe(15);
+    expect(moreLinesLabel(32)).toBe("Afficher les 32 autres lignes");
+    expect(moreLinesLabel(1)).toBe("Afficher la dernière ligne");
+    expect(balanceLabel(11500, "au 1er octobre 2026")).toBe("Reste dû au 1er octobre 2026");
+    expect(balanceLabel(0, "à ce jour")).toBe("Reste dû à ce jour");
+    expect(balanceLabel(-500, "fin septembre 2026")).toBe("Avance du client fin septembre 2026");
   });
 });
