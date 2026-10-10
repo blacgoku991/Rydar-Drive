@@ -18,6 +18,8 @@ import { getPayerContext } from "@/components/platform-fees/org-payer-context";
 import { isAdminRole } from "@/lib/auth";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
+// Chemin relatif : chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
+import { refuseInPrivateFleet } from "../../../lib/private-fleet";
 
 export type NetworkActionResult<T = object> =
   | ({ ok: true; message: string } & T)
@@ -44,6 +46,9 @@ type PgError = { code?: string; message?: string } | null;
 async function context(admin: boolean, opts: { creditor?: boolean } = {}): Promise<Ctx | Fail> {
   const ctx = opts.creditor ? await getPayerContext() : await getOrgContext();
   if (!ctx) return { ok: false, error: "Session expirée ou organisation indisponible : rechargez la page." };
+  // Flotte Privée : jamais de réseau partagé (garde E en base) — toutes les actions de ce fichier passent par ici
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (admin && !isAdminRole(ctx.role)) return { ok: false, error: ADMIN_ONLY };
   return ctx;
 }

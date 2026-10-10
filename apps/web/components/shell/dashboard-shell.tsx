@@ -6,7 +6,6 @@ import { useEffect, useLayoutEffect, useRef, useState, useTransition } from "rea
 import { AlertsBell, AlertsProvider } from "@/components/alerts/dispatch-alerts";
 import { ChatUnreadProvider, useChatUnread } from "@/components/chat/unread-provider";
 import { CookieNotice } from "@/components/legal/cookie-notice";
-import { joinNavLabel } from "@/components/network/join-copy";
 import { networkNavItem, type NetworkNavState } from "@/components/network-share/nav";
 import { OrgPlatformBanner } from "@/components/platform-fees/org-platform-banner";
 import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
@@ -14,7 +13,9 @@ import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realti
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, fetchNetworkNav, type CentraleCounts } from "@/components/settlements/counts";
-import { Sidebar, type NavSection } from "@/components/shell/sidebar";
+import { countExpiringDocuments, countToTreat } from "@/components/private-fleet/queue";
+import { dashboardNav } from "@/components/shell/dashboard-nav";
+import { Sidebar } from "@/components/shell/sidebar";
 import { SkipToContent } from "@/components/shell/skip-to-content";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
@@ -54,30 +55,50 @@ type ShellProps = {
    * + en retard + à vérifier). null / absent : réseau fermé, AUCUNE entrée (rien ne change pour personne).
    */
   sharedNetwork?: NetworkNavState | null;
+  /**
+   * Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.2 et 7.5) : menu épuré, sous-titre « Flotte Privée », pastilles « à
+   * traiter » et « documents à renouveler » ; ni messagerie, ni candidatures, ni documents à valider, ni réseau.
+   * null / absent : organisation standard.
+   */
+  privateFleet?: PrivateFleetShell | null;
+};
+
+export type PrivateFleetShell = {
+  /** Fiche chauffeur du propriétaire (null : fiche supprimée) */
+  driverId: string | null;
+  /** Réservations à traiter (à confirmer, à vérifier, non confirmées) */
+  toTreat: number;
+  /** Documents expirés ou qui expirent sous 30 jours */
+  expiringDocuments: number;
 };
 
 export function DashboardShell(props: ShellProps) {
   const { org, user } = props;
+  // Flotte Privée : aucune messagerie (§ 7.4) — ni compteur, ni relecture des non-lus
+  const body = props.privateFleet ? (
+    <ShellBody {...props} />
+  ) : (
+    <ChatUnreadProvider key={org.id} initial={props.unreadMessages ?? 0} initialOpenReports={props.openReports} userId={user.id}>
+      <ShellBody {...props} />
+    </ChatUnreadProvider>
+  );
   return (
     <RealtimeProvider topic={`org:${org.id}`}>
-      <CentraleProvider value={props.centrale}>
-        <ChatUnreadProvider key={org.id} initial={props.unreadMessages ?? 0} initialOpenReports={props.openReports} userId={user.id}>
-          <ShellBody {...props} />
-        </ChatUnreadProvider>
-      </CentraleProvider>
+      <CentraleProvider value={props.centrale}>{body}</CentraleProvider>
     </RealtimeProvider>
   );
 }
 
 /**
  * Compteurs « Encaissements » (centrale) et « Réseau » / « Inscriptions » (candidatures, les deux modèles) : valeur
- * serveur, relue après chaque événement.
+ * serveur, relue après chaque événement. `enabled` faux (Flotte Privée : ni candidatures ni encaissements) : aucune relecture.
  */
-function useCentraleCounts(orgId: string, centrale: boolean, initial: CentraleCounts | null | undefined) {
+function useCentraleCounts(orgId: string, centrale: boolean, initial: CentraleCounts | null | undefined, enabled = true) {
   const [counts, setCounts] = useState<CentraleCounts>(initial ?? EMPTY_CENTRALE_COUNTS);
   useEffect(() => setCounts(initial ?? EMPTY_CENTRALE_COUNTS), [initial]);
   const timer = useRef<number | null>(null);
   const reload = () => {
+    if (!enabled) return;
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       fetchCentraleCounts(getBrowserClient(), orgId, { settlements: centrale })
@@ -151,20 +172,54 @@ function useNetworkNav(orgId: string, initial: NetworkNavState | null | undefine
   return enabled ? state : null;
 }
 
-const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
+/**
+ * Flotte Privée : pastilles « à traiter » (réservations) et « documents à renouveler » — valeur serveur (layout), relue
+ * après chaque changement de course ou d'offre (rafales regroupées) et de document. Inactif hors Flotte Privée.
+ */
+function usePrivateFleetCounts(orgId: string, initial: PrivateFleetShell | null | undefined) {
+  const [counts, setCounts] = useState({ toTreat: initial?.toTreat ?? 0, expiringDocuments: initial?.expiringDocuments ?? 0 });
+  useEffect(() => setCounts({ toTreat: initial?.toTreat ?? 0, expiringDocuments: initial?.expiringDocuments ?? 0 }), [initial]);
+  const enabled = !!initial;
+  const driverId = initial?.driverId ?? null;
+  const rides = useRef<number | null>(null);
+  const docs = useRef<number | null>(null);
+  const reloadRides = () => {
+    if (!enabled) return;
+    if (rides.current) window.clearTimeout(rides.current);
+    rides.current = window.setTimeout(() => {
+      countToTreat(getBrowserClient(), orgId, driverId)
+        .then((n) => n !== null && setCounts((c) => ({ ...c, toTreat: n })))
+        .catch(() => undefined);
+    }, 800);
+  };
+  const reloadDocuments = () => {
+    if (!enabled) return;
+    if (docs.current) window.clearTimeout(docs.current);
+    docs.current = window.setTimeout(() => {
+      countExpiringDocuments(getBrowserClient(), orgId)
+        .then((n) => n !== null && setCounts((c) => ({ ...c, expiringDocuments: n })))
+        .catch(() => undefined);
+    }, 600);
+  };
+  useRealtimeEvent("ride.updated", reloadRides);
+  useRealtimeEvent("offer.updated", reloadRides);
+  useRealtimeEvent("driver.document", reloadDocuments);
+  return counts;
+}
 
 /** Événements « platform.updated » qui changent le layout (entrée « Frais Rydar », bandeau, menus du modèle). */
 const LAYOUT_PLATFORM_ACTIONS = new Set<string>(["rates", "model", "rates_scheduled", "rates_cancelled"]);
 
 function ShellBody({
   children, org, orgs, user, alerts, pendingDocuments: pendingInitial, centrale, centraleCounts, topBanner, superAdmin, bookingSites, rydarFees,
-  sharedNetwork,
+  sharedNetwork, privateFleet,
 }: ShellProps) {
   const router = useRouter();
   const [, start] = useTransition();
   const { unread, openReports } = useChatUnread();
   const isCentrale = centrale.model === "centrale";
-  const counts = useCentraleCounts(org.id, isCentrale, centraleCounts);
+  const counts = useCentraleCounts(org.id, isCentrale, centraleCounts, !privateFleet);
+  const privateCounts = usePrivateFleetCounts(org.id, privateFleet);
   const networkNav = networkNavItem(useNetworkNav(org.id, sharedNetwork));
   const isAdmin = org.role === "owner" || org.role === "admin";
   // Frais dus à Rydar : centrale → carte d'« Encaissements » ; flotte avec des frais → entrée « Frais Rydar »
@@ -197,6 +252,8 @@ function ShellBody({
   useEffect(() => setPendingDocuments(pendingInitial ?? 0), [pendingInitial]);
   const docsTimer = useRef<number | null>(null);
   const reloadPendingDocuments = () => {
+    // Flotte Privée : pastille « documents à renouveler » (usePrivateFleetCounts) à la place
+    if (privateFleet) return;
     if (docsTimer.current) window.clearTimeout(docsTimer.current);
     docsTimer.current = window.setTimeout(() => {
       countPendingDocuments(getBrowserClient(), org.id)
@@ -215,91 +272,31 @@ function ShellBody({
     setSwitchedTo(null);
     return onOrgSwitch((id) => setSwitchedTo(id === org.id ? null : id));
   }, [org.id]);
-  const toSettle = counts.declared + counts.overdue;
-  const settlementsLabel = [
-    counts.declared ? plural(counts.declared, "paiement à confirmer", "paiements à confirmer") : null,
-    counts.overdue ? plural(counts.overdue, "commission en retard", "commissions en retard") : null,
-  ].filter(Boolean).join(" · ");
-  // « Messages » : messages signalés à traiter (ambre) en priorité, sinon non-lus
-  const unreadLabel = plural(unread, "message non lu", "messages non lus");
-  const messagesLabel = openReports
-    ? [plural(openReports, "message signalé à traiter", "messages signalés à traiter"), unread ? unreadLabel : null].filter(Boolean).join(" · ")
-    : unreadLabel;
-  const sections: NavSection[] = [
-    {
-      title: "Opérations",
-      items: [
-        { href: "/dashboard", label: "En direct", icon: "radar", exact: true },
-        {
-          href: "/dashboard/messages",
-          label: "Messages",
-          icon: "message",
-          badge: openReports || unread,
-          badgeTone: openReports ? "amber" : "brand",
-          badgeLabel: messagesLabel,
-        },
-        { href: "/dashboard/rides", label: "Courses", icon: "route", badge: alerts },
-        ...(isCentrale
-          ? [
-              {
-                href: "/dashboard/settlements",
-                label: "Encaissements",
-                icon: "wallet" as const,
-                badge: toSettle,
-                badgeTone: counts.overdue ? ("red" as const) : ("amber" as const),
-                badgeLabel: settlementsLabel,
-              },
-            ]
-          : []),
-        // Réseau partagé (flottes et centrales) : seulement quand la plateforme l'a ouvert
-        ...(networkNav ? [networkNav] : []),
-        {
-          href: "/dashboard/drivers",
-          label: "Chauffeurs",
-          icon: "users",
-          badge: pendingDocuments,
-          badgeTone: "amber",
-          badgeLabel: `${pendingDocuments} document${pendingDocuments > 1 ? "s" : ""} à valider`,
-        },
-        // Lien d'inscription + candidatures : « Réseau » en centrale, « Inscriptions » en flotte (même page), juste
-        // sous « Chauffeurs », avec le nombre de candidatures à traiter ; « Inscriptions » pour les deux quand le réseau
-        // partagé est ouvert (pas de confusion avec « Réseau partagé »)
-        {
-          href: "/dashboard/network",
-          label: joinNavLabel(centrale.model, !!networkNav),
-          icon: isCentrale && !networkNav ? "network" : "userPlus",
-          badge: counts.applications,
-          badgeTone: "brand",
-          badgeLabel: plural(counts.applications, "candidature en attente", "candidatures en attente"),
-        },
-        { href: "/dashboard/dispatch", label: "Journal du dispatch", icon: "scroll" },
-      ],
+  const sections = dashboardNav({
+    privateFleet: !!privateFleet,
+    model: centrale.model,
+    role: org.role,
+    counts: {
+      alerts,
+      unread,
+      openReports,
+      pendingDocuments,
+      applications: counts.applications,
+      declared: counts.declared,
+      overdue: counts.overdue,
+      toTreat: privateCounts.toTreat,
+      expiringDocuments: privateCounts.expiringDocuments,
     },
-    { title: "Pilotage", items: [{ href: "/dashboard/stats", label: "Statistiques", icon: "chart" }] },
-    {
-      title: "Canaux",
-      items: [
-        { href: "/dashboard/integrations", label: "API & site web", icon: "key" },
-        ...(bookingSites ? [{ href: "/dashboard/booking-site", label: "Mini-site", icon: "globe" as const }] : []),
-      ],
-    },
-    {
-      title: "Organisation",
-      items: [
-        ...(fleetFees ? [{ href: feePaths.page, label: "Frais Rydar", icon: "landmark" as const }] : []),
-        { href: "/dashboard/settings", label: "Réglages", icon: "settings" },
-      ],
-    },
-    ...(superAdmin ? [{ title: "Plateforme", items: [{ href: "/admin", label: "Espace super admin", icon: "shield" as const }] }] : []),
-  ];
+    flags: { bookingSites, rydarFees, superAdmin, networkNav },
+  });
   return (
-    <AlertsProvider key={org.id} scope={`${org.id}:${user.email}`}>
+    <AlertsProvider key={org.id} scope={`${org.id}:${user.email}`} privateFleet={!!privateFleet}>
       {/* Premier élément au clavier : saute la barre latérale */}
       <SkipToContent />
       <Sidebar
         headerAction={<AlertsBell />}
         sections={sections}
-        subtitle="Dispatch"
+        subtitle={privateFleet ? "Flotte Privée" : "Dispatch"}
         user={user}
         orgs={orgs}
         currentOrgId={org.id}

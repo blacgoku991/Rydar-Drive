@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Chauffeurs" };
@@ -28,6 +29,8 @@ const FILTERS = [
 
 export default async function DriversPage({ searchParams }: { searchParams: Promise<{ filter?: string; q?: string }> }) {
   const ctx = await requireOrg();
+  // Flotte Privée : un seul chauffeur, le propriétaire → « Mon profil chauffeur »
+  privateFleetPage(ctx, { redirect: "/dashboard/profil" });
   const sp = await searchParams;
   const filter = FILTERS.some((f) => f.key === sp.filter) ? sp.filter! : "all";
   const q = (sp.q ?? "").trim().toLowerCase();

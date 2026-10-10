@@ -6,6 +6,7 @@ import { env } from "@/lib/env";
 import { getOrgContext } from "@/lib/org-context";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { checkoutPlanAllowed } from "./plan-access";
 
 const body = z.object({ planCode: z.string().regex(/^[a-z0-9_]+$/), interval: z.enum(["month", "year"]).default("month") });
 
@@ -26,7 +27,8 @@ export async function POST(req: Request) {
   const admin = createAdminClient();
   const [{ data: plan }, { data: org }, { data: live, error: liveError }, { data: terms, error: termsError }] = await Promise.all([
     admin.from("plans").select("id, code, is_public, stripe_price_monthly_id, stripe_price_yearly_id").eq("code", parsed.data.planCode).eq("is_active", true).maybeSingle(),
-    admin.from("organizations").select("id, name, email, stripe_customer_id, plan_id").eq("id", ctx.org.id).single(),
+    // private_fleet relu ici (service role), jamais d'après la session : la Flotte Privée ne paie que son offre attribuée
+    admin.from("organizations").select("id, name, email, stripe_customer_id, plan_id, private_fleet").eq("id", ctx.org.id).single(),
     // Abonnement Stripe encore vivant : Checkout en créerait un SECOND (double facturation)
     admin.from("subscriptions").select("id").eq("organization_id", ctx.org.id).not("stripe_subscription_id", "is", null)
       .in("status", ["active", "trialing", "past_due", "unpaid", "paused"]).limit(1),
@@ -35,7 +37,8 @@ export async function POST(req: Request) {
     admin.from("legal_acceptances").select("version").eq("organization_id", ctx.org.id).eq("document", "dpa")
       .eq("version", ORG_LEGAL_VERSION).limit(1),
   ]);
-  if (liveError || termsError) return NextResponse.json({ error: "Abonnement indisponible pour le moment : réessayez." }, { status: 503 });
+  // Organisation illisible : jamais de Checkout (offre attribuée et drapeau Flotte Privée inconnus)
+  if (liveError || termsError || !org) return NextResponse.json({ error: "Abonnement indisponible pour le moment : réessayez." }, { status: 503 });
   if (live?.length) return NextResponse.json({ error: "Vous avez déjà un abonnement : changez d'offre avec le bouton « Gérer »." }, { status: 409 });
   if (!terms?.length) {
     return NextResponse.json(
@@ -47,8 +50,13 @@ export async function POST(req: Request) {
     );
   }
   const priceId = parsed.data.interval === "year" ? (plan as any)?.stripe_price_yearly_id : (plan as any)?.stripe_price_monthly_id;
-  // Offre non publique (négociée) : seulement celle que le super admin a attribuée à cette centrale
-  const allowed = plan && ((plan as any).is_public || (plan as any).id === (org as any)?.plan_id);
+  // Offre non publique (négociée) : seulement celle que le super admin a attribuée à cette centrale ; Flotte Privée :
+  // seulement son offre attribuée, jamais une offre publique (limites fixées par son contrat, docs/FLOTTE-PRIVEE.md § 7.6)
+  const allowed = checkoutPlanAllowed({
+    privateFleet: (org as any)?.private_fleet === true,
+    plan: plan ? { id: (plan as any).id, is_public: (plan as any).is_public } : null,
+    orgPlanId: (org as any)?.plan_id ?? null,
+  });
   if (!allowed || !priceId) return NextResponse.json({ error: "Offre non disponible au paiement en ligne." }, { status: 422 });
 
   let customer = (org as any).stripe_customer_id as string | null;

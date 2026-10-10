@@ -6,12 +6,14 @@ import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { feeTermsText } from "@/components/platform-fees/org-platform-format";
 import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
 import { BillingPanel } from "@/components/settings/billing-panel";
+import { PrivateBookingSettingsForm, type PrivateBookingSettingsRow } from "@/components/settings/private-booking-settings";
 import { DispatchSettingsForm, OrganizationForm, PricingEditor, TeamPanel } from "@/components/settings/settings-forms";
 import { CentraleSettingsForm, type CentraleSettingsRow } from "@/components/settlements/centrale-settings-form";
 import { ReminderSettings } from "@/components/settlements/reminder-settings";
 import type { WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
+import { isPrivateFleet } from "@/lib/private-fleet";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +30,17 @@ const TABS = [
   { key: "billing", label: "Abonnement" },
 ] as const;
 
+/**
+ * Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.3) : « Mon entreprise », « Tarifs », « Réservations », « Abonnement » ;
+ * Dispatch, Commission et encaissement, Équipe retirés (et leurs actions refusées) ; onglet inconnu → « Mon entreprise ».
+ */
+const PRIVATE_TABS = [
+  { key: "org", label: "Mon entreprise" },
+  { key: "pricing", label: "Tarifs" },
+  { key: "bookings", label: "Réservations" },
+  { key: "billing", label: "Abonnement" },
+] as const;
+
 const CENTRALE_COLUMNS =
   "driver_commission_percent, driver_commission_fixed_cents, settlement_grace_hours, settlement_credit_limit_cents, block_unpaid, new_driver_max_price_cents, trust_after_rides, settlement_methods, settlement_link, settlement_instructions, settlement_payee_name, settlement_iban, settlement_bic, reminder_channels";
 
@@ -35,13 +48,22 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const ctx = await requireOrg();
   const { tab: t } = await searchParams;
   const centrale = ctx.org.dispatch_model === "centrale";
-  const tabs = TABS.filter((x) => x.key !== "centrale" || centrale);
-  const tab = tabs.some((x) => x.key === t) ? t! : "dispatch";
+  const privateFleet = isPrivateFleet(ctx.org);
+  const tabs: readonly { key: string; label: string }[] = privateFleet ? PRIVATE_TABS : TABS.filter((x) => x.key !== "centrale" || centrale);
+  const tab = tabs.some((x) => x.key === t) ? t! : privateFleet ? "org" : "dispatch";
   const admin = isAdminRole(ctx.role);
   const orgId = ctx.org.id;
 
   let content: React.ReactNode = null;
-  if (tab === "dispatch") {
+  if (tab === "bookings") {
+    // Flotte Privée seulement (onglet absent ailleurs) : délais de confirmation et de réponse, rappels, paiement
+    const { data } = await ctx.supabase
+      .from("organization_settings")
+      .select("scheduled_dispatch_lead_minutes, offer_timeout_seconds, reminder_offsets_minutes, default_payment_method")
+      .eq("organization_id", orgId)
+      .single();
+    content = <PrivateBookingSettingsForm settings={data as PrivateBookingSettingsRow} readOnly={!admin} />;
+  } else if (tab === "dispatch") {
     const { data } = await ctx.supabase.from("organization_settings").select("*").eq("organization_id", orgId).single();
     content = (
       <DispatchSettingsForm
@@ -99,10 +121,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     );
   } else if (tab === "org") {
     const { data } = await ctx.supabase.from("organizations").select("name, legal_name, siret, email, phone, address, city, postal_code, vtc_registration").eq("id", orgId).single();
-    content = <OrganizationForm org={data} readOnly={!admin} />;
+    content = <OrganizationForm org={data} readOnly={!admin} privateFleet={privateFleet} />;
   } else if (tab === "pricing") {
     const { data } = await ctx.supabase.from("pricing_rules").select("*").eq("organization_id", orgId).eq("is_active", true);
-    content = <PricingEditor rules={data ?? []} readOnly={!admin} />;
+    content = <PricingEditor rules={data ?? []} readOnly={!admin} privateFleet={privateFleet} />;
   } else if (tab === "team") {
     const { data } = await ctx.supabase
       .from("organization_users")
@@ -120,7 +142,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     content = <TeamPanel members={members} isOwner={ctx.role === "owner"} canInvite={admin} />;
   } else {
     const [{ data: plans }, { data: usage }, { data: subscription }, { data: invoices }, sitesOn, fees] = await Promise.all([
-      ctx.supabase.from("plans").select("*").eq("is_active", true).eq("is_public", true).order("sort_order"),
+      // Flotte Privée : seulement l'offre attribuée par l'équipe Rydar, même non publique (illisible par la RLS des
+      // offres : lue en service role, la seule de l'organisation) ; jamais les offres publiques (Checkout verrouillé)
+      privateFleet
+        ? ctx.org.plan_id
+          ? createAdminClient().from("plans").select("*").eq("id", ctx.org.plan_id).eq("is_active", true)
+          : Promise.resolve({ data: [] })
+        : ctx.supabase.from("plans").select("*").eq("is_active", true).eq("is_public", true).order("sort_order"),
       ctx.supabase.rpc("org_usage", { p_org: orgId }),
       ctx.supabase.from("subscriptions").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
       ctx.supabase.from("invoices").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(12),
@@ -154,7 +182,16 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <span className="shrink-0 text-[13px] text-brand">Ouvrir →</span>
           </Link>
         )}
-        <BillingPanel plans={plans ?? []} currentPlanId={ctx.org.plan_id} usage={usage} subscription={subscription} invoices={invoices ?? []} isOwner={ctx.role === "owner"} bookingSitesEnabled={sitesOn} />
+        <BillingPanel
+          plans={plans ?? []}
+          currentPlanId={ctx.org.plan_id}
+          usage={usage}
+          subscription={subscription}
+          invoices={invoices ?? []}
+          isOwner={ctx.role === "owner"}
+          bookingSitesEnabled={sitesOn}
+          privateFleet={privateFleet}
+        />
       </div>
     );
   }
@@ -162,9 +199,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   return (
     <>
       <PageHeader
-        eyebrow="Organisation"
+        eyebrow={privateFleet ? "Mon entreprise" : "Organisation"}
         title="Réglages"
-        description={centrale ? "Moteur de dispatch, commission et encaissement, identité, tarifs, équipe et abonnement." : "Moteur de dispatch, identité, tarifs, équipe et abonnement."}
+        description={
+          privateFleet
+            ? "Votre entreprise, vos tarifs, vos réservations et votre abonnement."
+            : centrale
+              ? "Moteur de dispatch, commission et encaissement, identité, tarifs, équipe et abonnement."
+              : "Moteur de dispatch, identité, tarifs, équipe et abonnement."
+        }
       >
         <nav aria-label="Rubriques des réglages" className="-mb-px flex gap-1 overflow-x-auto">
           {tabs.map((x) => (

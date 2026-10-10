@@ -29,9 +29,27 @@ function Meter({ label, used, max }: { label: string; used: number; max: number 
   );
 }
 
-/** `bookingSitesEnabled` : interrupteur plateforme des mini-sites (super admin) ; coupé = mini-site et domaine personnalisé
- *  signalés indisponibles, quelle que soit l'offre. */
-export function BillingPanel({ plans, currentPlanId, usage, subscription, invoices, isOwner, bookingSitesEnabled }: { plans: any[]; currentPlanId: string | null; usage: any; subscription: any; invoices: any[]; isOwner: boolean; bookingSitesEnabled: boolean }) {
+/** Abonnement Stripe encore vivant (même règle que /api/billing/checkout : un second serait refusé). */
+const LIVE_SUBSCRIPTION = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+
+/**
+ * `bookingSitesEnabled` : interrupteur plateforme des mini-sites (super admin) ; coupé = mini-site et domaine personnalisé
+ * signalés indisponibles, quelle que soit l'offre.
+ * `privateFleet` (docs/FLOTTE-PRIVEE.md § 7.6) : seulement l'offre attribuée par l'équipe Rydar (même non publique,
+ * `plans` ne contient qu'elle), factures et portail ; sans offre : « Abonnement géré par l'équipe Rydar ».
+ */
+export function BillingPanel({
+  plans, currentPlanId, usage, subscription, invoices, isOwner, bookingSitesEnabled, privateFleet = false,
+}: {
+  plans: any[];
+  currentPlanId: string | null;
+  usage: any;
+  subscription: any;
+  invoices: any[];
+  isOwner: boolean;
+  bookingSitesEnabled: boolean;
+  privateFleet?: boolean;
+}) {
   const [loading, setLoading] = useState<string | null>(null);
   const [interval, setInterval] = useState<"month" | "year">("month");
   const call = async (url: string, body?: unknown) => {
@@ -44,6 +62,7 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
   };
   const limits = usage?.limits ?? {};
   const freeMonths = annualFreeMonths(plans);
+  const subscribed = !!subscription?.stripe_subscription_id && LIVE_SUBSCRIPTION.has(subscription.status);
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[1fr_1.4fr]">
@@ -66,7 +85,10 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
                   ["Domaine personnalisé", limits.custom_domain, true],
                   ["Statistiques avancées", limits.advanced_stats, false],
                 ] as [string, unknown, boolean][]
-              ).map(([l, on, site]) =>
+              )
+                // Flotte Privée : son site est relié par l'API (aucun mini-site)
+                .filter(([, , site]) => !privateFleet || !site)
+                .map(([l, on, site]) =>
                 on && site && !bookingSitesEnabled ? (
                   <Badge key={l} tone="amber">{l} · indisponible</Badge>
                 ) : (
@@ -74,7 +96,7 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
                 ),
               )}
             </div>
-            {!bookingSitesEnabled && (
+            {!bookingSitesEnabled && !privateFleet && (
               <p className="text-[12.5px] leading-relaxed text-fg-muted">
                 {ERROR_MESSAGES.BOOKING_SITES_DISABLED} Vos réglages sont conservés&nbsp;; les réservations par le tableau de
                 bord et par l&apos;API ne sont pas concernées.
@@ -108,7 +130,7 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
       </div>
 
       <div className="flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold">Offres Rydar Drive</h2>
+        <h2 className="text-[15px] font-semibold">{privateFleet ? "Votre offre" : "Offres Rydar Drive"}</h2>
         {/* Choix exposé (aria-pressed) et visible autrement que par une nuance de fond : contour lime (WCAG 1.4.11) */}
         <div role="group" aria-label="Périodicité des prix" className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[12.5px]">
           {(["month", "year"] as const).map((v) => (
@@ -124,12 +146,17 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
           ))}
         </div>
       </div>
-      {!bookingSitesEnabled && (
+      {!bookingSitesEnabled && !privateFleet && (
         <p className="-mt-2 text-[12.5px] text-fg-muted">Mini-site de réservation momentanément indisponible, quelle que soit l&apos;offre.</p>
+      )}
+      {privateFleet && !plans.length && (
+        <p className="rounded-xl border border-line bg-white/[0.02] px-4 py-3 text-[13px] text-fg-muted">Abonnement géré par l&apos;équipe Rydar.</p>
       )}
       <div className="grid gap-4 lg:grid-cols-3">
         {plans.map((p) => {
-          const current = p.id === currentPlanId;
+          // Flotte Privée : l'offre attribuée est payable tant qu'aucun abonnement n'est en cours (Checkout verrouillé sur elle)
+          const current = privateFleet ? subscribed && p.id === currentPlanId : p.id === currentPlanId;
+          const payable = !privateFleet || !!(interval === "year" ? p.stripe_price_yearly_id : p.stripe_price_monthly_id);
           // Prix EXACT de l'offre, hors taxes (CGV art. 4 : « celui affiché dans l'offre au moment de la souscription » ;
           // jamais arrondi à l'euro) : mensuel, ou annuel (avec son équivalent mensuel, au centime)
           const yearly = interval === "year";
@@ -153,15 +180,19 @@ export function BillingPanel({ plans, currentPlanId, usage, subscription, invoic
                   </li>
                 ))}
               </ul>
-              <Button
-                className="mt-6 w-full"
-                variant={current ? "outline" : p.highlighted ? "primary" : "secondary"}
-                disabled={current || !isOwner}
-                loading={loading === "/api/billing/checkout" + JSON.stringify({ planCode: p.code, interval })}
-                onClick={() => call("/api/billing/checkout", { planCode: p.code, interval })}
-              >
-                {current ? "Offre actuelle" : "Choisir cette offre"}
-              </Button>
+              {payable || current ? (
+                <Button
+                  className="mt-6 w-full"
+                  variant={current ? "outline" : p.highlighted || privateFleet ? "primary" : "secondary"}
+                  disabled={current || !isOwner}
+                  loading={loading === "/api/billing/checkout" + JSON.stringify({ planCode: p.code, interval })}
+                  onClick={() => call("/api/billing/checkout", { planCode: p.code, interval })}
+                >
+                  {current ? "Offre actuelle" : privateFleet ? "S'abonner à cette offre" : "Choisir cette offre"}
+                </Button>
+              ) : (
+                <p className="mt-6 text-center text-[12.5px] text-fg-muted">Abonnement géré par l&apos;équipe Rydar.</p>
+              )}
             </div>
           );
         })}

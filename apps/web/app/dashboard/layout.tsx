@@ -3,6 +3,7 @@ import { networkMenuShown } from "@/components/network-share/access";
 import { networkNavState } from "@/components/network-share/nav";
 import { networkTermsDue, shareOutRequested } from "@/components/network-share/readiness";
 import { NetworkTermsBanner } from "@/components/network-share/terms-banner";
+import { countExpiringDocuments, countToTreat } from "@/components/private-fleet/queue";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
 import { OrgTermsGate, TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
@@ -11,40 +12,21 @@ import { loadChatCounts } from "@/app/dashboard/messages/queries";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { LEGAL_VERSION, ORG_LEGAL_EFFECTIVE_AT } from "@/lib/legal";
+import { isPrivateFleet } from "@/lib/private-fleet";
 import { countPendingDocuments } from "@/lib/queries/pending-documents";
 import { networkAccess } from "@/lib/shared-network";
 
-export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const ctx = await requireOrg();
-  const centrale = ctx.org.dispatch_model === "centrale";
-  const admin = isAdminRole(ctx.role);
-  // Réseau partagé : interrupteur plateforme, puis le résumé de l'organisation (pastille du menu, bandeau « nouvelle
-  // convention ») — réseau ouvert, ou fermé par Rydar avec des sommes en cours (organisation déjà membre) ; jamais
-  // membre et réseau coupé : rien d'autre que l'interrupteur et l'adhésion. En parallèle des autres lectures.
-  const network = networkAccess(ctx.supabase, ctx.org.id);
-  const [{ count }, chat, pendingDocs, centraleCounts, centraleSettings, terms, userTerms, bookingSites, fleetFees, networkInfo] = await Promise.all([
+type Ctx = Awaited<ReturnType<typeof requireOrg>>;
+
+/** Lectures communes aux deux espaces : alerte « sans chauffeur », CGV / accord de traitement, CGU, frais Rydar (flotte). */
+function commonReads(ctx: Ctx, admin: boolean, centrale: boolean) {
+  return Promise.all([
     ctx.supabase
       .from("rides")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", ctx.org.id)
       .eq("status", "NO_DRIVER_FOUND")
       .gte("pickup_at", new Date(Date.now() - 6 * 3600_000).toISOString()),
-    // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus, et messages signalés à traiter
-    // (comptages seuls : la liste des fils n'est lue que par la page Messages)
-    loadChatCounts(ctx.supabase, ctx.org.id),
-    // Compteur « Chauffeurs » : documents déposés à valider (candidats exclus, comme la page Chauffeurs)
-    countPendingDocuments(ctx.supabase, ctx.org.id),
-    // « Réseau » (centrale) / « Inscriptions » (flotte) : candidatures en attente ; mode centrale : « Encaissements »
-    // (à confirmer + en retard)
-    fetchCentraleCounts(ctx.supabase, ctx.org.id, { settlements: centrale }),
-    // Mode centrale : lien de paiement et instructions (réclamations WhatsApp depuis les alertes et les fiches)
-    centrale
-      ? ctx.supabase
-          .from("organization_settings")
-          .select("settlement_link, settlement_instructions, settlement_methods, settlement_payee_name, settlement_iban, settlement_bic, block_unpaid")
-          .eq("organization_id", ctx.org.id)
-          .maybeSingle()
-      : Promise.resolve(null),
     // CGV + accord de traitement (owner / admin) : versions acceptées au nom de la centrale (une ligne par signataire
     // et par version ; « dpa » suffit, les deux documents sont enregistrés ensemble) → version en vigueur
     // (ORG_LEGAL_VERSION) acceptée, mise à jour à accepter (version antérieure seulement) ou première acceptation
@@ -63,13 +45,51 @@ export default async function DashboardLayout({ children }: { children: React.Re
       .eq("user_id", ctx.user.id)
       .eq("version", LEGAL_VERSION)
       .in("document", [...USER_TERMS_DOCUMENTS]),
-    // Menu « Mini-site » : masqué tant que les mini-sites sont coupés par la plateforme (super admin)
-    bookingSitesEnabled(),
     // Flotte : frais Rydar par course réglés par le super admin (ou historique) → entrée « Frais Rydar » (owner / admin).
     // Le seul booléen (org_platform_fees_enabled) : le compte complet n'est calculé que par le bandeau et la page
     !centrale && admin ? ctx.supabase.rpc("org_platform_fees_enabled", { p_org: ctx.org.id }) : Promise.resolve(null),
-    network,
   ]);
+}
+
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const ctx = await requireOrg();
+  const centrale = ctx.org.dispatch_model === "centrale";
+  const admin = isAdminRole(ctx.role);
+  // Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.5) : ni messagerie, ni documents à valider, ni compteurs de centrale, ni
+  // réseau partagé, ni mini-site, ni réglages d'encaissement ; à la place, les réservations à traiter et les documents à
+  // renouveler (pastilles du menu). Gardés : alerte « sans chauffeur », CGV et accord de traitement, CGU, frais Rydar.
+  const privateFleet = isPrivateFleet(ctx.org);
+  // Réseau partagé : interrupteur plateforme, puis le résumé de l'organisation (pastille du menu, bandeau « nouvelle
+  // convention ») — réseau ouvert, ou fermé par Rydar avec des sommes en cours (organisation déjà membre) ; jamais
+  // membre et réseau coupé : rien d'autre que l'interrupteur et l'adhésion. En parallèle des autres lectures.
+  const network = privateFleet ? Promise.resolve(null) : networkAccess(ctx.supabase, ctx.org.id);
+  const [[{ count }, terms, userTerms, fleetFees], chat, pendingDocs, centraleCounts, centraleSettings, bookingSites, networkInfo, toTreat, expiringDocuments] =
+    await Promise.all([
+      commonReads(ctx, admin, centrale),
+      // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus, et messages signalés à traiter
+      // (comptages seuls : la liste des fils n'est lue que par la page Messages)
+      privateFleet ? Promise.resolve(null) : loadChatCounts(ctx.supabase, ctx.org.id),
+      // Compteur « Chauffeurs » : documents déposés à valider (candidats exclus, comme la page Chauffeurs)
+      privateFleet ? Promise.resolve(null) : countPendingDocuments(ctx.supabase, ctx.org.id),
+      // « Réseau » (centrale) / « Inscriptions » (flotte) : candidatures en attente ; mode centrale : « Encaissements »
+      // (à confirmer + en retard)
+      privateFleet ? Promise.resolve(null) : fetchCentraleCounts(ctx.supabase, ctx.org.id, { settlements: centrale }),
+      // Mode centrale : lien de paiement et instructions (réclamations WhatsApp depuis les alertes et les fiches)
+      centrale
+        ? ctx.supabase
+            .from("organization_settings")
+            .select("settlement_link, settlement_instructions, settlement_methods, settlement_payee_name, settlement_iban, settlement_bic, block_unpaid")
+            .eq("organization_id", ctx.org.id)
+            .maybeSingle()
+        : Promise.resolve(null),
+      // Menu « Mini-site » : masqué tant que les mini-sites sont coupés par la plateforme (super admin)
+      privateFleet ? Promise.resolve(false) : bookingSitesEnabled(),
+      network,
+      // Flotte Privée : pastille « à traiter » (une lecture légère : statuts et offres des réservations sans chauffeur)
+      privateFleet ? countToTreat(ctx.supabase, ctx.org.id, ctx.driverId) : Promise.resolve(null),
+      // … et « documents à renouveler » de sa fiche
+      privateFleet ? countExpiringDocuments(ctx.supabase, ctx.org.id) : Promise.resolve(null),
+    ]);
   // Un seul bandeau à la fois : celui de la centrale (owner / admin, CGU et politique comprises) d'abord, puis les CGU
   // à titre personnel, puis la nouvelle convention du réseau partagé (owner / admin)
   const termsBanner = termsBannerChoice({
@@ -143,6 +163,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       bookingSites={bookingSites}
       rydarFees={fleetFees?.data === true}
       sharedNetwork={networkMenuShown(networkInfo) ? networkNavState(networkInfo?.summary) : null}
+      privateFleet={privateFleet ? { driverId: ctx.driverId, toTreat: toTreat ?? 0, expiringDocuments: expiringDocuments ?? 0 } : null}
     >
       {gate ? <OrgTermsGate orgName={ctx.org.name} hasRides={gateHasRides} /> : children}
     </DashboardShell>

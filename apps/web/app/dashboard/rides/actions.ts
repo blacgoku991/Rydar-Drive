@@ -1,13 +1,15 @@
 "use server";
 import {
-  PAYMENT_METHODS, estimatePrice, extractErrorCode, fieldErrors, matchFixedFare, rideFormSchema, type PaymentMethod, type PricingRule, type RideFormInput,
-  type RpcResult,
+  ERROR_MESSAGES, PAYMENT_METHODS, estimatePrice, extractErrorCode, fieldErrors, matchFixedFare, rideFormSchema, type PaymentMethod, type PricingRule,
+  type RideFormInput, type RpcResult,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { actionError } from "@/lib/errors";
 import { geocodeOne } from "@/lib/geocode";
 import { rideRouteColumns } from "@/lib/geo/routing";
 import { getOrgContext } from "@/lib/org-context";
+// Chemin relatif : chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
+import { isPrivateFleet, refuseInPrivateFleet } from "../../../lib/private-fleet";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
@@ -121,7 +123,37 @@ export async function assignRide(rideId: string, driverId: string) {
 }
 
 export async function redispatchRide(rideId: string) {
+  // Flotte Privée : pas de relance (une seule fiche, déjà sollicitée) — « Je la prends » ou « Annuler »
+  const refused = refuseInPrivateFleet(await getOrgContext());
+  if (refused) return refused;
   return rpc("redispatch_ride", { p_ride_id: rideId });
+}
+
+const OFFER_ERRORS: Record<string, string> = {
+  OFFER_NOT_FOUND: "Réservation introuvable : rechargez la page.",
+  OFFER_CLOSED: "Cette réservation n'attend plus de réponse : rechargez la page.",
+};
+
+/**
+ * Flotte Privée, « Refuser » : refus de l'offre « à confirmer » par le chauffeur-propriétaire lui-même
+ * (decline_ride_offer avec le client de la session : même compte que la fiche ; la base contrôle que l'offre est la
+ * sienne). La réservation passe « Refusée » tout de suite (H2, webhook ride.no_driver_found au site).
+ */
+export async function declineOffer(offerId: string): Promise<Result> {
+  const ctx = await getOrgContext();
+  if (!ctx) return { ok: false, error: "Accès refusé." };
+  if (!isPrivateFleet(ctx.org)) return { ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_ONLY };
+  if (!UUID.test(offerId)) return { ok: false, error: OFFER_ERRORS.OFFER_NOT_FOUND! };
+  const { data, error } = await ctx.supabase.rpc("decline_ride_offer", { p_offer_id: offerId });
+  if (error) {
+    // Fiche inactive, suspendue ou supprimée : FORBIDDEN (42501)
+    return { ok: false, error: error.code === "42501" ? "Votre fiche chauffeur n'est pas active : refus impossible." : actionError(error) };
+  }
+  const res = data as { ok?: boolean; code?: string; message?: string } | null;
+  if (!res?.ok) return { ok: false, error: OFFER_ERRORS[res?.code ?? ""] ?? res?.message ?? "Refus impossible." };
+  revalidatePath("/dashboard/rides");
+  revalidatePath("/dashboard");
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------- alertes de suivi (migration 002200)
@@ -138,6 +170,9 @@ export type RelaunchResult =
 export async function relaunchRide(rideId: string, expectedDriverId: string | null, reason?: string): Promise<RelaunchResult> {
   const ctx = await getOrgContext();
   if (!ctx) return { ok: false, code: "ERROR", error: "Accès refusé." };
+  // Flotte Privée : jamais « Retirer / Relancer » (D13 : reassign_ride reste permis en base pour la suspension)
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return { ...refused, code: "ERROR" };
   if (!UUID.test(rideId) || (expectedDriverId && !UUID.test(expectedDriverId))) return { ok: false, code: "RIDE_NOT_FOUND", error: "Course introuvable." };
   const { data, error } = await ctx.supabase.rpc("reassign_ride", {
     p_ride_id: rideId,

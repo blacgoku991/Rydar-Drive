@@ -6,6 +6,7 @@ import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
 import { env } from "@/lib/env";
 import { domainToken } from "./actions";
@@ -15,6 +16,8 @@ export const dynamic = "force-dynamic";
 
 export default async function BookingSitePage() {
   const ctx = await requireOrg();
+  // Flotte Privée : son site est relié par l'API v1 (mini-sites coupés pour la plateforme) → « Mon site »
+  privateFleetPage(ctx, { redirect: "/dashboard/site" });
   const header = (
     <PageHeader eyebrow="Canaux" title="Mini-site de réservation" description="Option pour les rattacheurs sans site : vos clients réservent en 30 secondes, sans compte ni application." />
   );

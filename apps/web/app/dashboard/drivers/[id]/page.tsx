@@ -25,6 +25,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Avatar, EmptyState } from "@/components/ui/misc";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { cn } from "@/lib/utils";
 import type { LiveDriver } from "@/lib/queries/live";
 
@@ -47,6 +48,8 @@ async function signedUrl(supabase: Awaited<ReturnType<typeof requireOrg>>["supab
 export default async function DriverPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await requireOrg();
+  // Flotte Privée : fiche du propriétaire dans « Mon profil chauffeur » (ni statut, ni bannissement, ni mot de passe)
+  privateFleetPage(ctx, { redirect: "/dashboard/profil" });
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const { data: d } = await ctx.supabase
     .from("drivers")

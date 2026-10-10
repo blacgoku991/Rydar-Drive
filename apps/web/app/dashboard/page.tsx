@@ -1,14 +1,26 @@
 import type { PricingRule } from "@rydar/shared";
 import type { Metadata } from "next";
 import { CommandCenter } from "@/components/command/command-center";
+import { loadPrivateHome } from "@/components/private-fleet/home-data";
+import { PrivateHome } from "@/components/private-fleet/private-home";
 import { requireOrg } from "@/lib/auth";
+import { isPrivateFleet } from "@/lib/private-fleet";
 import { getLiveSnapshot } from "@/lib/queries/live";
 
-export const metadata: Metadata = { title: "En direct" };
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const ctx = await requireOrg();
+  return { title: isPrivateFleet(ctx.org) ? "Accueil" : "En direct" };
+}
 
 export default async function DashboardPage() {
   const ctx = await requireOrg();
+  // Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.3) : Accueil du chauffeur-propriétaire à la place du centre de commande
+  if (isPrivateFleet(ctx.org)) {
+    const data = await loadPrivateHome(ctx);
+    return <PrivateHome data={data} now={Date.now()} />;
+  }
   const [snapshot, pricing, settings] = await Promise.all([
     getLiveSnapshot(ctx.supabase, ctx.org.id),
     ctx.supabase

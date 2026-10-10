@@ -17,6 +17,7 @@ import { ReconsiderButton } from "@/components/network/reconsider-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { networkMenuShown } from "@/components/network-share/access";
 import { networkAccess } from "@/lib/shared-network";
 
@@ -24,6 +25,8 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
   const ctx = await requireOrg();
+  // Flotte Privée : ni lien d'inscription ni candidatures (404, comme la page)
+  privateFleetPage(ctx, "notFound");
   // « Inscriptions » pour les deux modèles quand le menu montre « Réseau partagé » (réseau ouvert, ou fermé avec des
   // sommes en cours), comme le menu
   return { title: joinNavLabel(ctx.org.dispatch_model, networkMenuShown(await networkAccess(ctx.supabase, ctx.org.id))) };
@@ -52,6 +55,8 @@ async function signedUrl(supabase: Ctx["supabase"], path: string): Promise<strin
  */
 export default async function NetworkPage() {
   const ctx = await requireOrg();
+  // Flotte Privée : lien d'inscription fermé et candidatures impossibles (contrainte et garde en base) → 404
+  privateFleetPage(ctx, "notFound");
   const model: DispatchModel = ctx.org.dispatch_model === "centrale" ? "centrale" : "fleet";
   const centrale = model === "centrale";
   const tz = ctx.org.timezone;

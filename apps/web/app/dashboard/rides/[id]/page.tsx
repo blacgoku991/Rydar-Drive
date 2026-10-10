@@ -22,12 +22,18 @@ import { RideMoneyCard, type RideMoneyRide, type SettlementRow } from "@/compone
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/misc";
+import { PrivateBookingDetail } from "@/components/private-fleet/booking-detail";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { isPrivateFleet } from "@/lib/private-fleet";
 import { cn } from "@/lib/utils";
 import type { LiveDriver, LiveOffer, LiveRide } from "@/lib/queries/live";
 
-export const metadata: Metadata = { title: "Course" };
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const ctx = await requireOrg();
+  return { title: isPrivateFleet(ctx.org) ? "Réservation" : "Course" };
+}
 
 const DRIVER_COLUMNS =
   "id, number, first_name, last_name, phone, photo_url, presence, status, current_ride_id, online_since, vehicle:vehicles(brand, model, plate, color, category, seats), location:driver_locations(lat, lng, heading, speed_mps, updated_at)";
@@ -52,6 +58,9 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const ctx = await requireOrg();
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+  // Flotte Privée : fiche épurée (Je la prends, Refuser, Annuler, Modifier le prix ; ni attribution, ni relance, ni
+  // réseau, ni règlement)
+  if (isPrivateFleet(ctx.org)) return <PrivateBookingDetail ctx={ctx} id={id} />;
 
   const centrale = ctx.org.dispatch_model === "centrale";
   // Course et données liées en un seul aller-retour : toutes ne dépendent que de l'id de l'URL (filtrées aussi par

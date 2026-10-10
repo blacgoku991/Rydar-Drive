@@ -35,11 +35,15 @@ function useSave() {
 }
 
 // ---------------------------------------------------------------- Organisation
-export function OrganizationForm({ org, readOnly }: { org: any; readOnly: boolean }) {
+/** `privateFleet` : « Mon entreprise » du chauffeur-propriétaire (Flotte Privée), sans mention du mini-site. */
+export function OrganizationForm({ org, readOnly, privateFleet = false }: { org: any; readOnly: boolean; privateFleet?: boolean }) {
   const { pending, save } = useSave();
   return (
     <Card>
-      <CardHeader title="Identité de la centrale" description="Affichée dans l'application chauffeur, les factures et le mini-site." />
+      <CardHeader
+        title={privateFleet ? "Mon entreprise" : "Identité de la centrale"}
+        description={privateFleet ? "Affichée dans l'application et sur vos factures." : "Affichée dans l'application chauffeur, les factures et le mini-site."}
+      />
       <CardBody>
         <form
           onSubmit={submitWith((f) => {
@@ -60,7 +64,11 @@ export function OrganizationForm({ org, readOnly }: { org: any; readOnly: boolea
             label="Inscription VTC"
             optional
             className="sm:col-span-2"
-            hint="N° d'inscription au registre des exploitants VTC et, si vous prenez des réservations pour d'autres chauffeurs, de déclaration de centrale de réservation. Affiché sur votre mini-site."
+            hint={
+              privateFleet
+                ? "N° d'inscription au registre des exploitants VTC."
+                : "N° d'inscription au registre des exploitants VTC et, si vous prenez des réservations pour d'autres chauffeurs, de déclaration de centrale de réservation. Affiché sur votre mini-site."
+            }
           >
             <Input name="vtcRegistration" defaultValue={org.vtc_registration ?? ""} placeholder="Registre VTC n° EVTC075…" disabled={readOnly} maxLength={120} />
           </Field>
@@ -466,7 +474,8 @@ export function DispatchSettingsForm({
 }
 
 // ---------------------------------------------------------------- Tarifs
-export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boolean }) {
+/** `privateFleet` : la grille calcule aussi le prix affiché par le site du client (devis de l'API v1). */
+export function PricingEditor({ rules, readOnly, privateFleet = false }: { rules: any[]; readOnly: boolean; privateFleet?: boolean }) {
   const { pending, save } = useSave();
   const byCat = new Map(rules.map((r) => [r.vehicle_category, r]));
   return (
@@ -474,7 +483,11 @@ export function PricingEditor({ rules, readOnly }: { rules: any[]; readOnly: boo
       {/* Montants TTC : le mini-site affiche ce prix aux particuliers comme « Prix TTC » (C. conso. L112-1) */}
       <CardHeader
         title="Grille tarifaire"
-        description="Montants toutes taxes comprises (prix payé par le client). Sert à suggérer le prix à la saisie et au prix affiché sur le mini-site. Le prix final reste modifiable."
+        description={
+          privateFleet
+            ? "Montants toutes taxes comprises (prix payé par le client). Sert au prix affiché par votre site et suggéré à la saisie. Le prix final reste modifiable."
+            : "Montants toutes taxes comprises (prix payé par le client). Sert à suggérer le prix à la saisie et au prix affiché sur le mini-site. Le prix final reste modifiable."
+        }
       />
       <div className="divide-y divide-line">
         {VEHICLE_CATEGORIES.map((cat) => {

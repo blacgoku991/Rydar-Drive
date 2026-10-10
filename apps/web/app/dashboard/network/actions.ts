@@ -8,6 +8,8 @@ import { audit } from "@/lib/audit";
 import { isAdminRole } from "@/lib/auth";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
+// Chemin relatif : chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
+import { refuseInPrivateFleet } from "../../../lib/private-fleet";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; code?: string };
@@ -44,6 +46,9 @@ export type JoinLinkState = { join_code: string | null; join_enabled: boolean; j
 export async function updateJoinLink(input: { enabled?: boolean; regenerate?: boolean; autoApprove?: boolean }): Promise<Result<JoinLinkState>> {
   const ctx = await managerCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs (propriétaire ou admin)." };
+  // Flotte Privée : lien d'inscription toujours fermé (contrainte et garde C en base)
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   // Flotte comme centrale (20260924006300). null = inchangé (coalesce côté SQL)
   const { data, error } = await ctx.supabase.rpc("set_join_link", {
     p_org: ctx.org.id,
@@ -63,6 +68,8 @@ export async function updateJoinLink(input: { enabled?: boolean; regenerate?: bo
 export async function approveApplication(driverId: string, requestedLevel: TrustLevel): Promise<Result<{ message: string }>> {
   const ctx = await managerCtx();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent valider une candidature." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (!uuid.safeParse(driverId).success || !["new", "trusted"].includes(requestedLevel)) return { ok: false, error: "Demande invalide." };
   if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Candidature introuvable." };
   const trustLevel: TrustLevel = ctx.org.dispatch_model === "centrale" ? requestedLevel : "trusted";
@@ -93,6 +100,8 @@ export async function approveApplication(driverId: string, requestedLevel: Trust
 export async function rejectApplication(driverId: string, reason: string): Promise<Result<{ message: string }>> {
   const ctx = await managerCtx();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent refuser une candidature." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (!uuid.safeParse(driverId).success) return { ok: false, error: "Demande invalide." };
   if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Candidature introuvable." };
   const motive = String(reason ?? "").trim().slice(0, 500) || null;
@@ -117,6 +126,8 @@ export async function rejectApplication(driverId: string, reason: string): Promi
 export async function liftIdentityBan(identityId: string, reason?: string): Promise<Result<{ message: string }>> {
   const ctx = await managerCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs (propriétaire ou admin)." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (!uuid.safeParse(identityId).success) return { ok: false, error: "Demande invalide." };
   const { data, error } = await ctx.supabase.rpc("lift_identity_ban", { p_id: identityId, p_reason: reason?.trim().slice(0, 500) || null });
   if (error || !data) return { ok: false, error: actionError(error, "Action impossible.") };

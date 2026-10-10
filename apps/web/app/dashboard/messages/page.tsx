@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { MessagesView } from "@/components/chat/messages-view";
 import { FLEET_THREAD, driverThread, isUuid, type DriverThreadSummary } from "@/components/chat/chat-utils";
 import { requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { loadChatOverview, loadModerationQueue, loadThreadPage, type ThreadPage } from "./queries";
 
 export const metadata: Metadata = { title: "Messages" };
@@ -11,6 +12,8 @@ export const dynamic = "force-dynamic";
 /** Messagerie centrale ⇄ chauffeurs. Contrat d'URL : ?driver=<driver_id> (fil direct) | ?thread=fleet (toute la flotte). */
 export default async function MessagesPage({ searchParams }: { searchParams: Promise<{ driver?: string; thread?: string }> }) {
   const ctx = await requireOrg();
+  // Flotte Privée : aucune messagerie (un seul chauffeur, le propriétaire) → Accueil
+  privateFleetPage(ctx, { redirect: "/dashboard" });
   const sp = await searchParams;
   const initialThread: ChatThreadKey | null = sp.thread === FLEET_THREAD ? FLEET_THREAD : isUuid(sp.driver) ? driverThread(sp.driver) : null;
 

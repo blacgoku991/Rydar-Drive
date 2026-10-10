@@ -5,6 +5,8 @@ import {
 } from "@rydar/shared";
 import { CHAT_MAX_LENGTH, chatErrorMessage, isThreadKey, isUuid, threadDriverId, toChatMessage } from "@/components/chat/chat-utils";
 import { getOrgContext } from "@/lib/org-context";
+// Chemin relatif : chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
+import { refuseInPrivateFleet } from "../../../lib/private-fleet";
 import { loadChatCounts, loadChatOverview, loadModerationQueue, loadThreadPage, type ThreadPage } from "./queries";
 
 type Fail = { ok: false; error: string };
@@ -45,6 +47,9 @@ export async function sendChatMessage(thread: string, body: string): Promise<{ o
   if (text.length > CHAT_MAX_LENGTH) return { ok: false, error: `Message trop long (${CHAT_MAX_LENGTH} caractères maximum).` };
   const ctx = await getOrgContext();
   if (!ctx) return { ok: false, error: "Accès refusé." };
+  // Flotte Privée : aucune messagerie
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const driverId = threadDriverId(thread);
   const { data, error } = await ctx.supabase.rpc("send_chat_message", {
     p_org: ctx.org.id,
@@ -60,6 +65,8 @@ export async function markChatRead(thread: string): Promise<{ ok: true; thread: 
   if (!isThreadKey(thread)) return { ok: false, error: "Conversation introuvable." };
   const ctx = await getOrgContext();
   if (!ctx) return { ok: false, error: "Accès refusé." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const { data, error } = await ctx.supabase.rpc("mark_chat_read", { p_org: ctx.org.id, p_thread: thread });
   if (error || !data) return { ok: false, error: chatErrorMessage(error, "Impossible de marquer comme lu.") };
   return data as { ok: true; thread: ChatThreadKey; last_read_at: string };
@@ -83,6 +90,8 @@ export async function removeChatMessage(messageId: string): Promise<RemoveChatMe
   if (!isUuid(messageId)) return { ok: false, error: "Message introuvable." };
   const ctx = await getOrgContext();
   if (!ctx) return { ok: false, error: "Accès refusé." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const { data, error } = await ctx.supabase.rpc("remove_chat_message", { p_message: messageId });
   if (error || !data) {
     const gone = extractErrorCode(error?.message) === "MESSAGE_NOT_FOUND";
@@ -100,6 +109,8 @@ export async function dismissChatReport(reportId: string): Promise<DismissChatRe
   if (!isUuid(reportId)) return { ok: false, error: "Signalement introuvable.", code: null };
   const ctx = await getOrgContext();
   if (!ctx) return { ok: false, error: "Accès refusé.", code: null };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return { ...refused, code: null };
   const { data, error } = await ctx.supabase.rpc("dismiss_chat_report", { p_report: reportId });
   if (error || !data) {
     return { ok: false, error: chatErrorMessage(error, "Action impossible. Réessayez."), code: extractErrorCode(error?.message) ?? null };

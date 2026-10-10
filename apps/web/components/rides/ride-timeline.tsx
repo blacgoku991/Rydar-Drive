@@ -40,8 +40,13 @@ function DataChips({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-export function RideTimeline({ events, timeZone }: { events: TimelineEvent[]; timeZone: string }) {
-  const [technical, setTechnical] = useState(false);
+/**
+ * `technicalView` faux (Flotte Privée) : chronologie limitée à la catégorie « timeline » (dont les étapes
+ * dispatch.private_* de la réservation), sans la vue technique du dispatch.
+ */
+export function RideTimeline({ events, timeZone, technicalView = true }: { events: TimelineEvent[]; timeZone: string; technicalView?: boolean }) {
+  const [technicalOn, setTechnical] = useState(false);
+  const technical = technicalView && technicalOn;
   const shown = events.filter((e) => technical || e.category === "timeline");
   return (
     <div>
@@ -49,10 +54,12 @@ export function RideTimeline({ events, timeZone }: { events: TimelineEvent[]; ti
         <p className="text-[12px] text-fg-subtle">
           <span className="num text-fg-muted">{shown.length}</span> événements
         </p>
-        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-fg-muted">
-          <Terminal className="size-3.5" /> Vue technique
-          <Switch checked={technical} onCheckedChange={setTechnical} />
-        </label>
+        {technicalView && (
+          <label className="flex cursor-pointer items-center gap-2 text-[12px] text-fg-muted">
+            <Terminal className="size-3.5" /> Vue technique
+            <Switch checked={technicalOn} onCheckedChange={setTechnical} />
+          </label>
+        )}
       </div>
       <ol className="relative">
         {shown.map((e, i) => {

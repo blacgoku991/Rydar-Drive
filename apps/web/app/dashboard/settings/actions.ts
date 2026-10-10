@@ -1,7 +1,8 @@
 "use server";
 import {
-  centraleSettingsSchema, describeError, emailSchema, humanizeError, orgSettingsSchema, organizationUpdateSchema, reminderChannelsSchema,
-  VEHICLE_CATEGORIES, whatsappConfigSchema,
+  centraleSettingsSchema, describeError, emailSchema, ERROR_MESSAGES, fieldErrors, humanizeError, orgSettingsSchema, organizationUpdateSchema,
+  PRIVATE_BOOKING_SETTINGS_LABELS, privateBookingSettingsColumns, privateBookingSettingsSchema, reminderChannelsSchema, VEHICLE_CATEGORIES,
+  whatsappConfigSchema,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -12,6 +13,8 @@ import { env } from "@/lib/env";
 import { actionError } from "@/lib/errors";
 import { findUserIdByEmail, sendMemberInvitationEmail } from "@/lib/member-invite";
 import { getOrgContext } from "@/lib/org-context";
+// Chemin relatif : chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
+import { isPrivateFleet, refuseInPrivateFleet } from "../../../lib/private-fleet";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { removeWhatsApp, saveWhatsApp, testWhatsApp, type WhatsAppActionResult } from "@/lib/whatsapp";
 
@@ -62,6 +65,10 @@ export async function updateOrganization(input: z.input<typeof organizationUpdat
 export async function updateDispatchSettings(input: z.input<typeof orgSettingsSchema>): Promise<Result> {
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  // Flotte Privée : profil de dispatch posé par les RPC du super admin ; le chauffeur règle ses délais dans
+  // « Réservations » (updatePrivateBookingSettings)
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const parsed = orgSettingsSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, SETTINGS_LABELS) };
   // Mode centrale : la commission se règle dans « Commission & encaissement » (jamais écrasée d'ici)
@@ -77,6 +84,8 @@ export async function updateDispatchSettings(input: z.input<typeof orgSettingsSc
 export async function updateCentraleSettings(input: z.input<typeof centraleSettingsSchema>): Promise<Result<{ fieldErrors?: Record<string, string> }>> {
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (ctx.org.dispatch_model !== "centrale") return { ok: false, error: "Réservé au mode centrale." };
   const parsed = centraleSettingsSchema.safeParse(input);
   if (!parsed.success) {
@@ -105,6 +114,30 @@ export async function updateCentraleSettings(input: z.input<typeof centraleSetti
   if (error) return { ok: false, error: actionError(error, "Enregistrement impossible.") };
   // Lien et instructions servent aussi aux réclamations WhatsApp (alertes, fiches) : mise en page relue
   revalidatePath("/dashboard", "layout");
+  return { ok: true };
+}
+
+/**
+ * Flotte Privée, onglet « Réservations » (owner / admin) : confirmation au plus tard, délai de réponse à une réservation
+ * immédiate, rappels et paiement par défaut (privateBookingSettingsSchema : choix proposés seulement). Colonnes de
+ * organization_settings déjà ouvertes en écriture ; le reste du profil (rayons, seuil…) reste celui des RPC.
+ */
+export async function updatePrivateBookingSettings(
+  input: z.input<typeof privateBookingSettingsSchema>,
+): Promise<{ ok: true } | { ok: false; error: string; fieldErrors?: Record<string, string> }> {
+  const ctx = await adminCtx();
+  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  if (!isPrivateFleet(ctx.org)) return { ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_ONLY };
+  const parsed = privateBookingSettingsSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: describeError(parsed.error, PRIVATE_BOOKING_SETTINGS_LABELS), fieldErrors: fieldErrors(parsed.error) };
+  }
+  const { error } = await ctx.supabase
+    .from("organization_settings")
+    .update(privateBookingSettingsColumns(parsed.data))
+    .eq("organization_id", ctx.org.id);
+  if (error) return { ok: false, error: humanizeError(error.message, actionError(error, "Enregistrement impossible.")) };
+  revalidatePath("/dashboard/settings");
   return { ok: true };
 }
 
@@ -172,6 +205,9 @@ export async function inviteMember(
 ): Promise<Result<{ invited: boolean; existingAccount: boolean; emailSent: boolean; passwordIgnored: boolean }>> {
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  // Flotte Privée : un seul accès, le propriétaire — refus AVANT toute recherche ou création de compte (org_limits)
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const parsed = inviteSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, INVITE_LABELS) };
   const v = parsed.data;
@@ -226,6 +262,8 @@ const memberPatchSchema = z
 export async function updateMember(memberId: string, patch: { role?: "admin" | "dispatcher"; status?: "active" | "disabled" }): Promise<Result> {
   const ctx = await getOrgContext();
   if (!ctx || ctx.role !== "owner") return { ok: false, error: "Réservé au propriétaire du compte." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const parsedPatch = memberPatchSchema.safeParse(patch);
   if (!memberIdSchema.safeParse(memberId).success || !parsedPatch.success) return { ok: false, error: "Demande invalide." };
   // Seuls ces deux champs sont écrits (jamais user_id, organization_id, rôle « owner »…)
@@ -249,6 +287,9 @@ export async function updateMember(memberId: string, patch: { role?: "admin" | "
 async function pendingInvitation(memberId: string) {
   const ctx = await adminCtx();
   if (!ctx) return { ctx: null, error: "Réservé aux administrateurs." } as const;
+  // Flotte Privée : aucune équipe (renvoi et annulation d'invitation refusés)
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return { ctx: null, error: refused.error } as const;
   if (!memberIdSchema.safeParse(memberId).success) return { ctx: null, error: "Invitation introuvable." } as const;
   const { data } = await createAdminClient()
     .from("organization_users")
@@ -307,6 +348,8 @@ export async function cancelMemberInvitation(memberId: string): Promise<Result> 
 export async function updateReminderChannels(channels: string[]): Promise<Result> {
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (ctx.org.dispatch_model !== "centrale") return { ok: false, error: "Réservé au mode centrale." };
   const parsed = reminderChannelsSchema.safeParse([...new Set(channels)]);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Canal invalide." };
@@ -323,6 +366,8 @@ export async function updateReminderChannels(channels: string[]): Promise<Result
 export async function saveOrgWhatsApp(input: z.input<typeof whatsappConfigSchema>): Promise<WhatsAppActionResult> {
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const res = await saveWhatsApp(ctx.org.id, ctx.user.id, input);
   if (res.ok) revalidatePath("/dashboard/settings");
   return res;
@@ -331,6 +376,8 @@ export async function saveOrgWhatsApp(input: z.input<typeof whatsappConfigSchema
 export async function removeOrgWhatsApp(): Promise<WhatsAppActionResult> {
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const res = await removeWhatsApp(ctx.org.id, ctx.user.id);
   if (res.ok) revalidatePath("/dashboard/settings");
   return res;
@@ -339,6 +386,8 @@ export async function removeOrgWhatsApp(): Promise<WhatsAppActionResult> {
 export async function testOrgWhatsApp(to: string): Promise<WhatsAppActionResult> {
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const res = await testWhatsApp(ctx.org.id, ctx.org.name, to);
   revalidatePath("/dashboard/settings");
   return res;

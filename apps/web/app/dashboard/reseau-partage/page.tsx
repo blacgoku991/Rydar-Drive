@@ -19,6 +19,7 @@ import { showReceivedTab } from "@/components/network-share/received";
 import { ReceivedView } from "@/components/network-share/received-view";
 import { SettingsView, type NetworkPaymentRow } from "@/components/network-share/settings-view";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { networkAccess } from "@/lib/shared-network";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,8 @@ const one = <T,>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ?
  */
 export default async function NetworkSharePage({ searchParams }: { searchParams: Promise<NetworkShareSearchParams> }) {
   const ctx = await requireOrg();
+  // Flotte Privée : jamais de réseau partagé (garde en base) → 404, sans lecture du réseau
+  privateFleetPage(ctx, "notFound");
   const access = await networkAccess(ctx.supabase, ctx.org.id);
   if (!access) notFound();
   const closed = access.mode === "closed";

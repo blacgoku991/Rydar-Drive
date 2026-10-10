@@ -42,19 +42,24 @@ function Preview({ doc }: { doc: DocumentView }) {
   );
 }
 
-/** Documents du chauffeur : statut calculé, échéance, source, aperçu, validation / refus (temps réel). */
+/**
+ * Documents du chauffeur : statut calculé, échéance, source, aperçu, validation / refus (temps réel). `self` (Flotte
+ * Privée, « Mon profil chauffeur ») : ses propres pièces, textes à la deuxième personne.
+ */
 export function DriverDocuments({
   driverId,
   firstName,
   items,
   missing,
   canReview,
+  self = false,
 }: {
   driverId: string;
   firstName: string;
   items: DocumentView[];
   missing: DocumentType[];
   canReview: boolean;
+  self?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -85,7 +90,7 @@ export function DriverDocuments({
         if (res.code === "DOCUMENT_NOT_PENDING" || res.code === "DOCUMENT_NOT_FOUND") router.refresh();
         return;
       }
-      toast.success(approve ? `Document validé : ${doc.label}` : `Document refusé : ${doc.label} — ${firstName} est prévenu`);
+      toast.success(approve ? `Document validé : ${doc.label}` : self ? `Document refusé : ${doc.label}` : `Document refusé : ${doc.label} — ${firstName} est prévenu`);
       setReject(null);
       setFixDate(null);
       setNote("");
@@ -136,7 +141,13 @@ export function DriverDocuments({
                     <span aria-hidden>·</span>
                     <span className="inline-flex items-center gap-1">
                       {doc.source === "driver" ? <Smartphone className="size-3" /> : <Building2 className="size-3" />}
-                      {doc.source === "driver" ? `Déposé par ${firstName}` : "Ajouté par la centrale"}
+                      {doc.source === "driver"
+                        ? self
+                          ? "Déposé depuis l'application"
+                          : `Déposé par ${firstName}`
+                        : self
+                          ? "Ajouté depuis le tableau de bord"
+                          : "Ajouté par la centrale"}
                       {isPending && <> le {formatDate(doc.created_at)}</>}
                     </span>
                   </p>
@@ -177,7 +188,9 @@ export function DriverDocuments({
               </span>
               <div className="min-w-0">
                 <p className="text-[13.5px] font-medium text-fg-muted">{DOCUMENT_TYPE_LABELS[type]}</p>
-                <p className="mt-0.5 text-[12px] text-fg-subtle">Exigé — {firstName} peut le déposer depuis l&apos;application.</p>
+                <p className="mt-0.5 text-[12px] text-fg-subtle">
+                  {self ? "Exigé — déposez-le depuis l'application ou ajoutez-le ici." : `Exigé — ${firstName} peut le déposer depuis l'application.`}
+                </p>
               </div>
             </div>
             <div className="shrink-0 pl-[62px] sm:pl-0">
@@ -191,7 +204,13 @@ export function DriverDocuments({
       <Dialog open={!!reject} onOpenChange={(o) => !o && setReject(null)}>
         <DialogContent
           title="Refuser le document"
-          description={reject ? `${reject.label} — ${firstName} reçoit une notification avec votre motif et pourra en déposer un nouveau.` : undefined}
+          description={
+            reject
+              ? self
+                ? `${reject.label} — vous pourrez en déposer un nouveau depuis l'application.`
+                : `${reject.label} — ${firstName} reçoit une notification avec votre motif et pourra en déposer un nouveau.`
+              : undefined
+          }
         >
           <div className="mb-3 flex flex-wrap gap-1.5">
             {REJECT_REASONS.map((r) => (

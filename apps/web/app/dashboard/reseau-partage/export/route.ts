@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { networkStatementCsv, statementFileName, statementRowsFromGiven, statementRowsFromReceived } from "@/components/network-share/csv";
 import { isUuid, monthInZone, parseMonth } from "@/components/network-share/paths";
 import { getOrgContext } from "@/lib/org-context";
+import { isPrivateFleet } from "@/lib/private-fleet";
 import { networkAccess } from "@/lib/shared-network";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,8 @@ type Page<T> = { items: T[]; next_before: string | null };
 export async function GET(request: Request) {
   const ctx = await getOrgContext();
   if (!ctx) return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
+  // Flotte Privée : jamais de réseau partagé → 404, comme l'onglet
+  if (isPrivateFleet(ctx.org)) return NextResponse.json({ error: "Page introuvable." }, { status: 404 });
   if (!(await networkAccess(ctx.supabase, ctx.org.id))) return NextResponse.json({ error: "Page introuvable." }, { status: 404 });
   const url = new URL(request.url);
   const view = url.searchParams.get("vue") === "recues" ? "recues" : "confiees";

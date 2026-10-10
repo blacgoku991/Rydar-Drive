@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { networkAccess } from "@/lib/shared-network";
 
 export const metadata: Metadata = { title: "Encaissements" };
@@ -29,6 +30,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export default async function SettlementsPage({ searchParams }: { searchParams: Promise<{ filter?: string; driver?: string; n?: string }> }) {
   const ctx = await requireOrg();
+  // Flotte Privée : ni commission ni règlement chauffeur (modèle flotte imposé) → Accueil
+  privateFleetPage(ctx, { redirect: "/dashboard" });
   const sp = await searchParams;
 
   if (ctx.org.dispatch_model !== "centrale") {

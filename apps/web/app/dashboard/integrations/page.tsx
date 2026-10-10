@@ -9,6 +9,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 import { env } from "@/lib/env";
 import { WEBHOOK_ENDPOINT_SELECT } from "@/lib/webhooks";
 
@@ -70,6 +71,8 @@ async function loadWebhooks(ctx: OrgCtx): Promise<{ endpoints: WebhookEndpoint[]
 
 export default async function IntegrationsPage() {
   const ctx = await requireOrg();
+  // Flotte Privée : clés et webhooks gérés par l'équipe Rydar (D16) → « Mon site », en lecture seule
+  privateFleetPage(ctx, { redirect: "/dashboard/site" });
   const admin = isAdminRole(ctx.role);
   const [{ data: keys }, { data: logs }, { data: usage }, webhooks] = await Promise.all([
     admin

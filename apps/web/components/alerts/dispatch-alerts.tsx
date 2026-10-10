@@ -17,8 +17,11 @@
 // chauffeur partenaire (libellé court) ; règlements des courses confiées → onglet « Réseau partagé » (jamais WhatsApp) ;
 // course confiée : partenaire indisponible client à bord (« Clôturer la course », owner / admin), course rendue au
 // partenaire puis relancée, course clôturée (alertes fermées quand la course se termine).
+// Flotte Privée (docs/FLOTTE-PRIVEE.md § 7) : vocabulaire « réservation », alertes ouvertes sur la fiche de la
+// réservation (pas de carte du command center), ni « Relancer » ni « Réattribuer » (refusés en Flotte Privée), ni
+// messagerie ; réservation à vérifier ou non proposée (journal dispatch.private_*) signalée.
 import {
-  DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatPhone, formatPrice, formatRideDate, formatTime,
+  DOCUMENT_TYPE_LABELS, FLEET_REPORT_META, PAYMENT_METHOD_LABELS, fleetReportTitle, formatDate, formatPhone, formatPrice, formatRideDate, formatTime,
   platformFeeScopeText, shortAddress,
   type ChatMessage, type ChatModerationEvent, type DispatchModel, type DriverApplicationEvent, type DriverDocumentEvent, type DriverFlaggedEvent,
   type OrgPlatformAccount, type PaymentMethod, type PlatformAccount, type PlatformEvent,
@@ -358,15 +361,67 @@ function platformAlert(
   }
 }
 
+type PushAlert = (item: Omit<AlertItem, "read" | "at">) => void;
+
+/**
+ * Flotte Privée : événement du journal d'une réservation → alerte au vocabulaire du chauffeur-propriétaire. true :
+ * événement traité ici (alerte poussée ou volontairement tue) ; false : traitement commun (vols…).
+ */
+function privateRideEvent(
+  e: { id: unknown; type: string; ride_id: string; actor_type?: string },
+  line: { label: string; route: string },
+  push: PushAlert,
+): boolean {
+  const booking = `Réservation ${line.label}`.trim();
+  const body = (...parts: (string | null)[]) => [line.route, ...parts].filter(Boolean).join(" · ");
+  switch (e.type) {
+    // Confirmée depuis l'application (offre acceptée ou « La prendre »)
+    case "offer.accepted":
+    case "ride.taken_by_driver":
+      push({ id: `acc:${e.id}`, kind: "accepted", rideId: e.ride_id, title: `${booking} confirmée`, body: body() });
+      return true;
+    // Fenêtre de réponse et dernier appel passés sans réponse (H3 : notification « NON CONFIRMÉE » sur le téléphone)
+    case "dispatch.no_driver":
+      push({ id: `nd:${e.id}`, kind: "no_driver", rideId: e.ride_id, title: `${booking} non confirmée`, body: body("Prenez-la quand même ou prévenez votre client.") });
+      return true;
+    case "dispatch.private_no_driver":
+      push({ id: `nd:${e.id}`, kind: "no_driver", rideId: e.ride_id, title: `${booking} non proposée`, body: body("Aucune fiche chauffeur active : contactez l'équipe Rydar.") });
+      return true;
+    case "dispatch.private_incompatible":
+      push({ id: `chk:${e.id}`, kind: "escalated", rideId: e.ride_id, title: `${booking} à vérifier`, body: body("Catégorie ou nombre de places au-delà de votre véhicule.") });
+      return true;
+    // Échéance de confirmation atteinte : dernier appel (sonnerie si l'application est en ligne)
+    case "dispatch.escalated":
+      push({ id: `esc:${e.id}`, kind: "escalated", rideId: e.ride_id, title: `${booking} toujours à confirmer`, body: body("Dernier appel sur votre téléphone s'il est en ligne.") });
+      return true;
+    case "ride.cancelled":
+      if (e.actor_type === "api" || e.actor_type === "booking_site") {
+        push({ id: `can:${e.id}`, kind: "cancelled", rideId: e.ride_id, title: `${booking} annulée par votre site`, body: body() });
+      }
+      return true;
+    // Décidé par le chauffeur lui-même (refus, saisie au tableau de bord) ou déjà sous ses yeux (proposée) : rien
+    case "dispatch.private_declined":
+    case "dispatch.private_offer":
+    case "dispatch.private_self":
+      return true;
+    default:
+      return false;
+  }
+}
+
 type Api = {
   focusRide: (id: string) => void;
   assignRide: (id: string) => void;
   navigate: (href: string) => void;
   /** Organisation (mode centrale) : lien de paiement, instructions — pour les réclamations WhatsApp */
   centrale: () => CentraleInfo | null;
+  /** Flotte Privée : ni « Relancer » ni « Réattribuer », réservation ouverte sur sa fiche */
+  privateFleet: () => boolean;
 };
 
 type Ctx = {
+  /** Flotte Privée (textes de la cloche) */
+  privateFleet: boolean;
   items: AlertItem[];
   unread: number;
   sound: boolean;
@@ -400,8 +455,10 @@ function write(storage: () => Storage, key: string, value: unknown) {
 }
 
 /** `scope` : organisation + utilisateur (l'historique ne suit ni un changement d'organisation ni un autre compte). */
-export function AlertsProvider({ scope, children }: { scope: string; children: React.ReactNode }) {
+export function AlertsProvider({ scope, children, privateFleet = false }: { scope: string; children: React.ReactNode; privateFleet?: boolean }) {
   const router = useRouter();
+  const privateRef = useRef(privateFleet);
+  privateRef.current = privateFleet;
   const pathname = usePathname();
   const [items, setItems] = useState<AlertItem[]>([]);
   const itemsRef = useRef(items);
@@ -451,14 +508,18 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
 
   const focusRide = useCallback(
     (id: string) => {
-      if (pathname === "/dashboard") window.dispatchEvent(new CustomEvent("rydar:focus-ride", { detail: id }));
+      // Flotte Privée : pas de carte du command center, la fiche de la réservation
+      if (privateRef.current) router.push(`/dashboard/rides/${id}`);
+      else if (pathname === "/dashboard") window.dispatchEvent(new CustomEvent("rydar:focus-ride", { detail: id }));
       else router.push(`/dashboard?ride=${id}`);
     },
     [pathname, router],
   );
   const assignRide = useCallback(
     (id: string) => {
-      if (pathname === "/dashboard") window.dispatchEvent(new CustomEvent("rydar:assign-ride", { detail: id }));
+      // Flotte Privée : aucune attribution manuelle à un autre chauffeur (« Je la prends » sur la fiche)
+      if (privateRef.current) router.push(`/dashboard/rides/${id}`);
+      else if (pathname === "/dashboard") window.dispatchEvent(new CustomEvent("rydar:assign-ride", { detail: id }));
       else router.push(`/dashboard?ride=${id}&assign=1`);
     },
     [pathname, router],
@@ -475,14 +536,15 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
   const centrale = useCentrale();
   const centraleRef = useRef(centrale);
   centraleRef.current = centrale;
-  const apiRef = useRef<Api>({ focusRide, assignRide, navigate, centrale: () => centraleRef.current });
-  apiRef.current = { focusRide, assignRide, navigate, centrale: () => centraleRef.current };
+  const apiRef = useRef<Api>({ focusRide, assignRide, navigate, centrale: () => centraleRef.current, privateFleet: () => privateRef.current });
+  apiRef.current = { focusRide, assignRide, navigate, centrale: () => centraleRef.current, privateFleet: () => privateRef.current };
   const api: Api = useMemo(
     () => ({
       focusRide: (id) => apiRef.current.focusRide(id),
       assignRide: (id) => apiRef.current.assignRide(id),
       navigate: (href) => apiRef.current.navigate(href),
       centrale: () => apiRef.current.centrale(),
+      privateFleet: () => apiRef.current.privateFleet(),
     }),
     [],
   );
@@ -557,13 +619,15 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     });
     // Les courses saisies au dashboard sont déjà sous les yeux de leur auteur : pas d'alerte sonore
     if (p.op === "insert" && p.source !== "dashboard") {
-      const via = SOURCE[p.source]?.label ?? "API";
+      const own = privateRef.current;
+      // Flotte Privée : la réservation vient de son site
+      const via = own && p.source === "api" ? "Votre site" : (SOURCE[p.source]?.label ?? "API");
       push({
         id: `new:${p.id}`,
         kind: "new",
         rideId: p.id,
         source: p.source,
-        title: `Nouvelle course #${p.number}${p.type === "scheduled" ? " · planifiée" : ""}`,
+        title: `${own ? "Nouvelle réservation" : "Nouvelle course"} #${p.number}${p.type === "scheduled" ? " · planifiée" : ""}`,
         body: [
           `${shortAddress(p.pickup_address)} → ${shortAddress(p.dropoff_address)}`,
           // Fuseau de la centrale (Réglages), comme la liste Courses
@@ -578,6 +642,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
   useRealtimeEvent("ride.event", (e) => {
     if (!e?.type || !e.ride_id) return;
     const { label, route } = rideLine(e.ride_id);
+    if (privateRef.current && privateRideEvent(e, { label, route }, push)) return;
     if (e.type === "offer.accepted") {
       const secs = e.data?.response_ms != null ? Math.max(1, Math.round(e.data.response_ms / 1000)) : null;
       // Chauffeur partenaire : « Karim B. (Flotte B) » + mention du réseau (jamais son nom de famille ni son n°)
@@ -670,6 +735,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
 
   // ---------------------------------------------------------------- messagerie et signalements (002300)
   useRealtimeEvent("chat.message", (m: ChatMessage) => {
+    if (privateRef.current) return; // Flotte Privée : aucune messagerie
     if (!m?.id || m.author_type !== "driver") return; // messages de la centrale : déjà sous les yeux de leur auteur
     if (window.location.pathname.startsWith("/dashboard/messages")) return; // la messagerie affiche déjà le message
     const who = firstName(m.author_name);
@@ -706,7 +772,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
   // Identifiants seulement (jamais le texte). Alerte `mod:<message>:<signalement>` ; message supprimé ou signalement
   // classé (ici ou par un autre membre) : toast fermé, historique « traitée ».
   useRealtimeEvent("chat.moderation", (e: ChatModerationEvent) => {
-    if (!e?.message_id) return;
+    if (!e?.message_id || privateRef.current) return;
     const prefix = `mod:${e.message_id}:`;
     if (e.action === "removed" || e.action === "dismissed") {
       for (const i of itemsRef.current) {
@@ -738,6 +804,19 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
     const doc = e.document;
     const who = e.driver?.first_name || "Un chauffeur";
     const typeLabel = DOCUMENT_TYPE_LABELS[doc.type];
+    if (privateRef.current) {
+      // Flotte Privée : sa propre pièce, envoyée depuis l'application, à valider dans « Mon profil chauffeur »
+      push({
+        id: `doc:${doc.id}`,
+        kind: "document",
+        rideId: null,
+        title: `${doc.label && doc.label !== typeLabel ? doc.label : (typeLabel ?? "Document")} envoyé depuis l'application — à valider`,
+        body: doc.expires_at ? `échéance ${formatDate(doc.expires_at)}` : "",
+        href: "/dashboard/profil",
+        cta: "Vérifier",
+      });
+      return;
+    }
     const what = doc.label && doc.label !== typeLabel ? `« ${doc.label} »` : (DOC_PHRASE[doc.type] ?? "un document");
     push({
       id: `doc:${doc.id}`,
@@ -875,7 +954,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
       level: "critical",
       title: "Compte suspendu : appareil déjà utilisé par un chauffeur banni",
       body: `${e.first_name} ${e.last_name} (#${e.number}) · vérifiez son identité avant de le réactiver`,
-      href: `/dashboard/drivers/${e.driver_id}`,
+      href: privateRef.current ? "/dashboard/profil" : `/dashboard/drivers/${e.driver_id}`,
       cta: "Vérifier la fiche",
     });
   });
@@ -937,6 +1016,7 @@ export function AlertsProvider({ scope, children }: { scope: string; children: R
   }, [unread, pathname]);
 
   const ctx: Ctx = {
+    privateFleet,
     items,
     unread,
     sound,
@@ -1002,7 +1082,7 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
         </button>
       </div>
 
-      {item.kind === "ride_alert" && item.alert && item.rideId ? (
+      {item.kind === "ride_alert" && item.alert && item.rideId && !api.privateFleet() ? (
         <AlertActionBar
           className="mt-3"
           alert={{ id: item.alert.id, ride_id: item.rideId, driver_id: item.alert.driverId, driverName: item.alert.driverName, rideNumber: item.alert.rideNumber }}
@@ -1013,9 +1093,10 @@ function AlertToast({ item, api, onClose }: { item: AlertItem; api: Api; onClose
       ) : item.rideId ? (
         <div className="ml-12 mt-2.5 flex gap-1.5">
           <button type="button" onClick={() => (api.focusRide(item.rideId!), onClose())} className={cn(btn, "bg-white/[0.08] text-fg hover:bg-white/[0.13]")}>
-            Voir sur la carte
+            {api.privateFleet() ? "Voir la réservation" : "Voir sur la carte"}
           </button>
-          {item.kind === "no_driver" && (
+          {/* Flotte Privée : relance refusée (redispatchRide) — « Je la prends » sur la fiche */}
+          {item.kind === "no_driver" && !api.privateFleet() && (
             <button
               type="button"
               disabled={busy}
@@ -1218,9 +1299,15 @@ export function AlertsBell({ className }: { className?: string }) {
                 <Bell className="mx-auto mb-2 size-5 text-fg-subtle" />
                 <p className="text-[13px] font-medium">Rien de neuf</p>
                 <p className="mt-1 text-[12px] text-fg-subtle">
-                  Courses, retards, vols, messages
-                  {centrale?.model === "centrale" ? `, paiements, candidatures${centrale.role === "owner" || centrale.role === "admin" ? ", frais Rydar" : ""}` : ""} et
-                  signalements apparaîtront ici, avec un son.
+                  {a.privateFleet ? (
+                    "Réservations, retards et vols apparaîtront ici, avec un son."
+                  ) : (
+                    <>
+                      Courses, retards, vols, messages
+                      {centrale?.model === "centrale" ? `, paiements, candidatures${centrale.role === "owner" || centrale.role === "admin" ? ", frais Rydar" : ""}` : ""} et
+                      signalements apparaîtront ici, avec un son.
+                    </>
+                  )}
                 </p>
               </div>
             ) : (

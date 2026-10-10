@@ -67,6 +67,7 @@ export function NewRideSheet({
   onCreated,
   defaultPayment = "card",
   center,
+  privateFleet = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -75,6 +76,11 @@ export function NewRideSheet({
   defaultPayment?: string;
   /** Centre de la flotte (proximité des suggestions d'adresses) */
   center?: { lat: number; lng: number } | null;
+  /**
+   * Flotte Privée : réservation prise par téléphone, attribuée d'office au chauffeur-propriétaire (start_dispatch,
+   * 20260924007600) — ni chauffeurs disponibles, ni suggestion de catégorie, vocabulaire « réservation ».
+   */
+  privateFleet?: boolean;
 }) {
   const org = useCentrale();
   const timeZone = org?.timeZone || "Europe/Paris";
@@ -143,7 +149,7 @@ export function NewRideSheet({
   const nearest = quote?.nearby.drivers[0];
   // Catégorie choisie sans chauffeur compatible alors que d'autres chauffeurs sont en ligne : suggestion
   const betterCategory =
-    quote && quote.nearby.total === 0 && quote.nearby.available > 0
+    !privateFleet && quote && quote.nearby.total === 0 && quote.nearby.available > 0
       ? ([...VEHICLE_CATEGORIES].filter((c) => quote.nearby.byCategory[c] > 0).sort((a, b) => quote.nearby.byCategory[b] - quote.nearby.byCategory[a])[0] ?? null)
       : null;
   const isAirport = /a[ée]roport|terminal|cdg|orly|bourget|beauvais/i.test(`${pickup.address} ${dropoff.address}`);
@@ -231,7 +237,16 @@ export function NewRideSheet({
         toast.error(res.error);
         return;
       }
-      toast.success(`Course #${res.number} créée`, { description: when === "now" ? "Les chauffeurs les plus proches sont notifiés." : "Proposée à votre flotte." });
+      toast.success(
+        privateFleet ? `Réservation #${res.number} enregistrée` : `Course #${res.number} créée`,
+        {
+          description: privateFleet
+            ? "Elle vous est attribuée directement."
+            : when === "now"
+              ? "Les chauffeurs les plus proches sont notifiés."
+              : "Proposée à votre flotte.",
+        },
+      );
       reset();
       onOpenChange(false);
       onCreated?.({ id: res.id, number: res.number });
@@ -240,7 +255,14 @@ export function NewRideSheet({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <WorkspaceContent title="Nouvelle course" description="Adresse, heure, client : le trajet, le prix et les chauffeurs disponibles sont calculés en direct.">
+      <WorkspaceContent
+        title={privateFleet ? "Nouvelle réservation (téléphone)" : "Nouvelle course"}
+        description={
+          privateFleet
+            ? "Elle vous est attribuée directement. Adresse, heure, client : le trajet et le prix sont calculés en direct."
+            : "Adresse, heure, client : le trajet, le prix et les chauffeurs disponibles sont calculés en direct."
+        }
+      >
         <form onSubmit={submit} className="grid h-full min-h-0 lg:grid-cols-[440px_1fr]">
           {/* ---------------------------------------------------------------- formulaire */}
           <div className="flex min-h-0 flex-col border-line lg:border-r">
@@ -312,7 +334,11 @@ export function NewRideSheet({
                     <Field label="Heure">
                       <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="[color-scheme:dark]" />
                     </Field>
-                    {zoneName && <p className="col-span-2 text-[12px] text-fg-muted">Heure de la centrale ({zoneName})</p>}
+                    {zoneName && (
+                      <p className="col-span-2 text-[12px] text-fg-muted">
+                        {privateFleet ? "Heure de votre entreprise" : "Heure de la centrale"} ({zoneName})
+                      </p>
+                    )}
                   </div>
                 )}
               </section>
@@ -330,7 +356,7 @@ export function NewRideSheet({
                       )}
                     >
                       <span className="text-[12.5px] font-semibold">{VEHICLE_CATEGORY_META[c].label}</span>
-                      {quote ? (
+                      {quote && !privateFleet ? (
                         <span className={cn("text-[11px] tabular-nums", quote.nearby.byCategory[c] > 0 ? "text-brand" : "text-fg-subtle")}>
                           {quote.nearby.byCategory[c]} dispo.
                         </span>
@@ -492,7 +518,7 @@ export function NewRideSheet({
                     </div>
                   </Field>
                   <Button type="submit" variant="primary" size="lg" loading={pending} className="flex-1">
-                    {when === "now" ? "Créer et dispatcher" : "Planifier la course"}
+                    {privateFleet ? "Enregistrer la réservation" : when === "now" ? "Créer et dispatcher" : "Planifier la course"}
                   </Button>
                 </div>
               )}
@@ -505,7 +531,7 @@ export function NewRideSheet({
               pickup={pickupPt}
               dropoff={dropoffPt}
               route={routeCoords}
-              drivers={(quote?.nearby.drivers ?? []).slice(0, 4).map((d) => ({ id: d.id, name: d.name, lat: d.lat, lng: d.lng, etaS: d.etaS }))}
+              drivers={privateFleet ? [] : (quote?.nearby.drivers ?? []).slice(0, 4).map((d) => ({ id: d.id, name: d.name, lat: d.lat, lng: d.lng, etaS: d.etaS }))}
               onPick={!pickupPt || !dropoffPt ? pickOnMap : undefined}
               padding={{ top: 60, bottom: 170, left: 60, right: 60 }}
             />
@@ -516,7 +542,7 @@ export function NewRideSheet({
               </div>
             )}
             <div className="absolute inset-x-4 bottom-4">
-              <div className="glass grid grid-cols-2 gap-px overflow-hidden rounded-2xl sm:grid-cols-4">
+              <div className={cn("glass grid grid-cols-2 gap-px overflow-hidden rounded-2xl", privateFleet ? "sm:grid-cols-3" : "sm:grid-cols-4")}>
                 <Metric icon={Route} label="Distance" value={quote?.route ? formatDistance(quote.route.distanceM) : "—"} loading={quoting && !!dropoffPt} />
                 <Metric icon={Clock3} label="Durée" value={quote?.route ? formatDuration(quote.route.durationS) : "—"} loading={quoting && !!dropoffPt} />
                 <Metric
@@ -527,13 +553,15 @@ export function NewRideSheet({
                   accent
                   loading={quoting && !!dropoffPt && !price}
                 />
-                <Metric
-                  icon={Car}
-                  label={quote ? `${quote.nearby.total} chauffeur${quote.nearby.total > 1 ? "s" : ""} dispo.` : "Chauffeurs"}
-                  value={nearest ? `${formatDuration(nearest.etaS)}` : quote ? "Aucun" : "—"}
-                  hint={nearest ? `${nearest.name} le plus proche` : undefined}
-                  loading={quoting}
-                />
+                {!privateFleet && (
+                  <Metric
+                    icon={Car}
+                    label={quote ? `${quote.nearby.total} chauffeur${quote.nearby.total > 1 ? "s" : ""} dispo.` : "Chauffeurs"}
+                    value={nearest ? `${formatDuration(nearest.etaS)}` : quote ? "Aucun" : "—"}
+                    hint={nearest ? `${nearest.name} le plus proche` : undefined}
+                    loading={quoting}
+                  />
+                )}
               </div>
               {quote?.route?.approximate && (
                 <p className="mt-2 text-center text-[11.5px] text-fg-subtle">Itinéraire estimé (service de routage indisponible)</p>

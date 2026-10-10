@@ -23,7 +23,11 @@ type DriverData = {
   vehicle: { brand: string | null; model: string; color: string | null; plate: string; category: string; seats: number; luggage_capacity: number } | null;
 };
 
-export function DriverControls({ driver, canManage }: { driver: DriverData; canManage: boolean }) {
+/**
+ * `self` (Flotte Privée, « Mon profil chauffeur ») : la fiche du propriétaire lui-même — modifier et ajouter un
+ * document seulement (canManage faux), sans notes de gestion.
+ */
+export function DriverControls({ driver, canManage, self = false }: { driver: DriverData; canManage: boolean; self?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [dialog, setDialog] = useState<null | "suspend" | "password" | "edit" | "document">(null);
@@ -154,7 +158,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
       </Dialog>
 
       <Dialog open={dialog === "edit"} onOpenChange={(o) => !o && setDialog(null)}>
-        <DialogContent title="Modifier le chauffeur" size="lg">
+        <DialogContent title={self ? "Modifier ma fiche" : "Modifier le chauffeur"} size="lg">
           <form
             onSubmit={submitWith((f) => {
               const g = (k: string) => String(f.get(k) ?? "");
@@ -162,7 +166,7 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
                 () =>
                   updateDriver(driver.id, {
                     firstName: g("firstName"), lastName: g("lastName"), phone: g("phone"), email: g("email"),
-                    vtcCardNumber: g("vtc"), notes: g("notes"),
+                    vtcCardNumber: g("vtc"), notes: self ? (driver.notes ?? "") : g("notes"),
                     vehicle: {
                       brand: g("brand"), model: g("model"), color: g("color"), plate: g("plate"),
                       category: g("category") as never, seats: Number(g("seats")), luggageCapacity: Number(g("luggage")),
@@ -178,7 +182,11 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
             <Field label="Téléphone" error={errors.phone}><Input name="phone" defaultValue={driver.phone} /></Field>
             <Field
               label="E-mail de contact"
-              hint="L'identifiant de connexion du chauffeur reste l'adresse utilisée à la création du compte."
+              hint={
+                self
+                  ? "Votre identifiant de connexion reste l'adresse de votre compte."
+                  : "L'identifiant de connexion du chauffeur reste l'adresse utilisée à la création du compte."
+              }
               error={errors.email}
             >
               <Input name="email" defaultValue={driver.email ?? ""} />
@@ -197,9 +205,11 @@ export function DriverControls({ driver, canManage }: { driver: DriverData; canM
               <Field label="Places"><Input name="seats" type="number" defaultValue={driver.vehicle?.seats ?? 4} /></Field>
               <Field label="Bagages"><Input name="luggage" type="number" defaultValue={driver.vehicle?.luggage_capacity ?? 3} /></Field>
             </div>
-            <Field label="Notes (visibles par le chauffeur)" optional hint="Le chauffeur peut les lire : n'y notez rien de confidentiel, ni aucune donnée sensible (santé, opinions, infractions)." className="col-span-2">
-              <Textarea name="notes" defaultValue={driver.notes ?? ""} />
-            </Field>
+            {!self && (
+              <Field label="Notes (visibles par le chauffeur)" optional hint="Le chauffeur peut les lire : n'y notez rien de confidentiel, ni aucune donnée sensible (santé, opinions, infractions)." className="col-span-2">
+                <Textarea name="notes" defaultValue={driver.notes ?? ""} />
+              </Field>
+            )}
             <div className="col-span-2 mt-4 flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setDialog(null)}>Annuler</Button>
               <Button type="submit" variant="primary" loading={pending}>Enregistrer</Button>

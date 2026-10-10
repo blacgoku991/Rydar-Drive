@@ -10,6 +10,8 @@ import { isAdminRole } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { actionError } from "@/lib/errors";
 import { getOrgContext } from "@/lib/org-context";
+// Chemin relatif : chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
+import { refuseInPrivateFleet } from "../../../lib/private-fleet";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; fieldErrors?: Record<string, string> };
@@ -57,6 +59,9 @@ const SHARED_ACCOUNT_PASSWORD =
 export async function createDriver(input: z.input<typeof driverCreateSchema>): Promise<Result<{ id: string }>> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent créer des chauffeurs." };
+  // Flotte Privée : un seul chauffeur, le propriétaire — refus AVANT toute création de compte d'accès (garde D en base)
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const parsed = driverCreateSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Vérifiez le formulaire.", fieldErrors: fieldErrors(parsed.error) };
   const v: DriverCreateInput = parsed.data;
@@ -172,6 +177,9 @@ export async function updateDriver(driverId: string, input: z.input<typeof drive
 export async function setDriverStatus(driverId: string, input: z.input<typeof driverStatusChangeSchema>): Promise<Result<{ message?: string }>> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent modifier ce statut." };
+  // Flotte Privée : la fiche du propriétaire n'est ni désactivée ni suspendue depuis son propre espace
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   const parsed = driverStatusChangeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Statut invalide." };
   const { status, reason } = parsed.data;
@@ -203,6 +211,9 @@ export async function setDriverStatus(driverId: string, input: z.input<typeof dr
 export async function resetDriverPassword(driverId: string, password: string): Promise<Result> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Accès refusé." };
+  // Flotte Privée : compte de gestion et fiche partagés — « Mot de passe oublié » seulement
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (typeof password !== "string" || password.length < 10) return { ok: false, error: "10 caractères minimum." };
   if (password.length > 72) return { ok: false, error: "72 caractères maximum." };
   if (!uuid.safeParse(driverId).success) return { ok: false, error: "Chauffeur introuvable." };
@@ -224,6 +235,8 @@ export async function resetDriverPassword(driverId: string, password: string): P
 export async function revokeDriverSessions(driverId: string): Promise<Result> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent déconnecter un chauffeur." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
   const { data, error } = await ctx.supabase.rpc("revoke_driver_sessions", { p_driver_id: driverId });
   if (error) return { ok: false, error: humanizeError(error.message, actionError(error)) };
@@ -330,6 +343,8 @@ export async function reviewDriverDocument(
 export async function setDriverTrustLevel(driverId: string, trustLevel: TrustLevel): Promise<Result> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent modifier le niveau de confiance." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (!z.string().uuid().safeParse(driverId).success || !["new", "trusted"].includes(trustLevel)) return { ok: false, error: "Demande invalide." };
   const { data, error } = await ctx.supabase
     .from("drivers")
@@ -363,6 +378,8 @@ export async function banDriver(
 ): Promise<Result<BanOutcome> | { ok: false; error: string; code?: string; fieldErrors?: Record<string, string> }> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent bannir un chauffeur." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
   const parsed = banDriverSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Vérifiez le formulaire.", fieldErrors: fieldErrors(parsed.error) };
@@ -431,6 +448,8 @@ export async function banDriver(
 export async function liftDriverBan(driverId: string, reason?: string): Promise<Result<{ message: string }> | { ok: false; error: string; code?: string }> {
   const ctx = await fleetManager();
   if (!ctx) return { ok: false, error: "Seuls les administrateurs peuvent lever un bannissement." };
+  const refused = refuseInPrivateFleet(ctx);
+  if (refused) return refused;
   if (!(await ownDriver(ctx, driverId))) return { ok: false, error: "Chauffeur introuvable." };
   const motive = reason?.trim().slice(0, 500) || null;
   const { data, error } = await ctx.supabase.rpc("lift_driver_ban", { p_driver_id: driverId, p_reason: motive });

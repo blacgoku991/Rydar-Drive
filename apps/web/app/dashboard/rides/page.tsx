@@ -1,6 +1,6 @@
 import {
   RIDE_FILTER_STATUSES, RIDE_FILTERS, RIDE_SOURCE_LABELS, SETTLEMENT_STATUS_META, VEHICLE_CATEGORY_META, formatDistance, formatPrice, formatRideDate,
-  normalizePhone, settlementStatusLabel, shortAddress,
+  settlementStatusLabel, shortAddress,
   type NetworkPartnerNames, type RideFilterKey, type RideSource, type SettlementDirection, type SettlementStatus, type VehicleCategory,
 } from "@rydar/shared";
 import { ArrowLeftRight, ChevronLeft, ChevronRight, Route, Search } from "lucide-react";
@@ -12,19 +12,26 @@ import { ActiveFilterIntoView } from "@/components/rides/active-filter-into-view
 import { LiveRefresh } from "@/components/rides/live-refresh";
 import { NewRideButton } from "@/components/rides/new-ride-button";
 import { RouteGlyph } from "@/components/rides/route-glyph";
+import { rideSearch } from "@/components/rides/ride-search";
 import { RideStatusBadge, RideTypeTag } from "@/components/rides/status";
 import { toneDot, toneText } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/misc";
 import { Table, TD, TH, THead, TR } from "@/components/ui/table";
+import { PrivateBookingsPage } from "@/components/private-fleet/bookings-page";
 import { requireOrg } from "@/lib/auth";
+import { isPrivateFleet } from "@/lib/private-fleet";
 import { getPricing } from "@/lib/queries/pricing";
 import { sharedNetworkEnabled } from "@/lib/shared-network";
 import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = { title: "Courses" };
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const ctx = await requireOrg();
+  return { title: isPrivateFleet(ctx.org) ? "Réservations" : "Courses" };
+}
 
 const PAGE_SIZE = 30;
 
@@ -49,8 +56,24 @@ function SettlementLine({ s, now, partner }: { s: SettlementCell; now: number; p
 
 export default async function RidesPage({ searchParams }: { searchParams: Promise<{ filter?: string; q?: string; page?: string }> }) {
   const ctx = await requireOrg();
-  const centrale = ctx.org.dispatch_model === "centrale";
   const sp = await searchParams;
+  // Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.3) : réservations à traiter, à venir, terminées, annulées ; pas de colonne
+  // chauffeur, ni réseau partagé, ni encaissements
+  if (isPrivateFleet(ctx.org)) {
+    const [pricing, settings] = await Promise.all([
+      getPricing(ctx.supabase, ctx.org.id),
+      ctx.supabase.from("organization_settings").select("default_payment_method").eq("organization_id", ctx.org.id).maybeSingle(),
+    ]);
+    return (
+      <PrivateBookingsPage
+        ctx={ctx}
+        searchParams={sp}
+        pricing={pricing}
+        defaultPayment={(settings.data as { default_payment_method?: string } | null)?.default_payment_method ?? "card"}
+      />
+    );
+  }
+  const centrale = ctx.org.dispatch_model === "centrale";
   // Réseau partagé ouvert par la plateforme (même lecture que la mise en page, mémorisée par requête) : filtre
   // « Réseau partagé » en plus. Attendu avant la requête seulement quand ce filtre est demandé ; sinon en parallèle.
   const networkOnP = sharedNetworkEnabled();
@@ -80,23 +103,9 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
   if (filter === "completed" || filter === "cancelled" || filter === "no_driver") query = query.gte("pickup_at", since);
   else if (!statuses) query = query.or(`pickup_at.gte."${since}",status.not.in.(COMPLETED,CANCELLED,NO_DRIVER_FOUND)`);
   if (q) {
-    // Un seul or() : un numéro court reste aussi cherché dans les adresses (code postal « 75012 ») et un téléphone saisi
-    // comme on le lit (« 06 12 34 56 78 », « 0612… », « +33… ») est comparé au format enregistré (E.164 « +33612345678 »)
-    const safe = q.replace(/[%,()]/g, " ");
-    const terms = [
-      `customer_name.ilike.%${safe}%`,
-      `customer_phone.ilike.%${safe}%`,
-      `pickup_address.ilike.%${safe}%`,
-      `dropoff_address.ilike.%${safe}%`,
-    ];
-    const numText = q.replace(/^#\s*/, "");
-    if (/^\d{1,7}$/.test(numText)) terms.push(`number.eq.${Number(numText)}`);
-    const phone = normalizePhone(q);
-    if (phone) terms.push(`customer_phone.eq.${phone}`);
-    const compact = q.replace(/[\s.\-]/g, "");
-    if (/^\+?\d{4,15}$/.test(compact)) terms.push(`customer_phone.ilike.%${compact.replace(/^\+/, "").replace(/^0/, "")}%`);
-    // « #1678 » : numéro de course seul (recherche explicite)
-    query = /^#\s*\d{1,7}$/.test(q) ? query.eq("number", Number(numText)) : query.or(terms.join(","));
+    // Numéro exact (« #1678 ») ou client, téléphone et adresses (components/rides/ride-search.ts)
+    const search = rideSearch(q);
+    query = "number" in search ? query.eq("number", search.number) : query.or(search.or);
   }
   const [{ data: rides, count }, { data: counts }, pricing, networkOn] = await Promise.all([
     query.order("pickup_at", { ascending: false }).range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1),

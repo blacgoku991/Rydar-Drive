@@ -3,12 +3,15 @@ import type { Metadata } from "next";
 import { DispatchJournal, type JournalEvent } from "@/components/dispatch/dispatch-journal";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
 import { requireOrg } from "@/lib/auth";
+import { privateFleetPage } from "@/lib/private-fleet";
 
 export const metadata: Metadata = { title: "Journal du dispatch" };
 export const dynamic = "force-dynamic";
 
 export default async function DispatchPage() {
   const ctx = await requireOrg();
+  // Flotte Privée : journal technique du dispatch masqué (chronologie de chaque réservation sur sa fiche) → Accueil
+  privateFleetPage(ctx, { redirect: "/dashboard" });
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
   const [{ data: events }, { data: counters }, { data: kpis }] = await Promise.all([
     ctx.supabase

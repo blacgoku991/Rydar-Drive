@@ -18,6 +18,11 @@ export type OrgSummary = {
   plan_id: string | null;
   /** Modèle d'exploitation choisi par le super admin : flotte (option 1) ou centrale à commission (option 2) */
   dispatch_model: DispatchModel;
+  /**
+   * Flotte Privée (20260924007600, docs/FLOTTE-PRIVEE.md) : flotte d'un seul chauffeur, le propriétaire. Écrit par le
+   * super admin seulement ; lu ici (grant de lecture par colonne) pour l'espace épuré du client (lib/private-fleet.ts).
+   */
+  private_fleet: boolean;
 };
 
 export type SessionContext = Awaited<ReturnType<typeof loadSession>>;
@@ -51,10 +56,11 @@ async function loadSession() {
     supabase.from("users").select("id, email, full_name, avatar_url, is_super_admin, last_active_org_id").eq("id", sub).maybeSingle(),
     supabase
       .from("organization_users")
-      .select("organization_id, role, organization:organizations(id, name, slug, status, logo_url, timezone, plan_id, dispatch_model)")
+      .select("organization_id, role, organization:organizations(id, name, slug, status, logo_url, timezone, plan_id, dispatch_model, private_fleet)")
       .eq("user_id", sub)
       .eq("status", "active"),
-    supabase.from("drivers").select("id, first_name").eq("user_id", sub).maybeSingle(),
+    // Fiche chauffeur du compte (drivers.user_id unique) : Flotte Privée, le propriétaire est aussi son chauffeur
+    supabase.from("drivers").select("id, organization_id").eq("user_id", sub).maybeSingle(),
   ]);
   // Contrôle qui fait foi AVANT toute autre décision : jeton falsifié, expiré ou session révoquée → /login (et non la
   // page d'erreur que donnerait le refus des lectures par PostgREST)
@@ -66,14 +72,20 @@ async function loadSession() {
 
   const orgs = (memberships ?? [])
     .map((m) => ({ role: m.role as OrgRole, org: m.organization as unknown as OrgSummary }))
-    .filter((m) => m.org && m.org.status !== "archived");
+    .filter((m) => m.org && m.org.status !== "archived")
+    // Drapeau toujours booléen (colonne non nulle ; jamais « undefined » pour une réponse incomplète)
+    .map((m) => ({ ...m, org: { ...m.org, private_fleet: m.org.private_fleet === true } }));
+  const ownDriver = (driver ?? null) as { id: string; organization_id: string } | null;
 
   return {
     supabase,
     user,
     profile: profile ?? { id: user.id, email: user.email ?? "", full_name: null, avatar_url: null, is_super_admin: false, last_active_org_id: null },
     memberships: orgs,
-    isDriver: !!driver,
+    isDriver: !!ownDriver,
+    /** Fiche chauffeur du compte (une au plus) et son organisation ; requireOrg ne garde que celle de l'organisation affichée */
+    driverId: ownDriver?.id ?? null,
+    driverOrgId: ownDriver?.organization_id ?? null,
   };
 }
 
@@ -131,7 +143,9 @@ export async function requireOrg(opts: { roles?: OrgRole[] } = {}) {
   const current = pickMembership(session.memberships, wanted);
   if (current.org.status === "suspended") redirect("/suspended");
   if (opts.roles && !opts.roles.includes(current.role)) redirect("/dashboard?forbidden=1");
-  return { ...session, org: current.org, role: current.role };
+  // Fiche chauffeur du compte DANS l'organisation affichée (Flotte Privée : celle du propriétaire), sinon null
+  const driverId = session.driverOrgId === current.org.id ? session.driverId : null;
+  return { ...session, org: current.org, role: current.role, driverId };
 }
 
 export function isAdminRole(role: OrgRole) {

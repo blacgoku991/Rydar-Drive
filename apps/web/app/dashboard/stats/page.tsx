@@ -4,11 +4,16 @@ import Link from "next/link";
 import { StatsView } from "@/components/charts/stats-view";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { requireOrg } from "@/lib/auth";
+import { isPrivateFleet } from "@/lib/private-fleet";
 import { statsPeriodStart } from "@/lib/stats-period";
 import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = { title: "Statistiques" };
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const ctx = await requireOrg();
+  return { title: isPrivateFleet(ctx.org) ? "Activité" : "Statistiques" };
+}
 
 const PRESETS = [
   { key: "7d", label: "7 derniers jours", days: 7 },
@@ -19,6 +24,7 @@ const PRESETS = [
 
 export default async function StatsPage({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
   const ctx = await requireOrg();
+  const privateFleet = isPrivateFleet(ctx.org);
   const { range } = await searchParams;
   const preset = PRESETS.find((p) => p.key === range) ?? PRESETS[1];
   const to = new Date();
@@ -32,7 +38,11 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
-      <PageHeader eyebrow="Pilotage" title="Statistiques" description="CA, volume, rapidité d'attribution, acceptation et activité de la flotte." />
+      {privateFleet ? (
+        <PageHeader eyebrow="Mon entreprise" title="Activité" description="Chiffre d'affaires, réservations, confirmations et canaux de réservation." />
+      ) : (
+        <PageHeader eyebrow="Pilotage" title="Statistiques" description="CA, volume, rapidité d'attribution, acceptation et activité de la flotte." />
+      )}
       <PageBody className="space-y-6">
         {/* Filtre de période : une seule ligne, au-dessus de tous les graphiques */}
         <div className="flex flex-wrap gap-1 rounded-xl border border-line bg-ink-850 p-1 sm:w-fit">
@@ -48,7 +58,7 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
             </Link>
           ))}
         </div>
-        {error || !stats ? <p className="text-sm text-red">Statistiques indisponibles.</p> : <StatsView stats={stats} />}
+        {error || !stats ? <p className="text-sm text-red">Statistiques indisponibles.</p> : <StatsView stats={stats} privateFleet={privateFleet} />}
       </PageBody>
     </>
   );

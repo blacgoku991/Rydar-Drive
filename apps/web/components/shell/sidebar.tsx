@@ -4,7 +4,7 @@ import {
   BarChart3, Building2, Check, ChevronsUpDown, CreditCard, Globe, KeyRound, LayoutDashboard, LogOut, Mail, Menu, MessageCircle, Radar,
   Route, ScrollText, Settings, ShieldCheck, Sparkles, UserPlus, UserX, Users,
 } from "lucide-react";
-import { ArrowLeftRight, HandCoins, Landmark, Waypoints } from "lucide-react";
+import { ArrowLeftRight, CalendarDays, CarFront, HandCoins, House, Landmark, Waypoints } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -26,6 +26,8 @@ const ICONS = {
   share: ArrowLeftRight,
   // Super admin : suppressions de comptes chauffeur, demandes du formulaire de contact
   userX: UserX, mail: Mail,
+  // Flotte Privée : Accueil, Agenda, Mon profil chauffeur
+  home: House, calendar: CalendarDays, car: CarFront,
 };
 export type NavIcon = keyof typeof ICONS;
 /** Pastille de compteur : rouge (alertes, défaut), lime (messages), ambre. */
