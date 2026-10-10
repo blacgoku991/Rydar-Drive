@@ -2,8 +2,8 @@ import { PRIVATE_FLEET_OPEN_STATUSES } from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import {
-  BOOKING_COLUMNS, OFFER_EMBED, bookingStateOf, countExpiringDocuments, countToTreat, driverOffers, isToTreat, loadBookingQueue, queueSince,
-  sortQueue, toBooking, type Booking, type BookingOffer, type BookingRow,
+  BOOKING_COLUMNS, OFFER_EMBED, bookingStateOf, countExpiringDocuments, countQueue, driverOffers, isToTreat, loadBookingQueue, queueCounts,
+  queueSince, sortQueue, toBooking, type Booking, type BookingOffer, type BookingRow,
 } from "./queue";
 
 // Réservations « à traiter » de la Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.3) : même règle que
@@ -129,6 +129,30 @@ describe("file à traiter", () => {
     expect(sortQueue(items).map((i) => i.number)).toEqual([5, 6, 3, 4, 2, 1]);
     expect(items.map((i) => i.number)).toEqual([1, 2, 3, 4, 5, 6]);
   });
+
+  it("pastilles : à traiter (Accueil) et non confirmées (Réservations) ; une réservation refusée par le chauffeur : aucune", () => {
+    // Refus de l'offre par le chauffeur lui-même : NO_DRIVER_FOUND tout de suite (H2), jusqu'à des jours avant l'heure
+    const declined = row({ status: "NO_DRIVER_FOUND", pickup_at: "2026-10-23T08:00:00Z", offers: [offer({ status: "declined" })] });
+    expect(queueCounts([declined], DRIVER)).toEqual({ toTreat: 0, notConfirmed: 0 });
+    const rows = [
+      declined,
+      row({ status: "OFFERED", offers: [offer()] }), // à confirmer
+      row({ status: "SEARCHING_DRIVER" }), // à vérifier (véhicule incompatible)
+      // Dernier appel en cours (offre de la flotte expirée, course encore en recherche) : à traiter, pas encore d'alerte
+      row({ status: "SEARCHING_DRIVER", offers: [offer({ status: "expired" })] }),
+      row({ status: "NO_DRIVER_FOUND", offers: [offer({ status: "expired" })] }), // non confirmée à l'échéance
+      row({ status: "NO_DRIVER_FOUND" }), // aucune fiche active : jamais proposée
+      // Sa DERNIÈRE offre compte (comme la base) : un refus suivi d'une offre restée sans réponse → non confirmée
+      row({
+        status: "NO_DRIVER_FOUND",
+        offers: [offer({ id: "a", status: "declined", sent_at: "2026-10-20T06:00:00Z" }), offer({ id: "b", status: "expired" })],
+      }),
+    ];
+    expect(queueCounts(rows, DRIVER)).toEqual({ toTreat: 6, notConfirmed: 3 });
+    // Sans fiche (supprimée : aucune offre à lui, comme private.private_fleet_unassigned) : toute réservation sans
+    // chauffeur à l'échéance est une alerte
+    expect(queueCounts([declined], null)).toEqual({ toTreat: 1, notConfirmed: 1 });
+  });
 });
 
 /** Client Supabase simulé : enregistre chaque appel de la chaîne, répond `result`. */
@@ -173,18 +197,25 @@ describe("lectures (RLS de membre, colonnes accordées)", () => {
     expect(await loadBookingQueue(fakeClient({ data: null, error: { message: "x" } }).client, "org-1", DRIVER)).toBeNull();
   });
 
-  it("pastille « à traiter » : refusées exclues ; lecture en échec : null (pastille inchangée)", async () => {
+  it("pastilles « à traiter » et « non confirmées » : une seule lecture, refusées exclues ; en échec : null (inchangées)", async () => {
     const rows = [
       row({ status: "OFFERED", offers: [offer()] }),
       row({ status: "SEARCHING_DRIVER" }),
       row({ status: "NO_DRIVER_FOUND", offers: [offer({ status: "expired" })] }),
-      row({ offers: [offer({ status: "declined" })] }),
+      row({ status: "NO_DRIVER_FOUND", offers: [offer({ status: "declined" })] }),
     ];
     const { calls, client } = fakeClient({ data: rows, error: null });
-    expect(await countToTreat(client, "org-1", DRIVER, NOW)).toBe(3);
-    expect(calls[1]).toEqual(["select", `id, status, driver_id, pickup_at, ${OFFER_EMBED}`]);
-    expect(calls).toContainEqual(["gt", "pickup_at", "2026-10-20T02:00:00.000Z"]);
-    expect(await countToTreat(fakeClient({ data: null, error: { message: "x" } }).client, "org-1", DRIVER, NOW)).toBeNull();
+    expect(await countQueue(client, "org-1", DRIVER, NOW)).toEqual({ toTreat: 3, notConfirmed: 1 });
+    expect(calls).toEqual([
+      ["from", "rides"],
+      ["select", `id, status, driver_id, pickup_at, ${OFFER_EMBED}`],
+      ["eq", "organization_id", "org-1"],
+      ["is", "driver_id", null],
+      ["in", "status", [...PRIVATE_FLEET_OPEN_STATUSES]],
+      ["gt", "pickup_at", "2026-10-20T02:00:00.000Z"],
+      ["limit", 100],
+    ]);
+    expect(await countQueue(fakeClient({ data: null, error: { message: "x" } }).client, "org-1", DRIVER, NOW)).toBeNull();
   });
 
   it("pastille « documents à renouveler » : expirés + bientôt expirés (org_document_alerts)", async () => {

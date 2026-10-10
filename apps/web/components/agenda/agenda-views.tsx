@@ -1,6 +1,7 @@
 // Agenda du tableau de bord : vues Mois, Semaine, Jour et Liste (composants serveur, sans script : liens seulement).
 // Modèle de vue : agenda-model.ts. Couleur = information (jetons de globals.css, AGENDA_KIND_META) ; liens sans
-// préchargement ; textes du lecteur d'écran pour chaque jour.
+// préchargement ; textes du lecteur d'écran pour chaque jour et, dans les grilles du mois et de la semaine (ni tableau ni
+// titre pour situer un lien), le jour dans le nom de chaque lien (courses, « +N »).
 import { AGENDA_KIND_META, AGENDA_VIEW_LABELS, formatPrice, formatTime, minutesOfDay, type AgendaKind, type AgendaView, type Tone } from "@rydar/shared";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
@@ -8,7 +9,7 @@ import { Badge, toneDot, toneText } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
-  TIMELINE_HOUR_PX, WEEKDAY_HEADERS, agendaHref, periodLabel, shiftPeriod, summaryLabel,
+  TIMELINE_HOUR_PX, WEEKDAY_HEADERS, agendaHref, entryAriaLabel, periodLabel, shiftPeriod, summaryLabel,
   type AgendaEntry, type DayTimeline, type ListDay, type MonthCell, type WeekColumn,
 } from "./agenda-model";
 
@@ -85,19 +86,22 @@ export function AgendaLegend() {
   );
 }
 
-/** Ligne compacte : « 08:30 Orly → Paris 8e » (point de couleur de la catégorie). */
-function EntryLink({ entry, compact }: { entry: AgendaEntry; compact?: boolean }) {
+/**
+ * Ligne compacte : « 08:30 Orly → Paris 8e » (point de couleur de la catégorie). `day` (« mercredi 14 octobre ») :
+ * dans le nom accessible, avec l'état — case du mois ou colonne de la semaine, rien d'autre ne situe le lien.
+ */
+function EntryLink({ entry, day, compact }: { entry: AgendaEntry; day: string; compact?: boolean }) {
   return (
     <Link
       href={`/dashboard/rides/${entry.id}`}
       prefetch={false}
       className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-[12px] hover:bg-white/[0.05]"
       title={`${entry.time} · ${entry.route} · ${entry.label}`}
+      aria-label={entryAriaLabel(entry, day)}
     >
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", toneDot[entry.tone])} />
       <span className="num shrink-0 text-fg">{entry.time}</span>
       <span className={cn("min-w-0 truncate", compact ? "text-fg-muted" : "text-fg")}>{entry.route}</span>
-      <span className="sr-only">, {entry.label}</span>
     </Link>
   );
 }
@@ -146,10 +150,15 @@ export function MonthView({ cells }: { cells: MonthCell[] }) {
             )}
             <div className="mt-0.5 hidden space-y-0.5 sm:block">
               {c.entries.map((e) => (
-                <EntryLink key={e.id} entry={e} compact />
+                <EntryLink key={e.id} entry={e} day={c.title} compact />
               ))}
-              {c.more > 0 && (
-                <Link href={agendaHref("day", c.day)} prefetch={false} className="block px-1 text-[11.5px] font-medium text-fg-muted hover:text-fg">
+              {c.moreLabel && (
+                <Link
+                  href={agendaHref("day", c.day)}
+                  prefetch={false}
+                  aria-label={c.moreLabel}
+                  className="block px-1 text-[11.5px] font-medium text-fg-muted hover:text-fg"
+                >
                   +{c.more}
                 </Link>
               )}
@@ -180,7 +189,7 @@ export function WeekView({ columns }: { columns: WeekColumn[] }) {
             </Link>
             <div className="space-y-0.5 p-1.5">
               {c.entries.map((e) => (
-                <EntryLink key={e.id} entry={e} />
+                <EntryLink key={e.id} entry={e} day={c.title} />
               ))}
             </div>
           </Card>

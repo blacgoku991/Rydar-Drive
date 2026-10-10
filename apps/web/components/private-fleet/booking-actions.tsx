@@ -1,13 +1,15 @@
 "use client";
-// Flotte Privée : actions sur une réservation (Accueil, Réservations, fiche) — « Je la prends » (assign_ride vers la
-// fiche du propriétaire), « Refuser » (decline_ride_offer, même compte que la fiche), « Annuler » (cancel_ride, motif),
-// « Appeler » le client. Jamais « Attribuer à… », « Relancer » ni « Retirer » (§ 7.3). Refus de la base affichés tels quels.
+// Flotte Privée : actions sur une réservation (Accueil, Réservations, fiche) — « Je la prends » (driver_take_ride, comme
+// « Confirmer » / « La prendre » dans l'application : offre acceptée, aucune notification « attribuée » vers son propre
+// téléphone, 6 h au plus après l'heure prévue), « Refuser » (decline_ride_offer), « Annuler » (cancel_ride, motif),
+// « Appeler » le client ; « Je la prends » et « Refuser » avec le compte de la session, qui est celui de la fiche.
+// Jamais « Attribuer à… », « Relancer » ni « Retirer » (§ 7.3). Refus de la base affichés tels quels.
 import { canCancel, formatPhone, type PrivateFleetBookingState, type RideStatus } from "@rydar/shared";
 import { Ban, Check, Phone, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { assignRide, cancelRide, declineOffer } from "@/app/dashboard/rides/actions";
+import { cancelRide, declineOffer, takeBooking } from "@/app/dashboard/rides/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
@@ -49,16 +51,21 @@ export function BookingActions({
   const [reasonError, setReasonError] = useState<string | null>(null);
   const label = `Réservation #${booking.number}`;
 
-  const run = (fn: () => Promise<{ ok: boolean; error?: string }>, success: string, description?: string) =>
+  /** `description` : texte sous le message de succès, éventuellement d'après la réponse de l'action. */
+  const run = <R extends { ok: boolean; error?: string }>(fn: () => Promise<R>, success: string, description?: string | ((res: R) => string)) =>
     start(() => runAction(async () => {
       const res = await fn();
       if (!res.ok) return void toast.error(res.error ?? "Action impossible.");
-      toast.success(success, description ? { description } : undefined);
+      const text = typeof description === "function" ? description(res) : description;
+      toast.success(success, text ? { description: text } : undefined);
       setDialog(null);
       router.refresh();
     }));
 
-  const take = () => driverId && run(() => assignRide(booking.id, driverId), `${label} confirmée`, "Elle vous est attribuée.");
+  const take = () =>
+    run(() => takeBooking(booking.id), `${label} confirmée`, (res) =>
+      res.ok && res.chained ? "Elle vous est attribuée, à la suite de votre course en cours." : "Elle vous est attribuée.",
+    );
   const decline = () => booking.offerId && run(() => declineOffer(booking.offerId!), `${label} refusée`, "Votre site en est informé.");
 
   return (

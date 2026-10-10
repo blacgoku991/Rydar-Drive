@@ -4,8 +4,9 @@ import { checkoutPlanAllowed } from "../app/api/billing/checkout/plan-access";
 
 // Flotte Privée — espace web du client (lot L3, docs/FLOTTE-PRIVEE.md § 7) : détection et gardes (lib/private-fleet.ts),
 // Checkout verrouillé sur l'offre attribuée (§ 7.6, app/api/billing/checkout/plan-access.ts), et vraies actions serveur
-// avec Supabase simulé : création de chauffeur et invitation refusées AVANT toute création de compte Auth, « Refuser »
-// (decline_ride_offer), « Relancer » refusé, réglages « Réservations ».
+// avec Supabase simulé : création de chauffeur et invitation refusées AVANT toute création de compte Auth, « Je la
+// prends » (driver_take_ride, jamais assign_ride), « Refuser » (decline_ride_offer), « Attribuer à… » et « Relancer »
+// refusés, réglages « Réservations ».
 
 type Op = { client: string; table: string; action: string; values?: unknown; filters: Record<string, unknown> };
 type Reply = { data?: unknown; error?: unknown; count?: number } | undefined;
@@ -245,6 +246,56 @@ describe("actions refusées AVANT toute création de compte Auth", () => {
     expect(relaunch).toMatchObject({ ok: false, code: "ERROR", error: ERROR_MESSAGES.PRIVATE_FLEET_RESTRICTED });
     expect(h.ops.filter((o) => o.action !== "select")).toEqual([]);
     expect(h.auth).toEqual([]);
+  });
+});
+
+describe("« Je la prends » (takeBooking)", () => {
+  const rpcCalls = () => h.ops.filter((o) => o.action === "rpc").map((o) => o.table);
+
+  it("driver_take_ride avec le client de la session (compte de la fiche), jamais assign_ride", async () => {
+    h.handle = (op) => (op.table === "rpc:driver_take_ride" ? { data: { ok: true, code: "ACCEPTED", message: "Course attribuée.", ride_id: RIDE } } : undefined);
+    expect(await rides.takeBooking(RIDE)).toEqual({ ok: true, chained: false });
+    expect(h.ops).toEqual([{ client: "user", table: "rpc:driver_take_ride", action: "rpc", values: { p_ride_id: RIDE }, filters: {} }]);
+    expect(rpcCalls()).not.toContain("rpc:assign_ride");
+    expect(h.auth).toEqual([]);
+  });
+
+  it("immédiate prise pendant une autre course : enchaînée ; déjà à lui (UNCHANGED) : succès", async () => {
+    h.handle = () => ({ data: { ok: true, code: "ACCEPTED", ride_id: RIDE, chained: true } });
+    expect(await rides.takeBooking(RIDE)).toEqual({ ok: true, chained: true });
+    h.handle = () => ({ data: { ok: true, code: "UNCHANGED", ride_id: RIDE } });
+    expect(await rides.takeBooking(RIDE)).toEqual({ ok: true, chained: false });
+  });
+
+  it("refus de la base affichés tels quels (6 h dépassées, plus attribuable, introuvable) ; fiche inactive : message clair", async () => {
+    for (const [code, message] of [
+      ["RIDE_TOO_LATE", "Heure de prise en charge dépassée depuis plus de 6 h."],
+      ["RIDE_NOT_ASSIGNABLE", "Cette réservation ne peut plus être prise."],
+      ["RIDE_NOT_FOUND", "Course introuvable."],
+      ["RIDE_ALREADY_ASSIGNED", "Course déjà attribuée."],
+    ]) {
+      h.handle = () => ({ data: { ok: false, code, message } });
+      expect(await rides.takeBooking(RIDE), code).toEqual({ ok: false, error: message });
+    }
+    h.handle = () => ({ error: { code: "42501", message: "FORBIDDEN: compte chauffeur inactif ou inconnu" } });
+    expect(await rides.takeBooking(RIDE)).toEqual({ ok: false, error: "Votre fiche chauffeur n'est pas active : réservation impossible à prendre." });
+    expect(rpcCalls().every((t) => t === "rpc:driver_take_ride")).toBe(true);
+  });
+
+  it("identifiant invalide ou organisation standard : aucun appel", async () => {
+    expect(await rides.takeBooking("pas-un-uuid")).toEqual({ ok: false, error: "Réservation introuvable : rechargez la page." });
+    h.ctx = ctxFor(false);
+    expect(await rides.takeBooking(RIDE)).toEqual({ ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_ONLY });
+    expect(h.ops).toEqual([]);
+  });
+
+  it("« Attribuer à… » (assignRide) refusé en Flotte Privée sans appel ; organisation standard : assign_ride (non-régression)", async () => {
+    expect(await rides.assignRide(RIDE, OFFER)).toEqual({ ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_RESTRICTED });
+    expect(h.ops).toEqual([]);
+    h.ctx = ctxFor(false);
+    h.handle = (op) => (op.table === "rpc:assign_ride" ? { data: { ok: true, code: "ASSIGNED", ride_id: RIDE } } : undefined);
+    expect(await rides.assignRide(RIDE, OFFER)).toEqual({ ok: true });
+    expect(rpcCalls()).toEqual(["rpc:assign_ride"]);
   });
 });
 

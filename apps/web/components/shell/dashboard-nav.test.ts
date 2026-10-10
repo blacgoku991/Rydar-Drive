@@ -121,7 +121,8 @@ describe("menu standard : identique au menu historique", () => {
 });
 
 describe("menu Flotte Privée (§ 7.2)", () => {
-  const counts = { toTreat: 3, alerts: 1, expiringDocuments: 2, unread: 9, pendingDocuments: 4, applications: 5, declared: 1, overdue: 1 };
+  // `alerts` (compte brut des courses sans chauffeur, standard) jamais affiché : la pastille rouge = `notConfirmed`
+  const counts = { toTreat: 3, notConfirmed: 1, alerts: 7, expiringDocuments: 2, unread: 9, pendingDocuments: 4, applications: 5, declared: 1, overdue: 1 };
 
   it("exactement : Mon activité (Accueil, Agenda, Réservations, Mon site), Mon entreprise (profil, Activité, Réglages)", () => {
     const nav = dashboardNav({
@@ -138,7 +139,7 @@ describe("menu Flotte Privée (§ 7.2)", () => {
         items: [
           { href: "/dashboard", label: "Accueil", icon: "home", exact: true, badge: 3, badgeTone: "amber", badgeLabel: "3 réservations à traiter" },
           { href: "/dashboard/agenda", label: "Agenda", icon: "calendar" },
-          { href: "/dashboard/rides", label: "Réservations", icon: "route", badge: 1, badgeTone: "red", badgeLabel: "1 réservation sans chauffeur" },
+          { href: "/dashboard/rides", label: "Réservations", icon: "route", badge: 1, badgeTone: "red", badgeLabel: "1 réservation non confirmée" },
           { href: "/dashboard/site", label: "Mon site", icon: "globe" },
         ],
       },
@@ -185,5 +186,13 @@ describe("menu Flotte Privée (§ 7.2)", () => {
     // Pastilles absentes : 0 (rien d'affiché), libellés corrects
     const empty = dashboardNav({ privateFleet: true, model: "fleet", role: "owner" });
     expect(empty[0]!.items[0]).toMatchObject({ badge: 0, badgeLabel: "0 réservation à traiter" });
+  });
+
+  it("alerte rouge de « Réservations » : non confirmées seulement, jamais le compte brut des courses sans chauffeur", () => {
+    const rides = (c: Record<string, number>) =>
+      dashboardNav({ privateFleet: true, model: "fleet", role: "owner", counts: c })[0]!.items.find((i) => i.href === "/dashboard/rides");
+    // Réservation refusée par le chauffeur lui-même : dans le compte brut (NO_DRIVER_FOUND), jamais dans la pastille
+    expect(rides({ alerts: 1, notConfirmed: 0 })).toMatchObject({ badge: 0, badgeLabel: "0 réservation non confirmée" });
+    expect(rides({ alerts: 5, notConfirmed: 2 })).toMatchObject({ badge: 2, badgeTone: "red", badgeLabel: "2 réservations non confirmées" });
   });
 });

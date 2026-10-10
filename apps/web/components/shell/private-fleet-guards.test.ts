@@ -63,15 +63,15 @@ const ACTIONS: Record<string, string[] | "all"> = {
   ],
   // Messagerie
   "app/dashboard/messages/actions.ts": ["sendChatMessage", "markChatRead", "removeChatMessage", "dismissChatReport"],
-  // Relancer / Retirer une course
-  "app/dashboard/rides/actions.ts": ["redispatchRide", "relaunchRide"],
+  // Attribuer à… (« Je la prends » passe par takeBooking → driver_take_ride), Relancer / Retirer une course
+  "app/dashboard/rides/actions.ts": ["assignRide", "redispatchRide", "relaunchRide"],
 };
 
 /** Actions qui restent permises en Flotte Privée (le test échoue si l'une d'elles est refusée par erreur). */
 const ALLOWED: Record<string, string[]> = {
   "app/dashboard/drivers/actions.ts": ["updateDriver", "addDriverDocument", "reviewDriverDocument"],
   "app/dashboard/settings/actions.ts": ["updateOrganization", "savePricingRule", "updatePrivateBookingSettings"],
-  "app/dashboard/rides/actions.ts": ["createRide", "cancelRide", "assignRide", "declineOffer", "updateRidePricing", "acknowledgeRideAlert"],
+  "app/dashboard/rides/actions.ts": ["createRide", "cancelRide", "takeBooking", "declineOffer", "updateRidePricing", "acknowledgeRideAlert"],
 };
 
 describe("actions serveur refusées en Flotte Privée", () => {
@@ -95,6 +95,13 @@ describe("actions serveur refusées en Flotte Privée", () => {
       const guarded = guardedFunctions(read(file));
       expect(names.filter((n) => guarded.has(n)), file).toEqual([]);
     }
+  });
+
+  it("« Je la prends » (Accueil, Réservations, fiche) : takeBooking, jamais l'attribution manuelle (assignRide)", () => {
+    const src = read("components/private-fleet/booking-actions.tsx");
+    expect(src).toMatch(/import \{[^}]*\btakeBooking\b[^}]*\} from "@\/app\/dashboard\/rides\/actions";/);
+    expect(src).toContain("takeBooking(booking.id)");
+    expect(src).not.toMatch(/\bassignRide\b/);
   });
 
   it("createDriver et inviteMember refusent AVANT toute création ou recherche de compte Auth", () => {

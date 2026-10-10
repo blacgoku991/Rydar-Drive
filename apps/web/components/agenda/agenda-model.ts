@@ -123,6 +123,14 @@ export function dayAriaLabel(day: string, s: AgendaDaySummary): string {
   return `${dayTitle(day)}, ${parts[0]}${extra.length ? ` dont ${extra.join(" et ")}` : ""}`;
 }
 
+/**
+ * Nom accessible d'une course dans une case du mois ou une colonne de la semaine : le texte visible (« 08:30 Orly →
+ * Paris 8e ») d'abord, puis le jour et l'état — rien d'autre ne situe le lien (ni cellule de tableau, ni titre avant lui).
+ */
+export function entryAriaLabel(entry: Pick<AgendaEntry, "time" | "route" | "label">, title: string): string {
+  return `${entry.time} ${entry.route}, ${title}, ${entry.label}`;
+}
+
 /** Courses affichées par case du mois avant « +N ». */
 export const MONTH_CELL_ITEMS = 3;
 
@@ -131,9 +139,13 @@ export type MonthCell = {
   dayNumber: number;
   inMonth: boolean;
   today: boolean;
+  /** « mercredi 14 octobre » : situe les liens de la case pour le lecteur d'écran */
+  title: string;
   /** Courses affichées (3 au plus) et nombre d'autres */
   entries: AgendaEntry[];
   more: number;
+  /** Nom accessible du lien « +N » vers la vue Jour (« +2 autres courses, mercredi 14 octobre ») ; null sans « +N » */
+  moreLabel: string | null;
   summary: AgendaDaySummary;
   ariaLabel: string;
 };
@@ -144,13 +156,18 @@ export function monthCells(day: string, byDay: Record<string, AgendaEntry[]>, to
   return monthGrid(day).map((d) => {
     const all = byDay[d] ?? [];
     const summary = daySummary(all, now);
+    const title = dayTitle(d);
+    const more = Math.max(0, all.length - MONTH_CELL_ITEMS);
     return {
       day: d,
       dayNumber: Number(d.slice(8)),
       inMonth: d.slice(0, 7) === month,
       today: d === today,
+      title,
       entries: all.slice(0, MONTH_CELL_ITEMS),
-      more: Math.max(0, all.length - MONTH_CELL_ITEMS),
+      more,
+      // Commence par le texte visible « +N » (étiquette dans le nom), puis ce qu'il désigne
+      moreLabel: more > 0 ? `+${count(more, "autre course", "autres courses")}, ${title}` : null,
       summary,
       ariaLabel: dayAriaLabel(d, summary),
     };
@@ -168,7 +185,16 @@ export const WEEKDAY_HEADERS: readonly { short: string; long: string }[] = [
   { short: "D", long: "dimanche" },
 ];
 
-export type WeekColumn = { day: string; heading: string; today: boolean; entries: AgendaEntry[]; summary: AgendaDaySummary; ariaLabel: string };
+export type WeekColumn = {
+  day: string;
+  /** « mercredi 14 octobre » (liens de la colonne, lecteur d'écran) ; `heading` : même date, capitale initiale */
+  title: string;
+  heading: string;
+  today: boolean;
+  entries: AgendaEntry[];
+  summary: AgendaDaySummary;
+  ariaLabel: string;
+};
 
 /** Semaine du jour (lundi → dimanche). */
 export function weekColumns(day: string, byDay: Record<string, AgendaEntry[]>, today: string, now = Date.now()): WeekColumn[] {
@@ -177,7 +203,8 @@ export function weekColumns(day: string, byDay: Record<string, AgendaEntry[]>, t
     const d = addDays(start, i);
     const entries = byDay[d] ?? [];
     const summary = daySummary(entries, now);
-    return { day: d, heading: capitalize(dayTitle(d)), today: d === today, entries, summary, ariaLabel: dayAriaLabel(d, summary) };
+    const title = dayTitle(d);
+    return { day: d, title, heading: capitalize(title), today: d === today, entries, summary, ariaLabel: dayAriaLabel(d, summary) };
   });
 }
 

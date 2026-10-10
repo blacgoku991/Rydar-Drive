@@ -1,8 +1,8 @@
 import { fetchWindow } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
-  MONTH_CELL_ITEMS, TIMELINE_HOUR_PX, agendaHref, agendaParams, dayAriaLabel, dayTimeline, entriesByDay, listDays, monthCells, periodLabel,
-  shiftPeriod, summaryLabel, toEntries, validDay, weekColumns, type AgendaRide,
+  MONTH_CELL_ITEMS, TIMELINE_HOUR_PX, agendaHref, agendaParams, dayAriaLabel, dayTimeline, entriesByDay, entryAriaLabel, listDays, monthCells,
+  periodLabel, shiftPeriod, summaryLabel, toEntries, validDay, weekColumns, type AgendaRide,
 } from "./agenda-model";
 
 // Agenda du tableau de bord (docs/FLOTTE-PRIVEE.md § 7.3) : vues Mois, Semaine, Jour, Liste dans le fuseau de
@@ -136,6 +136,32 @@ describe("mois", () => {
 
   it("mois commençant un dimanche (novembre 2026) : la grille commence le lundi 26 octobre", () => {
     expect(monthCells("2026-11-10", {}, "2026-10-20", NOW)[0]!.day).toBe("2026-10-26");
+  });
+
+  it("lien « +N » : nom accessible qui dit le jour (et commence par le texte visible) ; aucun sans « +N »", () => {
+    const rides = (day: string, n: number) => ["06:00", "08:00", "10:00", "12:00", "14:00"].slice(0, n).map((t) => ride(`${day}T${t}:00Z`));
+    const byDay = entriesByDay(toEntries([...rides("2026-10-14", 5), ...rides("2026-10-15", 4), ...rides("2026-10-16", 3)], TZ, NOW), TZ);
+    const cells = monthCells("2026-10-14", byDay, "2026-10-20", NOW);
+    const cell = (day: string) => cells.find((c) => c.day === day)!;
+    expect(cell("2026-10-14").moreLabel).toBe("+2 autres courses, mercredi 14 octobre");
+    expect(cell("2026-10-15").moreLabel).toBe("+1 autre course, jeudi 15 octobre");
+    expect(cell("2026-10-15").moreLabel!.startsWith(`+${cell("2026-10-15").more}`)).toBe(true);
+    // Deux cases du mois n'ont jamais le même nom de lien
+    const labels = cells.map((c) => c.moreLabel).filter(Boolean);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(cell("2026-10-16").moreLabel).toBeNull();
+    expect(cell("2026-10-20").moreLabel).toBeNull();
+    expect(cell("2026-10-14").title).toBe("mercredi 14 octobre");
+  });
+
+  it("liens des courses (mois, semaine) : texte visible, puis le jour et l'état", () => {
+    const [entry] = toEntries([ride("2026-10-21T08:00:00Z", { status: "OFFERED", state: "to_confirm" })], TZ, NOW);
+    const cell = monthCells("2026-10-21", entriesByDay([entry!], TZ), "2026-10-20", NOW).find((c) => c.day === "2026-10-21")!;
+    expect(entryAriaLabel(cell.entries[0]!, cell.title)).toBe("10:00 Aéroport d'Orly → 12 Rue de Rivoli, mercredi 21 octobre, À confirmer");
+    const column = weekColumns("2026-10-21", entriesByDay([entry!], TZ), "2026-10-20", NOW).find((c) => c.day === "2026-10-21")!;
+    expect(column.title).toBe("mercredi 21 octobre");
+    expect(column.heading).toBe("Mercredi 21 octobre");
+    expect(entryAriaLabel(column.entries[0]!, column.title)).toBe(entryAriaLabel(cell.entries[0]!, cell.title));
   });
 });
 

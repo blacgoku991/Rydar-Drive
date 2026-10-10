@@ -3,7 +3,7 @@ import { networkMenuShown } from "@/components/network-share/access";
 import { networkNavState } from "@/components/network-share/nav";
 import { networkTermsDue, shareOutRequested } from "@/components/network-share/readiness";
 import { NetworkTermsBanner } from "@/components/network-share/terms-banner";
-import { countExpiringDocuments, countToTreat } from "@/components/private-fleet/queue";
+import { countExpiringDocuments, countQueue } from "@/components/private-fleet/queue";
 import { DashboardShell } from "@/components/shell/dashboard-shell";
 import { fetchCentraleCounts } from "@/components/settlements/counts";
 import { OrgTermsGate, TermsBanner, UserTermsBanner } from "@/components/legal/terms-banner";
@@ -18,15 +18,22 @@ import { networkAccess } from "@/lib/shared-network";
 
 type Ctx = Awaited<ReturnType<typeof requireOrg>>;
 
-/** Lectures communes aux deux espaces : alerte « sans chauffeur », CGV / accord de traitement, CGU, frais Rydar (flotte). */
-function commonReads(ctx: Ctx, admin: boolean, centrale: boolean) {
+/**
+ * Lectures communes aux deux espaces : alerte « sans chauffeur » (organisation standard), CGV / accord de traitement,
+ * CGU, frais Rydar (flotte).
+ */
+function commonReads(ctx: Ctx, admin: boolean, centrale: boolean, privateFleet: boolean) {
   return Promise.all([
-    ctx.supabase
-      .from("rides")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", ctx.org.id)
-      .eq("status", "NO_DRIVER_FOUND")
-      .gte("pickup_at", new Date(Date.now() - 6 * 3600_000).toISOString()),
+    // Flotte Privée : alerte « non confirmées » lue avec la file à traiter (countQueue), sans les réservations qu'il a
+    // refusées lui-même (aussi NO_DRIVER_FOUND) — jamais ce compte brut
+    privateFleet
+      ? Promise.resolve({ count: null })
+      : ctx.supabase
+          .from("rides")
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id", ctx.org.id)
+          .eq("status", "NO_DRIVER_FOUND")
+          .gte("pickup_at", new Date(Date.now() - 6 * 3600_000).toISOString()),
     // CGV + accord de traitement (owner / admin) : versions acceptées au nom de la centrale (une ligne par signataire
     // et par version ; « dpa » suffit, les deux documents sont enregistrés ensemble) → version en vigueur
     // (ORG_LEGAL_VERSION) acceptée, mise à jour à accepter (version antérieure seulement) ou première acceptation
@@ -56,16 +63,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const centrale = ctx.org.dispatch_model === "centrale";
   const admin = isAdminRole(ctx.role);
   // Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.5) : ni messagerie, ni documents à valider, ni compteurs de centrale, ni
-  // réseau partagé, ni mini-site, ni réglages d'encaissement ; à la place, les réservations à traiter et les documents à
-  // renouveler (pastilles du menu). Gardés : alerte « sans chauffeur », CGV et accord de traitement, CGU, frais Rydar.
+  // réseau partagé, ni mini-site, ni réglages d'encaissement ; à la place, les réservations à traiter et non confirmées
+  // et les documents à renouveler (pastilles du menu). Gardés : alerte « non confirmées » (à la place du compte brut des
+  // courses sans chauffeur), CGV et accord de traitement, CGU, frais Rydar.
   const privateFleet = isPrivateFleet(ctx.org);
   // Réseau partagé : interrupteur plateforme, puis le résumé de l'organisation (pastille du menu, bandeau « nouvelle
   // convention ») — réseau ouvert, ou fermé par Rydar avec des sommes en cours (organisation déjà membre) ; jamais
   // membre et réseau coupé : rien d'autre que l'interrupteur et l'adhésion. En parallèle des autres lectures.
   const network = privateFleet ? Promise.resolve(null) : networkAccess(ctx.supabase, ctx.org.id);
-  const [[{ count }, terms, userTerms, fleetFees], chat, pendingDocs, centraleCounts, centraleSettings, bookingSites, networkInfo, toTreat, expiringDocuments] =
+  const [[{ count }, terms, userTerms, fleetFees], chat, pendingDocs, centraleCounts, centraleSettings, bookingSites, networkInfo, queue, expiringDocuments] =
     await Promise.all([
-      commonReads(ctx, admin, centrale),
+      commonReads(ctx, admin, centrale, privateFleet),
       // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus, et messages signalés à traiter
       // (comptages seuls : la liste des fils n'est lue que par la page Messages)
       privateFleet ? Promise.resolve(null) : loadChatCounts(ctx.supabase, ctx.org.id),
@@ -85,8 +93,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
       // Menu « Mini-site » : masqué tant que les mini-sites sont coupés par la plateforme (super admin)
       privateFleet ? Promise.resolve(false) : bookingSitesEnabled(),
       network,
-      // Flotte Privée : pastille « à traiter » (une lecture légère : statuts et offres des réservations sans chauffeur)
-      privateFleet ? countToTreat(ctx.supabase, ctx.org.id, ctx.driverId) : Promise.resolve(null),
+      // Flotte Privée : pastilles « à traiter » et « non confirmées » (une lecture légère : statuts et offres des
+      // réservations sans chauffeur ; une réservation qu'il a refusée n'est dans aucune des deux)
+      privateFleet ? countQueue(ctx.supabase, ctx.org.id, ctx.driverId) : Promise.resolve(null),
       // … et « documents à renouveler » de sa fiche
       privateFleet ? countExpiringDocuments(ctx.supabase, ctx.org.id) : Promise.resolve(null),
     ]);
@@ -125,7 +134,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       org={{ id: ctx.org.id, name: ctx.org.name, role: ctx.role }}
       orgs={ctx.memberships.map((m) => ({ id: m.org.id, name: m.org.name, role: m.role }))}
       user={{ id: ctx.user.id, name: ctx.profile.full_name ?? ctx.profile.email, email: ctx.profile.email }}
-      alerts={count ?? 0}
+      alerts={privateFleet ? undefined : (count ?? 0)}
       unreadMessages={chat?.unread ?? 0}
       openReports={chat?.openReports ?? 0}
       pendingDocuments={pendingDocs ?? 0}
@@ -163,7 +172,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
       bookingSites={bookingSites}
       rydarFees={fleetFees?.data === true}
       sharedNetwork={networkMenuShown(networkInfo) ? networkNavState(networkInfo?.summary) : null}
-      privateFleet={privateFleet ? { driverId: ctx.driverId, toTreat: toTreat ?? 0, expiringDocuments: expiringDocuments ?? 0 } : null}
+      privateFleet={
+        privateFleet
+          ? { driverId: ctx.driverId, toTreat: queue?.toTreat ?? 0, notConfirmed: queue?.notConfirmed ?? 0, expiringDocuments: expiringDocuments ?? 0 }
+          : null
+      }
     >
       {gate ? <OrgTermsGate orgName={ctx.org.name} hasRides={gateHasRides} /> : children}
     </DashboardShell>

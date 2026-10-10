@@ -1,8 +1,8 @@
 // Flotte Privée : réservations sans chauffeur « à traiter » (même règle que private.private_fleet_unassigned,
 // 20260924007600, et que privateFleetBookingState de @rydar/shared) — prise en charge il y a moins de 6 h, statut
 // encore ouvert ; état calculé d'après les offres du chauffeur (son offre en attente, sa dernière offre). Lectures RLS
-// de membre (le propriétaire lit toutes les courses et offres de son organisation). Module neutre : layout (compteur du
-// menu), pages serveur (Accueil, Réservations, fiche, Agenda) et barre latérale (relecture dans le navigateur).
+// de membre (le propriétaire lit toutes les courses et offres de son organisation). Module neutre : layout (pastilles
+// du menu), pages serveur (Accueil, Réservations, fiche, Agenda) et barre latérale (relecture dans le navigateur).
 import {
   PRIVATE_FLEET_OPEN_STATUSES, PRIVATE_FLEET_TAKE_MAX_AGE_HOURS, privateFleetBookingState, privateFleetTakeable,
   type OfferStatus, type PaymentMethod, type PrivateFleetBookingState, type RideStatus, type RideType, type VehicleCategory,
@@ -126,11 +126,35 @@ export async function loadBookingQueue(
   return ((data ?? []) as unknown as BookingRow[]).map((r) => toBooking(r, driverId, now));
 }
 
+/** Pastilles du menu de la Flotte Privée tirées de la file des réservations sans chauffeur. */
+export type QueueCounts = {
+  /** « Accueil » (ambre) : à confirmer, à vérifier, non confirmées */
+  toTreat: number;
+  /**
+   * « Réservations » (rouge) : non confirmées — sans chauffeur à l'échéance (NO_DRIVER_FOUND), sans refus du chauffeur.
+   * Une réservation qu'il a refusée lui-même (« Refusée », aussi NO_DRIVER_FOUND) est déjà décidée : jamais d'alerte.
+   */
+  notConfirmed: number;
+};
+
+/** Comptes des pastilles d'après les réservations sans chauffeur lues (même règle que la file et que la base). */
+export function queueCounts(rows: readonly Pick<BookingRow, "status" | "driver_id" | "offers">[], driverId: string | null): QueueCounts {
+  let toTreat = 0;
+  let notConfirmed = 0;
+  for (const r of rows) {
+    const state = bookingStateOf(r, driverId);
+    if (isToTreat({ state })) toTreat += 1;
+    if (r.status === "NO_DRIVER_FOUND" && state === "not_confirmed") notConfirmed += 1;
+  }
+  return { toTreat, notConfirmed };
+}
+
 /**
- * Pastille « à traiter » du menu (layout, barre latérale) : lecture légère (statut et offres seulement). null si la
- * lecture échoue (pastille inchangée).
+ * Pastilles « à traiter » et « non confirmées » du menu (layout, barre latérale) : une seule lecture légère (statut et
+ * offres des réservations sans chauffeur des 6 dernières heures et à venir). null si la lecture échoue (pastilles
+ * inchangées).
  */
-export async function countToTreat(supabase: SupabaseClient, orgId: string, driverId: string | null, now = Date.now()): Promise<number | null> {
+export async function countQueue(supabase: SupabaseClient, orgId: string, driverId: string | null, now = Date.now()): Promise<QueueCounts | null> {
   const { data, error } = await supabase
     .from("rides")
     .select(`id, status, driver_id, pickup_at, ${OFFER_EMBED}`)
@@ -140,8 +164,7 @@ export async function countToTreat(supabase: SupabaseClient, orgId: string, driv
     .gt("pickup_at", queueSince(now))
     .limit(100);
   if (error) return null;
-  const rows = (data ?? []) as unknown as Pick<BookingRow, "status" | "driver_id" | "offers">[];
-  return rows.filter((r) => isToTreat({ state: bookingStateOf(r, driverId) })).length;
+  return queueCounts((data ?? []) as unknown as Pick<BookingRow, "status" | "driver_id" | "offers">[], driverId);
 }
 
 /**

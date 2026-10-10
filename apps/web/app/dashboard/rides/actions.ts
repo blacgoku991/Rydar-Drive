@@ -119,6 +119,10 @@ export async function cancelRide(rideId: string, reason?: string) {
 }
 
 export async function assignRide(rideId: string, driverId: string) {
+  // Flotte Privée : jamais « Attribuer à… » (attribution manuelle : notification « COURSE ATTRIBUÉE » vers son propre
+  // téléphone, offre fermée au lieu d'acceptée, aucune borne des 6 h) — « Je la prends » passe par takeBooking
+  const refused = refuseInPrivateFleet(await getOrgContext());
+  if (refused) return refused;
   return rpc("assign_ride", { p_ride_id: rideId, p_driver_id: driverId });
 }
 
@@ -154,6 +158,32 @@ export async function declineOffer(offerId: string): Promise<Result> {
   revalidatePath("/dashboard/rides");
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+/**
+ * Flotte Privée, « Je la prends » : le chauffeur-propriétaire prend la réservation lui-même, exactement comme
+ * « Confirmer » / « La prendre » dans l'application — driver_take_ride avec le client de la session (même compte que
+ * la fiche ; la base retrouve la fiche par private.current_driver_id()). Offre en attente : acceptée (accept_ride_offer,
+ * comptée dans le taux de confirmation) ; sinon attribuée à sa fiche sans notification « COURSE ATTRIBUÉE » vers son
+ * propre téléphone ; jamais plus de 6 h après l'heure prévue (RIDE_TOO_LATE). Jamais assign_ride (refusé ci-dessus).
+ * `chained` : immédiate prise pendant une autre course, enchaînée à la fin de celle-ci.
+ */
+export async function takeBooking(rideId: string): Promise<Result<{ chained: boolean }>> {
+  const ctx = await getOrgContext();
+  if (!ctx) return { ok: false, error: "Accès refusé." };
+  if (!isPrivateFleet(ctx.org)) return { ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_ONLY };
+  if (!UUID.test(rideId)) return { ok: false, error: "Réservation introuvable : rechargez la page." };
+  const { data, error } = await ctx.supabase.rpc("driver_take_ride", { p_ride_id: rideId });
+  if (error) {
+    // Fiche inactive, suspendue ou supprimée : FORBIDDEN (42501)
+    return { ok: false, error: error.code === "42501" ? "Votre fiche chauffeur n'est pas active : réservation impossible à prendre." : actionError(error) };
+  }
+  // Refus de la base affichés tels quels (RIDE_TOO_LATE, RIDE_NOT_ASSIGNABLE, RIDE_NOT_FOUND, RIDE_ALREADY_ASSIGNED…)
+  const res = data as { ok?: boolean; code?: string; message?: string; chained?: boolean } | null;
+  if (!res?.ok) return { ok: false, error: res?.message ?? "Impossible de prendre la réservation." };
+  revalidatePath("/dashboard/rides");
+  revalidatePath("/dashboard");
+  return { ok: true, chained: res.chained === true };
 }
 
 // ---------------------------------------------------------------- alertes de suivi (migration 002200)

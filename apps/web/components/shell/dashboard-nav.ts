@@ -10,7 +10,7 @@ import type { NavSection } from "./sidebar";
 
 /** Compteurs des pastilles (absents : 0). */
 export type DashboardNavCounts = {
-  /** Courses sans chauffeur des 6 dernières heures (alerte rouge de « Courses » / « Réservations ») */
+  /** Standard : courses sans chauffeur des 6 dernières heures et à venir (alerte rouge de « Courses ») */
   alerts?: number;
   /** Messages non lus et messages signalés à traiter (standard) */
   unread?: number;
@@ -24,6 +24,11 @@ export type DashboardNavCounts = {
   overdue?: number;
   /** Flotte Privée : réservations à traiter (à confirmer, à vérifier, non confirmées) */
   toTreat?: number;
+  /**
+   * Flotte Privée : réservations non confirmées (sans chauffeur à l'échéance) — alerte rouge de « Réservations », à la
+   * place de `alerts` : une réservation que le chauffeur a refusée lui-même n'y est jamais comptée
+   */
+  notConfirmed?: number;
   /** Flotte Privée : documents expirés ou qui expirent sous 30 jours (« Mon profil chauffeur ») */
   expiringDocuments?: number;
 };
@@ -144,11 +149,14 @@ function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput
   ];
 }
 
-/** Menu de la Flotte Privée (§ 7.2) : « Frais Rydar » seulement si des frais sont réglés (owner / admin). */
+/**
+ * Menu de la Flotte Privée (§ 7.2) : « Frais Rydar » seulement si des frais sont réglés (owner / admin). Alerte rouge de
+ * « Réservations » : les non confirmées seulement (jamais le compte brut `alerts`, qui comprend ses propres refus).
+ */
 function privateFleetNav({ role, counts = {}, flags = {} }: DashboardNavInput): NavSection[] {
   const isAdmin = role === "owner" || role === "admin";
   const toTreat = counts.toTreat ?? 0;
-  const alerts = counts.alerts ?? 0;
+  const notConfirmed = counts.notConfirmed ?? 0;
   const documents = counts.expiringDocuments ?? 0;
   return [
     {
@@ -168,9 +176,9 @@ function privateFleetNav({ role, counts = {}, flags = {} }: DashboardNavInput): 
           href: "/dashboard/rides",
           label: "Réservations",
           icon: "route",
-          badge: alerts,
+          badge: notConfirmed,
           badgeTone: "red",
-          badgeLabel: plural(alerts, "réservation sans chauffeur", "réservations sans chauffeur"),
+          badgeLabel: plural(notConfirmed, "réservation non confirmée", "réservations non confirmées"),
         },
         { href: "/dashboard/site", label: "Mon site", icon: "globe" },
       ],

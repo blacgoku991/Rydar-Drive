@@ -13,7 +13,7 @@ import { RealtimeProvider, useRealtimeEvent } from "@/components/realtime/realti
 import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, fetchNetworkNav, type CentraleCounts } from "@/components/settlements/counts";
-import { countExpiringDocuments, countToTreat } from "@/components/private-fleet/queue";
+import { countExpiringDocuments, countQueue } from "@/components/private-fleet/queue";
 import { dashboardNav } from "@/components/shell/dashboard-nav";
 import { Sidebar } from "@/components/shell/sidebar";
 import { SkipToContent } from "@/components/shell/skip-to-content";
@@ -31,6 +31,7 @@ type ShellProps = {
   org: { id: string; name: string; role: string };
   orgs: { id: string; name: string; role: string }[];
   user: { id: string; name: string; email: string };
+  /** Organisation standard : courses sans chauffeur des 6 dernières heures (Flotte Privée : `privateFleet.notConfirmed`) */
   alerts?: number;
   /** Messages non lus (chat_overview.unread_total) au chargement */
   unreadMessages?: number;
@@ -57,8 +58,8 @@ type ShellProps = {
   sharedNetwork?: NetworkNavState | null;
   /**
    * Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.2 et 7.5) : menu épuré, sous-titre « Flotte Privée », pastilles « à
-   * traiter » et « documents à renouveler » ; ni messagerie, ni candidatures, ni documents à valider, ni réseau.
-   * null / absent : organisation standard.
+   * traiter », « non confirmées » et « documents à renouveler » ; ni messagerie, ni candidatures, ni documents à valider,
+   * ni réseau. null / absent : organisation standard.
    */
   privateFleet?: PrivateFleetShell | null;
 };
@@ -68,6 +69,8 @@ export type PrivateFleetShell = {
   driverId: string | null;
   /** Réservations à traiter (à confirmer, à vérifier, non confirmées) */
   toTreat: number;
+  /** Réservations non confirmées (sans chauffeur à l'échéance, hors ses propres refus) : alerte de « Réservations » */
+  notConfirmed: number;
   /** Documents expirés ou qui expirent sous 30 jours */
   expiringDocuments: number;
 };
@@ -172,13 +175,21 @@ function useNetworkNav(orgId: string, initial: NetworkNavState | null | undefine
   return enabled ? state : null;
 }
 
+/** Compteurs des pastilles de la Flotte Privée (valeur serveur ; absente : 0). */
+const privateFleetCounts = (p: PrivateFleetShell | null | undefined) => ({
+  toTreat: p?.toTreat ?? 0,
+  notConfirmed: p?.notConfirmed ?? 0,
+  expiringDocuments: p?.expiringDocuments ?? 0,
+});
+
 /**
- * Flotte Privée : pastilles « à traiter » (réservations) et « documents à renouveler » — valeur serveur (layout), relue
- * après chaque changement de course ou d'offre (rafales regroupées) et de document. Inactif hors Flotte Privée.
+ * Flotte Privée : pastilles « à traiter » et « non confirmées » (réservations, une seule lecture) et « documents à
+ * renouveler » — valeur serveur (layout), relue après chaque changement de course ou d'offre (rafales regroupées) et de
+ * document. Inactif hors Flotte Privée.
  */
 function usePrivateFleetCounts(orgId: string, initial: PrivateFleetShell | null | undefined) {
-  const [counts, setCounts] = useState({ toTreat: initial?.toTreat ?? 0, expiringDocuments: initial?.expiringDocuments ?? 0 });
-  useEffect(() => setCounts({ toTreat: initial?.toTreat ?? 0, expiringDocuments: initial?.expiringDocuments ?? 0 }), [initial]);
+  const [counts, setCounts] = useState(() => privateFleetCounts(initial));
+  useEffect(() => setCounts(privateFleetCounts(initial)), [initial]);
   const enabled = !!initial;
   const driverId = initial?.driverId ?? null;
   const rides = useRef<number | null>(null);
@@ -187,8 +198,8 @@ function usePrivateFleetCounts(orgId: string, initial: PrivateFleetShell | null 
     if (!enabled) return;
     if (rides.current) window.clearTimeout(rides.current);
     rides.current = window.setTimeout(() => {
-      countToTreat(getBrowserClient(), orgId, driverId)
-        .then((n) => n !== null && setCounts((c) => ({ ...c, toTreat: n })))
+      countQueue(getBrowserClient(), orgId, driverId)
+        .then((q) => q !== null && setCounts((c) => ({ ...c, ...q })))
         .catch(() => undefined);
     }, 800);
   };
@@ -285,6 +296,7 @@ function ShellBody({
       declared: counts.declared,
       overdue: counts.overdue,
       toTreat: privateCounts.toTreat,
+      notConfirmed: privateCounts.notConfirmed,
       expiringDocuments: privateCounts.expiringDocuments,
     },
     flags: { bookingSites, rydarFees, superAdmin, networkNav },
