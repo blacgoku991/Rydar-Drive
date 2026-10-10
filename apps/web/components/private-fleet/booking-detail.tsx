@@ -1,15 +1,14 @@
 // Flotte Privée, fiche d'une réservation (/dashboard/rides/[id], docs/FLOTTE-PRIVEE.md § 7.3) : actions « Je la
-// prends », « Refuser », « Annuler », « Modifier le prix » ; jamais « Attribuer à… », « Relancer » ni « Retirer » ; ni
-// bloc réseau partagé ni règlement chauffeur ; chronologie limitée à la catégorie « timeline » (étapes
-// dispatch.private_* comprises). Composant serveur.
+// prends », « Refuser », « Annuler la réservation », « Fixer le prix » (sans prix) ou « Modifier le prix » ; jamais
+// « Attribuer à… », « Relancer » ni « Retirer » ; ni bloc réseau partagé ni règlement chauffeur ; chronologie limitée à
+// la catégorie « timeline » (étapes dispatch.private_* comprises). Composant serveur.
 import {
   PAYMENT_METHOD_LABELS, VEHICLE_CATEGORY_META, formatDistance, formatDuration, formatPhone, formatPrice,
   type PaymentMethod, type RideStatus, type VehicleCategory,
 } from "@rydar/shared";
-import { ArrowLeft, Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
-import Link from "next/link";
+import { Car, Clock, Luggage, MessageSquareText, Phone, Plane, Radar, Users, Wallet } from "lucide-react";
 import { notFound } from "next/navigation";
-import { PageBody } from "@/components/layout/page-header";
+import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { BookingActions } from "@/components/private-fleet/booking-actions";
 import { bookingKind, bookingKindMeta, PRIVATE_SOURCE_LABELS, responseDeadline } from "@/components/private-fleet/booking-meta";
 import { EditPriceButton } from "@/components/private-fleet/edit-price";
@@ -19,22 +18,23 @@ import { LiveRefresh } from "@/components/rides/live-refresh";
 import { RideMap } from "@/components/rides/ride-map";
 import { RideProgress } from "@/components/rides/ride-progress";
 import { RideTimeline, type TimelineEvent } from "@/components/rides/ride-timeline";
-import { RideTypeTag } from "@/components/rides/status";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import type { requireOrg } from "@/lib/auth";
 import type { LiveRide } from "@/lib/queries/live";
+import { cn } from "@/lib/utils";
 
 type OrgCtx = Awaited<ReturnType<typeof requireOrg>>;
 
 const CLOSED = new Set(["COMPLETED", "CANCELLED"]);
+const NB = "\u00a0";
 
-function Info({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
+function Info({ icon, label, children, className }: { icon: React.ReactNode; label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="flex items-start gap-3">
+    <div className={cn("flex items-start gap-3", className)}>
       <span aria-hidden className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-subtle [&_svg]:size-4">{icon}</span>
       <div className="min-w-0">
-        <p className="text-[11.5px] text-fg-subtle">{label}</p>
+        <p className="text-[12px] text-fg-muted">{label}</p>
         <div className="text-[13.5px] text-fg">{children}</div>
       </div>
     </div>
@@ -63,28 +63,33 @@ export async function PrivateBookingDetail({ ctx, id }: { ctx: OrgCtx; id: strin
   return (
     <>
       <LiveRefresh rideId={id} events={["ride.updated", "ride.event", "offer.updated"]} maxPollMs={CLOSED.has(status) ? 60_000 : 30_000} />
-      <div className="border-b border-line">
-        <div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-4 px-6 pb-6 pt-6 lg:px-10">
-          <div>
-            <Link href="/dashboard/rides" prefetch={false} className="mb-3 inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
-              <ArrowLeft className="size-3.5" /> Réservations
-            </Link>
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-[26px] font-semibold tracking-tight">Réservation #{ride.number}</h1>
-              <Badge tone={meta.tone}>{meta.label}</Badge>
-              <RideTypeTag type={ride.type} />
-              {ride.flight_number && <FlightChip ride={ride} timeZone={tz} className="h-[22px] rounded-full px-2 text-[11.5px]" />}
-              <Badge tone="neutral" dot={false}>{PRIVATE_SOURCE_LABELS[ride.source] ?? ride.source}</Badge>
-            </div>
-            <p className="mt-2 text-[14px] text-fg-muted">
-              <PickupTime ride={ride} timeZone={tz} withDate /> · {ride.customer_name}
-            </p>
-            {deadline && <p className="mt-1 text-[13px] font-medium text-amber">{deadline}</p>}
+      {/* En-tête de fiche (§ 3.2) : « ← Réservations », état, vol et origine à côté du titre (plus d'étiquette « Planifiée ») */}
+      <PageHeader
+        back={{ href: "/dashboard/rides", label: "Réservations" }}
+        title={`Réservation #${ride.number}`}
+        badges={
+          <>
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+            {ride.flight_number && <FlightChip ride={ride} timeZone={tz} className="h-[22px] rounded-full px-2" />}
+            <Badge tone="neutral" dot={false}>
+              {PRIVATE_SOURCE_LABELS[ride.source] ?? ride.source}
+            </Badge>
+          </>
+        }
+        meta={
+          <>
+            <span className="text-fg">
+              <PickupTime ride={ride} timeZone={tz} withDate />
+            </span>{" "}
+            · {ride.customer_name}
+            {deadline && <span className="mt-1 block font-medium text-amber">{deadline}</span>}
             {booking.state === "to_check" && (
-              <p className="mt-1 text-[13px] text-fg-muted">Catégorie ou nombre de places au-delà de votre véhicule : vérifiez avant de la prendre.</p>
+              <span className="mt-1 block">Catégorie ou nombre de places au-delà de votre véhicule{NB}: vérifiez avant de la prendre.</span>
             )}
-          </div>
-          <div className="flex flex-wrap gap-2">
+          </>
+        }
+        actions={
+          <>
             <BookingActions
               size="md"
               call={false}
@@ -102,9 +107,9 @@ export async function PrivateBookingDetail({ ctx, id }: { ctx: OrgCtx; id: strin
             {status !== "CANCELLED" && (
               <EditPriceButton rideId={ride.id} number={ride.number} priceCents={ride.price_cents ?? null} paymentMethod={ride.payment_method as PaymentMethod} />
             )}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <PageBody className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
         <div className="min-w-0 space-y-6">
@@ -124,11 +129,11 @@ export async function PrivateBookingDetail({ ctx, id }: { ctx: OrgCtx; id: strin
                 </div>
                 <div className="space-y-4">
                   <div>
-                    <p className="text-[11.5px] text-fg-subtle">Départ</p>
+                    <p className="text-[12px] text-fg-muted">Départ</p>
                     <p className="text-[14px] font-medium">{ride.pickup_address}</p>
                   </div>
                   <div>
-                    <p className="text-[11.5px] text-fg-subtle">Destination</p>
+                    <p className="text-[12px] text-fg-muted">Destination</p>
                     <p className="text-[14px] font-medium">{ride.dropoff_address}</p>
                   </div>
                 </div>
@@ -146,7 +151,7 @@ export async function PrivateBookingDetail({ ctx, id }: { ctx: OrgCtx; id: strin
                   ) : (
                     <span className="num font-semibold">{formatPrice(ride.price_cents, ride.currency ?? "EUR")}</span>
                   )}{" "}
-                  <span className="text-fg-subtle">· {PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod]}</span>
+                  <span className="whitespace-nowrap text-fg-muted">· {PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod]}</span>
                 </Info>
                 <Info icon={<Car />} label="Catégorie">{VEHICLE_CATEGORY_META[ride.vehicle_category as VehicleCategory]?.label}</Info>
               </div>
@@ -154,21 +159,19 @@ export async function PrivateBookingDetail({ ctx, id }: { ctx: OrgCtx; id: strin
           </Card>
 
           <Card>
-            <CardHeader title="Client" description="Aucun compte client : coordonnées de contact uniquement." />
+            <CardHeader title="Client" />
             <CardBody className="grid grid-cols-2 gap-4">
-              <Info icon={<Users />} label="Nom">{ride.customer_name}</Info>
-              <Info icon={<Phone />} label="Téléphone">
-                <a href={`tel:${ride.customer_phone}`} className="hover:text-brand">{formatPhone(ride.customer_phone)}</a>
+              {/* Téléphone : nom et numéro sur toute la largeur (numéro jamais coupé), passagers et bagages côte à côte */}
+              <Info icon={<Users />} label="Nom" className="col-span-2 sm:col-span-1">
+                {ride.customer_name}
+              </Info>
+              <Info icon={<Phone />} label="Téléphone" className="col-span-2 sm:col-span-1">
+                <a href={`tel:${ride.customer_phone}`} className="whitespace-nowrap hover:text-brand">
+                  {formatPhone(ride.customer_phone)}
+                </a>
               </Info>
               <Info icon={<Users />} label="Passagers">{ride.passengers}</Info>
               <Info icon={<Luggage />} label="Bagages">{ride.luggage}</Info>
-              {ride.flight_number && (
-                <div className="col-span-2">
-                  <Info icon={<Plane />} label="Vol">
-                    <FlightChip ride={ride} timeZone={tz} className="mt-0.5" />
-                  </Info>
-                </div>
-              )}
               {ride.comment && (
                 <div className="col-span-2">
                   <Info icon={<MessageSquareText />} label="Commentaire">{ride.comment}</Info>
@@ -181,7 +184,7 @@ export async function PrivateBookingDetail({ ctx, id }: { ctx: OrgCtx; id: strin
         <div className="min-w-0 space-y-6">
           {ride.flight_number && (
             <Card>
-              <CardHeader title="Vol suivi" description="Horaires mis à jour automatiquement ; la prise en charge suit l'arrivée." icon={<Plane />} />
+              <CardHeader title="Vol suivi" description={"Horaires mis à jour automatiquement\u00a0; la prise en charge suit l'arrivée."} icon={<Plane />} />
               <CardBody className="pt-1">
                 <FlightDetails ride={ride} timeZone={tz} />
               </CardBody>

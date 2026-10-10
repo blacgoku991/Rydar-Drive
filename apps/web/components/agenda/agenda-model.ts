@@ -3,12 +3,25 @@
 // dans le fuseau de l'ORGANISATION, frise placée à l'heure murale (passage à l'heure d'hiver compris : la journée de
 // 25 h garde ses deux « 02:30 » côte à côte). Couleur = information (AGENDA_KIND_META). Aucun « new Intl » ici.
 import {
-  AGENDA_KIND_META, AGENDA_LIST_DAYS, AGENDA_VIEW_PARAMS, addDays, agendaKind, agendaViewFromParam, daySummary, dayHeading, dayLayout,
-  dayTitle, formatPrice, formatTime, groupByDay, monthGrid, monthTitle, shortAddress, viewRange, weekStart, weekTitle,
+  AGENDA_KIND_META, AGENDA_LIST_DAYS, AGENDA_VIEW_PARAMS, addDays, agendaKind, agendaViewFromParam, dateTimeFormat, daySummary, dayHeading,
+  dayLayout, dayTitle, formatPrice, formatRideDate, formatTime, groupByDay, localIsoDay, monthGrid, monthTitle, shortAddress, viewRange, weekStart,
+  weekTitle,
   type AgendaDaySummary, type AgendaKind, type AgendaView, type PrivateFleetBookingState, type RideStatus, type RideType, type Tone,
 } from "@rydar/shared";
 
 const NB = "\u00a0";
+
+/**
+ * Vocabulaire de l'agenda : « course » (flottes et centrales) ou « réservation » (Flotte Privée, seulement). Les
+ * fonctions qui écrivent un texte le prennent en dernier paramètre (défaut : « course »).
+ */
+export type AgendaNoun = "ride" | "booking";
+type NounWords = { one: string; many: string; none: string; other: string; others: string };
+const NOUNS: Record<AgendaNoun, NounWords> = {
+  ride: { one: "course", many: "courses", none: "aucune course", other: "autre course", others: "autres courses" },
+  booking: { one: "réservation", many: "réservations", none: "aucune réservation", other: "autre réservation", others: "autres réservations" },
+};
+export const agendaNoun = (noun: AgendaNoun = "ride"): NounWords => NOUNS[noun] ?? NOUNS.ride;
 
 /** Course lue pour l'agenda (organisation, fenêtre fetchWindow). */
 export type AgendaRide = {
@@ -68,7 +81,17 @@ export function shiftPeriod(view: AgendaView, day: string, dir: -1 | 1): string 
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Titre de la période : « Mardi 14 octobre », « 12 – 18 oct. », « Octobre 2026 », « Du mardi 14 octobre au … ». */
+const shortDay = (day: string, year = false) =>
+  dateTimeFormat("fr-FR", { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`));
+
+/** Titre court d'une suite de jours : « 10 – 16 oct. », « 25 oct. – 23 nov. », « 28 déc. 2026 – 3 janv. 2027 ». */
+export function rangeTitle(from: string, last: string): string {
+  if (from.slice(0, 4) !== last.slice(0, 4)) return `${shortDay(from, true)} – ${shortDay(last, true)}`;
+  if (from.slice(0, 7) !== last.slice(0, 7)) return `${shortDay(from)} – ${shortDay(last)}`;
+  return `${Number(from.slice(8))} – ${shortDay(last)}`;
+}
+
+/** Titre de la période : « Mardi 14 octobre », « 12 – 18 oct. », « Octobre 2026 », liste de 30 jours « 25 oct. – 23 nov. ». */
 export function periodLabel(view: AgendaView, day: string): string {
   switch (view) {
     case "day":
@@ -78,8 +101,9 @@ export function periodLabel(view: AgendaView, day: string): string {
     case "month":
       return capitalize(monthTitle(day));
     case "list": {
+      // Titre court (téléphone) : « 25 oct. – 23 nov. » au lieu de « Du dimanche 25 octobre au lundi 23 novembre »
       const range = viewRange("list", day);
-      return `Du ${dayTitle(range.from)} au ${dayTitle(addDays(range.to, -1))}`;
+      return rangeTitle(range.from, addDays(range.to, -1));
     }
   }
 }
@@ -107,15 +131,17 @@ export function entriesByDay(entries: readonly AgendaEntry[], timeZone: string):
 
 const count = (n: number, one: string, many: string) => `${n}${NB}${n > 1 ? many : one}`;
 
-/** « 3 courses · 245 € » (annulées et refusées exclues) ; null pour un jour vide. */
-export function summaryLabel(s: AgendaDaySummary, currency = "EUR"): string | null {
+/** « 3 courses · 245 € » (« 3 réservations » en Flotte Privée ; annulées et refusées exclues) ; null pour un jour vide. */
+export function summaryLabel(s: AgendaDaySummary, currency = "EUR", noun: AgendaNoun = "ride"): string | null {
   if (!s.count) return null;
-  return [count(s.count, "course", "courses"), s.totalCents ? formatPrice(s.totalCents, currency) : null].filter(Boolean).join(" · ");
+  const w = agendaNoun(noun);
+  return [count(s.count, w.one, w.many), s.totalCents ? formatPrice(s.totalCents, currency) : null].filter(Boolean).join(" · ");
 }
 
 /** Texte du lecteur d'écran d'un jour : « mardi 14 octobre, 3 courses dont 1 à confirmer ». */
-export function dayAriaLabel(day: string, s: AgendaDaySummary): string {
-  const parts = [s.count ? count(s.count, "course", "courses") : "aucune course"];
+export function dayAriaLabel(day: string, s: AgendaDaySummary, noun: AgendaNoun = "ride"): string {
+  const w = agendaNoun(noun);
+  const parts = [s.count ? count(s.count, w.one, w.many) : w.none];
   const extra = [
     s.toConfirm ? `${s.toConfirm} à confirmer` : null,
     s.unconfirmed ? `${s.unconfirmed} non confirmée${s.unconfirmed > 1 ? "s" : ""} ou à vérifier` : null,
@@ -151,8 +177,9 @@ export type MonthCell = {
 };
 
 /** Grille de 6 semaines (42 jours, lundi en premier) du mois du jour. */
-export function monthCells(day: string, byDay: Record<string, AgendaEntry[]>, today: string, now = Date.now()): MonthCell[] {
+export function monthCells(day: string, byDay: Record<string, AgendaEntry[]>, today: string, now = Date.now(), noun: AgendaNoun = "ride"): MonthCell[] {
   const month = day.slice(0, 7);
+  const w = agendaNoun(noun);
   return monthGrid(day).map((d) => {
     const all = byDay[d] ?? [];
     const summary = daySummary(all, now);
@@ -167,9 +194,9 @@ export function monthCells(day: string, byDay: Record<string, AgendaEntry[]>, to
       entries: all.slice(0, MONTH_CELL_ITEMS),
       more,
       // Commence par le texte visible « +N » (étiquette dans le nom), puis ce qu'il désigne
-      moreLabel: more > 0 ? `+${count(more, "autre course", "autres courses")}, ${title}` : null,
+      moreLabel: more > 0 ? `+${count(more, w.other, w.others)}, ${title}` : null,
       summary,
-      ariaLabel: dayAriaLabel(d, summary),
+      ariaLabel: dayAriaLabel(d, summary, noun),
     };
   });
 }
@@ -197,15 +224,42 @@ export type WeekColumn = {
 };
 
 /** Semaine du jour (lundi → dimanche). */
-export function weekColumns(day: string, byDay: Record<string, AgendaEntry[]>, today: string, now = Date.now()): WeekColumn[] {
+export function weekColumns(day: string, byDay: Record<string, AgendaEntry[]>, today: string, now = Date.now(), noun: AgendaNoun = "ride"): WeekColumn[] {
   const start = weekStart(day);
   return Array.from({ length: 7 }, (_, i) => {
     const d = addDays(start, i);
     const entries = byDay[d] ?? [];
     const summary = daySummary(entries, now);
     const title = dayTitle(d);
-    return { day: d, title, heading: capitalize(title), today: d === today, entries, summary, ariaLabel: dayAriaLabel(d, summary) };
+    return { day: d, title, heading: capitalize(title), today: d === today, entries, summary, ariaLabel: dayAriaLabel(d, summary, noun) };
   });
+}
+
+/** Jour de la semaine abrégé et numéro : « lun. 5 ». */
+const weekdayDay = (day: string) => dateTimeFormat("fr-FR", { weekday: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`));
+
+/**
+ * Semaine sur téléphone (colonnes empilées) : les jours vides consécutifs forment une seule ligne (« lun. 5 – ven. 9 :
+ * rien de prévu ») ; aujourd'hui garde toujours sa carte. Tableau aligné sur les colonnes : null = carte du jour ;
+ * sinon la suite vide à laquelle le jour appartient (`start` : premier jour de la suite, qui porte la ligne).
+ */
+export type WeekPhoneRun = { start: boolean; label: string } | null;
+export function weekPhoneRuns(columns: readonly WeekColumn[]): WeekPhoneRun[] {
+  const out: WeekPhoneRun[] = columns.map(() => null);
+  let i = 0;
+  while (i < columns.length) {
+    const empty = (c: WeekColumn) => !c.entries.length && !c.today;
+    if (!empty(columns[i]!)) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < columns.length && empty(columns[j + 1]!)) j += 1;
+    const label = `${i === j ? weekdayDay(columns[i]!.day) : `${weekdayDay(columns[i]!.day)} – ${weekdayDay(columns[j]!.day)}`}${NB}: rien de prévu`;
+    for (let k = i; k <= j; k += 1) out[k] = { start: k === i, label };
+    i = j + 1;
+  }
+  return out;
 }
 
 /** Hauteur d'une heure dans la frise d'une journée (px) et hauteur minimale d'un bloc. */
@@ -244,6 +298,19 @@ export function dayTimeline(entries: readonly AgendaEntry[], timeZone: string): 
 }
 
 export type ListDay = { day: string; heading: string; entries: AgendaEntry[]; summary: AgendaDaySummary };
+
+/**
+ * Lien d'un jour vide (vue Jour) vers la prochaine course : « Prochaine réservation : demain 08:30 » (« course » hors
+ * Flotte Privée), heure dans le fuseau de l'organisation ; `href` : vue Jour de ce jour-là.
+ */
+export function nextEntryLink(pickupAt: string, timeZone: string, now = Date.now(), noun: AgendaNoun = "ride"): { label: string; href: string } {
+  const when = formatRideDate(pickupAt, timeZone, new Date(now));
+  const day = localIsoDay(pickupAt, timeZone);
+  return {
+    label: `Prochaine ${agendaNoun(noun).one}${NB}: ${when.charAt(0).toLowerCase()}${when.slice(1)}`,
+    href: agendaHref("day", day),
+  };
+}
 
 /** Liste : jours de la période (30 jours) qui ont au moins une course, « Aujourd'hui », « Demain », puis la date. */
 export function listDays(day: string, byDay: Record<string, AgendaEntry[]>, today: string, now = Date.now()): ListDay[] {

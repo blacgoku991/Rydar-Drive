@@ -1,6 +1,6 @@
 // Chiffre d'affaires d'un chauffeur vu par la centrale (miroir de public.driver_earnings :
 // courses COMPLETED, date = completed_at sinon pickup_at, semaine depuis lundi, fuseau de l'org).
-import { zonedTimeToUtc } from "@rydar/shared";
+import { dateTimeFormat, zonedTimeToUtc } from "@rydar/shared";
 import { orgToday } from "./documents";
 
 export type EarningRide = { price_cents: number | null; completed_at: string | null; pickup_at: string; payment_method: string | null };
@@ -37,7 +37,8 @@ export function computeDriverEarnings(rides: EarningRide[], timeZone: string, co
   const empty = (): EarningPeriod => ({ rides: 0, revenue_cents: 0, net_cents: commission != null ? 0 : null, cash_cents: 0, unpriced: 0 });
   const week = empty();
   const month = empty();
-  const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+  // Formateurs mémorisés (dateTimeFormat) : jamais de « new Intl » au rendu
+  const dayKey = dateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
   const byDay = new Map<string, { rides: number; revenue_cents: number }>();
 
   for (const r of rides) {
@@ -56,7 +57,7 @@ export function computeDriverEarnings(rides: EarningRide[], timeZone: string, co
     byDay.set(k, { rides: cur.rides + 1, revenue_cents: cur.revenue_cents + price });
   }
 
-  const weekday = new Intl.DateTimeFormat("fr-FR", { weekday: "narrow", timeZone: "UTC" });
+  const weekday = dateTimeFormat("fr-FR", { weekday: "narrow", timeZone: "UTC" });
   const series = Array.from({ length: days }, (_, i) => {
     const date = addDays(w.seriesStart, i);
     const v = byDay.get(date) ?? { rides: 0, revenue_cents: 0 };

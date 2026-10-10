@@ -1,7 +1,7 @@
 "use client";
 // Fiche chauffeur : niveau de confiance (mode centrale) et bannissement définitif (flotte et centrale).
 import {
-  BAN_CATEGORY_META, TRUST_LEVEL_META, banDriverSchema, fieldErrors, isPlatformBanCategory, type BanCategory, type TrustLevel,
+  BAN_CATEGORY_META, TRUST_LEVEL_META, banDriverSchema, fieldErrors, isPlatformBanCategory, type BanCategory, type DispatchModel, type TrustLevel,
 } from "@rydar/shared";
 import { Check, Flag, ShieldBan, Undo2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -9,10 +9,14 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { banDriver, liftDriverBan, setDriverTrustLevel } from "@/app/dashboard/drivers/actions";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Callout } from "@/components/ui/callout";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn } from "@/lib/utils";
+import { orgWords } from "@/lib/wording";
+
+const NB = "\u00a0";
 
 export function TrustLevelControl({
   driverId,
@@ -65,17 +69,35 @@ export function TrustLevelControl({
           </button>
         ))}
       </div>
-      <p className="text-[12px] text-fg-subtle">{TRUST_LEVEL_META[current].description}</p>
+      <p className="text-[12px] text-fg-muted">{TRUST_LEVEL_META[current].description}</p>
       {lockedReason ? (
-        <p className="text-[11.5px] text-fg-subtle">{lockedReason}</p>
+        <p className="text-[12px] text-fg-muted">{lockedReason}</p>
       ) : (
-        !canManage && <p className="text-[11.5px] text-fg-subtle">Modifiable par un administrateur.</p>
+        !canManage && <p className="text-[12px] text-fg-muted">Modifiable par un administrateur.</p>
       )}
     </div>
   );
 }
 
-export function BanDriverButton({ driverId, driverName, plate, className }: { driverId: string; driverName: string; plate: string | null; className?: string }) {
+/**
+ * Bannissement définitif (dialogue, catégories et cases inchangés). `model` : mots de l'organisation (« votre flotte »,
+ * « votre centrale ») ; absent : textes d'une centrale, comme avant.
+ */
+export function BanDriverButton({
+  driverId,
+  driverName,
+  plate,
+  className,
+  model,
+}: {
+  driverId: string;
+  driverName: string;
+  plate: string | null;
+  className?: string;
+  model?: DispatchModel | null;
+}) {
+  const w = orgWords(model ?? "centrale");
+  const centrale = (model ?? "centrale") === "centrale";
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
@@ -131,8 +153,8 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
       <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
         <DialogContent
           size="lg"
-          title={`Bannir ${driverName} définitivement ?`}
-          description="Accès coupé immédiatement. Son téléphone, e-mail, carte VTC, permis, pièce d'identité et appareils sont refusés à toute nouvelle inscription dans votre centrale."
+          title={`Bannir ${driverName} définitivement${NB}?`}
+          description={`Accès coupé immédiatement. Son téléphone, e-mail, carte VTC, permis, pièce d'identité et appareils sont refusés à toute nouvelle inscription dans ${w.your}.`}
         >
           <div className="space-y-4">
             <div>
@@ -155,7 +177,7 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
             <Field
               label="Motif"
               error={errors.reason}
-              hint="Décrivez le manquement constaté (faux document, course fictive, commission impayée…), jamais une infraction supposée ni un jugement sur la personne. Visible par votre équipe et, en cas de signalement, par Rydar."
+              hint={`Décrivez le manquement constaté (${centrale ? "faux document, course fictive, commission impayée…" : "faux document, course fictive…"}), jamais une infraction supposée ni un jugement sur la personne. Visible par votre équipe et, en cas de signalement, par Rydar.`}
             >
               <Textarea
                 value={reason}
@@ -165,7 +187,7 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
                 }}
                 maxLength={500}
                 aria-invalid={!!errors.reason}
-                placeholder="Commissions de septembre non réglées malgré trois relances, carte VTC falsifiée…"
+                placeholder={centrale ? `ex.${NB}: commissions de septembre non réglées malgré trois relances, carte VTC falsifiée…` : `ex.${NB}: carte VTC falsifiée, courses fictives…`}
               />
             </Field>
             <div className="space-y-2">
@@ -186,8 +208,8 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
                   <span className="flex items-center gap-1.5 text-[13px] font-medium"><Flag className="size-3.5 text-red" /> Signaler à Rydar (bannissement de toute la plateforme)</span>
                   <span className="mt-0.5 block text-[12px] text-fg-subtle">
                     {reportable
-                      ? "Fraude ou faux document seulement. Rydar examine le signalement et peut refuser ce chauffeur dans toutes les centrales ; il lui envoie alors sa décision et ses motifs. Seules des empreintes de ses identités sont transmises. Prévenez le chauffeur que son signalement est transmis à Rydar."
-                      : "Réservé à une fraude ou à un faux document : une dette, un comportement ou un autre motif reste propre à votre centrale."}
+                      ? `Fraude ou faux document seulement. Rydar examine le signalement et peut refuser ce chauffeur dans toutes les centrales${NB}; il lui envoie alors sa décision et ses motifs. Seules des empreintes de ses identités sont transmises. Prévenez le chauffeur que son signalement est transmis à Rydar.`
+                      : `Réservé à une fraude ou à un faux document${NB}: une dette, un comportement ou un autre motif reste propre à ${w.your}.`}
                   </span>
                   {errors.reportToPlatform && <span className="mt-1 block text-[12px] text-red">{errors.reportToPlatform}</span>}
                 </span>
@@ -200,24 +222,25 @@ export function BanDriverButton({ driverId, driverName, plate, className }: { dr
                 </span>
               </label>
             </div>
-            <p className="rounded-lg border border-line bg-white/[0.02] px-3 py-2.5 text-[12px] leading-relaxed text-fg-muted">
+            <Callout role={null} className="text-[12.5px]">
               Ses courses acceptées mais pas encore commencées sont remises en recherche. Impossible pendant une course avec client à bord.
-            </p>
-            {blocker && <p className="rounded-lg border border-red/25 bg-red/[0.07] px-3 py-2.5 text-[12.5px] text-red">{blocker}</p>}
+            </Callout>
+            {blocker && <Callout tone="danger">{blocker}</Callout>}
           </div>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" disabled={pending} onClick={() => setOpen(false)}>Annuler</Button>
+          <DialogFooter backDisabled={pending}>
             <Button variant="danger" loading={pending} onClick={submit}>
               <ShieldBan /> Bannir définitivement
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
   );
 }
 
-export function LiftBanButton({ driverId, driverName }: { driverId: string; driverName: string }) {
+/** Levée du bannissement (motif facultatif). `model` : mots de l'organisation ; absent : textes d'une centrale, comme avant. */
+export function LiftBanButton({ driverId, driverName, model }: { driverId: string; driverName: string; model?: DispatchModel | null }) {
+  const w = orgWords(model ?? "centrale");
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
@@ -236,17 +259,18 @@ export function LiftBanButton({ driverId, driverName }: { driverId: string; driv
         <Undo2 /> Lever le bannissement
       </Button>
       <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
-        <DialogContent title={`Lever le bannissement de ${driverName} ?`} description="Ses identités redeviennent acceptées dans votre centrale.">
-          <p className="mb-4 text-[12.5px] text-fg-muted">Il reste suspendu : utilisez « Activer » sur sa fiche pour qu&apos;il reçoive de nouveau des courses.</p>
+        <DialogContent title={`Lever le bannissement de ${driverName}${NB}?`} description={`Ses identités redeviennent acceptées dans ${w.your}.`}>
+          <p className="mb-4 text-[12.5px] text-fg-muted">
+            {`Il reste suspendu${NB}: activez-le ensuite depuis sa fiche («${NB}Plus d'actions${NB}» puis «${NB}Activer le chauffeur${NB}») pour qu'il reçoive de nouveau des courses.`}
+          </p>
           <Field label="Motif de la levée" optional>
-            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="Dette réglée, erreur…" />
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder={`ex.${NB}: dette réglée, erreur…`} />
           </Field>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button variant="ghost" disabled={pending} onClick={() => setOpen(false)}>Annuler</Button>
+          <DialogFooter backDisabled={pending}>
             <Button variant="primary" loading={pending} onClick={submit}>
               <Undo2 /> Lever le bannissement
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

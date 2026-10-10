@@ -625,24 +625,31 @@ Titres et motifs : constantes partagées `PRIVATE_FLEET_TITLES` (un test compare
 ### 7.3 Pages
 
 **Accueil (`/dashboard`, `components/private-fleet/private-home.tsx`, à la place de `CommandCenter`)** — lectures RLS de
-membre, relecture `LiveRefresh` sur `ride.updated` et `offer.updated` :
+membre, relecture `LiveRefresh` sur `ride.updated` et `offer.updated` (texte mis à jour par la refonte des panneaux, lot
+R8 : `docs/REFONTE-PANELS.md`) :
 
-- en-tête : prénom, date, état de l'application (`drivers.presence`, `drivers.last_seen_at` : « en ligne », « hors
-  ligne », « en course », « dernière activité il y a … ») ;
-- **À traiter** : réservations à confirmer (« Réponse avant HH:MM »), à vérifier, non confirmées ; actions **Je la
-  prends** (nouvelle action `takeBooking` → `driver_take_ride` avec le client de l'utilisateur, comme « Confirmer » /
-  « La prendre » dans l'app : offre acceptée, aucune notification « COURSE ATTRIBUÉE » vers son propre téléphone,
-  `RIDE_TOO_LATE` contrôlé en base ; jamais `assignRide`), **Refuser** (nouvelle action `declineOffer` →
-  `decline_ride_offer` avec le client de l'utilisateur : même compte que la fiche), **Annuler** (dialogue + motif →
-  `cancelRide`), **Appeler** (`tel:`) ; toutes par `start(() => runAction(…))` ;
-- **Prochaines courses** (5) et **Aujourd'hui** ;
-- 4 `StatCard` : réservations du site ce mois (`source = 'api'`), courses terminées, chiffre d'affaires (somme des prix
-  terminés), panier moyen ;
-- **Mon site** : clé active, origines, dernière utilisation, dernière réservation reçue ;
+- en-tête (`PageHeader`) : « Bonjour {prénom} », état de l'application en badge (`drivers.presence`,
+  `drivers.last_seen_at` : « en ligne », « hors ligne », « en course »), date et « dernière activité il y a … » sur la
+  ligne du dessous ; bouton **Nouvelle réservation (téléphone)** : `NewRideSheet` avec la mention « Elle vous est
+  attribuée directement » ;
+- ordre de lecture, téléphone compris : **À traiter** puis **Aujourd'hui** avant les chiffres ; sur grand écran, deux
+  colonnes (à gauche À traiter et Aujourd'hui ; à droite Premiers pas, Ce mois-ci, Prochaines réservations, Mon site) ;
+- **À traiter** : réservations à confirmer, à vérifier, non confirmées ; l'état et « Réponse avant HH:MM » en premier,
+  puis la réservation (date, trajet, client, passagers, bagages, catégorie, prix) ; actions **Je la prends** (action
+  `takeBooking` → `driver_take_ride` avec le client de l'utilisateur, comme « Confirmer » / « La prendre » dans l'app :
+  offre acceptée, aucune notification « COURSE ATTRIBUÉE » vers son propre téléphone, `RIDE_TOO_LATE` contrôlé en base ;
+  jamais `assignRide`), **Refuser** (action `declineOffer` → `decline_ride_offer` avec le client de l'utilisateur, même
+  compte que la fiche ; confirmation qui dit la conséquence), **Appeler** (`tel:`) et, pour une demande sans prix,
+  **Fixer le prix** (`EditPriceButton` → `updateRidePricing`) ; toutes par `start(() => runAction(…))`. L'annulation
+  n'est pas sur l'Accueil (`BookingActions cancel={false}`) : elle se fait depuis la fiche ;
+- **Aujourd'hui** et **Prochaines réservations** (5 confirmées, de la plus proche à la plus lointaine) ;
+- **Ce mois-ci** : 4 `StatCard` en couleur neutre : réservations du site (`source = 'api'`), réservations terminées,
+  chiffre d'affaires (somme des prix terminés), panier moyen ;
+- **Mon site** : état du site (« Votre site … est relié ») et dernière réservation reçue (« #1003, aujourd'hui à
+  11:04 ») ; « Détails » mène à Mon site, où restent la clé (« rdk_live_… ») et sa dernière utilisation ;
 - **Premiers pas** (calculé, aucun stockage, masqué une fois complet) : entreprise complète (raison sociale, SIRET,
   n° de registre VTC), tarifs actifs, carte VTC et assurance valides, application utilisée (`last_seen_at`), site relié
-  (clé active + première réservation `api`) ;
-- bouton **Nouvelle réservation (téléphone)** : `NewRideSheet` avec la mention « Elle vous est attribuée directement ».
+  (clé active + première réservation `api`).
 
 **Agenda (`/dashboard/agenda?vue=mois|semaine|jour|liste&date=AAAA-MM-JJ`)** — page serveur, `force-dynamic` :
 courses de l'organisation sur la fenêtre `fetchWindow` de `@rydar/shared` (marge d'un jour, 1 000 au plus, index
@@ -652,22 +659,33 @@ téléphone ; jour : frise de 6 h à 24 h, blocs proportionnels à `estimated_du
 liste). Couleurs = information, par jetons (`AGENDA_KIND_META` : ambre à confirmer ou en retard, rouge non confirmée,
 violet confirmée, cyan en cours, `brand` terminée, `fg-muted` annulée ou refusée). Liens `prefetch={false}`. La page
 fonctionne pour toute organisation ; l'entrée de menu des flottes et centrales attend la décision du propriétaire (§ 16).
+Depuis le lot R8 : mot « réservation » en Flotte Privée (« course » ailleurs) ; bouton **Nouvelle réservation
+(téléphone)** dans l'en-tête ; fuseau affiché seulement s'il diffère d'Europe/Paris ; semaine sur téléphone : jours
+vides consécutifs sur une ligne (« lun. 5 – ven. 9 : rien de prévu ») ; liste : titre court (« 10 oct. – 8 nov. »),
+trajet sur deux lignes, « prix à fixer » ; jour vide : lien « Prochaine réservation : demain 08:30 ».
 
 **Réservations (`/dashboard/rides` et fiche)** — variante : filtres « À traiter », « À venir », « Terminées »,
-« Annulées », « Toutes » ; pas de colonne chauffeur ; libellés `PRIVATE_FLEET_BOOKING_STATES`. Fiche : actions « Je la
-prends », « Refuser », « Annuler », « Modifier le prix » (`updateRidePricing`) ; **jamais** « Attribuer à… »,
-« Relancer », « Retirer » ; pas de `RideNetworkCard` ni de `RideMoneyCard` ; chronologie limitée à la catégorie
-`timeline`, les `dispatch.private_*` y figurent.
+« Annulées », « Toutes » ; pas de colonne chauffeur ; libellés `PRIVATE_FLEET_BOOKING_STATES` ; sous 768 px, une carte
+par réservation (état et « Réponse avant … » en premier) ; plus d'étiquette « Planifiée ». Fiche (`PageHeader`,
+« ← Réservations ») : actions « Je la prends », « Refuser », « Annuler la réservation » (motif obligatoire), **« Fixer
+le prix »** quand la réservation n'a pas de prix, « Modifier le prix » sinon (`updateRidePricing`) ; fenêtres fermées par
+« Retour » ; **jamais** « Attribuer à… », « Relancer », « Retirer » ; pas de `RideNetworkCard` ni de `RideMoneyCard` ;
+chronologie limitée à la catégorie `timeline`, les `dispatch.private_*` y figurent.
 
-**Mon site (`/dashboard/site`, nouveau, lecture seule)** — état (« Votre site … est relié »), réservations du site sur
-30 jours, liens « Vos prix » (Réglages › Tarifs) et « Demander une modification » (formulaire `/contact`) ; « Détails
-techniques » repliés : type et préfixe des clés, origines, dernière utilisation, webhooks (adresse, actif, dernier
-succès / échec). Organisation standard : redirection vers `/dashboard/integrations`.
+**Mon site (`/dashboard/site`, nouveau, lecture seule)** — état (« Votre site … est relié » ; « Dernier contact de
+votre site : il y a 40 min · dernière réservation : aujourd'hui à 11:04 »), « Réservations reçues » (30 jours) et
+« Dernière réservation reçue », liste des réservations du site sur deux lignes, liens « Vos prix » (Réglages › Tarifs)
+et « Demander une modification » (formulaire `/contact`) ; « Détails techniques » repliés : type et préfixe des clés,
+origines, dernière utilisation, webhooks (adresse, actif, dernier succès / échec). Organisation standard : redirection
+vers `/dashboard/integrations`.
 
 **Mon profil chauffeur (`/dashboard/profil`, nouveau)** — identité, carte VTC, véhicule, documents et échéances
-(`updateDriver`, `addDriverDocument`, mise à jour du véhicule). Aucune action de statut, bannissement, niveau de
-confiance, mot de passe ou session. Sans fiche : « Votre fiche chauffeur a été supprimée : contactez l'équipe Rydar
-pour la recréer. » Organisation standard : redirection vers `/dashboard/drivers`.
+(`updateDriver`, `addDriverDocument`, mise à jour du véhicule) : « Modifier ma fiche », « Ajouter un document »,
+« Ajouter » sur chaque pièce manquante, expirée ou refusée ; ses propres dépôts : « Confirmer » / « Retirer » (même
+action `reviewDriverDocument`) ; application jamais ouverte : « Jamais ouverte » et « Connectez-vous à l'application
+avec les mêmes identifiants ». Aucune action de statut, bannissement, niveau de confiance, mot de passe ou session.
+Sans fiche : « Votre fiche chauffeur a été supprimée : contactez l'équipe Rydar pour la recréer. » Organisation
+standard : redirection vers `/dashboard/drivers`.
 
 **Réglages** — onglets : « Mon entreprise » (`OrganizationForm`, n° de registre VTC compris), « Tarifs »
 (`PricingEditor`), « Réservations » (nouveau formulaire, action `updatePrivateBookingSettings`, schéma
@@ -676,7 +694,9 @@ déjà ouvertes en écriture), « Abonnement ». Onglets Dispatch, Commission et
 liste → onglet « Mon entreprise ».
 
 **Activité (`/dashboard/stats`)** — page existante (`components/charts/stats-view.tsx`), blocs propres aux chauffeurs
-d'une flotte masqués.
+d'une flotte masqués ; mot « réservation » partout ; période sans réservation : une carte qui le dit au lieu de
+graphiques vides ; canaux et catégories masqués s'ils sont vides ; sans l'offre avancée, une seule carte « Statistiques
+avancées » (« Non compris dans votre offre »).
 
 ### 7.4 Masqué ET bloqué
 
@@ -1366,6 +1386,9 @@ d'origine.
 
 **Espace web du client (§ 7)**
 
+- Refonte des panneaux, lot R8 (`docs/REFONTE-PANELS.md`) : Accueil, Réservations et leur fiche, Agenda, Mon site, Mon
+  profil chauffeur et Activité remis en forme sans changer les actions ni les gardes ; le § 7.3 décrit l'état livré
+  (« Fixer le prix », annulation depuis la fiche seulement, carte « Mon site » sans la clé).
 - § 7.2, sous-titre de la barre latérale : « Flotte Privée » s'affiche sous le nom de l'organisation, à la place du rôle
   (`sidebarOrgCaption`, `components/shell/dashboard-nav.ts`) ; il n'était que l'attribut `title` du logo, invisible
   (corrigé à la recette L7, test dans `dashboard-nav.test.ts`). Organisation standard : rôle affiché, inchangé.

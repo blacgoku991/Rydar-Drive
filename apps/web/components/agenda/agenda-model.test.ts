@@ -2,7 +2,7 @@ import { fetchWindow } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
   MONTH_CELL_ITEMS, TIMELINE_HOUR_PX, agendaHref, agendaParams, dayAriaLabel, dayTimeline, entriesByDay, entryAriaLabel, listDays, monthCells,
-  periodLabel, shiftPeriod, summaryLabel, toEntries, validDay, weekColumns, type AgendaRide,
+  nextEntryLink, periodLabel, rangeTitle, shiftPeriod, summaryLabel, toEntries, validDay, weekColumns, weekPhoneRuns, type AgendaRide,
 } from "./agenda-model";
 
 // Agenda du tableau de bord (docs/FLOTTE-PRIVEE.md § 7.3) : vues Mois, Semaine, Jour, Liste dans le fuseau de
@@ -47,11 +47,18 @@ describe("paramètres d'URL", () => {
     expect(shiftPeriod("list", "2026-10-01", 1)).toBe("2026-10-31");
   });
 
-  it("titres : jour, semaine, mois, liste", () => {
+  it("titres : jour, semaine, mois, liste (titre court des 30 jours, lisible sur téléphone)", () => {
     expect(periodLabel("day", "2026-10-25")).toBe("Dimanche 25 octobre");
     expect(periodLabel("week", "2026-10-25")).toBe("19 – 25 oct.");
     expect(periodLabel("month", "2026-10-25")).toBe("Octobre 2026");
-    expect(periodLabel("list", "2026-10-25")).toBe("Du dimanche 25 octobre au lundi 23 novembre");
+    expect(periodLabel("list", "2026-10-25")).toBe("25 oct. – 23 nov.");
+  });
+
+  it("titre court d'une suite de jours : même mois, deux mois, deux années", () => {
+    expect(rangeTitle("2026-10-10", "2026-10-16")).toBe("10 – 16 oct.");
+    expect(rangeTitle("2026-09-28", "2026-10-04")).toBe("28 sept. – 4 oct.");
+    expect(rangeTitle("2026-12-20", "2027-01-18")).toBe("20 déc. 2026 – 18 janv. 2027");
+    expect(periodLabel("list", "2026-12-20")).toBe("20 déc. 2026 – 18 janv. 2027");
   });
 });
 
@@ -209,5 +216,73 @@ describe("catégories, résumés et textes", () => {
     const e = toEntries([ride("2026-10-20T10:00:00Z"), ride("2026-10-21T10:00:00Z"), ride("2026-10-24T10:00:00Z"), ride("2026-12-24T10:00:00Z")], TZ, NOW);
     const days = listDays("2026-10-20", entriesByDay(e, TZ), "2026-10-20", NOW);
     expect(days.map((d) => d.heading)).toEqual(["Aujourd'hui", "Demain", "Samedi 24 octobre"]);
+  });
+});
+
+describe("deux vocabulaires : « course » (flottes, centrales) et « réservation » (Flotte Privée)", () => {
+  const e = toEntries(
+    [ride("2026-10-21T08:00:00Z", { status: "OFFERED", state: "to_confirm" }), ride("2026-10-21T10:00:00Z"), ride("2026-10-21T12:00:00Z", { status: "CANCELLED" })],
+    TZ,
+    NOW,
+  );
+  const byDay = entriesByDay(e, TZ);
+
+  it("résumé d'un jour et texte du lecteur d'écran : « réservations » seulement en Flotte Privée", () => {
+    const course = monthCells("2026-10-21", byDay, "2026-10-20", NOW).find((c) => c.day === "2026-10-21")!;
+    const booking = monthCells("2026-10-21", byDay, "2026-10-20", NOW, "booking").find((c) => c.day === "2026-10-21")!;
+    expect(summaryLabel(course.summary)).toBe("2\u00a0courses · 170\u00a0€");
+    expect(summaryLabel(booking.summary, "EUR", "booking")).toBe("2\u00a0réservations · 170\u00a0€");
+    expect(course.ariaLabel).toBe("mercredi 21 octobre, 2\u00a0courses dont 1 à confirmer");
+    expect(booking.ariaLabel).toBe("mercredi 21 octobre, 2\u00a0réservations dont 1 à confirmer");
+    expect(dayAriaLabel("2026-10-22", { count: 0, totalCents: 0, toConfirm: 0, unconfirmed: 0 }, "booking")).toBe("jeudi 22 octobre, aucune réservation");
+    expect(dayAriaLabel("2026-10-22", { count: 1, totalCents: 0, toConfirm: 0, unconfirmed: 0 }, "booking")).toBe("jeudi 22 octobre, 1\u00a0réservation");
+  });
+
+  it("« +N » du mois et colonnes de la semaine dans le vocabulaire du profil", () => {
+    const many = ["06:00", "08:00", "10:00", "12:00", "14:00"].map((t) => ride(`2026-10-14T${t}:00Z`));
+    const days = entriesByDay(toEntries(many, TZ, NOW), TZ);
+    expect(monthCells("2026-10-14", days, "2026-10-20", NOW, "booking").find((c) => c.day === "2026-10-14")!.moreLabel).toBe(
+      "+2\u00a0autres réservations, mercredi 14 octobre",
+    );
+    expect(monthCells("2026-10-14", days, "2026-10-20", NOW).find((c) => c.day === "2026-10-14")!.moreLabel).toBe("+2\u00a0autres courses, mercredi 14 octobre");
+    const col = weekColumns("2026-10-14", days, "2026-10-20", NOW, "booking").find((c) => c.day === "2026-10-14")!;
+    expect(col.ariaLabel).toBe("mercredi 14 octobre, 5\u00a0réservations");
+    expect(weekColumns("2026-10-14", days, "2026-10-20", NOW).find((c) => c.day === "2026-10-14")!.ariaLabel).toBe("mercredi 14 octobre, 5\u00a0courses");
+  });
+
+  it("jour vide : lien « Prochaine réservation : demain 08:30 » vers la vue Jour de ce jour-là (« course » ailleurs)", () => {
+    // NOW : mardi 20 octobre 10:00 à Paris ; 21/10 06:30 UTC = 08:30 à Paris
+    expect(nextEntryLink("2026-10-21T06:30:00Z", TZ, NOW, "booking")).toEqual({
+      label: "Prochaine réservation\u00a0: demain 08:30",
+      href: "/dashboard/agenda?vue=jour&date=2026-10-21",
+    });
+    expect(nextEntryLink("2026-10-22T06:30:00Z", TZ, NOW).label).toBe("Prochaine course\u00a0: jeu. 22/10 08:30");
+    // Le jour suit le fuseau de l'organisation (23:30 à Paris le 25 = 21:30 UTC)
+    expect(nextEntryLink("2026-10-25T22:30:00Z", TZ, NOW).href).toBe("/dashboard/agenda?vue=jour&date=2026-10-25");
+  });
+});
+
+describe("semaine sur téléphone : jours vides consécutifs regroupés", () => {
+  const show = (runs: ReturnType<typeof weekPhoneRuns>) => runs.map((r) => (r ? (r.start ? r.label : "…") : null));
+
+  it("« lun. 19 – mer. 21 : rien de prévu » ; un jour avec des courses garde sa carte", () => {
+    const e = toEntries([ride("2026-10-22T08:00:00Z"), ride("2026-10-25T08:00:00Z")], TZ, NOW);
+    // Semaine du lundi 19 au dimanche 25 ; aujourd'hui = jeudi 22 (avec une course)
+    const cols = weekColumns("2026-10-22", entriesByDay(e, TZ), "2026-10-22", NOW);
+    expect(show(weekPhoneRuns(cols))).toEqual([
+      "lun. 19 – mer. 21\u00a0: rien de prévu", "…", "…", null, "ven. 23 – sam. 24\u00a0: rien de prévu", "…", null,
+    ]);
+  });
+
+  it("aujourd'hui vide garde sa carte ; un jour vide seul a sa propre ligne", () => {
+    // Aucune course, aujourd'hui = mercredi 21
+    expect(show(weekPhoneRuns(weekColumns("2026-10-22", {}, "2026-10-21", NOW)))).toEqual([
+      "lun. 19 – mar. 20\u00a0: rien de prévu", "…", null, "jeu. 22 – dim. 25\u00a0: rien de prévu", "…", "…", "…",
+    ]);
+    // Courses les 19, 21, 23 et 25 : les 20, 22 et 24 sont des jours vides isolés
+    const e = toEntries(["19", "21", "23", "25"].map((d) => ride(`2026-10-${d}T08:00:00Z`)), TZ, NOW);
+    expect(show(weekPhoneRuns(weekColumns("2026-10-22", entriesByDay(e, TZ), "2026-10-19", NOW)))).toEqual([
+      null, "mar. 20\u00a0: rien de prévu", null, "jeu. 22\u00a0: rien de prévu", null, "sam. 24\u00a0: rien de prévu", null,
+    ]);
   });
 });

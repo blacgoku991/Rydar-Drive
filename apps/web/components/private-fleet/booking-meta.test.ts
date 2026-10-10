@@ -2,6 +2,7 @@ import { formatPrice, formatRelative } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
   PRIVATE_SOURCE_LABELS, UPCOMING_STATUSES, appPresence, bookingKind, bookingKindMeta, bookingPrice, bookingRoute, countLabel, responseDeadline,
+  rideDateAt,
 } from "./booking-meta";
 
 // Libellés d'une réservation de la Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.3) : couleur = information (mêmes
@@ -91,3 +92,14 @@ it("compteurs : singulier jusqu'à 1, espace insécable", () => {
   expect(countLabel(1, "réservation", "réservations")).toBe("1\u00a0réservation");
   expect(countLabel(3, "réservation", "réservations")).toBe("3\u00a0réservations");
 });
+
+it("moment dans une phrase (« Mon site ») : aujourd'hui, hier, demain, sinon la date ; fuseau de l'organisation", () => {
+  expect(rideDateAt("2026-10-20T09:04:00Z", TZ, NOW)).toBe("aujourd'hui à 11:04");
+  expect(rideDateAt("2026-10-19T16:20:00Z", TZ, NOW)).toBe("hier à 18:20");
+  expect(rideDateAt("2026-10-21T06:30:00Z", TZ, NOW)).toBe("demain à 08:30");
+  expect(rideDateAt("2026-10-15T16:36:00Z", TZ, NOW)).toBe("jeu. 15/10 à 18:36");
+  expect(rideDateAt(null, TZ, NOW)).toBe("—");
+  // 23:30 à Paris le 20 = 21:30 UTC ; à New York, 17:30 le même jour
+  expect(rideDateAt("2026-10-20T21:30:00Z", "America/New_York", NOW)).toBe("aujourd'hui à 17:30");
+});
+

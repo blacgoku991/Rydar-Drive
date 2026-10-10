@@ -36,6 +36,18 @@ export function responseDeadline(expiresAt: string | null | undefined, timeZone:
   return `Réponse avant ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
 }
 
+/**
+ * Moment dans une phrase (fuseau de l'organisation) : « aujourd'hui à 11:04 », « hier à 18:20 », « jeu. 08/10 à 18:36 »
+ * — « Mon site » (« dernière réservation : aujourd'hui à 11:04 »), carte « Mon site » de l'Accueil.
+ */
+export function rideDateAt(date: string | null | undefined, timeZone: string, now = Date.now()): string {
+  if (!date) return "—";
+  const label = formatRideDate(date, timeZone, new Date(now));
+  const cut = label.lastIndexOf(" ");
+  const day = label.slice(0, cut);
+  return `${day.charAt(0).toLowerCase()}${day.slice(1)} à ${label.slice(cut + 1)}`;
+}
+
 /** Origine d'une réservation, au vocabulaire du chauffeur-propriétaire. */
 export const PRIVATE_SOURCE_LABELS: Record<string, string> = {
   api: "Votre site",

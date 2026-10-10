@@ -1,7 +1,7 @@
 // Documents chauffeur côté centrale : statut calculé et « document courant » (miroir de
 // private.document_state / private.document_superseded, migration 20260924002400).
 import type { DocumentState, DocumentType, DriverDocumentItem } from "@rydar/shared";
-import { DOCUMENT_TYPE_LABELS } from "@rydar/shared";
+import { DOCUMENT_TYPE_LABELS, dateTimeFormat } from "@rydar/shared";
 
 export const REQUIRED_DOCUMENT_TYPES: DocumentType[] = ["vtc_card", "driving_license", "identity", "insurance", "vehicle_registration"];
 const TYPE_ORDER: DocumentType[] = [...REQUIRED_DOCUMENT_TYPES, "medical", "other"];
@@ -21,9 +21,9 @@ export type DocumentView = DriverDocumentItem & {
   kind?: "image" | "pdf" | null;
 };
 
-/** Date du jour (AAAA-MM-JJ) dans le fuseau de l'organisation. */
+/** Date du jour (AAAA-MM-JJ) dans le fuseau de l'organisation (formateur mémorisé : jamais de « new Intl » au rendu). */
 export function orgToday(timeZone: string, now = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  return dateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
 
 const dayNumber = (iso: string) => {

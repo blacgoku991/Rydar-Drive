@@ -8,12 +8,15 @@ import { cn } from "@/lib/utils";
  * page). Titre qui dit ce qu'il y a dedans, cible de 44 px, focus visible ; fermé par défaut (`defaultOpen` sinon) ;
  * `forceOpen` (erreur ou blocage à l'intérieur) l'ouvre et le garde ouvert tant que la personne ne le referme pas ;
  * `id` : ancre — une adresse qui la vise (#id) l'ouvre. Aucun état mémorisé (pas de nouvelle clé de stockage).
+ * `lazy` : contenu monté seulement à la première ouverture, puis gardé (carte, graphique : rien n'est chargé pour un
+ * repli jamais ouvert).
  */
 export function Disclosure({
   title,
   hint,
   defaultOpen = false,
   forceOpen = false,
+  lazy = false,
   id,
   className,
   summaryClassName,
@@ -25,6 +28,8 @@ export function Disclosure({
   hint?: React.ReactNode;
   defaultOpen?: boolean;
   forceOpen?: boolean;
+  /** Contenu monté à la première ouverture seulement (puis gardé monté) */
+  lazy?: boolean;
   id?: string;
   className?: string;
   summaryClassName?: string;
@@ -32,6 +37,11 @@ export function Disclosure({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = React.useState(defaultOpen || forceOpen);
+  // Repli `lazy` : monté dès sa première ouverture, gardé ensuite (refermer ne recharge rien)
+  const [mounted, setMounted] = React.useState(!lazy || defaultOpen || forceOpen);
+  React.useEffect(() => {
+    if (open) setMounted(true);
+  }, [open]);
   // Erreur ou blocage apparu à l'intérieur : ouvert d'office (jamais refermé à sa disparition, la saisie reste visible)
   React.useEffect(() => {
     if (forceOpen) setOpen(true);
@@ -64,7 +74,7 @@ export function Disclosure({
         <span className="min-w-0 flex-1">{title}</span>
         {hint && <span className="shrink-0 text-[12.5px] font-normal text-fg-muted">{hint}</span>}
       </summary>
-      <div className={contentClassName}>{children}</div>
+      <div className={contentClassName}>{mounted ? children : null}</div>
     </details>
   );
 }

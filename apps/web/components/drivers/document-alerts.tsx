@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/misc";
 import { cn } from "@/lib/utils";
+import { plural } from "@/lib/wording";
 
 /** Encart « Documents à surveiller » (org_document_alerts) : à valider, expirés, bientôt échus. */
 export function DocumentAlertsCard({ alerts }: { alerts: OrgDocumentAlerts }) {
@@ -16,7 +17,7 @@ export function DocumentAlertsCard({ alerts }: { alerts: OrgDocumentAlerts }) {
   const tiles = [
     { key: "pending", label: "À valider", n: counts.pending, tone: "text-blue" },
     { key: "expired", label: "Expirés", n: counts.expired, tone: "text-red" },
-    { key: "expiring", label: "Expirent sous 30 j", n: counts.expiring, tone: "text-amber" },
+    { key: "expiring", label: "Expirent sous 30\u00a0jours", n: counts.expiring, tone: "text-amber" },
   ];
   return (
     <Card className="overflow-hidden">
@@ -33,8 +34,8 @@ export function DocumentAlertsCard({ alerts }: { alerts: OrgDocumentAlerts }) {
         <div className="flex gap-5 pl-11 sm:pl-0">
           {tiles.map((t) => (
             <div key={t.key} className="text-right max-sm:text-left">
-              <p className={cn("num text-[20px] font-semibold leading-none", t.n ? t.tone : "text-fg-subtle")}>{t.n}</p>
-              <p className="mt-1 text-[11.5px] text-fg-subtle">{t.label}</p>
+              <p className={cn("num text-[20px] font-semibold leading-none", t.n ? t.tone : "text-fg-muted")}>{t.n}</p>
+              <p className="mt-1 text-[12px] text-fg-muted">{t.label}</p>
             </div>
           ))}
         </div>
@@ -51,7 +52,7 @@ export function DocumentAlertsCard({ alerts }: { alerts: OrgDocumentAlerts }) {
                   <p className="truncate text-[13px] font-medium">
                     {name} <span className="font-normal text-fg-subtle">· {doc.label}</span>
                   </p>
-                  <p className="truncate text-[11.5px] text-fg-subtle">
+                  <p className="truncate text-[12px] text-fg-muted">
                     {doc.status === "pending"
                       ? `Déposé le ${formatDate(doc.created_at)}${doc.expires_at ? ` · échéance ${formatDate(doc.expires_at)}` : ""}`
                       : doc.expires_at
@@ -59,7 +60,7 @@ export function DocumentAlertsCard({ alerts }: { alerts: OrgDocumentAlerts }) {
                         : "Sans échéance"}
                   </p>
                 </div>
-                <Badge tone={meta.tone} pulse={doc.status === "pending"}>
+                <Badge tone={meta.tone}>
                   {documentStateLabel(doc.status, doc.days_left)}
                 </Badge>
                 <ChevronRight className="size-4 shrink-0 text-fg-subtle transition-transform group-hover:translate-x-0.5" />
@@ -69,7 +70,7 @@ export function DocumentAlertsCard({ alerts }: { alerts: OrgDocumentAlerts }) {
         })}
       </ul>
       {items.length > shown.length && (
-        <p className="border-t border-line px-5 py-2.5 text-[12px] text-fg-subtle">+ {items.length - shown.length} autre{items.length - shown.length > 1 ? "s" : ""} document{items.length - shown.length > 1 ? "s" : ""}</p>
+        <p className="border-t border-line px-5 py-2.5 text-[12px] text-fg-muted">+ {plural(items.length - shown.length, "autre document", "autres documents")}</p>
       )}
     </Card>
   );

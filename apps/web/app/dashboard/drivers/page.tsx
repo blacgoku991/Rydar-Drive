@@ -1,5 +1,5 @@
 import { normalizePhone, type DriverStatus, type OrgDocumentAlerts } from "@rydar/shared";
-import { Link2, Search, Users } from "lucide-react";
+import { Link2, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DocumentAlertsCard } from "@/components/drivers/document-alerts";
@@ -10,30 +10,50 @@ import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header"
 import { LiveRefresh } from "@/components/rides/live-refresh";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Disclosure } from "@/components/ui/disclosure";
 import { EmptyState } from "@/components/ui/misc";
+import { SearchField } from "@/components/ui/search-field";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { privateFleetPage } from "@/lib/private-fleet";
-import { cn } from "@/lib/utils";
+import { plural } from "@/lib/wording";
 
 export const metadata: Metadata = { title: "Chauffeurs" };
 export const dynamic = "force-dynamic";
 
+const PATH = "/dashboard/drivers";
+const NB = "\u00a0";
+
+/** Chiffres de la page = filtres de la liste (mêmes clés `?filter=` qu'avant ; la rangée de puces a disparu). */
 const FILTERS = [
   { key: "all", label: "Tous" },
   { key: "online", label: "En ligne" },
   { key: "available", label: "Disponibles" },
   { key: "busy", label: "En course" },
   { key: "offline", label: "Hors ligne" },
-  { key: "inactive", label: "Désactivés / suspendus" },
+  { key: "inactive", label: "Désactivés ou suspendus" },
 ] as const;
+type FilterKey = (typeof FILTERS)[number]["key"];
+
+const BUSY = new Set(["en_route", "arrived", "on_trip"]);
+
+/** Règle de chaque filtre (et de son chiffre) : présence en direct des chauffeurs actifs, statut du compte sinon. */
+const MATCH: Record<FilterKey, (d: { status: string; presence: string }) => boolean> = {
+  all: () => true,
+  online: (d) => d.status === "active" && d.presence !== "offline",
+  available: (d) => d.status === "active" && d.presence === "available",
+  busy: (d) => BUSY.has(d.presence),
+  offline: (d) => d.status === "active" && d.presence === "offline",
+  inactive: (d) => d.status !== "active",
+};
 
 export default async function DriversPage({ searchParams }: { searchParams: Promise<{ filter?: string; q?: string }> }) {
   const ctx = await requireOrg();
   // Flotte Privée : un seul chauffeur, le propriétaire → « Mon profil chauffeur »
   privateFleetPage(ctx, { redirect: "/dashboard/profil" });
   const sp = await searchParams;
-  const filter = FILTERS.some((f) => f.key === sp.filter) ? sp.filter! : "all";
-  const q = (sp.q ?? "").trim().toLowerCase();
+  const filter: FilterKey = FILTERS.find((f) => f.key === sp.filter)?.key ?? "all";
+  const rawQ = (sp.q ?? "").trim().slice(0, 80);
+  const q = rawQ.toLowerCase();
 
   const [{ data: drivers }, { data: metrics }, { data: docAlerts }] = await Promise.all([
     ctx.supabase
@@ -47,7 +67,6 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
   const m = new Map(((metrics ?? []) as any[]).map((x) => [x.driver_id, x]));
   const serverNow = Date.now();
   const all = (drivers ?? []) as any[];
-  const busy = new Set(["en_route", "arrived", "on_trip"]);
   const one = <T,>(x: T | T[] | null | undefined): T | null => (Array.isArray(x) ? (x[0] ?? null) : (x ?? null));
   // Téléphone saisi comme on le lit (« 06 12… », « 0612… ») comparé au format enregistré (E.164) ; plaque sans espaces ni tirets
   const qPhone = normalizePhone(q);
@@ -60,18 +79,13 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     if (qDigits && String(d.phone ?? "").includes(qDigits)) return true;
     return qCompact.length >= 2 && plate.replace(/[\s.\-]/g, "").includes(qCompact);
   };
-  const list = all.filter((d) => {
-    if (q && !matches(d)) return false;
-    switch (filter) {
-      case "online": return d.status === "active" && d.presence !== "offline";
-      case "available": return d.status === "active" && d.presence === "available";
-      case "busy": return busy.has(d.presence);
-      case "offline": return d.status === "active" && d.presence === "offline";
-      case "inactive": return d.status !== "active";
-      default: return true;
-    }
-  });
-  const active = all.filter((d) => d.status === "active");
+  const list = all.filter((d) => (!q || matches(d)) && MATCH[filter](d));
+  const online = all.filter(MATCH.online);
+  const count = (key: FilterKey) => all.filter(MATCH[key]).length;
+  const suspended = all.some((d) => d.status === "suspended");
+  const href = (key: FilterKey) => `${PATH}?filter=${key}${rawQ ? `&q=${encodeURIComponent(rawQ)}` : ""}`;
+  const filterLabel = FILTERS.find((f) => f.key === filter)!.label;
+
   // Lignes compactes pour le tableau (composant client) : seuls les champs affichés quittent le serveur
   const rows: DriverTableRow[] = list.map((d) => {
     const x = m.get(d.id);
@@ -88,9 +102,9 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
       vehicle: vehicle ? { brand: vehicle.brand, model: vehicle.model, plate: vehicle.plate, category: vehicle.category } : null,
       seen_at: one<any>(d.location)?.updated_at ?? null,
       rate: x?.acceptance_rate != null ? Number(x.acceptance_rate) : null,
-      offers: x?.offers ?? 0,
-      completed: x?.completed ?? 0,
-      cancelled: x?.cancelled ?? 0,
+      offers: Number(x?.offers ?? 0),
+      completed: Number(x?.completed ?? 0),
+      cancelled: Number(x?.cancelled ?? 0),
       revenue_cents: Number(x?.revenue_cents ?? 0),
     };
   });
@@ -100,11 +114,10 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
       {/* Présence et statuts relus au fil des changements (rafales regroupées, rien onglet caché) */}
       <LiveRefresh events={["driver.updated"]} pollMs={30_000} debounceMs={2000} />
       <PageHeader
-        eyebrow="Flotte"
         title="Chauffeurs"
-        description="Comptes chauffeurs, véhicules, présence temps réel et performance sur 30 jours."
+        description="Vos chauffeurs, leur présence en direct et leurs résultats sur 30 jours."
         actions={
-          <div className="flex flex-wrap gap-2">
+          <>
             {/* Lien d'inscription à partager (flotte : « Inscriptions », centrale : « Réseau ») */}
             <Button variant="secondary" asChild>
               <Link href="/dashboard/network" prefetch={false}>
@@ -112,68 +125,96 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
               </Link>
             </Button>
             {isAdminRole(ctx.role) && <DriverFormSheet />}
-          </div>
+          </>
         }
       />
       <PageBody className="space-y-6">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <StatCard label="Chauffeurs actifs" value={active.length} />
-          <StatCard label="En ligne" value={active.filter((d) => d.presence !== "offline").length} tone="brand" />
-          <StatCard label="Disponibles" value={active.filter((d) => d.presence === "available").length} tone="brand" />
-          <StatCard label="En course" value={active.filter((d) => busy.has(d.presence)).length} tone="cyan" />
-          <StatCard label="Suspendus" value={all.filter((d) => d.status === "suspended").length} tone={all.some((d) => d.status === "suspended") ? "red" : undefined} />
-        </div>
+        {/* Chiffres = filtres de la liste : un clic affiche les chauffeurs comptés (aria-current sur le filtre affiché) */}
+        <nav aria-label="Filtrer les chauffeurs" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          {FILTERS.map((f) => (
+            <StatCard
+              key={f.key}
+              href={href(f.key)}
+              active={f.key === filter}
+              label={f.label}
+              value={count(f.key)}
+              tone={f.key === "inactive" && suspended ? "red" : undefined}
+            />
+          ))}
+        </nav>
 
         {docAlerts && <DocumentAlertsCard alerts={docAlerts as OrgDocumentAlerts} />}
 
-        <Card className="relative h-[320px] overflow-hidden">
-          {/* Carte : seulement ce qu'elle affiche (position, présence, nom, plaque) */}
-          <FleetOverviewMap
-            drivers={active
-              .filter((d) => d.presence !== "offline")
-              .map((d) => {
-                const vehicle = one<any>(d.vehicle);
-                const loc = one<any>(d.location);
-                return {
-                  id: d.id,
-                  number: d.number,
-                  first_name: d.first_name,
-                  last_name: d.last_name,
-                  presence: d.presence,
-                  vehicle: vehicle ? { plate: vehicle.plate } : null,
-                  location: loc ? { lat: loc.lat, lng: loc.lng, heading: loc.heading, speed_mps: loc.speed_mps, updated_at: loc.updated_at } : null,
-                };
-              })}
-          />
-        </Card>
+        {all.length > 0 && (
+          <Disclosure
+            title="Voir sur la carte"
+            hint={plural(online.length, "chauffeur en ligne", "chauffeurs en ligne")}
+            lazy
+            className="surface rounded-xl px-4 sm:px-5"
+            contentClassName="pb-4 pt-1"
+          >
+            <div className="relative h-[320px] overflow-hidden rounded-lg border border-line">
+              {/* Carte : seulement ce qu'elle affiche (position, présence, nom, plaque) ; chargée à l'ouverture du repli */}
+              <FleetOverviewMap
+                drivers={online.map((d) => {
+                  const vehicle = one<any>(d.vehicle);
+                  const loc = one<any>(d.location);
+                  return {
+                    id: d.id,
+                    number: d.number,
+                    first_name: d.first_name,
+                    last_name: d.last_name,
+                    presence: d.presence,
+                    vehicle: vehicle ? { plate: vehicle.plate } : null,
+                    location: loc ? { lat: loc.lat, lng: loc.lng, heading: loc.heading, speed_mps: loc.speed_mps, updated_at: loc.updated_at } : null,
+                  };
+                })}
+              />
+            </div>
+          </Disclosure>
+        )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-1 rounded-xl border border-line bg-ink-850 p-1">
-            {FILTERS.map((f) => (
-              <Link
-                key={f.key}
-                href={`/dashboard/drivers?filter=${f.key}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
-                prefetch={false}
-                className={cn("rounded-lg px-3 py-1.5 text-[12.5px] font-medium", filter === f.key ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg")}
-              >
-                {f.label}
-              </Link>
-            ))}
-          </div>
-          <form action="/dashboard/drivers" className="relative w-full max-w-xs">
-            <input type="hidden" name="filter" value={filter} />
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
-            <input type="search" name="q" defaultValue={q} placeholder="Nom, téléphone, plaque…" aria-label="Rechercher un chauffeur" title="Rechercher un chauffeur" className="h-9 w-full rounded-lg border border-line-field bg-ink-850 pl-9 pr-3 text-sm outline-none placeholder:text-fg-subtle focus:border-brand/60 focus-visible:ring-2 focus-visible:ring-brand/40" />
-          </form>
-        </div>
+        <SearchField
+          action={PATH}
+          defaultValue={rawQ}
+          label="Rechercher un chauffeur"
+          placeholder={`ex.${NB}: nom, téléphone, plaque`}
+          params={{ filter: filter === "all" ? null : filter }}
+        />
 
-        <Card className="overflow-hidden">
-          {!list.length ? (
-            <EmptyState icon={<Users />} title="Aucun chauffeur" description="Ajoutez vos chauffeurs : ils recevront les courses dans l'application Rydar Drive." />
-          ) : (
+        {!all.length ? (
+          <Card>
+            <EmptyState
+              icon={<Users />}
+              title="Aucun chauffeur pour l'instant"
+              description={
+                isAdminRole(ctx.role)
+                  ? `Ajoutez vos chauffeurs ou partagez votre lien d'inscription${NB}: ils reçoivent ensuite les courses dans l'application Rydar Drive.`
+                  : "Les chauffeurs ajoutés par un administrateur apparaîtront ici."
+              }
+            />
+          </Card>
+        ) : !list.length ? (
+          <Card>
+            <EmptyState
+              size="compact"
+              title={
+                rawQ
+                  ? `Aucun chauffeur ne correspond à «${NB}${rawQ}${NB}»${filter === "all" ? "" : ` dans «${NB}${filterLabel}${NB}»`}.`
+                  : `Aucun chauffeur dans «${NB}${filterLabel}${NB}».`
+              }
+              action={
+                <Link href={PATH} prefetch={false} className="inline-flex min-h-11 items-center text-[13px] font-medium text-brand hover:underline sm:min-h-8">
+                  Voir tous les chauffeurs
+                </Link>
+              }
+            />
+          </Card>
+        ) : (
+          <Card className="overflow-hidden">
             <DriversTable rows={rows} serverNow={serverNow} />
-          )}
-        </Card>
+          </Card>
+        )}
       </PageBody>
     </>
   );

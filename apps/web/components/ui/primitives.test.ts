@@ -74,6 +74,16 @@ describe("Disclosure", () => {
     expect(source("disclosure.tsx")).not.toMatch(/localStorage|sessionStorage/);
   });
 
+  it("lazy (R8 : carte de la flotte) : contenu absent tant que le repli n'a jamais été ouvert, présent s'il l'est d'office", () => {
+    const closed = html(createElement(Disclosure, { title: "Voir sur la carte", lazy: true, children: createElement("p", null, "Carte") }));
+    expect(closed).toContain("Voir sur la carte");
+    expect(closed).not.toContain("<p>Carte</p>");
+    expect(html(createElement(Disclosure, { title: "A", lazy: true, defaultOpen: true, children: createElement("p", null, "Carte") }))).toContain("<p>Carte</p>");
+    expect(html(createElement(Disclosure, { title: "A", lazy: true, forceOpen: true, children: createElement("p", null, "Carte") }))).toContain("<p>Carte</p>");
+    // Sans lazy : contenu toujours rendu (recherche dans la page, lecteurs d'écran)
+    expect(html(createElement(Disclosure, { title: "A", children: createElement("p", null, "Carte") }))).toContain("<p>Carte</p>");
+  });
+
   it("repli imbriqué : son chevron suit SON état, pas celui du repli ouvert qui le contient", () => {
     const inner = createElement(Disclosure, { title: "Intérieur", children: "x" });
     const out = html(createElement(Disclosure, { title: "Extérieur", defaultOpen: true, children: inner }));

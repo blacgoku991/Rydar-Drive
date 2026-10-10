@@ -1,12 +1,11 @@
-import { Check } from "lucide-react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { StatsView } from "@/components/charts/stats-view";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
-import { requireOrg } from "@/lib/auth";
+import { Callout } from "@/components/ui/callout";
+import { FilterTabs } from "@/components/ui/filter-tabs";
+import { isAdminRole, requireOrg } from "@/lib/auth";
 import { isPrivateFleet } from "@/lib/private-fleet";
 import { statsPeriodStart } from "@/lib/stats-period";
-import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -38,27 +37,33 @@ export default async function StatsPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
-      {privateFleet ? (
-        <PageHeader eyebrow="Mon entreprise" title="Activité" description="Chiffre d'affaires, réservations, confirmations et canaux de réservation." />
-      ) : (
-        <PageHeader eyebrow="Pilotage" title="Statistiques" description="CA, volume, rapidité d'attribution, acceptation et activité de la flotte." />
-      )}
+      <PageHeader
+        title={privateFleet ? "Activité" : "Statistiques"}
+        description={
+          privateFleet
+            ? "Chiffre d'affaires, réservations et rapidité de confirmation sur la période."
+            : "Chiffre d'affaires, nombre de courses et rapidité d'attribution sur la période."
+        }
+      />
       <PageBody className="space-y-6">
-        {/* Filtre de période : une seule ligne, au-dessus de tous les graphiques */}
-        <div className="flex flex-wrap gap-1 rounded-xl border border-line bg-ink-850 p-1 sm:w-fit">
-          {PRESETS.map((p) => (
-            <Link
-              key={p.key}
-              href={`/dashboard/stats?range=${p.key}`}
-              prefetch={false}
-              className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium", p.key === preset.key ? "bg-ink-600 text-fg" : "text-fg-muted hover:bg-white/[0.03] hover:text-fg")}
-            >
-              {p.key === preset.key && <Check className="size-3.5 text-brand" strokeWidth={3} />}
-              {p.label}
-            </Link>
-          ))}
-        </div>
-        {error || !stats ? <p className="text-sm text-red">Statistiques indisponibles.</p> : <StatsView stats={stats} privateFleet={privateFleet} />}
+        {/* Filtre de période : une seule ligne, au-dessus de tous les graphiques (mêmes clés ?range=) */}
+        <FilterTabs
+          label="Période"
+          items={PRESETS.map((p) => ({ href: `/dashboard/stats?range=${p.key}`, label: p.label, active: p.key === preset.key }))}
+        />
+        {error || !stats ? (
+          <Callout tone="danger" title="Statistiques illisibles pour le moment.">
+            Lecture impossible, réessayez dans un instant.
+          </Callout>
+        ) : (
+          <StatsView
+            stats={stats}
+            privateFleet={privateFleet}
+            // Abonnement : réservé au propriétaire et aux administrateurs (le dispatcher n'y a rien à faire)
+            offersHref={isAdminRole(ctx.role) ? "/dashboard/settings?tab=billing" : null}
+            longerHref={preset.key === "90d" ? null : "/dashboard/stats?range=90d"}
+          />
+        )}
       </PageBody>
     </>
   );

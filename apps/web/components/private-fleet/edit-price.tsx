@@ -1,17 +1,20 @@
 "use client";
-// Flotte Privée, fiche d'une réservation : « Modifier le prix » (prix et moyen de paiement ; updateRidePricing, sans
-// commission : modèle flotte). Prix vide : demande sans prix (« prix à fixer »).
+// Flotte Privée, Accueil et fiche d'une réservation : « Fixer le prix » (demande du site sans prix) ou « Modifier le
+// prix » (prix et moyen de paiement ; updateRidePricing, sans commission : modèle flotte). Prix vide : demande sans prix
+// (« prix à fixer »). Charge envoyée inchangée.
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PaymentMethod } from "@rydar/shared";
-import { Pencil } from "lucide-react";
+import { Pencil, Tag } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { updateRidePricing } from "@/app/dashboard/rides/actions";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { submitWith } from "@/lib/utils";
+
+const NB = " ";
 
 /** « 85 » / « 85,50 » → centimes ; vide → null ; illisible → NaN. */
 function eurosToCents(v: string): number | null {
@@ -27,21 +30,27 @@ export function EditPriceButton({
   number,
   priceCents,
   paymentMethod,
+  size = "md",
+  variant = "secondary",
 }: {
   rideId: string;
   number: number;
   priceCents: number | null;
   paymentMethod: PaymentMethod;
+  size?: "sm" | "md";
+  variant?: "secondary" | "outline";
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Sans prix (demande du site) : « Fixer le prix » ; sinon « Modifier le prix »
+  const toFix = priceCents == null;
 
   return (
     <>
-      <Button variant="secondary" onClick={() => (setErrors({}), setOpen(true))}>
-        <Pencil /> Modifier le prix
+      <Button variant={variant} size={size} onClick={() => (setErrors({}), setOpen(true))}>
+        {toFix ? <Tag /> : <Pencil />} {toFix ? "Fixer le prix" : "Modifier le prix"}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent title={`Prix de la réservation #${number}`} description="Prix payé par le client, toutes taxes comprises." size="sm">
@@ -49,7 +58,7 @@ export function EditPriceButton({
             onSubmit={submitWith((f) => {
               const cents = eurosToCents(String(f.get("price") ?? ""));
               if (cents !== null && Number.isNaN(cents)) {
-                setErrors({ priceCents: "Montant en euros (ex. 85 ou 85,50)" });
+                setErrors({ priceCents: `Montant en euros (ex.${NB}: 85 ou 85,50)` });
                 return;
               }
               const method = String(f.get("payment") ?? "") as PaymentMethod;
@@ -67,8 +76,8 @@ export function EditPriceButton({
             })}
             className="space-y-4"
           >
-            <Field label="Prix (€ TTC)" optional hint="Vide : demande sans prix." error={errors.priceCents}>
-              <Input name="price" defaultValue={centsToInput(priceCents)} inputMode="decimal" className="num" autoComplete="off" />
+            <Field label="Prix (€ TTC)" optional hint={`Vide${NB}: demande sans prix.`} error={errors.priceCents}>
+              <Input name="price" defaultValue={centsToInput(priceCents)} inputMode="decimal" className="num" autoComplete="off" placeholder={`ex.${NB}: 85 ou 85,50`} />
             </Field>
             <Field label="Paiement">
               <NativeSelect name="payment" defaultValue={paymentMethod}>
@@ -79,14 +88,11 @@ export function EditPriceButton({
                 ))}
               </NativeSelect>
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-                Annuler
-              </Button>
+            <DialogFooter backDisabled={pending}>
               <Button type="submit" variant="primary" loading={pending}>
-                Enregistrer
+                Enregistrer le prix
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

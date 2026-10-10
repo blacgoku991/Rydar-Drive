@@ -24,3 +24,18 @@ describe("liens des grilles du mois et de la semaine", () => {
     for (const use of uses) expect(use).toContain("day={c.title}");
   });
 });
+
+describe("vocabulaire des vues : « course » (flottes, centrales) ou « réservation » (Flotte Privée)", () => {
+  it("aucun « course » écrit en dur dans les textes des vues : agendaNoun(noun) et summaryLabel(…, noun)", () => {
+    expect(src).not.toMatch(/[Aa]ucune course/);
+    expect(src).toContain('summaryLabel(c.summary, "EUR", noun)');
+    expect(src).toContain('summaryLabel(d.summary, "EUR", noun)');
+    expect((src.match(/agendaNoun\(noun\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("page : « réservation » en Flotte Privée seulement, passé à chaque vue et au modèle", () => {
+    const page = readFileSync(join(import.meta.dirname, "..", "..", "app", "dashboard", "agenda", "page.tsx"), "utf8");
+    expect(page).toContain('const noun: AgendaNoun = privateFleet ? "booking" : "ride";');
+    for (const use of ["monthCells(day, byDay, today, now, noun)", "weekColumns(day, byDay, today, now, noun)", "noun={noun}"]) expect(page).toContain(use);
+  });
+});

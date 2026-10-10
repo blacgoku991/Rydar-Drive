@@ -12,11 +12,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireOrg } from "@/lib/auth";
 import { isPrivateFleet } from "@/lib/private-fleet";
+import { upperFirst } from "@/lib/wording";
 
 export const metadata: Metadata = { title: "Mon profil chauffeur" };
 export const dynamic = "force-dynamic";
 
 type Ctx = Awaited<ReturnType<typeof requireOrg>>;
+
+const DESCRIPTION = "Votre fiche chauffeur\u00a0: identité, carte VTC, véhicule et documents.";
 
 /** URL signée d'un fichier du bucket privé driver-documents (null si le stockage ne répond pas). */
 async function signedUrl(supabase: Ctx["supabase"], path: string): Promise<string | null> {
@@ -31,11 +34,13 @@ async function signedUrl(supabase: Ctx["supabase"], path: string): Promise<strin
   }
 }
 
-function Item({ label, children }: { label: string; children: React.ReactNode }) {
+function Item({ label, children, hint }: { label: string; children: React.ReactNode; hint?: React.ReactNode }) {
   return (
-    <div>
-      <p className="text-[11.5px] text-fg-subtle">{label}</p>
-      <p className="text-[13.5px] text-fg">{children}</p>
+    <div className="min-w-0">
+      <p className="text-[12px] text-fg-muted">{label}</p>
+      {/* Texte long (e-mail) : coupé n'importe où plutôt que de déborder */}
+      <p className="text-[13.5px] text-fg [overflow-wrap:anywhere]">{children}</p>
+      {hint && <p className="mt-0.5 text-[12px] text-fg-muted">{hint}</p>}
     </div>
   );
 }
@@ -48,9 +53,7 @@ function Item({ label, children }: { label: string; children: React.ReactNode })
 export default async function ProfilePage() {
   const ctx = await requireOrg();
   if (!isPrivateFleet(ctx.org)) redirect("/dashboard/drivers");
-  const header = (
-    <PageHeader eyebrow="Mon entreprise" title="Mon profil chauffeur" description="Votre fiche chauffeur : identité, carte VTC, véhicule et documents." />
-  );
+  const header = <PageHeader title="Mon profil chauffeur" description={DESCRIPTION} />;
   const driverId = ctx.driverId;
   const [{ data: d }, { data: docs }] = driverId
     ? await Promise.all([
@@ -91,14 +94,15 @@ export default async function ProfilePage() {
     docView.items.map(async (doc) => ({ ...doc, kind: fileKind(doc.file_path), url: doc.file_path ? await signedUrl(ctx.supabase, doc.file_path) : null })),
   );
   const presence = appPresence({ status: d.status, presence: d.presence, last_seen_at: d.last_seen_at }, Date.now());
+  // Application : « Jamais ouverte » (avec la marche à suivre), sinon l'état ou la dernière activité
+  const neverOpened = !d.last_seen_at;
 
   return (
     <>
       <LiveRefresh driverId={d.id} events={["driver.updated"]} pollMs={30_000} />
       <PageHeader
-        eyebrow="Mon entreprise"
         title="Mon profil chauffeur"
-        description="Votre fiche chauffeur : identité, carte VTC, véhicule et documents."
+        description={DESCRIPTION}
         actions={
           <DriverControls
             self
@@ -132,11 +136,13 @@ export default async function ProfilePage() {
               <Item label="N° de carte VTC">
                 <span className="num">{d.vtc_card_number ?? "—"}</span>
               </Item>
-              <Item label="Application">{presence.detail ?? presence.label}</Item>
+              <Item label="Application" hint={neverOpened ? "Connectez-vous à l'application avec les mêmes identifiants." : undefined}>
+                {neverOpened ? "Jamais ouverte" : upperFirst(presence.detail ?? presence.label)}
+              </Item>
             </CardBody>
           </Card>
           <Card>
-            <CardHeader title="Véhicule" icon={<Car />} description="Les réservations d'une autre catégorie ou de plus de places sont « à vérifier »." />
+            <CardHeader title="Véhicule" icon={<Car />} description={`Les réservations d'une autre catégorie ou de plus de places sont «\u00a0à vérifier\u00a0».`} />
             <CardBody className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <Item label="Modèle">{vehicle ? `${vehicle.brand ?? ""} ${vehicle.model}`.trim() : "—"}</Item>
               <Item label="Plaque">
@@ -153,7 +159,7 @@ export default async function ProfilePage() {
             </CardBody>
           </Card>
         </div>
-        <DriverDocuments self driverId={d.id} firstName={d.first_name} items={documents} missing={docView.missing} canReview />
+        <DriverDocuments self canAdd driverId={d.id} firstName={d.first_name} items={documents} missing={docView.missing} canReview />
       </PageBody>
     </>
   );
