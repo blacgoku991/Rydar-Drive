@@ -7,7 +7,7 @@ import {
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 // Chemin relatif : module neutre, chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
-import { apiAccessOf, effectiveLimits } from "../../components/admin/private-fleet-state";
+import { apiAccessOf, effectiveLimits, limitEnabled } from "../../components/admin/private-fleet-state";
 import { audit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
@@ -795,11 +795,49 @@ export async function updateOrganizationPlan(orgId: string, planId: string | nul
   return { ok: true };
 }
 
+/**
+ * Clients Flotte Privée (non archivés) qui perdraient l'accès à l'API si l'offre `planId` prenait les limites `next` :
+ * sur cette offre, sans surcharge qui le leur rende. Seulement pour un RETRAIT (offre actuelle avec l'API) ; null :
+ * lecture impossible.
+ */
+async function privateFleetsLosingApi(
+  admin: ReturnType<typeof createAdminClient>,
+  planId: string,
+  next: Record<string, unknown>,
+): Promise<number | null> {
+  const [current, orgs] = await Promise.all([
+    admin.from("plans").select("limits").eq("id", planId).maybeSingle(),
+    admin.from("organizations").select("id, limits_override").eq("plan_id", planId).eq("private_fleet", true).neq("status", "archived"),
+  ]);
+  if (current.error || orgs.error) return null;
+  if (!limitEnabled((current.data as { limits: Record<string, unknown> | null } | null)?.limits?.api_access)) return 0;
+  return ((orgs.data ?? []) as { limits_override: Record<string, unknown> | null }[]).filter(
+    (o) => !apiAccessOf(effectiveLimits({ planId, planLimits: next, override: o.limits_override, privateFleet: true })),
+  ).length;
+}
+
+/**
+ * Offre créée ou modifiée. Retrait de l'accès à l'API d'une offre utilisée par des clients Flotte Privée : refusé, avec
+ * le nombre de clients concernés (le site de chacun réserve par l'API v1 : il recevrait 403 PLAN_FEATURE_API et plus
+ * aucune clé ne pourrait être créée) — changer d'abord leur offre, ou leur rendre l'API par une surcharge.
+ */
 export async function savePlan(id: string | null, input: z.input<typeof planSchema>): Promise<Result> {
   const session = await requireSuperAdmin();
   const parsed = planSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, PLAN_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const admin = createAdminClient();
+  if (id && !parsed.data.limits.api_access) {
+    const losing = await privateFleetsLosingApi(admin, id, parsed.data.limits);
+    if (losing === null) return { ok: false, error: "Vérification impossible pour le moment\u00a0: réessayez." };
+    if (losing > 0) {
+      const clients = `${losing} client${losing > 1 ? "s" : ""} Flotte Privée`;
+      return {
+        ok: false,
+        error: `${ERROR_MESSAGES.PRIVATE_FLEET_PLAN_INVALID} ${clients} sur cette offre\u00a0: changez d'abord leur offre, ou rendez-leur l'API par une surcharge («\u00a0Offre & limites\u00a0» de leur fiche).`,
+        fieldErrors: { "limits.api_access": `Utilisée par ${clients}` },
+      };
+    }
+  }
   const { error } = id ? await admin.from("plans").update(parsed.data as never).eq("id", id) : await admin.from("plans").insert(parsed.data as never);
   if (error) return { ok: false, error: error.code === "23505" ? "Code déjà utilisé." : "Enregistrement impossible." };
   await audit({ actorUserId: session.user.id, actorType: "super_admin", action: id ? "plan.updated" : "plan.created", entityType: "plans", entityId: id ?? parsed.data.code });

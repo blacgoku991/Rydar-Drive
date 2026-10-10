@@ -1,5 +1,5 @@
 import { apiRideCreateSchema, estimatePrice, fieldErrors, matchFixedFare, type PricingRule } from "@rydar/shared";
-import { ApiError, PUBLIC_RIDE_SELECT, handle, limitBrowserPhone, preflight, publicRide, readJson, rejectTenantFields, type ApiContext } from "@/lib/api/v1";
+import { ApiError, PUBLIC_RIDE_SELECT, handle, limitBrowserBooking, preflight, publicRide, readJson, rejectTenantFields, type ApiContext } from "@/lib/api/v1";
 import { apiPickupAt, geoConsumer, resolvePlaces, sitePrice } from "@/lib/api/trip";
 import { env } from "@/lib/env";
 import { rideRouteColumns } from "@/lib/geo/routing";
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
 
     const admin = createAdminClient();
     // Renvoi d'une réservation déjà créée : reconnu avant tout calcul (lieux, itinéraire, prix), il renvoie la course
-    // créée même si le prix a changé depuis et ne compte pas dans la limite par téléphone
+    // créée même si le prix a changé depuis et ne compte ni dans la limite par téléphone ni dans celle de l'organisation
     const idempotencyKey = req.headers.get("idempotency-key")?.slice(0, 100) || null;
     if (idempotencyKey) {
       const replay = await idempotentReplay(admin, ctx, idempotencyKey);
@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     const consumer = geoConsumer(ctx);
     const places = await resolvePlaces(ctx, v, consumer);
     const { pickup, dropoff } = places;
-    await limitBrowserPhone(ctx, v.customer.phone);
+    await limitBrowserBooking(ctx, v.customer.phone);
     const pickupAt = apiPickupAt(v, ctx.orgTimezone);
     const route = await rideRouteColumns(pickup, dropoff, consumer);
 

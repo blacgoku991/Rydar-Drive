@@ -7,10 +7,12 @@ import {
 import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Flotte Privée — super admin (lot L2, docs/FLOTTE-PRIVEE.md § 8 et § 9.4) : création (invitation + RPC, compensation),
-// clé du site, fiche recréée, changement d'offre de service, refus en Flotte Privée des actions du super admin et des
+// Flotte Privée — super admin (lot L2, docs/FLOTTE-PRIVEE.md § 8 et § 9.4) : création (compte neuf prouvé, invitation,
+// RPC, compensation limitée au compte créé ici), clé du site (débit réglable), fiche recréée, changement d'offre de
+// service (offre écrite par la RPC), offre qui perdrait l'API, refus en Flotte Privée des actions du super admin et des
 // clés / webhooks du tableau de bord (D16), insertKey extrait à l'identique, règles pures de la fiche. Vraies actions
-// serveur, Supabase simulé.
+// serveur, Supabase simulé ; Auth simulé comme GoTrue (admin.go : createUser refuse toute adresse connue, confirmée ou
+// non ; invite.go : l'invitation d'un compte non confirmé le renvoie, celle d'un compte confirmé est refusée).
 
 type Op = { client: string; table: string; action: string; values?: any; columns?: string; filters: Record<string, unknown> };
 type Reply = { data?: unknown; error?: unknown; count?: number } | undefined;
@@ -19,19 +21,24 @@ const h = vi.hoisted(() => ({
   ops: [] as Op[],
   handle: (() => undefined) as (op: Op) => Reply,
   auth: [] as [string, ...unknown[]][],
+  /** Comptes Auth par adresse (GoTrue simulé) */
+  accounts: new Map<string, { id: string; confirmed: boolean }>(),
   audits: [] as Record<string, any>[],
   revalidated: [] as string[],
   session: null as any,
   ctx: null as any,
-  existingUser: null as string | null,
   invitationEmails: [] as string[],
   sendOk: true,
+  createError: null as unknown,
   inviteError: null as unknown,
   deleteUserError: null as unknown,
   lastSignInAt: null as string | null,
   contactUpdates: [] as { id: string; input: { status: string; note: string } }[],
   webhookCalls: [] as { fn: string; org: string; args: Record<string, unknown> }[],
 }));
+
+/** Refus de GoTrue pour une adresse déjà connue (422 email_exists). */
+const EMAIL_EXISTS = { status: 422, code: "email_exists", message: "A user with this email address has already been registered" };
 
 function fakeDb(name: string) {
   const reply = (op: Op) => {
@@ -64,11 +71,24 @@ function fakeDb(name: string) {
     rpc: (fn: string, args: unknown) => reply({ client: name, table: `rpc:${fn}`, action: "rpc", values: args, filters: {} }),
     auth: {
       admin: {
-        createUser: async (a: unknown) => (h.auth.push(["createUser", a]), { data: { user: { id: NEW_USER } }, error: null }),
-        inviteUserByEmail: async (email: string, opts: unknown) => (
-          h.auth.push(["inviteUserByEmail", email, opts]),
-          h.inviteError ? { data: { user: null }, error: h.inviteError } : { data: { user: { id: NEW_USER } }, error: null }
-        ),
+        // admin.go (adminUserCreate) : toute adresse connue, confirmée ou non → 422 email_exists
+        createUser: async (a: { email: string; email_confirm?: boolean }) => {
+          h.auth.push(["createUser", a]);
+          if (h.createError) return { data: { user: null }, error: h.createError };
+          if (h.accounts.has(a.email)) return { data: { user: null }, error: EMAIL_EXISTS };
+          h.accounts.set(a.email, { id: NEW_USER, confirmed: a.email_confirm === true });
+          return { data: { user: { id: NEW_USER } }, error: null };
+        },
+        // invite.go : compte confirmé → email_exists ; compte NON confirmé → invitation renvoyée, compte EXISTANT renvoyé
+        inviteUserByEmail: async (email: string, opts: unknown) => {
+          h.auth.push(["inviteUserByEmail", email, opts]);
+          if (h.inviteError) return { data: { user: null }, error: h.inviteError };
+          const known = h.accounts.get(email);
+          if (known?.confirmed) return { data: { user: null }, error: EMAIL_EXISTS };
+          if (known) return { data: { user: { id: known.id } }, error: null };
+          h.accounts.set(email, { id: INVITED_USER, confirmed: false });
+          return { data: { user: { id: INVITED_USER } }, error: null };
+        },
         deleteUser: async (id: string) => (h.auth.push(["deleteUser", id]), { data: {}, error: h.deleteUserError }),
         getUserById: async (id: string) => ({
           data: { user: { id, last_sign_in_at: h.lastSignInAt, invited_at: "2026-10-09T10:00:00Z" } },
@@ -98,8 +118,10 @@ vi.mock("@/lib/org-context", () => ({ getOrgContext: async () => h.ctx }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin }));
 vi.mock("@/lib/errors", async () => await import("./errors"));
 vi.mock("@/lib/suspension", async () => await import("./suspension"));
-vi.mock("@/lib/member-invite", () => ({
-  findUserIdByEmail: async () => h.existingUser,
+vi.mock("@/lib/server-fetch", () => ({ serverFetch: fetch }));
+// Vrai module (likeExact, findUserIdByEmail), sauf l'envoi du lien
+vi.mock("@/lib/member-invite", async () => ({
+  ...(await import("./member-invite")),
   sendMemberInvitationEmail: async (email: string) => (h.invitationEmails.push(email), h.sendOk),
 }));
 vi.mock("@/lib/api-keys", async () => await import("./api-keys"));
@@ -122,6 +144,10 @@ vi.mock("@/app/admin/contacts/actions", () => ({
 
 const PEPPER = "pepper-de-test-assez-long";
 const NEW_USER = "44444444-4444-4444-8444-444444444444";
+/** Compte créé par une invitation seule (jamais par createPrivateFleet) */
+const INVITED_USER = "45454545-4545-4545-8545-454545454545";
+/** Compte d'une autre organisation (invitation jamais activée, chauffeur…) */
+const EXISTING = "99999999-9999-4999-8999-999999999999";
 const ORG = "11111111-1111-4111-8111-111111111111";
 const ACTOR = "77777777-7777-4777-8777-777777777777";
 const PLAN = "22222222-2222-4222-8222-222222222222";
@@ -145,6 +171,7 @@ const authCalls = (kind: string) => h.auth.filter((a) => a[0] === kind);
 beforeEach(() => {
   h.ops.length = 0;
   h.auth.length = 0;
+  h.accounts.clear();
   h.audits.length = 0;
   h.revalidated.length = 0;
   h.invitationEmails.length = 0;
@@ -153,8 +180,8 @@ beforeEach(() => {
   h.handle = () => undefined;
   h.session = { user: { id: ACTOR } };
   h.ctx = null;
-  h.existingUser = null;
   h.sendOk = true;
+  h.createError = null;
   h.inviteError = null;
   h.deleteUserError = null;
   h.lastSignInAt = null;
@@ -191,18 +218,24 @@ const created = (op: Op): Reply =>
     ? { data: { ok: true, code: "CREATED", organization_id: ORG, driver_id: DRIVER, fees: { ok: true, code: "APPLIED", message: "Frais appliqués." } } }
     : undefined;
 
-describe("createPrivateFleet : invitation puis RPC, tout ou rien", () => {
-  it("invitation par e-mail puis svc_platform_create_private_fleet (saisie, frais, termes des CGV) ; aucun audit doublé", async () => {
+/** Recherche du compte du propriétaire (public.users, égalité sans joker) : opération lue par le faux client. */
+const lookup = () => h.ops.find((o) => o.table === "users");
+
+describe("createPrivateFleet : compte neuf prouvé, invitation, puis RPC, tout ou rien", () => {
+  it("compte créé (createUser, non confirmé), invitation par e-mail, puis svc_platform_create_private_fleet ; aucun audit doublé", async () => {
     h.handle = created;
     const res = await fleet.createPrivateFleet(CREATE);
     expect(res).toMatchObject({ ok: true, id: ORG, name: "VTC Martin", contactUpdated: null });
     expect(res.ok && res.message).toBe(
-      "Invitation envoyée à paul@vtc-martin.fr : le client choisit son mot de passe, accepte les CGV dans son espace web, puis se connecte à l'application avec les mêmes identifiants.",
+      "Invitation envoyée à paul@vtc-martin.fr\u00a0: le client choisit son mot de passe, accepte les CGV dans son espace web, puis se connecte à l'application avec les mêmes identifiants.",
     );
-    expect(authCalls("inviteUserByEmail")).toEqual([
-      ["inviteUserByEmail", "paul@vtc-martin.fr", { data: { full_name: "Paul Martin" }, redirectTo: "https://app.rydar.test/auth/set-password" }],
+    // Recherche par égalité (jokers échappés), avant tout compte
+    expect(lookup()).toMatchObject({ client: "admin", columns: "id", filters: { "email~": "paul@vtc-martin.fr" } });
+    // Compte NEUF d'abord (preuve : Auth refuse toute adresse connue), puis le lien « choisir son mot de passe »
+    expect(h.auth).toEqual([
+      ["createUser", { email: "paul@vtc-martin.fr", email_confirm: false, user_metadata: { full_name: "Paul Martin" } }],
+      ["inviteUserByEmail", "paul@vtc-martin.fr", { redirectTo: "https://app.rydar.test/auth/set-password" }],
     ]);
-    expect(authCalls("createUser")).toEqual([]);
     expect(rpcCalls("svc_platform_create_private_fleet")).toEqual([
       {
         p_actor: ACTOR,
@@ -229,8 +262,8 @@ describe("createPrivateFleet : invitation puis RPC, tout ou rien", () => {
     expect(h.revalidated).toEqual(["/admin", "/admin/organizations"]);
   });
 
-  it("adresse qui a déjà un compte Rydar : refus clair AVANT toute invitation (phase 1)", async () => {
-    h.existingUser = "99999999-9999-4999-8999-999999999999";
+  it("adresse qui a déjà un compte Rydar : refus clair AVANT tout compte et toute invitation (phase 1)", async () => {
+    h.handle = (op) => (op.table === "users" ? { data: [{ id: EXISTING }] } : undefined);
     expect(await fleet.createPrivateFleet(CREATE)).toEqual({
       ok: false,
       error: "Cette adresse a déjà un compte Rydar\u00a0: demandez une autre adresse au client.",
@@ -238,15 +271,35 @@ describe("createPrivateFleet : invitation puis RPC, tout ou rien", () => {
     });
     expect(h.auth).toEqual([]);
     expect(rpcCalls("svc_platform_create_private_fleet")).toEqual([]);
+  });
 
-    // Compte créé entre-temps : Auth refuse l'invitation → même message
-    h.existingUser = null;
-    h.inviteError = { message: "A user with this email address has already been registered" };
-    expect(await fleet.createPrivateFleet(CREATE)).toMatchObject({ ok: false, error: "Cette adresse a déjà un compte Rydar\u00a0: demandez une autre adresse au client." });
+  it("recherche du compte en échec : refus, jamais lue comme « aucun compte » ; rien n'est créé", async () => {
+    h.handle = (op) => (op.table === "users" ? { error: { code: "PGRST000", message: "upstream request timeout" } } : undefined);
+    expect(await fleet.createPrivateFleet(CREATE)).toEqual({ ok: false, error: "Vérification impossible pour le moment\u00a0: réessayez." });
+    expect(h.auth).toEqual([]);
     expect(rpcCalls("svc_platform_create_private_fleet")).toEqual([]);
   });
 
-  it("identifiant pris ou offre sans API : refus avant l'invitation (aucun e-mail pour une création vouée à l'échec)", async () => {
+  it("compte Auth existant jamais confirmé (invitation jamais activée) absent de la recherche : createUser refuse, rien n'est invité ni supprimé", async () => {
+    // GoTrue simulé : une invitation seule renverrait ce compte (200) au lieu d'un refus — la création le prouve neuf
+    h.accounts.set("paul@vtc-martin.fr", { id: EXISTING, confirmed: false });
+    expect(await fleet.createPrivateFleet(CREATE)).toEqual({
+      ok: false,
+      error: "Cette adresse a déjà un compte Rydar\u00a0: demandez une autre adresse au client.",
+      fieldErrors: { ownerEmail: "Adresse déjà utilisée par un compte Rydar" },
+    });
+    expect(authCalls("inviteUserByEmail")).toEqual([]);
+    expect(authCalls("deleteUser")).toEqual([]);
+    expect(rpcCalls("svc_platform_create_private_fleet")).toEqual([]);
+    // Même refus pour un compte confirmé, et avec le mot de passe provisoire
+    h.accounts.set("paul@vtc-martin.fr", { id: EXISTING, confirmed: true });
+    expect(await fleet.createPrivateFleet({ ...CREATE, temporaryPassword: true, password: "Provisoire-2026" })).toMatchObject({
+      ok: false, fieldErrors: { ownerEmail: "Adresse déjà utilisée par un compte Rydar" },
+    });
+    expect(authCalls("deleteUser")).toEqual([]);
+  });
+
+  it("identifiant pris ou offre sans API : refus avant tout compte (aucun e-mail pour une création vouée à l'échec)", async () => {
     h.handle = (op) => (op.table === "organizations" ? { data: { id: "x" } } : undefined);
     expect(await fleet.createPrivateFleet(CREATE)).toMatchObject({ ok: false, fieldErrors: { slug: "Déjà utilisé" } });
     expect(h.auth).toEqual([]);
@@ -285,7 +338,15 @@ describe("createPrivateFleet : invitation puis RPC, tout ou rien", () => {
     expect(authCalls("inviteUserByEmail")).toEqual([]);
   });
 
-  it("refus de la RPC (champ) ou erreur levée : compte Auth créé supprimé (compensation)", async () => {
+  it("invitation impossible après la création du compte : compte créé ici supprimé, aucune RPC", async () => {
+    h.inviteError = { status: 500, code: "unexpected_failure", message: "Error sending invite email" };
+    const res = await fleet.createPrivateFleet(CREATE);
+    expect(res).toMatchObject({ ok: false, error: expect.stringContaining("Invitation impossible") });
+    expect(authCalls("deleteUser")).toEqual([["deleteUser", NEW_USER]]);
+    expect(rpcCalls("svc_platform_create_private_fleet")).toEqual([]);
+  });
+
+  it("refus de la RPC (champ) ou erreur levée : compte Auth créé supprimé (compensation), après relecture (ni adhésion ni fiche)", async () => {
     h.handle = (op) =>
       op.table === "rpc:svc_platform_create_private_fleet"
         ? { data: { ok: false, code: "INVALID", field: "platformFeeFixedCents", message: "Frais fixes par course : entre 0 et 1 000 €." } }
@@ -296,8 +357,13 @@ describe("createPrivateFleet : invitation puis RPC, tout ou rien", () => {
       fieldErrors: { platformFeeFixedCents: "Frais fixes par course : entre 0 et 1 000 €." },
     });
     expect(authCalls("deleteUser")).toEqual([["deleteUser", NEW_USER]]);
+    expect(h.ops.filter((o) => ["organization_users", "drivers"].includes(o.table)).map((o) => [o.table, o.filters])).toEqual([
+      ["organization_users", { user_id: NEW_USER }],
+      ["drivers", { user_id: NEW_USER }],
+    ]);
 
     h.auth.length = 0;
+    h.accounts.clear();
     h.handle = (op) =>
       op.table === "rpc:svc_platform_create_private_fleet" ? { error: { code: "P0001", message: "IDENTITY_BANNED: identité refusée" } } : undefined;
     const res = await fleet.createPrivateFleet(CREATE);
@@ -306,13 +372,56 @@ describe("createPrivateFleet : invitation puis RPC, tout ou rien", () => {
     expect(h.revalidated).toEqual([]);
   });
 
-  it("compensation impossible : le message demande de supprimer le compte avant de réessayer", async () => {
+  it("refus qui disent le compte déjà utilisé (OWNER_NOT_NEW, ALREADY_REGISTERED, SELF_NOT_ALLOWED, NOT_FOUND) : jamais de suppression", async () => {
+    for (const code of ["OWNER_NOT_NEW", "ALREADY_REGISTERED", "SELF_NOT_ALLOWED", "NOT_FOUND"]) {
+      h.auth.length = 0;
+      h.accounts.clear();
+      h.handle = (op) =>
+        op.table === "rpc:svc_platform_create_private_fleet" ? { data: { ok: false, code, field: "ownerEmail", message: `Refus ${code}.` } } : undefined;
+      const res = await fleet.createPrivateFleet(CREATE);
+      expect(res, code).toMatchObject({ ok: false, fieldErrors: { ownerEmail: `Refus ${code}.` } });
+      expect(res.ok === false && res.error, code).toContain("n'a pas été supprimé");
+      expect(authCalls("deleteUser"), code).toEqual([]);
+    }
+  });
+
+  it("erreur sans réponse de la RPC alors qu'elle a validé (adhésion ou fiche relue) : compte gardé, création peut-être aboutie", async () => {
+    for (const table of ["organization_users", "drivers"]) {
+      h.auth.length = 0;
+      h.accounts.clear();
+      h.handle = (op) =>
+        op.table === "rpc:svc_platform_create_private_fleet"
+          ? { error: { message: "TypeError: fetch failed" } }
+          : op.table === table
+            ? { data: [{ id: "lié" }] }
+            : undefined;
+      const res = await fleet.createPrivateFleet(CREATE);
+      expect(res, table).toMatchObject({ ok: false });
+      expect(res.ok === false && res.error, table).toContain("La création a peut-être abouti");
+      expect(authCalls("deleteUser"), table).toEqual([]);
+    }
+  });
+
+  it("relecture impossible ou suppression refusée : compte gardé, le message demande de vérifier puis de le supprimer", async () => {
+    h.handle = (op) =>
+      op.table === "rpc:svc_platform_create_private_fleet"
+        ? { error: { message: "TypeError: fetch failed" } }
+        : op.table === "organization_users"
+          ? { error: { code: "PGRST000", message: "timeout" } }
+          : undefined;
+    const unread = await fleet.createPrivateFleet(CREATE);
+    expect(unread.ok === false && unread.error).toContain("Le compte créé pour paul@vtc-martin.fr n'a pas été supprimé");
+    expect(authCalls("deleteUser")).toEqual([]);
+
+    h.auth.length = 0;
+    h.accounts.clear();
     h.deleteUserError = { message: "boom" };
     h.handle = (op) =>
       op.table === "rpc:svc_platform_create_private_fleet" ? { data: { ok: false, code: "SLUG_TAKEN", field: "slug", message: "Ce slug est déjà utilisé." } } : undefined;
     const res = await fleet.createPrivateFleet(CREATE);
     expect(res).toMatchObject({ ok: false, fieldErrors: { slug: "Ce slug est déjà utilisé." } });
-    expect(res.ok === false && res.error).toContain("n'a pas pu être supprimé");
+    expect(res.ok === false && res.error).toContain("n'a pas été supprimé");
+    expect(authCalls("deleteUser")).toEqual([["deleteUser", NEW_USER]]);
   });
 
   it("depuis une demande de contact : demande « traitée », note gardée et complétée", async () => {
@@ -343,10 +452,10 @@ describe("clé du site : après CGV et DPA, affichée une fois, révocable", () 
           ? { data: { id: KEY } }
           : undefined;
 
-  it("clé serveur : portées du serveur, aucune origine, audit super admin", async () => {
+  it("clé serveur : portées du serveur, aucune origine, débit par défaut, audit super admin", async () => {
     h.handle = ready;
     const res = await fleet.createPrivateFleetSiteKey(ORG, { kind: "server", name: "Site du client", origins: [] });
-    expect(res).toMatchObject({ ok: true, kind: "server", scopes: [...PRIVATE_FLEET_SITE_KEY_SCOPES.server], origins: [] });
+    expect(res).toMatchObject({ ok: true, kind: "server", scopes: [...PRIVATE_FLEET_SITE_KEY_SCOPES.server], origins: [], rateLimitPerMinute: 60 });
     const key = res.ok ? res.key : "";
     expect(key).toMatch(/^rdk_live_[a-z0-9]{8}_[A-Za-z0-9]{32}$/);
     const insert = writes("api_keys")[0]!;
@@ -365,18 +474,21 @@ describe("clé du site : après CGV et DPA, affichée une fois, révocable", () 
     expect(h.audits).toEqual([
       {
         organizationId: ORG, actorUserId: ACTOR, actorType: "super_admin", action: "api_key.created", entityType: "api_keys", entityId: KEY,
-        metadata: { prefix: insert.values.prefix, kind: "server", scopes: [...PRIVATE_FLEET_SITE_KEY_SCOPES.server], origins: [] },
+        metadata: { prefix: insert.values.prefix, kind: "server", scopes: [...PRIVATE_FLEET_SITE_KEY_SCOPES.server], origins: [], rate_limit_per_minute: 60 },
       },
     ]);
     // Acceptation lue pour la version en vigueur, CGV et accord de traitement
     expect(h.ops.find((o) => o.table === "legal_acceptances")?.filters).toEqual({ organization_id: ORG, version: ORG_LEGAL_VERSION, "document[]": ["cgv", "dpa"] });
   });
 
-  it("clé navigateur : création et devis seulement, origines https normalisées avec leur variante www", async () => {
+  it("clé navigateur : création et devis seulement, origines https normalisées avec leur variante www, débit de 1 000 par minute", async () => {
     h.handle = ready;
     const res = await fleet.createPrivateFleetSiteKey(ORG, { kind: "browser", name: "Formulaire", origins: ["https://MonSite.fr/"] });
     expect(res).toMatchObject({ ok: true, kind: "browser", scopes: [...BROWSER_KEY_SCOPES], origins: ["https://monsite.fr", "https://www.monsite.fr"] });
-    expect(writes("api_keys")[0]!.values).toMatchObject({ scopes: [...BROWSER_KEY_SCOPES], allowed_origins: ["https://monsite.fr", "https://www.monsite.fr"] });
+    // Bien au-dessus des 30 devis par minute et par adresse IP : deux visiteurs ne bloquent plus le site (constat de la revue)
+    expect(writes("api_keys")[0]!.values).toMatchObject({
+      scopes: [...BROWSER_KEY_SCOPES], allowed_origins: ["https://monsite.fr", "https://www.monsite.fr"], rate_limit_per_minute: 1_000,
+    });
 
     expect(await fleet.createPrivateFleetSiteKey(ORG, { kind: "browser", name: "Formulaire", origins: ["http://monsite.fr/reserver"] })).toMatchObject({
       ok: false,
@@ -396,6 +508,29 @@ describe("clé du site : après CGV et DPA, affichée une fois, révocable", () 
     h.handle = (op) => (op.table === "organizations" ? { data: { id: ORG, status: "suspended", private_fleet: true } } : ready(op));
     expect(await fleet.createPrivateFleetSiteKey(ORG, { kind: "server", name: "Site du client", origins: [] })).toMatchObject({ ok: false });
     expect(writes("api_keys")).toEqual([]);
+    expect(h.audits).toEqual([]);
+  });
+
+  it("débit réglable à la création : valeur saisie, bornes du type de clé (clé navigateur : 300 au moins), vide = défaut", async () => {
+    h.handle = ready;
+    expect(await fleet.createPrivateFleetSiteKey(ORG, { kind: "browser", name: "Formulaire", origins: ["https://monsite.fr"], rateLimitPerMinute: "2 500" })).toMatchObject({
+      ok: true, rateLimitPerMinute: 2_500,
+    });
+    expect(writes("api_keys")[0]!.values).toMatchObject({ rate_limit_per_minute: 2_500 });
+    expect(await fleet.createPrivateFleetSiteKey(ORG, { kind: "server", name: "Site", origins: [], rateLimitPerMinute: 600 })).toMatchObject({ ok: true, rateLimitPerMinute: 600 });
+    expect(await fleet.createPrivateFleetSiteKey(ORG, { kind: "server", name: "Site", origins: [], rateLimitPerMinute: "" })).toMatchObject({ ok: true, rateLimitPerMinute: 60 });
+
+    h.ops.length = 0;
+    h.audits.length = 0;
+    for (const [kind, rate] of [["browser", 60], ["browser", 299], ["server", 5], ["server", 10_001], ["server", "12,5"], ["browser", -1]] as const) {
+      const refused = await fleet.createPrivateFleetSiteKey(ORG, {
+        kind, name: "Site", origins: kind === "browser" ? ["https://monsite.fr"] : [], rateLimitPerMinute: rate,
+      });
+      expect(refused, `${kind} ${rate}`).toMatchObject({ ok: false, fieldErrors: { rateLimitPerMinute: expect.stringContaining("Nombre entier de") } });
+      expect(refused.ok === false && refused.error, `${kind} ${rate}`).toMatch(/^Débit \(requêtes par minute\)\u00a0: nombre entier de /);
+    }
+    // Refus avant toute lecture ou écriture
+    expect(h.ops).toEqual([]);
     expect(h.audits).toEqual([]);
   });
 
@@ -476,11 +611,11 @@ describe("setPrivateFleet : changement d'offre de service (PackConversionDialog)
       ? { data: { id: ORG, plan_id: PLAN, limits_override: null, plan: planLimits ? { limits: planLimits } : null } }
       : undefined;
 
-  it("sortie vers une centrale : modèle, taux, mode et note transmis ; offre choisie appliquée après la bascule", async () => {
+  it("sortie vers une centrale : modèle, taux, mode, note ET offre choisie transmis à la RPC (une transaction) ; rien d'écrit à part", async () => {
     const NEXT = "88888888-8888-4888-8888-888888888888";
     h.handle = (op) =>
       op.table === "plans"
-        ? { data: { id: NEXT, is_active: true } }
+        ? { data: { id: NEXT, name: "Pro", is_active: true } }
         : op.table === "rpc:svc_platform_set_private_fleet"
           ? { data: { ok: true, code: "PRIVATE_FLEET_DISABLED", fees: { ok: true, code: "APPLIED", message: "Modèle d'exploitation enregistré." }, open_rides: 2 } }
           : orgRow()(op);
@@ -490,32 +625,50 @@ describe("setPrivateFleet : changement d'offre de service (PackConversionDialog)
     expect(res).toEqual({
       ok: true,
       code: "PRIVATE_FLEET_DISABLED",
-      planApplied: true,
       message:
-        "Organisation passée en centrale à commission. Modèle d'exploitation enregistré. 2 réservations en recherche relancées avec le nouveau profil de dispatch.",
+        "Organisation passée en centrale à commission. Offre «\u00a0Pro\u00a0» appliquée. Modèle d'exploitation enregistré. 2 réservations en recherche relancées avec le nouveau profil de dispatch.",
     });
     expect(rpcCalls("svc_platform_set_private_fleet")).toEqual([
       {
         p_org: ORG, p_actor: ACTOR, p_enabled: false, p_consent_note: "E-mail du client du 09/10/2026", p_dispatch_model: "centrale", p_percent: 5,
         p_fixed_cents: 0, p_fee_mode: "consent", p_effective_on: null, p_org_legal_version: ORG_LEGAL_VERSION,
-        p_org_legal_effective_on: ORG_LEGAL_EFFECTIVE_AT, p_app_url: "https://app.rydar.test",
+        p_org_legal_effective_on: ORG_LEGAL_EFFECTIVE_AT, p_app_url: "https://app.rydar.test", p_set_plan: true, p_plan_id: NEXT,
       },
     ]);
-    // L'offre après la bascule (jamais avant : un refus laisserait une Flotte Privée sur une offre sans API)
-    const order = h.ops.map((o) => (o.table === "organizations" && o.action === "update" ? "plan" : o.table)).filter((t) => t === "plan" || t.startsWith("rpc:"));
-    expect(order).toEqual(["rpc:svc_platform_set_private_fleet", "plan"]);
-    expect(writes("organizations")[0]!.values).toEqual({ plan_id: NEXT });
-    expect(h.audits).toEqual([expect.objectContaining({ action: "organization.plan_changed", metadata: { planId: NEXT, previousPlanId: PLAN, reason: "private_fleet_disabled" } })]);
+    // Offre écrite par la RPC après le drapeau, annulée avec un refus des frais (constat de la revue : jamais une seconde
+    // écriture qui pourrait échouer après la bascule) ; journal écrit en base
+    expect(h.ops.filter((o) => ["insert", "update", "delete"].includes(o.action))).toEqual([]);
+    expect(h.audits).toEqual([]);
   });
 
-  it("sortie en flotte, même offre, taux inchangés : aucun taux envoyé, offre non réécrite", async () => {
+  it("sortie en flotte, même offre, taux inchangés : aucun taux envoyé, offre non transmise", async () => {
     h.handle = (op) =>
       op.table === "rpc:svc_platform_set_private_fleet" ? { data: { ok: true, code: "PRIVATE_FLEET_DISABLED", fees: null, open_rides: 0 } } : orgRow()(op);
-    expect(await fleet.setPrivateFleet(ORG, { target: "fleet", planId: PLAN, consentNote: "Demande écrite du 09/10" })).toMatchObject({
-      ok: true, planApplied: null, message: "Organisation passée en flotte standard.",
+    expect(await fleet.setPrivateFleet(ORG, { target: "fleet", planId: PLAN, consentNote: "Demande écrite du 09/10" })).toEqual({
+      ok: true, code: "PRIVATE_FLEET_DISABLED", message: "Organisation passée en flotte standard.",
     });
-    expect(rpcCalls("svc_platform_set_private_fleet")[0]).toMatchObject({ p_enabled: false, p_dispatch_model: null, p_percent: null, p_fixed_cents: null });
+    expect(rpcCalls("svc_platform_set_private_fleet")[0]).toMatchObject({
+      p_enabled: false, p_dispatch_model: null, p_percent: null, p_fixed_cents: null, p_set_plan: false, p_plan_id: null,
+    });
+    expect(h.ops.some((o) => o.table === "plans")).toBe(false);
     expect(writes("organizations")).toEqual([]);
+  });
+
+  it("sortie « sans offre » assumée : transmise à la RPC (aucune limite), offre inactive refusée avant", async () => {
+    h.handle = (op) =>
+      op.table === "rpc:svc_platform_set_private_fleet" ? { data: { ok: true, code: "PRIVATE_FLEET_DISABLED", fees: null, open_rides: 0 } } : orgRow()(op);
+    expect(await fleet.setPrivateFleet(ORG, { target: "fleet", planId: "", acceptNoPlan: true, consentNote: "Demande écrite du 09/10" })).toMatchObject({
+      ok: true, message: "Organisation passée en flotte standard. Sans offre\u00a0: aucune limite.",
+    });
+    expect(rpcCalls("svc_platform_set_private_fleet")[0]).toMatchObject({ p_set_plan: true, p_plan_id: null });
+
+    h.ops.length = 0;
+    h.handle = (op) => (op.table === "plans" ? { data: { id: "x", name: "Ancienne", is_active: false } } : orgRow()(op));
+    const retired = "77777777-7777-4777-8777-000000000001";
+    expect(await fleet.setPrivateFleet(ORG, { target: "fleet", planId: retired, consentNote: "Demande écrite du 09/10" })).toMatchObject({
+      ok: false, fieldErrors: { planId: "Offre introuvable ou inactive" },
+    });
+    expect(rpcCalls("svc_platform_set_private_fleet")).toEqual([]);
   });
 
   it("refus des frais (préavis) : rien n'est écrit, date au plus tôt renvoyée ; note ou offre manquante : rien n'est appelé", async () => {
@@ -614,6 +767,54 @@ describe("fiche de l'organisation : refus en Flotte Privée", () => {
     expect(await adminActions.updateOrganizationPlan(ORG, PLAN, {})).toEqual({ ok: true });
     expect(h.ops.some((o) => o.table === "plans")).toBe(false);
     expect(writes("organizations")[0]!.values).toEqual({ plan_id: PLAN, limits_override: {} });
+  });
+
+  it("offre qui perdrait l'API alors que des clients Flotte Privée l'utilisent : refusée avec leur nombre, rien n'est écrit", async () => {
+    const planInput = (api: boolean) => ({
+      code: "pack_flotte", name: "Pack Flotte Privée", description: "", price_monthly_cents: 0, price_yearly_cents: 0,
+      limits: {
+        max_drivers: null, max_rides_per_month: null, max_admins: null, api_access: api, booking_site: false, custom_domain: false,
+        advanced_stats: false, history_days: null,
+      },
+      features: [], is_active: true, is_public: false, highlighted: false,
+    });
+    // Offre actuelle avec l'API ; trois clients : un sans surcharge, un dont la surcharge rend l'API, un dont la surcharge la coupe
+    const clients = [
+      { id: "a", limits_override: null },
+      { id: "b", limits_override: { api_access: true } },
+      { id: "c", limits_override: { api_access: false, max_rides_per_month: 50 } },
+    ];
+    const using = (rows: unknown[], current: Record<string, unknown> = { api_access: true }) => (op: Op): Reply =>
+      op.table === "plans" && op.action === "select"
+        ? { data: { limits: current } }
+        : op.table === "organizations" && op.action === "select"
+          ? { data: rows }
+          : undefined;
+
+    h.handle = using(clients);
+    const refused = await adminActions.savePlan(PLAN, planInput(false));
+    expect(refused).toMatchObject({ ok: false, fieldErrors: { "limits.api_access": "Utilisée par 2 clients Flotte Privée" } });
+    expect(refused.ok === false && refused.error).toBe(
+      `${ERROR_MESSAGES.PRIVATE_FLEET_PLAN_INVALID} 2 clients Flotte Privée sur cette offre\u00a0: changez d'abord leur offre, ou rendez-leur l'API par une surcharge («\u00a0Offre & limites\u00a0» de leur fiche).`,
+    );
+    // Clients Flotte Privée non archivés de CETTE offre
+    expect(h.ops.find((o) => o.table === "organizations")?.filters).toEqual({ plan_id: PLAN, private_fleet: true });
+    expect(writes("plans")).toEqual([]);
+    expect(h.audits).toEqual([]);
+
+    // Tous rendus à l'API par leur surcharge, offre déjà sans API, ou API gardée : enregistrée
+    for (const [handle, api] of [[using([clients[1]]), false], [using(clients, { api_access: false }), false], [using(clients), true]] as const) {
+      h.ops.length = 0;
+      h.handle = handle;
+      expect(await adminActions.savePlan(PLAN, planInput(api))).toEqual({ ok: true });
+      expect(writes("plans")).toHaveLength(1);
+    }
+    // Nouvelle offre : aucun client, aucun contrôle ; lecture impossible : refus
+    h.ops.length = 0;
+    expect(await adminActions.savePlan(null, planInput(false))).toEqual({ ok: true });
+    expect(h.ops.some((o) => o.table === "organizations")).toBe(false);
+    h.handle = (op) => (op.table === "organizations" ? { error: { code: "PGRST000", message: "timeout" } } : using(clients)(op));
+    expect(await adminActions.savePlan(PLAN, planInput(false))).toEqual({ ok: false, error: "Vérification impossible pour le moment\u00a0: réessayez." });
   });
 
   it("réseau partagé d'une Flotte Privée sans adhésion : message clair, pas d'erreur générique", async () => {
@@ -839,6 +1040,13 @@ describe("private-fleet-state : règles de la fiche", () => {
     expect(state.ownerDriverState({ status: "active", deleted_at: "2026-10-01", user_id: null })).toMatchObject({ label: "Supprimée (compte chauffeur supprimé)", receives: false });
     expect(state.ownerDriverState({ status: "active", deleted_at: null, user_id: "u" })).toEqual({ label: "Active", tone: "green", receives: true });
     expect(state.ownerDriverState({ status: "suspended", deleted_at: null, user_id: "u" })).toMatchObject({ receives: false });
+    // Débit d'une clé du site : vide = défaut du type ; entier dans les bornes du type (espaces de milliers acceptés)
+    expect(state.siteKeyRate("server", undefined)).toEqual({ ok: true, value: 60 });
+    expect(state.siteKeyRate("browser", " ")).toEqual({ ok: true, value: 1_000 });
+    expect(state.siteKeyRate("browser", "1\u202f200")).toEqual({ ok: true, value: 1_200 });
+    expect(state.siteKeyRate("server", 10)).toEqual({ ok: true, value: 10 });
+    for (const bad of [9, 10_001, 1.5, "abc", true]) expect(state.siteKeyRate("server", bad).ok).toBe(false);
+    expect(state.siteKeyRate("browser", 299)).toEqual({ ok: false, error: "Nombre entier de 300 à 10\u202f000 (clé navigateur)" });
     expect(state.siteKeyKind([])).toBe("server");
     expect(state.siteKeyKind(null)).toBe("server");
     expect(state.siteKeyKind(["https://monsite.fr"])).toBe("browser");

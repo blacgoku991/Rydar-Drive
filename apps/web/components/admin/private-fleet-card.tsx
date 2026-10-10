@@ -97,7 +97,7 @@ export async function PrivateFleetCard({ db, org, members, plans, schedule, toda
       .maybeSingle(),
     db
       .from("api_keys")
-      .select("id, name, prefix, last4, allowed_origins, created_at, last_used_at, expires_at, revoked_at")
+      .select("id, name, prefix, last4, allowed_origins, rate_limit_per_minute, created_at, last_used_at, expires_at, revoked_at")
       .eq("organization_id", org.id)
       .order("created_at", { ascending: false }),
     db
@@ -168,8 +168,8 @@ export async function PrivateFleetCard({ db, org, members, plans, schedule, toda
   const text = (v: unknown) => (typeof v === "string" && v ? v : null);
 
   const keyRows: SiteKeyRow[] = ((keys.data ?? []) as {
-    id: string; name: string; prefix: string; last4: string; allowed_origins: string[] | null; created_at: string; last_used_at: string | null;
-    expires_at: string | null; revoked_at: string | null;
+    id: string; name: string; prefix: string; last4: string; allowed_origins: string[] | null; rate_limit_per_minute: number; created_at: string;
+    last_used_at: string | null; expires_at: string | null; revoked_at: string | null;
   }[]).map((k) => ({
     id: k.id,
     name: k.name,
@@ -177,6 +177,7 @@ export async function PrivateFleetCard({ db, org, members, plans, schedule, toda
     last4: k.last4,
     kind: siteKeyKind(k.allowed_origins),
     origins: k.allowed_origins ?? [],
+    rateLimitPerMinute: k.rate_limit_per_minute,
     lastUsedLabel: k.last_used_at ? `utilisée ${formatRelative(k.last_used_at, now)}` : "jamais utilisée",
     createdLabel: `créée le ${formatDate(k.created_at, timeZone)}`,
     state: k.revoked_at ? "revoked" : k.expires_at && Date.parse(k.expires_at) < now.getTime() ? "expired" : "active",

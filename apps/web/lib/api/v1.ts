@@ -23,7 +23,8 @@ export type ApiContext = {
   rate: { limit: number; remaining: number; resetAt: number };
   /**
    * Clé « navigateur » (origines autorisées) : portées BROWSER_KEY_SCOPES seulement (création de courses et devis),
-   * prix et paiement fixés par la centrale, limites par IP (BROWSER_IP_LIMITS) et par téléphone (BROWSER_PHONE_LIMIT)
+   * prix et paiement fixés par la centrale, limites par IP (BROWSER_IP_LIMITS), par téléphone (BROWSER_PHONE_LIMIT) et
+   * par organisation (BROWSER_ORG_CREATE_LIMIT), débit de la clé compté par portée (BROWSER_RATE_BUCKETS)
    */
   browser: boolean;
 };
@@ -44,10 +45,10 @@ type WindowLimit = { id: string; limit: number; windowSec: number };
 
 /**
  * Clé « navigateur » (publique : réservations factices et sonneries en rafale possibles) : limites par adresse IP
- * (IPv6 groupée par /64) et par organisation, vérifiées AVANT le débit de la clé (un visiteur refusé ne consomme pas
- * le débit partagé par tous les visiteurs du site). Mêmes plafonds que le mini-site (app/book/[slug]/actions.ts et son
- * devis app/api/book/[slug]/quote). Clé serveur : son seul débit. Une portée ajoutée à BROWSER_KEY_SCOPES sans ses
- * limites ne compile pas.
+ * (IPv6 groupée par /64), compteurs propres à chaque organisation, vérifiées AVANT le débit de la clé (un visiteur
+ * refusé ne consomme pas le débit partagé par tous les visiteurs du site). Mêmes plafonds que le mini-site
+ * (app/book/[slug]/actions.ts et son devis app/api/book/[slug]/quote). Clé serveur : son seul débit. Une portée ajoutée
+ * à BROWSER_KEY_SCOPES sans ses limites ne compile pas.
  */
 export const BROWSER_IP_LIMITS: Record<BrowserScope, readonly WindowLimit[]> = {
   "rides:create": [
@@ -60,8 +61,22 @@ export const BROWSER_IP_LIMITS: Record<BrowserScope, readonly WindowLimit[]> = {
   ],
 };
 
-/** Clé « navigateur » : réservations par téléphone du client et par organisation (même plafond que le mini-site). */
+/**
+ * Débit d'une clé « navigateur » (rate_limit_per_minute) compté PAR PORTÉE : les devis (plusieurs par réservation,
+ * jusqu'à 30 par minute et par adresse) ont leur propre compteur et ne privent jamais les réservations du débit de la
+ * clé. Clé serveur : un seul compteur, inchangé.
+ */
+export const BROWSER_RATE_BUCKETS: Record<BrowserScope, string> = { "rides:create": "", "rides:quote": ":quote" };
+
+/** Clé « navigateur » : réservations par téléphone du client (même plafond que le mini-site, booking:phone). */
 export const BROWSER_PHONE_LIMIT = { limit: 3, windowSec: 3_600 } as const;
+
+/**
+ * Clé « navigateur » : réservations par organisation, toutes adresses IP, tous numéros et toutes ses clés navigateur
+ * confondus (même plafond que le mini-site, booking:org) : des adresses et des numéros renouvelés ne dépassent jamais
+ * 60 réservations par heure (offres au chauffeur, quota mensuel de l'offre).
+ */
+export const BROWSER_ORG_CREATE_LIMIT = { limit: 60, windowSec: 3_600 } as const;
 
 /** Refus d'une portée hors BROWSER_KEY_SCOPES : même texte que la création de la clé (apiKeyCreateSchema). */
 const BROWSER_SCOPE_MESSAGE =
@@ -105,7 +120,8 @@ export function preflight(req: Request) {
 
 /**
  * Authentifie la clé API : préfixe → hash HMAC (temps constant) → révocation/expiration → tenant actif → scope → offre
- * → clé « navigateur » : portée (BROWSER_KEY_SCOPES), origine, limites par IP → débit de la clé.
+ * → clé « navigateur » : portée (BROWSER_KEY_SCOPES), origine, limites par IP → débit de la clé (clé « navigateur » :
+ * compteur de la portée, BROWSER_RATE_BUCKETS).
  */
 export async function authenticate(req: Request, scope: string): Promise<ApiContext> {
   const requestId = randomUUID();
@@ -149,6 +165,7 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
   const allowedOrigins = (k.allowed_origins ?? []) as string[];
   const browser = allowedOrigins.length > 0;
   let allowedOrigin: string | null = null;
+  let rateKey = `api:${k.id}`;
   if (browser) {
     if (!isBrowserScope(scope)) throw fail(new ApiError(403, "INSUFFICIENT_SCOPE", BROWSER_SCOPE_MESSAGE));
     if (!origin || !allowedOrigins.includes(origin)) {
@@ -165,9 +182,10 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
         allowedOrigin,
       );
     }
+    rateKey += BROWSER_RATE_BUCKETS[scope];
   }
 
-  const rl = await rateLimit(`api:${k.id}`, k.rate_limit_per_minute, 60);
+  const rl = await rateLimit(rateKey, k.rate_limit_per_minute, 60);
   const rate = { limit: rl.limit, remaining: rl.remaining, resetAt: rl.resetAt };
   if (!rl.ok) throw fail(new ApiError(429, "RATE_LIMITED", "Trop de requêtes pour cette clé.", undefined, retryAfter(rl.resetAt)), allowedOrigin);
   return {
@@ -178,14 +196,19 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
 }
 
 /**
- * Clé « navigateur » : réservations par téléphone du client (BROWSER_PHONE_LIMIT), 429 + Retry-After au-delà. Clé
- * serveur : aucune limite par téléphone (son seul débit).
+ * Clé « navigateur » : réservations par téléphone du client (BROWSER_PHONE_LIMIT) PUIS par organisation
+ * (BROWSER_ORG_CREATE_LIMIT), dans cet ordre comme le mini-site : une réservation refusée pour son numéro ne consomme
+ * pas le plafond de l'organisation. 429 + Retry-After au-delà. Clé serveur : ni l'un ni l'autre (son seul débit).
  */
-export async function limitBrowserPhone(ctx: ApiContext, phone: string) {
+export async function limitBrowserBooking(ctx: ApiContext, phone: string) {
   if (!ctx.browser) return;
-  const r = await rateLimit(`api:phone:${ctx.orgId}:${phone}`, BROWSER_PHONE_LIMIT.limit, BROWSER_PHONE_LIMIT.windowSec);
-  if (!r.ok) {
-    throw new ApiError(429, "RATE_LIMITED", "Trop de réservations pour ce numéro de téléphone : réessayez plus tard.", undefined, retryAfter(r.resetAt));
+  const byPhone = await rateLimit(`api:phone:${ctx.orgId}:${phone}`, BROWSER_PHONE_LIMIT.limit, BROWSER_PHONE_LIMIT.windowSec);
+  if (!byPhone.ok) {
+    throw new ApiError(429, "RATE_LIMITED", "Trop de réservations pour ce numéro de téléphone : réessayez plus tard.", undefined, retryAfter(byPhone.resetAt));
+  }
+  const byOrg = await rateLimit(`api:org:${ctx.orgId}:create`, BROWSER_ORG_CREATE_LIMIT.limit, BROWSER_ORG_CREATE_LIMIT.windowSec);
+  if (!byOrg.ok) {
+    throw new ApiError(429, "RATE_LIMITED", "Trop de réservations reçues par ce site en une heure : réessayez plus tard.", undefined, retryAfter(byOrg.resetAt));
   }
 }
 

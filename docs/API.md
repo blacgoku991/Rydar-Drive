@@ -22,21 +22,21 @@ Envoyez-la dans l'en-tête `Authorization: Bearer rdk_live_…`, ou `X-API-Key`.
   - **création de courses et devis seulement** : elle ne peut avoir que les permissions `rides:create` et `rides:quote` ; toute autre route (`GET /ping`, lecture, annulation, webhooks) répond **403 `INSUFFICIENT_SCOPE`** ;
   - **origine listée obligatoire** : en-tête `Origin` absent ou absent de la liste → **403 `ORIGIN_NOT_ALLOWED`**. Seules les origines listées reçoivent les en-têtes CORS. Attention : hors d'un navigateur (`curl`, serveur), l'en-tête `Origin` se forge ; la vraie protection d'une clé « navigateur » est sa portée (création de courses et devis seulement, prix et paiement ignorés, rejeu réduit) et ses limites par adresse IP, pas l'origine ;
   - **prix et paiement ignorés** : `price_cents` et `payment_method` de la requête ne sont pas pris en compte ; le prix est calculé avec la grille de l'organisation (ou vérifié, avec `expected_price_cents`, voir [Prix attendu](#prix-attendu--expected_price_cents)) et le moyen de paiement est `card` (valeur par défaut) ;
-  - **limites par adresse IP et par téléphone** : voir [Limites d'une clé « navigateur »](#limites-dune-clé--navigateur-).
+  - **limites par adresse IP, par téléphone et pour le site**, débit compté à part pour les devis et pour les réservations : voir [Limites d'une clé « navigateur »](#limites-dune-clé--navigateur-).
 - Côté Rydar, seul un hash **HMAC-SHA-256** (poivré) de la clé est stocké, dans une table inaccessible aux clients. La comparaison se fait en temps constant.
 - Chaque clé a des **permissions** : `rides:create`, `rides:read`, `rides:cancel`, `rides:quote` (devis, voir plus bas), `webhooks:manage` (gérer les webhooks, voir plus bas). Elle a aussi un **débit** (60 requêtes/min par défaut) et peut recevoir une date d'expiration. Elle se révoque instantanément depuis le dashboard.
-- **Limite par adresse IP** (IPv6 regroupée par /64) pour les requêtes non authentifiées : au-delà de 20 échecs d'authentification par minute (clé absente, inconnue ou invalide), les suivants reçoivent 429 et ne sont plus journalisés. Une clé serveur valide n'a que **son propre débit**, quelle que soit l'adresse (un serveur ou un intégrateur qui sert plusieurs organisations depuis une même IP n'est pas plafonné) ; une clé « navigateur » a en plus ses limites par adresse IP et par téléphone. Les refus d'une clé reconnue (révoquée, expirée, origine non autorisée, débit dépassé…) gardent leur réponse, mais sont journalisés au plus 20 fois par minute et par clé.
+- **Limite par adresse IP** (IPv6 regroupée par /64) pour les requêtes non authentifiées : au-delà de 20 échecs d'authentification par minute (clé absente, inconnue ou invalide), les suivants reçoivent 429 et ne sont plus journalisés. Une clé serveur valide n'a que **son propre débit**, quelle que soit l'adresse (un serveur ou un intégrateur qui sert plusieurs organisations depuis une même IP n'est pas plafonné) ; une clé « navigateur » a en plus ses limites par adresse IP, par téléphone et pour le site. Les refus d'une clé reconnue (révoquée, expirée, origine non autorisée, débit dépassé…) gardent leur réponse, mais sont journalisés au plus 20 fois par minute et par clé.
 
 ### Limites d'une clé « navigateur »
 
-Une clé « navigateur » est publique : n'importe qui peut la copier depuis le site et envoyer de fausses réservations. En plus du débit de la clé, chaque adresse IP (IPv6 regroupée par /64) est limitée, **site par site** (organisation par organisation), avec les mêmes plafonds que le mini-site :
+Une clé « navigateur » est publique : n'importe qui peut la copier depuis le site et envoyer de fausses réservations. En plus du débit de la clé, chaque adresse IP (IPv6 regroupée par /64) est limitée, **site par site** (organisation par organisation), et les réservations le sont aussi pour tout le site, avec les mêmes plafonds que le mini-site :
 
 | Requête | Limite |
 | --- | --- |
-| `POST /rides` | 6 par 10 minutes et 20 par jour, par adresse IP ; 3 par heure pour un même téléphone client (numéro normalisé, quelle que soit l'adresse) |
+| `POST /rides` | 6 par 10 minutes et 20 par jour, par adresse IP ; 3 par heure pour un même téléphone client (numéro normalisé, quelle que soit l'adresse) ; 60 par heure pour le site (toutes adresses, tous numéros et toutes ses clés « navigateur » confondus), vérifiée après celle du téléphone |
 | `POST /quotes` | 30 par minute et 600 par jour, par adresse IP (une réservation demande souvent plusieurs devis) |
 
-Au-delà : **429 `RATE_LIMITED`** avec l'en-tête `Retry-After` (secondes). Les limites par adresse sont vérifiées **avant** le débit de la clé : un visiteur bloqué ne consomme pas le débit partagé par tous les visiteurs du site. Les jours et les fenêtres sont des périodes fixes (la journée se termine à minuit UTC). Une fois l'origine vérifiée, les réponses d'erreur portent aussi les en-têtes CORS, et `Access-Control-Expose-Headers` rend `Retry-After`, `X-Request-Id` et `X-RateLimit-*` lisibles par le JavaScript du site. Un renvoi avec la même `Idempotency-Key` (voir plus bas) ne compte pas dans la limite par téléphone. Les clés serveur n'ont aucune de ces limites.
+Au-delà : **429 `RATE_LIMITED`** avec l'en-tête `Retry-After` (secondes). Les limites par adresse sont vérifiées **avant** le débit de la clé : un visiteur bloqué ne consomme pas le débit partagé par tous les visiteurs du site. Le débit d'une clé « navigateur » est compté **à part pour les devis et pour les réservations** (chacun dispose du débit réglé sur la clé) : des devis en rafale ne bloquent jamais les réservations. Les jours et les fenêtres sont des périodes fixes (la journée se termine à minuit UTC). Une fois l'origine vérifiée, les réponses d'erreur portent aussi les en-têtes CORS, et `Access-Control-Expose-Headers` rend `Retry-After`, `X-Request-Id` et `X-RateLimit-*` lisibles par le JavaScript du site. Un renvoi avec la même `Idempotency-Key` (voir plus bas) ne compte ni dans la limite par téléphone ni dans celle du site. Les clés serveur n'ont aucune de ces limites (un seul compteur : le débit de la clé).
 
 Test rapide :
 
@@ -206,7 +206,7 @@ Format commun :
 | 409 | `IDEMPOTENCY_KEY_CONFLICT` (valeur déjà utilisée par une autre clé), `PRICE_CHANGED` (prix attendu différent du prix recalculé : `details.price_cents`, rien n'est créé), codes métier d'annulation (ex. course déjà terminée), `WEBHOOK_LIMIT` (10 adresses au plus), `WEBHOOK_DISABLED` (test d'une adresse désactivée) |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 422 | `VALIDATION_ERROR`, `PICKUP_NOT_GEOCODED`, `INVALID_COORDINATES`, `PICKUP_IN_PAST`, `PICKUP_TOO_FAR`, `WEBHOOK_INVALID_URL`, `WEBHOOK_INVALID_EVENTS`, `WEBHOOK_INVALID_SECRET` |
-| 429 | `RATE_LIMITED` (débit de la clé, limites par adresse IP ou par téléphone d'une clé « navigateur », ou trop d'échecs d'authentification depuis une même adresse), avec l'en-tête `Retry-After` |
+| 429 | `RATE_LIMITED` (débit de la clé, limites par adresse IP, par téléphone ou pour le site d'une clé « navigateur », ou trop d'échecs d'authentification depuis une même adresse), avec l'en-tête `Retry-After` |
 
 Chaque réponse porte `X-Request-Id` et `X-RateLimit-Limit` / `-Remaining` / `-Reset`. Les requêtes sont journalisées (`api_logs`, 90 jours) et visibles dans **Intégrations**, sauf les échecs d'authentification au-delà de 20 par minute et par IP, et les refus d'une clé reconnue au-delà de 20 par minute et par clé.
 
@@ -416,12 +416,12 @@ Un client **Flotte Privée** est un chauffeur VTC indépendant : son organisatio
 
 ### Clés
 
-Les clés sont créées par l'équipe Rydar sur la fiche du client, une fois les CGV et l'accord de traitement des données (DPA) acceptés au nom de son organisation. La clé complète n'est affichée **qu'une seule fois**. Le client voit ses clés en lecture seule dans **Mon site** ; création et révocation passent par l'équipe Rydar.
+Les clés sont créées par l'équipe Rydar sur la fiche du client, une fois les CGV et l'accord de traitement des données (DPA) acceptés au nom de son organisation. La clé complète n'est affichée **qu'une seule fois**. Le client voit ses clés en lecture seule dans **Mon site** ; création et révocation passent par l'équipe Rydar. Le **débit** se règle à la création : 60 requêtes par minute par défaut pour une clé serveur ; 1 000 par défaut (300 au moins) pour une clé navigateur, compté à part pour les devis et pour les réservations, qui restent plafonnées à 60 par heure pour le site.
 
 | Clé | Permissions | Usage |
 | --- | --- | --- |
 | **Serveur** (recommandée) | `rides:create`, `rides:read`, `rides:cancel`, `rides:quote`, `webhooks:manage` | Back-end du site : devis, réservations, suivi et annulation ; le site enregistre lui-même ses webhooks (`POST /webhooks`) |
-| **Navigateur** | `rides:create`, `rides:quote` | JavaScript du site, depuis ses origines https (avec leur variante `www`) ; [limites par adresse IP et par téléphone](#limites-dune-clé--navigateur-). Ni lecture, ni webhooks : sans serveur, le site ne peut pas suivre la réservation |
+| **Navigateur** | `rides:create`, `rides:quote` | JavaScript du site, depuis ses origines https (avec leur variante `www`) ; [limites par adresse IP, par téléphone et pour le site](#limites-dune-clé--navigateur-). Ni lecture, ni webhooks : sans serveur, le site ne peut pas suivre la réservation |
 
 ### Parcours d'une réservation
 
@@ -472,4 +472,4 @@ Offres Pro et Business. **Dashboard → Mini-site** permet d'activer une page de
 - un **domaine personnalisé** (Business), par exemple `reservation.ma-centrale.fr`, via un CNAME vers l'application ;
 - une **iframe** intégrée à un site existant : `<iframe src="https://app.rydar.app/book/{slug}" …>`.
 
-Le client ne crée **aucun compte**. Le formulaire est protégé par un pot de miel anti-robot et des limites de débit (6 envois par 10 minutes et 20 par jour par adresse IP, 3 par heure par téléphone) ; le client est informé, sous le formulaire, de l'usage de ses coordonnées (exécution de la course demandée), sans case à cocher. La course arrive avec la source `booking_site` et suit le même dispatch.
+Le client ne crée **aucun compte**. Le formulaire est protégé par un pot de miel anti-robot et des limites de débit (6 envois par 10 minutes et 20 par jour par adresse IP, 3 par heure par téléphone, 60 par heure pour la centrale) ; le client est informé, sous le formulaire, de l'usage de ses coordonnées (exécution de la course demandée), sans case à cocher. La course arrive avec la source `booking_site` et suit le même dispatch.

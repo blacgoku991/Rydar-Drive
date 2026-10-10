@@ -1,7 +1,8 @@
 // Flotte Privée (migrations 20260924007600 et 20260924007700, docs/FLOTTE-PRIVEE.md § 13.1) : schéma et droits,
 // création atomique par le super admin, limites imposées malgré l'offre et la surcharge, gardes (une fiche, celle du
 // propriétaire ; lien fermé ; ni réseau, ni centrale ; un seul accès), suppression puis recréation de la fiche,
-// bascule sur place sans perte (vers flotte, vers centrale, retour ; aucune offre fermée avant son échéance),
+// bascule sur place sans perte (vers flotte, vers centrale, retour ; offre de service choisie à la sortie écrite dans la
+// même transaction ; aucune offre de course fermée avant son échéance),
 // écritures concurrentes d'une entrée en cours (gardes sous le verrou de l'organisation), exemption de règlement du
 // gérant en centrale.
 import { randomUUID } from "node:crypto";
@@ -63,17 +64,17 @@ function createArgs(
 }
 const create = (args: unknown[]) => svc("svc_platform_create_private_fleet", args);
 
-/** Bascule (comme l'action du super admin). */
+/** Bascule (comme l'action du super admin). `plan` fourni (null = sans offre) : offre écrite par la RPC à la sortie. */
 const setPrivate = (
   orgId: string,
   actor: string,
   enabled: boolean,
   note: string | null,
-  o: { model?: string; percent?: number; fixed?: number; mode?: string; effectiveOn?: string; legalOn?: string } = {},
+  o: { model?: string; percent?: number; fixed?: number; mode?: string; effectiveOn?: string; legalOn?: string; plan?: string | null } = {},
 ) =>
   svc("svc_platform_set_private_fleet", [
     orgId, actor, enabled, note, o.model ?? null, o.percent ?? null, o.fixed ?? null, o.mode ?? "notice", o.effectiveOn ?? null,
-    VERSION, o.legalOn ?? null, APP,
+    VERSION, o.legalOn ?? null, APP, o.plan !== undefined, o.plan ?? null,
   ]);
 
 const settings = async (orgId: string) =>
@@ -523,6 +524,59 @@ describe("bascule (svc_platform_set_private_fleet)", () => {
     expect(split.driver_payout_cents).toBe(8000);
     expect(await counts(pf.id)).toEqual(before);
     expect(await sql("select 1 from public.audit_logs where organization_id = $1 and action = 'organization.dispatch_model_changed'", [pf.id])).toHaveLength(1);
+  });
+
+  it("sortie avec l'offre choisie : écrite dans la même transaction, annulée avec un refus des frais ; offre inactive ou entrée refusées", async () => {
+    const pf = await createPrivateFleet("Sortie Offre");
+    const planOf = async () => (await sql("select private_fleet, plan_id from public.organizations where id = $1", [pf.id]))[0];
+    const before = await planOf();
+    const [pro] = await sql(
+      `insert into public.plans (code, name, limits) values ($1, 'Pro PF', '{"api_access":true,"max_drivers":5,"max_admins":3}') returning id`,
+      [`pf_pro_${uid()}`],
+    );
+    const [retired] = await sql(
+      `insert into public.plans (code, name, limits, is_active) values ($1, 'Retirée PF', '{"api_access":true}', false) returning id`,
+      [`pf_old_${uid()}`],
+    );
+    const planAudits = () => sql("select actor_type, actor_user_id, metadata from public.audit_logs where organization_id = $1 and action = 'organization.plan_changed'", [pf.id]);
+
+    // Offre retirée : refusée avant tout
+    expect(await setPrivate(pf.id, pf.actor, false, NOTE, { plan: retired.id })).toMatchObject({ ok: false, code: "INVALID", field: "planId" });
+    // Refus des frais : drapeau ET offre inchangés (constat de la revue : jamais sortie avec l'ancienne offre ou sans limite)
+    const refused = await setPrivate(pf.id, pf.actor, false, NOTE, { plan: pro.id, model: "centrale", percent: 5, fixed: 100, legalOn: "2026-11-05" });
+    expect(refused).toMatchObject({ ok: false, code: "TERMS_NOT_NOTIFIED" });
+    expect(await planOf()).toEqual(before);
+    expect(await planAudits()).toHaveLength(0);
+
+    // Sortie : drapeau levé et offre écrite ensemble ; limites de l'offre ; journal
+    expect(await setPrivate(pf.id, pf.actor, false, NOTE, { plan: pro.id })).toMatchObject({ ok: true, code: "PRIVATE_FLEET_DISABLED" });
+    expect(await planOf()).toEqual({ private_fleet: false, plan_id: pro.id });
+    expect(await limits(pf.id)).toMatchObject({ max_drivers: 5, max_admins: 3, api_access: true });
+    expect(await planAudits()).toEqual([
+      { actor_type: "super_admin", actor_user_id: pf.actor, metadata: { planId: pro.id, previousPlanId: before.plan_id, reason: "private_fleet_disabled" } },
+    ]);
+    const [disabled] = await sql("select metadata from public.audit_logs where organization_id = $1 and action = 'organization.private_fleet_disabled'", [pf.id]);
+    expect(disabled.metadata).toMatchObject({ plan_id: pro.id, plan_changed: true });
+    // Déjà sortie : l'offre se règle depuis la fiche (« Offre & limites »)
+    expect(await setPrivate(pf.id, pf.actor, false, NOTE, { plan: null })).toMatchObject({ ok: false, code: "INVALID" });
+    expect((await planOf()).plan_id).toBe(pro.id);
+
+    // Sortie « sans offre » assumée : aucune limite ; même offre : rien de réécrit ni de journalisé
+    const free = await createPrivateFleet("Sortie Sans Offre");
+    expect(await setPrivate(free.id, free.actor, false, NOTE, { plan: null })).toMatchObject({ ok: true, code: "PRIVATE_FLEET_DISABLED" });
+    expect((await sql("select plan_id from public.organizations where id = $1", [free.id]))[0].plan_id).toBeNull();
+    expect(await limits(free.id)).not.toHaveProperty("max_drivers");
+    const same = await createPrivateFleet("Sortie Même Offre");
+    const samePlan = (await sql("select plan_id from public.organizations where id = $1", [same.id]))[0].plan_id;
+    expect(await setPrivate(same.id, same.actor, false, NOTE, { plan: samePlan })).toMatchObject({ ok: true, code: "PRIVATE_FLEET_DISABLED" });
+    expect(await sql("select 1 from public.audit_logs where organization_id = $1 and action = 'organization.plan_changed'", [same.id])).toHaveLength(0);
+
+    // Entrée : jamais d'offre (réglée ensuite depuis la fiche)
+    const actor = await superAdmin();
+    const org = await createOrg("PF Entrée Offre");
+    await ownerFiche(org);
+    expect(await setPrivate(org.id, actor, true, NOTE, { plan: pro.id })).toMatchObject({ ok: false, code: "INVALID" });
+    expect((await orgRow(org.id)).private_fleet).toBe(false);
   });
 
   it("entrée refusée tant qu'une raison existe (liste des raisons), acceptée sinon : lien fermé, profil, fiche du gérant", async () => {

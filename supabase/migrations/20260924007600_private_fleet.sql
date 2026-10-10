@@ -1221,15 +1221,16 @@ $$;
 
 -- I3. Bascule sur place, sans perte (organization_id immuable) : entrée en Flotte Privée (aucune raison de
 -- private_fleet_blockers, sinon PRIVATE_FLEET_NOT_ELIGIBLE + liste ; lien fermé, profil Flotte Privée, owner_driver
--- posé) ou sortie (profil standard ; puis, si un modèle ou des taux sont fournis, public.svc_platform_set_fees dans le
--- MÊME sous-bloc : son refus annule tout et sa réponse est renvoyée telle quelle ; le drapeau d'abord, la contrainte
--- refusant « centrale » tant qu'il est vrai). Note obligatoire : demande ou accord écrit du client (CGV art. 3).
+-- posé) ou sortie (profil standard ; offre choisie si p_set_plan — p_plan_id, null = sans offre — écrite après le
+-- drapeau ; puis, si un modèle ou des taux sont fournis, public.svc_platform_set_fees dans le MÊME sous-bloc : son refus
+-- annule tout, offre comprise, et sa réponse est renvoyée telle quelle ; le drapeau d'abord, la contrainte refusant
+-- « centrale » tant qu'il est vrai). Note obligatoire : demande ou accord écrit du client (CGV art. 3).
 -- Courses en recherche : aucune offre fermée — une offre en attente vit jusqu'à son échéance annoncée (passage
 -- inchangé, au besoin repoussé : private.private_fleet_hold) ; sans offre en attente, relancées au passage suivant
 -- (échéances recalculées avec le nouveau profil) ; entrée : course déjà en vagues GPS reprise à la première vague du
 -- nouveau plan (le dernier appel de 100 km est vraiment lancé) ; sortie : rappels « à confirmer » en file annulés.
--- Audit organization.private_fleet_enabled / _disabled ; diffusion « platform.updated » (model) et « driver.updated »
--- de chaque fiche (l'application relit driver_home).
+-- Audit organization.private_fleet_enabled / _disabled (et organization.plan_changed si l'offre change) ; diffusion
+-- « platform.updated » (model) et « driver.updated » de chaque fiche (l'application relit driver_home).
 create or replace function public.svc_platform_set_private_fleet(
   p_org uuid,
   p_actor uuid,
@@ -1242,7 +1243,9 @@ create or replace function public.svc_platform_set_private_fleet(
   p_effective_on date default null,
   p_org_legal_version text default null,
   p_org_legal_effective_on date default null,
-  p_app_url text default null
+  p_app_url text default null,
+  p_set_plan boolean default false,
+  p_plan_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -1254,6 +1257,8 @@ declare
   v_note text := left(nullif(btrim(regexp_replace(coalesce(p_consent_note, ''), '\s+', ' ', 'g')), ''), 500);
   v_model text := case when p_enabled and p_dispatch_model = 'fleet' then null else p_dispatch_model end;
   v_rates boolean := p_percent is not null or p_fixed_cents is not null;
+  v_set_plan boolean := coalesce(p_set_plan, false);
+  v_plan_changed boolean := false;
   v_blockers text[] := '{}';
   v_fees jsonb;
   v_open integer := 0;
@@ -1268,6 +1273,11 @@ begin
     return jsonb_build_object('ok', false, 'code', 'CONSENT_REQUIRED', 'field', 'consentNote',
       'message', private.fr_typo('Changement d''offre de service : précisez la demande ou l''accord écrit du client (date et forme : e-mail, courrier…), CGV article 3.'));
   end if;
+  -- Offre de la sortie : active (une offre retirée ne s'attribue plus) ; null = sans offre, absence assumée
+  if v_set_plan and p_plan_id is not null
+     and not exists (select 1 from public.plans y where y.id = p_plan_id and y.is_active) then
+    return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'planId', 'message', 'Offre introuvable ou inactive.');
+  end if;
   -- Entrée : écritures concurrentes attendues puis relues par les gardes (D : verrou de la ligne de l'organisation,
   -- pris ci-dessous ; E : verrou consultatif exclusif ici, partagé dans la garde)
   if p_enabled then
@@ -1280,16 +1290,16 @@ begin
   if o.status = 'archived' then
     return jsonb_build_object('ok', false, 'code', 'ORGANIZATION_INACTIVE', 'message', 'Organisation archivée.');
   end if;
-  if p_enabled and (v_model is not null or v_rates) then
+  if p_enabled and (v_model is not null or v_rates or v_set_plan) then
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'dispatchModel',
-      'message', private.fr_typo('Entrée en Flotte Privée : modèle flotte, frais inchangés (réglez-les ensuite depuis la fiche).'));
+      'message', private.fr_typo('Entrée en Flotte Privée : modèle flotte, frais et offre inchangés (réglez-les ensuite depuis la fiche).'));
   end if;
   if o.private_fleet = p_enabled then
-    if v_model is null and not v_rates then
+    if v_model is null and not v_rates and not v_set_plan then
       return jsonb_build_object('ok', true, 'code', 'UNCHANGED');
     end if;
     return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'dispatchModel',
-      'message', private.fr_typo('Organisation déjà hors de la Flotte Privée : modèle et frais se règlent depuis sa fiche.'));
+      'message', private.fr_typo('Organisation déjà hors de la Flotte Privée : modèle, frais et offre se règlent depuis sa fiche.'));
   end if;
   perform private.set_actor('super_admin', p_actor);
 
@@ -1319,6 +1329,11 @@ begin
       perform set_config('rydar.private_fleet_change', p_org::text, true);
       update public.organizations set private_fleet = false where id = p_org;
       perform set_config('rydar.private_fleet_change', '', true);
+      -- Offre choisie, après le drapeau et dans le même sous-bloc : un refus des frais l'annule avec le reste
+      if v_set_plan and p_plan_id is distinct from o.plan_id then
+        update public.organizations set plan_id = p_plan_id where id = p_org;
+        v_plan_changed := true;
+      end if;
       perform private.apply_dispatch_profile(p_org, false);
       -- Rappels « à confirmer » : propres à la Flotte Privée (échéances recalculées avec le profil standard)
       update public.notifications n
@@ -1352,7 +1367,14 @@ begin
     case when p_enabled then 'organization.private_fleet_enabled' else 'organization.private_fleet_disabled' end,
     'organizations', p_org::text, 'warning',
     jsonb_build_object('note', v_note, 'blockers', to_jsonb(v_blockers),
-      'dispatch_model', coalesce(v_model, o.dispatch_model), 'fees_code', v_fees ->> 'code', 'open_rides', v_open));
+      'dispatch_model', coalesce(v_model, o.dispatch_model), 'fees_code', v_fees ->> 'code', 'open_rides', v_open,
+      'plan_id', case when v_plan_changed then p_plan_id else o.plan_id end, 'plan_changed', v_plan_changed));
+  -- Même action et mêmes clés que « Offre & limites » (updateOrganizationPlan) : historique des offres de la fiche
+  if v_plan_changed then
+    insert into public.audit_logs (organization_id, actor_type, actor_user_id, action, entity_type, entity_id, severity, metadata)
+    values (p_org, 'super_admin', p_actor, 'organization.plan_changed', 'organizations', p_org::text, 'info',
+      jsonb_build_object('planId', p_plan_id, 'previousPlanId', o.plan_id, 'reason', 'private_fleet_disabled'));
+  end if;
 
   perform private.broadcast_platform(p_org, 'model');
   for x in select d.id, d.presence, d.status, d.current_ride_id from public.drivers d where d.organization_id = p_org loop
@@ -1713,12 +1735,12 @@ to service_role;
 revoke all on function
   public.svc_platform_create_private_fleet(uuid, uuid, jsonb, jsonb, jsonb, uuid, numeric, integer, text, text, date, text),
   public.svc_platform_attach_private_fleet_driver(uuid, uuid, jsonb, jsonb),
-  public.svc_platform_set_private_fleet(uuid, uuid, boolean, text, text, numeric, integer, text, date, text, date, text)
+  public.svc_platform_set_private_fleet(uuid, uuid, boolean, text, text, numeric, integer, text, date, text, date, text, boolean, uuid)
 from public, anon, authenticated;
 grant execute on function
   public.svc_platform_create_private_fleet(uuid, uuid, jsonb, jsonb, jsonb, uuid, numeric, integer, text, text, date, text),
   public.svc_platform_attach_private_fleet_driver(uuid, uuid, jsonb, jsonb),
-  public.svc_platform_set_private_fleet(uuid, uuid, boolean, text, text, numeric, integer, text, date, text, date, text)
+  public.svc_platform_set_private_fleet(uuid, uuid, boolean, text, text, numeric, integer, text, date, text, date, text, boolean, uuid)
 to service_role;
 
 revoke all on function

@@ -4,7 +4,8 @@
 // « server-only ») : pages serveur, formulaires, actions serveur et tests (lib/private-fleet-admin.test.ts). La base
 // reste seule juge (private.org_limits, private.private_fleet_blockers, svc_platform_*_private_fleet).
 import {
-  PRIVATE_FLEET_BLOCKERS, PRIVATE_FLEET_LIMITS, type PrivateFleetBlocker, type PrivateFleetSiteKeyKind, type PrivateFleetSwitchTarget, type Tone,
+  PRIVATE_FLEET_BLOCKERS, PRIVATE_FLEET_LIMITS, formatNumber, type PrivateFleetBlocker, type PrivateFleetSiteKeyKind, type PrivateFleetSwitchTarget,
+  type Tone,
 } from "@rydar/shared";
 
 // -----------------------------------------------------------------------------
@@ -114,12 +115,46 @@ export const SITE_KEY_KIND_META: Record<PrivateFleetSiteKeyKind, { label: string
   browser: {
     label: "Clé navigateur",
     description:
-      "Lisible par tout visiteur du site : devis et réservations seulement, depuis les adresses listées (avec leur variante www), avec des limites par adresse IP et par téléphone.",
+      "Lisible par tout visiteur du site : devis et réservations seulement, depuis les adresses listées (avec leur variante www), avec des limites par adresse IP, par téléphone et pour le site (60 réservations par heure).",
   },
 };
 
-/** Débit d'une clé du site (requêtes par minute), comme une clé créée par défaut depuis le tableau de bord. */
-export const SITE_KEY_RATE_LIMIT_PER_MINUTE = 60;
+/**
+ * Débit d'une clé du site (requêtes par minute), réglable à la création. Clé navigateur : débit compté à part pour les
+ * devis et pour les réservations (lib/api/v1.ts, BROWSER_RATE_BUCKETS), défaut et minimum bien au-dessus des 30 devis
+ * par minute permis à une adresse IP (quelques visiteurs ne l'épuisent pas) ; les réservations restent plafonnées par
+ * adresse IP, par téléphone et à 60 par heure pour l'organisation, quel que soit ce débit. Clé serveur : débit d'une clé
+ * créée par défaut depuis le tableau de bord (un seul compteur ; le serveur du site limite lui-même ses visiteurs).
+ * Bornes de la base : 1 à 10 000 (api_keys.rate_limit_per_minute).
+ */
+export const SITE_KEY_RATE: Record<PrivateFleetSiteKeyKind, { default: number; min: number; max: number; hint: string }> = {
+  server: {
+    default: 60,
+    min: 10,
+    max: 10_000,
+    hint: "Devis, réservations et suivi sur un même compteur ; le serveur du site limite lui-même ses visiteurs.",
+  },
+  browser: {
+    default: 1_000,
+    min: 300,
+    max: 10_000,
+    hint: "Compté à part pour les devis et pour les réservations, 300 au moins (une adresse IP peut demander 30 devis par minute) ; les réservations restent limitées par adresse IP, par téléphone et à 60 par heure pour le site.",
+  },
+};
+
+export const SITE_KEY_RATE_LABEL = "Débit (requêtes par minute)";
+
+/** Débit saisi (vide : défaut du type de clé) → entier dans les bornes du type, sinon le message d'erreur du champ. */
+export function siteKeyRate(kind: PrivateFleetSiteKeyKind, input: unknown): { ok: true; value: number } | { ok: false; error: string } {
+  const r = SITE_KEY_RATE[kind];
+  const text = typeof input === "number" ? String(input) : typeof input === "string" ? input.replace(/\s/g, "") : input == null ? "" : null;
+  if (text === "") return { ok: true, value: r.default };
+  const n = text !== null && /^\d{1,6}$/.test(text) ? Number(text) : NaN;
+  if (!(n >= r.min && n <= r.max)) {
+    return { ok: false, error: `Nombre entier de ${formatNumber(r.min)} à ${formatNumber(r.max)} (${SITE_KEY_KIND_META[kind].label.toLowerCase()})` };
+  }
+  return { ok: true, value: n };
+}
 
 /** Trajet d'exemple (mêmes champs pour le devis et la réservation), indenté de `pad` espaces. */
 const exampleTrip = (pad: string) =>

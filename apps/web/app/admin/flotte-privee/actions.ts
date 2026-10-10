@@ -1,10 +1,11 @@
 "use server";
-// Super admin — Flotte Privée (docs/FLOTTE-PRIVEE.md § 8 et § 9.4) : création d'un client (invitation Auth puis RPC
-// svc_platform_create_private_fleet, tout ou rien ; compte Auth supprimé si la RPC échoue), clé du site (après
-// acceptation des CGV et de l'accord de traitement, affichée une fois, révocable), fiche du gérant recréée, lien
-// d'accès renvoyé, changement d'offre de service (svc_platform_set_private_fleet). Écritures par le service role après
-// requireSuperAdmin() ; les RPC revérifient l'auteur (p_actor) et écrivent audit_logs elles-mêmes (aucun audit()
-// doublé). Fichier « use server » : fonctions async seulement.
+// Super admin — Flotte Privée (docs/FLOTTE-PRIVEE.md § 8 et § 9.4) : création d'un client (compte Auth NEUF prouvé,
+// invitation, puis RPC svc_platform_create_private_fleet, tout ou rien ; seul le compte créé ici, sans adhésion ni
+// fiche, est supprimé si la création échoue), clé du site (après acceptation des CGV et de l'accord de traitement,
+// débit réglable, affichée une fois, révocable), fiche du gérant recréée, lien d'accès renvoyé, changement d'offre de
+// service (svc_platform_set_private_fleet, offre comprise). Écritures par le service role après requireSuperAdmin() ;
+// les RPC revérifient l'auteur (p_actor) et écrivent audit_logs elles-mêmes (aucun audit() doublé). Fichier
+// « use server » : fonctions async seulement.
 import {
   CONTACT_LIMITS, describeError, ERROR_MESSAGES, extractErrorCode, fieldErrors, humanizeError, legalDateLabel, ORG_LEGAL_EFFECTIVE_AT,
   ORG_LEGAL_VERSION, PRIVATE_FLEET_BLOCKER_LABELS, PRIVATE_FLEET_CREATE_LABELS, PRIVATE_FLEET_SITE_KEY_LABELS, PRIVATE_FLEET_SWITCH_LABELS,
@@ -15,13 +16,15 @@ import {
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { updateContactRequest } from "@/app/admin/contacts/actions";
-import { apiAccessOf, appendNote, effectiveLimits, limitEnabled, SITE_KEY_RATE_LIMIT_PER_MINUTE, SWITCH_TARGET_META } from "@/components/admin/private-fleet-state";
+import {
+  apiAccessOf, appendNote, effectiveLimits, limitEnabled, SITE_KEY_RATE_LABEL, siteKeyRate, SWITCH_TARGET_META,
+} from "@/components/admin/private-fleet-state";
 import { frSpaces } from "@/components/platform-fees/org-platform-format";
 import { insertKey } from "@/lib/api-keys-server";
 import { audit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
-import { findUserIdByEmail, sendMemberInvitationEmail } from "@/lib/member-invite";
+import { likeExact, sendMemberInvitationEmail } from "@/lib/member-invite";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type PrivateFleetActionResult<T = object> =
@@ -29,12 +32,25 @@ export type PrivateFleetActionResult<T = object> =
   | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 export type PrivateFleetSwitchActionResult =
-  | { ok: true; code: "PRIVATE_FLEET_ENABLED" | "PRIVATE_FLEET_DISABLED" | "UNCHANGED"; message: string; planApplied: boolean | null }
+  | { ok: true; code: "PRIVATE_FLEET_ENABLED" | "PRIVATE_FLEET_DISABLED" | "UNCHANGED"; message: string }
   | { ok: false; error: string; fieldErrors?: Record<string, string>; blockers?: PrivateFleetBlocker[]; minEffectiveOn?: string };
+
+type Admin = ReturnType<typeof createAdminClient>;
 
 const uuid = z.string().uuid();
 const CHECK_FAILED = frSpaces("Vérification impossible pour le moment : réessayez.");
 const EXISTING_ACCOUNT = frSpaces("Cette adresse a déjà un compte Rydar : demandez une autre adresse au client.");
+const EXISTING_ACCOUNT_FIELD = { ownerEmail: "Adresse déjà utilisée par un compte Rydar" };
+
+/**
+ * Refus de svc_platform_create_private_fleet qui disent le compte déjà utilisé, ou introuvable : jamais de
+ * compensation sur ces codes (le compte n'est pas, ou plus, celui que cette action vient de créer).
+ */
+const ACCOUNT_IN_USE_CODES: ReadonlySet<string> = new Set(["NOT_FOUND", "SELF_NOT_ALLOWED", "ALREADY_REGISTERED", "OWNER_NOT_NEW"]);
+
+/** Adresse déjà connue d'Auth (createUser : « email_exists », confirmée ou non). */
+const emailTaken = (e: { code?: string; message?: string } | null | undefined) =>
+  e?.code === "email_exists" || /already|exists|registered/i.test(e?.message ?? "");
 
 /**
  * Termes des CGV transmis aux RPC qui règlent les frais (svc_platform_set_fees) : version en vigueur, entrée en
@@ -64,12 +80,53 @@ function refresh(orgId: string) {
 // -----------------------------------------------------------------------------
 
 /**
+ * Compensation d'une création échouée : supprime le compte Auth que CETTE action vient de créer (createUser l'a prouvé
+ * neuf), seulement s'il n'a ni adhésion ni fiche chauffeur. Rattaché (RPC validée dont la réponse s'est perdue) :
+ * gardé ; relecture ou suppression impossible : gardé aussi (jamais de suppression à l'aveugle).
+ */
+async function discardCreatedOwner(admin: Admin, ownerId: string): Promise<"removed" | "linked" | "kept"> {
+  const [members, drivers] = await Promise.all([
+    admin.from("organization_users").select("organization_id").eq("user_id", ownerId).limit(1),
+    admin.from("drivers").select("id").eq("user_id", ownerId).limit(1),
+  ]);
+  if (members.error || drivers.error) return "kept";
+  if (((members.data ?? []) as unknown[]).length > 0 || ((drivers.data ?? []) as unknown[]).length > 0) return "linked";
+  const removed = await admin.auth.admin.deleteUser(ownerId).then(
+    (r) => !r.error,
+    () => false,
+  );
+  return removed ? "removed" : "kept";
+}
+
+/** Échec de la création après celle du compte Auth : compensation (sauf refus qui disent le compte déjà utilisé) et message. */
+async function creationFailed(
+  admin: Admin,
+  ownerId: string,
+  email: string,
+  failure: { error: string; fieldErrors?: Record<string, string> },
+  code: string | null,
+): Promise<{ ok: false; error: string; fieldErrors?: Record<string, string> }> {
+  const outcome = code && ACCOUNT_IN_USE_CODES.has(code) ? "kept" : await discardCreatedOwner(admin, ownerId);
+  if (outcome === "removed") return { ok: false, ...failure };
+  return {
+    ok: false,
+    fieldErrors: failure.fieldErrors,
+    error: frSpaces(
+      outcome === "linked"
+        ? `${failure.error} La création a peut-être abouti malgré l'erreur (compte de ${email} rattaché) : vérifiez la liste des organisations avant de réessayer.`
+        : `${failure.error} Le compte créé pour ${email} n'a pas été supprimé : s'il n'est rattaché à aucune organisation, supprimez-le (Supabase, Authentication) avant de réessayer.`,
+    ),
+  };
+}
+
+/**
  * « Nouveau client Flotte Privée » : client, chauffeur-propriétaire (compte NEUF, phase 1 : une adresse qui a déjà un
  * compte est refusée), véhicule, frais Rydar par course, offre facultative (avec l'API), référence du contrat signé.
- * Compte invité par e-mail (lien « choisir son mot de passe ») ; mot de passe provisoire seulement sur case cochée.
- * Organisation, adhésion, fiche et frais : une seule RPC, tout ou rien ; si elle échoue, le compte Auth créé ici est
- * supprimé. Depuis une demande de contact (`contactRequestId`) : la demande passe « traitée » avec la note
- * « Client créé : <organisation> » (action des demandes).
+ * Compte créé par createUser (preuve qu'il est neuf : Auth refuse toute adresse connue, confirmée ou non), puis invité
+ * par e-mail (lien « choisir son mot de passe ») ; mot de passe provisoire seulement sur case cochée. Organisation,
+ * adhésion, fiche et frais : une seule RPC, tout ou rien ; si la création échoue, le compte créé ici est supprimé
+ * (discardCreatedOwner). Depuis une demande de contact (`contactRequestId`) : la demande passe « traitée » avec la
+ * note « Client créé : <organisation> » (action des demandes).
  */
 export async function createPrivateFleet(
   input: z.input<typeof privateFleetCreateSchema>,
@@ -85,41 +142,52 @@ export async function createPrivateFleet(
   const admin = createAdminClient();
 
   // Phase 1 (D5) : jamais un compte existant, dont le mot de passe peut être connu d'un tiers (la base le refuse aussi :
-  // OWNER_NOT_NEW). Contrôles refaits par la RPC, faits ici AVANT l'invitation : aucun e-mail pour une création vouée
-  // à l'échec.
-  if (await findUserIdByEmail(v.ownerEmail)) {
-    return { ok: false, error: EXISTING_ACCOUNT, fieldErrors: { ownerEmail: "Adresse déjà utilisée par un compte Rydar" } };
-  }
-  const [slugTaken, plan] = await Promise.all([
+  // OWNER_NOT_NEW). Contrôles refaits par la RPC, faits ici AVANT tout compte et toute invitation : aucun e-mail pour
+  // une création vouée à l'échec. Recherche par égalité (jokers échappés) ; lecture en échec : refus, jamais lue comme
+  // « aucun compte ».
+  const [existing, slugTaken, plan] = await Promise.all([
+    admin.from("users").select("id").ilike("email", likeExact(v.ownerEmail)).limit(1),
     admin.from("organizations").select("id").eq("slug", v.slug).maybeSingle(),
     v.planId ? admin.from("plans").select("id, is_active, limits").eq("id", v.planId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
-  if (slugTaken.error || plan.error) return { ok: false, error: CHECK_FAILED };
+  if (existing.error || slugTaken.error || plan.error) return { ok: false, error: CHECK_FAILED };
+  if (((existing.data ?? []) as unknown[]).length > 0) return { ok: false, error: EXISTING_ACCOUNT, fieldErrors: EXISTING_ACCOUNT_FIELD };
   if (slugTaken.data) return { ok: false, error: ERROR_MESSAGES.SLUG_TAKEN, fieldErrors: { slug: "Déjà utilisé" } };
   const p = plan.data as { is_active: boolean; limits: Record<string, unknown> | null } | null;
   if (v.planId && (!p || !p.is_active || !limitEnabled(p.limits?.api_access))) {
     return { ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_PLAN_INVALID, fieldErrors: { planId: "Offre inactive ou sans accès à l'API" } };
   }
 
+  // Compte NEUF prouvé : createUser refuse toute adresse déjà connue d'Auth, confirmée ou non (email_exists). Une
+  // invitation seule ne le prouve pas : pour un compte existant jamais confirmé, Auth renvoie l'invitation et ce compte.
   const fullName = `${v.ownerFirstName} ${v.ownerLastName}`.trim();
-  const created =
-    v.temporaryPassword && v.password
-      ? await admin.auth.admin.createUser({ email: v.ownerEmail, password: v.password, email_confirm: true, user_metadata: { full_name: fullName } })
-      : await admin.auth.admin.inviteUserByEmail(v.ownerEmail, { data: { full_name: fullName }, redirectTo: `${env.appUrl}/auth/set-password` });
+  const temporary = v.temporaryPassword && !!v.password;
+  const created = await admin.auth.admin.createUser(
+    temporary
+      ? { email: v.ownerEmail, password: v.password, email_confirm: true, user_metadata: { full_name: fullName } }
+      : { email: v.ownerEmail, email_confirm: false, user_metadata: { full_name: fullName } },
+  );
   if (created.error || !created.data.user) {
-    if (/already|exists|registered/i.test(created.error?.message ?? "")) {
-      return { ok: false, error: EXISTING_ACCOUNT, fieldErrors: { ownerEmail: "Adresse déjà utilisée par un compte Rydar" } };
-    }
-    return {
-      ok: false,
-      error: frSpaces(
-        v.temporaryPassword
-          ? "Compte impossible à créer pour le moment : réessayez."
-          : "Invitation impossible (envoi des e-mails d'authentification non configuré ?) : réessayez, ou cochez « Mot de passe provisoire ».",
-      ),
-    };
+    if (emailTaken(created.error)) return { ok: false, error: EXISTING_ACCOUNT, fieldErrors: EXISTING_ACCOUNT_FIELD };
+    return { ok: false, error: frSpaces("Compte impossible à créer pour le moment : réessayez.") };
   }
   const ownerId = created.data.user.id;
+  if (!temporary) {
+    // Lien « choisir son mot de passe » vers ce compte neuf (Auth réinvite un compte non confirmé)
+    const invited = await admin.auth.admin.inviteUserByEmail(v.ownerEmail, { redirectTo: `${env.appUrl}/auth/set-password` }).then(
+      (r) => (r.error ? null : r.data.user),
+      () => null,
+    );
+    if (invited?.id !== ownerId) {
+      return creationFailed(
+        admin,
+        ownerId,
+        v.ownerEmail,
+        { error: frSpaces("Invitation impossible (envoi des e-mails d'authentification non configuré ?) : réessayez, ou cochez « Mot de passe provisoire ».") },
+        null,
+      );
+    }
+  }
 
   const { data, error } = await admin.rpc("svc_platform_create_private_fleet", {
     p_actor: session.user.id,
@@ -129,18 +197,9 @@ export async function createPrivateFleet(
   });
   const res = (data ?? null) as PrivateFleetCreateResult | null;
   if (error || !res || !res.ok) {
-    // Compensation : la RPC n'a rien écrit (tout ou rien) ; le compte Auth créé ici est supprimé
-    const removed = await admin.auth.admin.deleteUser(ownerId).then(
-      (r) => !r.error,
-      () => false,
-    );
-    const failure = res && !res.ok ? refusal(res) : { ok: false as const, error: humanizeError(error?.message, "Création impossible pour le moment."), fieldErrors: undefined };
-    return removed
-      ? failure
-      : {
-          ...failure,
-          error: frSpaces(`${failure.error} Le compte créé pour ${v.ownerEmail} n'a pas pu être supprimé : supprimez-le (Supabase, Authentication) avant de réessayer.`),
-        };
+    // Refus : la RPC n'a rien écrit (tout ou rien). Erreur sans réponse : elle a pu valider, la relecture le dit
+    const failure = res && !res.ok ? refusal(res) : { error: humanizeError(error?.message, "Création impossible pour le moment.") };
+    return creationFailed(admin, ownerId, v.ownerEmail, failure, res && !res.ok ? res.code : null);
   }
 
   revalidatePath("/admin");
@@ -180,13 +239,17 @@ export async function createPrivateFleet(
 /**
  * Clé du site du client (D16 : gérée par l'équipe Rydar) : Flotte Privée active, CGV et accord de traitement en
  * vigueur acceptés au nom de l'organisation. Clé serveur (devis, réservations, suivi, annulation, webhooks) ou clé
- * navigateur (devis et réservations, depuis les origines https listées et leur variante www). La clé complète n'est
- * renvoyée qu'UNE fois ; la garde api_keys_plan_limit (offre avec l'API) s'applique.
+ * navigateur (devis et réservations, depuis les origines https listées et leur variante www). Débit réglable
+ * (SITE_KEY_RATE : vide = défaut du type ; clé navigateur : 1 000 par minute par défaut, compté à part pour les devis et
+ * pour les réservations). La clé complète n'est renvoyée qu'UNE fois ; la garde api_keys_plan_limit (offre avec l'API)
+ * s'applique.
  */
 export async function createPrivateFleetSiteKey(
   orgId: string,
-  input: z.input<typeof privateFleetSiteKeySchema>,
-): Promise<PrivateFleetActionResult<{ key: string; prefix: string; kind: PrivateFleetSiteKeyKind; scopes: string[]; origins: string[] }>> {
+  input: z.input<typeof privateFleetSiteKeySchema> & { rateLimitPerMinute?: number | string | null },
+): Promise<
+  PrivateFleetActionResult<{ key: string; prefix: string; kind: PrivateFleetSiteKeyKind; scopes: string[]; origins: string[]; rateLimitPerMinute: number }>
+> {
   const session = await requireSuperAdmin();
   if (!uuid.safeParse(orgId).success) return { ok: false, error: "Organisation inconnue." };
   const parsed = privateFleetSiteKeySchema.safeParse(input);
@@ -194,6 +257,14 @@ export async function createPrivateFleetSiteKey(
     return { ok: false, error: describeError(parsed.error, PRIVATE_FLEET_SITE_KEY_LABELS), fieldErrors: fieldErrors(parsed.error) };
   }
   const v = parsed.data;
+  const rate = siteKeyRate(v.kind, input.rateLimitPerMinute);
+  if (!rate.ok) {
+    return {
+      ok: false,
+      error: frSpaces(`${SITE_KEY_RATE_LABEL} : ${rate.error.charAt(0).toLowerCase()}${rate.error.slice(1)}`),
+      fieldErrors: { rateLimitPerMinute: rate.error },
+    };
+  }
   const admin = createAdminClient();
   const [org, acceptances] = await Promise.all([
     admin.from("organizations").select("id, status, private_fleet").eq("id", orgId).maybeSingle(),
@@ -217,7 +288,7 @@ export async function createPrivateFleetSiteKey(
   const res = await insertKey(orgId, session.user.id, {
     name: v.name,
     scopes: v.scopes,
-    rateLimitPerMinute: SITE_KEY_RATE_LIMIT_PER_MINUTE,
+    rateLimitPerMinute: rate.value,
     allowedOrigins: v.origins,
     expiresAt: null,
   });
@@ -237,10 +308,10 @@ export async function createPrivateFleetSiteKey(
     action: "api_key.created",
     entityType: "api_keys",
     entityId: res.id,
-    metadata: { prefix: res.prefix, kind: v.kind, scopes: v.scopes, origins: v.origins },
+    metadata: { prefix: res.prefix, kind: v.kind, scopes: v.scopes, origins: v.origins, rate_limit_per_minute: rate.value },
   });
   revalidatePath(`/admin/organizations/${orgId}`);
-  return { ok: true, key: res.key, prefix: res.prefix, kind: v.kind, scopes: v.scopes, origins: v.origins };
+  return { ok: true, key: res.key, prefix: res.prefix, kind: v.kind, scopes: v.scopes, origins: v.origins, rateLimitPerMinute: rate.value };
 }
 
 /** Révocation immédiate d'une clé de l'organisation (le site qui l'utilise ne peut plus réserver). */
@@ -357,9 +428,9 @@ const openRidesText = (n: number) =>
 
 /**
  * « Changer d'offre de service » (PackConversionDialog) : entrée en Flotte Privée, ou sortie vers une flotte standard
- * ou une centrale, sur place et sans perte, par svc_platform_set_private_fleet (note d'accord obligatoire, frais par
- * svc_platform_set_fees dans la même transaction, tout ou rien). Entrée : offre avec l'API exigée (le site du client
- * réserve par l'API). Sortie : offre choisie (ou absence d'offre assumée) appliquée après la bascule.
+ * ou une centrale, sur place et sans perte, par svc_platform_set_private_fleet (note d'accord obligatoire ; offre et
+ * frais par svc_platform_set_fees dans la même transaction, tout ou rien). Entrée : offre avec l'API exigée (le site du
+ * client réserve par l'API). Sortie : offre choisie (ou absence d'offre assumée) écrite par la RPC après le drapeau.
  */
 export async function setPrivateFleet(orgId: string, input: z.input<typeof privateFleetSwitchSchema>): Promise<PrivateFleetSwitchActionResult> {
   const session = await requireSuperAdmin();
@@ -388,17 +459,24 @@ export async function setPrivateFleet(orgId: string, input: z.input<typeof priva
     return { ok: false, error: frSpaces(`${ERROR_MESSAGES.PRIVATE_FLEET_PLAN_INVALID} Changez d'abord l'offre (« Offre & limites »).`) };
   }
   const changePlan = exit && v.planId !== org.plan_id;
+  let nextPlanName: string | null = null;
   if (changePlan && v.planId) {
-    const { data: next, error: planError } = await admin.from("plans").select("id, is_active").eq("id", v.planId).maybeSingle();
+    const { data: next, error: planError } = await admin.from("plans").select("id, name, is_active").eq("id", v.planId).maybeSingle();
     if (planError) return { ok: false, error: CHECK_FAILED };
-    if (!(next as { is_active: boolean } | null)?.is_active) return { ok: false, error: "Offre introuvable ou inactive.", fieldErrors: { planId: "Offre introuvable ou inactive" } };
+    const n = next as { name: string; is_active: boolean } | null;
+    if (!n?.is_active) return { ok: false, error: "Offre introuvable ou inactive.", fieldErrors: { planId: "Offre introuvable ou inactive" } };
+    nextPlanName = n.name;
   }
 
+  // Offre écrite par la RPC, dans la même transaction que la bascule (après le drapeau) : jamais une organisation
+  // sortie de la Flotte Privée avec son ancienne offre, ou sans limite, parce qu'une seconde écriture aurait échoué
   const { data, error } = await admin.rpc("svc_platform_set_private_fleet", {
     p_org: orgId,
     p_actor: session.user.id,
     ...privateFleetSwitchArgs(v),
     ...feeTermsParams(),
+    p_set_plan: changePlan,
+    p_plan_id: changePlan ? v.planId : null,
   });
   if (error) return { ok: false, error: humanizeError(error.message, "Changement impossible pour le moment.") };
   const res = (data ?? null) as PrivateFleetSwitchResult | null;
@@ -411,25 +489,7 @@ export async function setPrivateFleet(orgId: string, input: z.input<typeof priva
     return { ...refusal(res), minEffectiveOn: "min_effective_on" in res ? res.min_effective_on : undefined };
   }
   if (res.code === "UNCHANGED") {
-    return { ok: true, code: "UNCHANGED", message: frSpaces("Aucun changement : l'organisation a déjà cette offre de service."), planApplied: null };
-  }
-
-  // Sortie : offre choisie appliquée après la bascule (sans offre : aucune limite, absence assumée dans le dialogue)
-  let planApplied: boolean | null = null;
-  if (changePlan) {
-    const { error: planError } = await admin.from("organizations").update({ plan_id: v.planId } as never).eq("id", orgId);
-    planApplied = !planError;
-    if (!planError) {
-      await audit({
-        organizationId: orgId,
-        actorUserId: session.user.id,
-        actorType: "super_admin",
-        action: "organization.plan_changed",
-        entityType: "organizations",
-        entityId: orgId,
-        metadata: { planId: v.planId, previousPlanId: org.plan_id, reason: "private_fleet_disabled" },
-      });
-    }
+    return { ok: true, code: "UNCHANGED", message: frSpaces("Aucun changement : l'organisation a déjà cette offre de service.") };
   }
 
   refresh(orgId);
@@ -439,15 +499,14 @@ export async function setPrivateFleet(orgId: string, input: z.input<typeof priva
 
   const fees = res.code === "PRIVATE_FLEET_DISABLED" && res.fees?.ok ? ` ${res.fees.message}` : "";
   const open = openRidesText(res.open_rides);
-  const planText = planApplied === false ? " L'offre n'a pas pu être appliquée : choisissez-la dans « Offre & limites »." : "";
+  const planText = !changePlan ? "" : nextPlanName ? ` Offre « ${nextPlanName} » appliquée.` : " Sans offre : aucune limite.";
   return {
     ok: true,
     code: res.code,
-    planApplied,
     message: frSpaces(
       res.code === "PRIVATE_FLEET_ENABLED"
         ? `Organisation passée en Flotte Privée : lien d'inscription fermé, profil de dispatch Flotte Privée, une seule fiche (celle du propriétaire).${open}`
-        : `Organisation passée en ${SWITCH_TARGET_META[v.target].label.toLowerCase()}.${fees}${open}${planText}`,
+        : `Organisation passée en ${SWITCH_TARGET_META[v.target].label.toLowerCase()}.${planText}${fees}${open}`,
     ),
   };
 }

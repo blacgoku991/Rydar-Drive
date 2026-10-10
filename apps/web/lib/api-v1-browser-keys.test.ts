@@ -2,9 +2,10 @@ import { API_SCOPES, BROWSER_KEY_SCOPES, apiKeyCreateSchema } from "@rydar/share
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // API v1, clé « navigateur » d'un site (Flotte Privée, § 11) : portée contrôlée par BROWSER_KEY_SCOPES, limites par IP
-// (création 6 / 10 min et 20 / jour, devis 30 / min et 600 / jour) et par téléphone (3 / h), 429 + Retry-After lisible
-// par le site (CORS) ; clés serveur inchangées. Vraie enveloppe handle()/authenticate() et vraies routes ; limiteur à
-// fenêtres fixes simulé (elapse = temps écoulé), Supabase service role simulé.
+// (création 6 / 10 min et 20 / jour, devis 30 / min et 600 / jour), par téléphone (3 / h) et par organisation (60
+// réservations / h, comme le mini-site), débit de la clé compté à part pour les devis et pour les réservations, 429 +
+// Retry-After lisible par le site (CORS) ; clés serveur inchangées. Vraie enveloppe handle()/authenticate() et vraies
+// routes ; limiteur à fenêtres fixes simulé (elapse = temps écoulé), Supabase service role simulé.
 
 const PEPPER = "test-pepper-0123456789abcdef";
 const ORG_A = "11111111-1111-4111-8111-111111111111";
@@ -98,7 +99,8 @@ vi.mock("@/lib/supabase/admin", () => ({
 }));
 
 const { generateApiKey, hashApiKey } = await import("./api-keys");
-const { authenticate, BROWSER_IP_LIMITS, BROWSER_PHONE_LIMIT } = await import("./api/v1");
+const { SITE_KEY_RATE } = await import("../components/admin/private-fleet-state");
+const { authenticate, BROWSER_IP_LIMITS, BROWSER_ORG_CREATE_LIMIT, BROWSER_PHONE_LIMIT, BROWSER_RATE_BUCKETS } = await import("./api/v1");
 const { GET: ping } = await import("../app/api/v1/ping/route");
 const { POST: quote } = await import("../app/api/v1/quotes/route");
 const { POST: createRide } = await import("../app/api/v1/rides/route");
@@ -217,10 +219,66 @@ describe("portée d'une clé « navigateur » : BROWSER_KEY_SCOPES", () => {
 });
 
 describe("limites par IP des clés « navigateur » (mêmes plafonds que le mini-site)", () => {
-  it("valeurs : création 6 / 10 min et 20 / jour, devis 30 / min et 600 / jour, téléphone 3 / h", () => {
+  it("valeurs : création 6 / 10 min et 20 / jour, devis 30 / min et 600 / jour, téléphone 3 / h, organisation 60 / h", () => {
     expect(BROWSER_IP_LIMITS["rides:create"].map(({ limit, windowSec }) => [limit, windowSec])).toEqual([[6, 600], [20, 86_400]]);
     expect(BROWSER_IP_LIMITS["rides:quote"].map(({ limit, windowSec }) => [limit, windowSec])).toEqual([[30, 60], [600, 86_400]]);
     expect(BROWSER_PHONE_LIMIT).toEqual({ limit: 3, windowSec: 3_600 });
+    // Mini-site : booking:org:<id>, 60 par heure (app/book/[slug]/actions.ts)
+    expect(BROWSER_ORG_CREATE_LIMIT).toEqual({ limit: 60, windowSec: 3_600 });
+    // Débit de la clé : devis et réservations sur des compteurs distincts
+    expect(new Set(Object.values(BROWSER_RATE_BUCKETS)).size).toBe(Object.keys(BROWSER_RATE_BUCKETS).length);
+    // Clé navigateur d'un site (super admin) : débit minimal = au moins 10 adresses IP à pleine cadence de devis
+    const quotePerIp = BROWSER_IP_LIMITS["rides:quote"].find((l) => l.windowSec === 60)!.limit;
+    expect(SITE_KEY_RATE.browser.min).toBeGreaterThanOrEqual(10 * quotePerIp);
+    expect(SITE_KEY_RATE.browser.default).toBeGreaterThan(SITE_KEY_RATE.browser.min);
+  });
+
+  it("création : 60 par heure pour l'organisation, toutes adresses et tous numéros confondus ; autre organisation non concernée", async () => {
+    const site = addKey("e1e1e1e1");
+    // 10 adresses × 6 réservations, chaque fois un numéro nouveau : dans toutes les limites par IP et par téléphone
+    const sent: number[] = [];
+    for (let n = 1; n <= 10; n += 1) sent.push(...(await statuses(6, () => book(site.key, { ip: `198.51.100.${n}` }))));
+    expect(sent.every((s) => s === 201)).toBe(true);
+    expect(h.rides).toHaveLength(60);
+    // 61e, depuis une adresse et avec un numéro jamais vus : refusée pour l'organisation, rien n'est créé
+    const res = await book(site.key, { ip: "203.0.113.200" });
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toMatchObject({ code: "RATE_LIMITED", message: "Trop de réservations reçues par ce site en une heure : réessayez plus tard." });
+    expect(res.headers.get("retry-after")).toBe("3600");
+    expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(h.rides).toHaveLength(60);
+    expect(h.checks.filter((c) => c.key === `api:org:${ORG_A}:create`).every((c) => c.limit === 60 && c.windowSec === 3_600)).toBe(true);
+    // Toutes les clés navigateur de l'organisation partagent le plafond ; une autre organisation garde le sien
+    const second = addKey("e2e2e2e2");
+    expect((await book(second.key, { ip: "203.0.113.201" })).status).toBe(429);
+    const other = addKey("e3e3e3e3", { org: ORG_B });
+    expect((await book(other.key, { ip: "203.0.113.202" })).status).toBe(201);
+    // Fenêtre suivante : de nouveau acceptée
+    elapse(3_600);
+    expect((await book(site.key, { ip: "203.0.113.203" })).status).toBe(201);
+  });
+
+  it("création : le téléphone d'abord (comme le mini-site) — une réservation refusée pour son numéro ne consomme pas le plafond de l'organisation", async () => {
+    const site = addKey("e4e4e4e4");
+    const phone = "+33612345999";
+    expect(await statuses(5, (i) => book(site.key, { phone, ip: `198.51.100.${i + 1}` }))).toEqual([201, 201, 201, 429, 429]);
+    expect(h.counts.get(`api:org:${ORG_A}:create`)).toBe(3);
+  });
+
+  it("débit de la clé compté par portée : des devis en rafale (dans leurs limites par IP) ne privent jamais les réservations", async () => {
+    // Ancien défaut des clés du site : 60 par minute (constat de la revue : deux adresses à 30 devis suffisaient)
+    const site = addKey("e5e5e5e5", { limit: 60 });
+    for (const ip of ["198.51.100.1", "198.51.100.2"]) expect((await statuses(30, () => ask(site.key, ip))).every((s) => s === 200)).toBe(true);
+    // Devis du site : débit des devis épuisé pour la minute (429 de la clé, CORS compris)
+    const quoteOver = await ask(site.key, "198.51.100.3");
+    expect(quoteOver.status).toBe(429);
+    expect((await quoteOver.json()).error.message).toBe("Trop de requêtes pour cette clé.");
+    // Réservation d'un autre visiteur : son propre compteur, acceptée
+    const res = await book(site.key, { ip: "203.0.113.77" });
+    expect(res.status).toBe(201);
+    expect(h.rides).toHaveLength(1);
+    expect(h.counts.get(`api:${site.id}${BROWSER_RATE_BUCKETS["rides:quote"]}`)).toBe(61);
+    expect(h.counts.get(`api:${site.id}${BROWSER_RATE_BUCKETS["rides:create"]}`)).toBe(1);
   });
 
   it("création : 6 par 10 min et par IP, puis 429 + Retry-After lisible par le site ; le débit de la clé n'est pas consommé", async () => {

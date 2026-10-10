@@ -6,8 +6,8 @@
 // private-fleet-card.tsx.
 import {
   PRIVATE_FLEET_BLOCKER_LABELS, PRIVATE_FLEET_BLOCKERS, PRIVATE_FLEET_SITE_KEY_MAX_ORIGINS, VEHICLE_CATEGORIES, VEHICLE_CATEGORY_META, addIsoDays,
-  isoDayLabel, slugify, type AdminPlatformFeeSchedule, type PrivateFleetBlocker, type PrivateFleetSiteKeyKind, type PrivateFleetSwitchTarget,
-  type VehicleCategory,
+  formatNumber, isoDayLabel, slugify, type AdminPlatformFeeSchedule, type PrivateFleetBlocker, type PrivateFleetSiteKeyKind,
+  type PrivateFleetSwitchTarget, type VehicleCategory,
 } from "@rydar/shared";
 import { AlertTriangle, Check, Copy, KeyRound, Mail, Plus, ShieldAlert, Sparkles, Trash2, UserPlus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -20,7 +20,7 @@ import { FeeFields, feeRule } from "@/components/admin/dispatch-model";
 import { feeChangePlan } from "@/components/admin/fee-change-plan";
 import { centsToInput, percentToInput, readFees } from "@/components/admin/fees";
 import {
-  SITE_KEY_KIND_META, SWITCH_TARGET_META, conversionSummary, siteKeySnippet, type PrivateFleetPrefill,
+  SITE_KEY_KIND_META, SITE_KEY_RATE, SITE_KEY_RATE_LABEL, SWITCH_TARGET_META, conversionSummary, siteKeySnippet, type PrivateFleetPrefill,
 } from "@/components/admin/private-fleet-state";
 import { frSpaces } from "@/components/platform-fees/org-platform-format";
 import { Badge } from "@/components/ui/badge";
@@ -363,6 +363,8 @@ export type SiteKeyRow = {
   last4: string;
   kind: PrivateFleetSiteKeyKind;
   origins: string[];
+  /** Débit de la clé (requêtes par minute ; clé navigateur : par portée, devis et réservations à part) */
+  rateLimitPerMinute: number;
   /** « utilisée il y a 3 min », « jamais utilisée » (calculé au rendu serveur) */
   lastUsedLabel: string;
   createdLabel: string;
@@ -397,8 +399,8 @@ function CopyText({ value, label }: { value: string; label: string }) {
 
 /**
  * Clés du site du client (D16 : gérées par l'équipe Rydar). Création possible seulement après l'acceptation des CGV
- * et de l'accord de traitement (`blockedReason` sinon) ; la clé complète et l'extrait d'intégration ne sont affichés
- * qu'une fois ; révocation immédiate.
+ * et de l'accord de traitement (`blockedReason` sinon), débit réglable (défaut selon le type de clé) ; la clé complète
+ * et l'extrait d'intégration ne sont affichés qu'une fois ; révocation immédiate.
  */
 export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: string; keys: SiteKeyRow[]; blockedReason: string | null; apiBase: string }) {
   const router = useRouter();
@@ -406,6 +408,7 @@ export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: 
   const [pending, start] = useTransition();
   const [createOpen, setCreateOpen] = useState(false);
   const [kind, setKind] = useState<PrivateFleetSiteKeyKind>("server");
+  const [rate, setRate] = useState(String(SITE_KEY_RATE.server.default));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState<{ key: string; kind: PrivateFleetSiteKeyKind; origins: string[] } | null>(null);
   const [revoking, setRevoking] = useState<SiteKeyRow | null>(null);
@@ -417,7 +420,12 @@ export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: 
           .split(/[\s,]+/)
           .map((o) => o.trim())
           .filter(Boolean);
-        const res = await createPrivateFleetSiteKey(orgId, { kind, name: String(f.get("name") ?? ""), origins: kind === "browser" ? origins : [] });
+        const res = await createPrivateFleetSiteKey(orgId, {
+          kind,
+          name: String(f.get("name") ?? ""),
+          origins: kind === "browser" ? origins : [],
+          rateLimitPerMinute: rate,
+        });
         if (!res.ok) {
           // Erreur d'une origine (« origins.2 ») : affichée sous le champ
           const fe = res.fieldErrors ?? {};
@@ -473,7 +481,7 @@ export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: 
                 </Badge>
               </p>
               <p className="mono text-[12px] text-fg-muted">
-                {k.prefix}_••••{k.last4}
+                {k.prefix}_••••{k.last4} · {formatNumber(k.rateLimitPerMinute)} req/min
               </p>
               {k.origins.length > 0 && <p className="mt-0.5 text-[12px] text-fg-muted [overflow-wrap:anywhere]">{k.origins.join(", ")}</p>}
             </div>
@@ -503,7 +511,10 @@ export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: 
                     type="radio"
                     name={`${uid}-kind`}
                     checked={kind === k}
-                    onChange={() => setKind(k)}
+                    onChange={() => {
+                      setKind(k);
+                      setRate(String(SITE_KEY_RATE[k].default));
+                    }}
                     className="mt-1 size-4 shrink-0 accent-brand"
                   />
                   <span className="min-w-0">
@@ -525,6 +536,20 @@ export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: 
                 <Textarea name="origins" required placeholder="https://monsite.fr" className="min-h-[72px]" />
               </Field>
             )}
+            <Field label={SITE_KEY_RATE_LABEL} error={errors.rateLimitPerMinute} hint={frSpaces(SITE_KEY_RATE[kind].hint)}>
+              <Input
+                name="rateLimitPerMinute"
+                type="number"
+                inputMode="numeric"
+                required
+                min={SITE_KEY_RATE[kind].min}
+                max={SITE_KEY_RATE[kind].max}
+                step={1}
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                className="num max-w-[160px]"
+              />
+            </Field>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="ghost" disabled={pending} onClick={() => setCreateOpen(false)}>
                 Annuler
