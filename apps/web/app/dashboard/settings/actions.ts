@@ -18,14 +18,18 @@ import { isPrivateFleet, refuseInPrivateFleet } from "../../../lib/private-fleet
 import { createAdminClient } from "@/lib/supabase/admin";
 import { removeWhatsApp, saveWhatsApp, testWhatsApp, type WhatsAppActionResult } from "@/lib/whatsapp";
 
-type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
-/** Noms des réglages de dispatch pour les messages d'erreur. */
+/**
+ * Noms des réglages de dispatch pour les messages d'erreur : ceux de l'onglet Dispatch, en français courant (refonte
+ * R10, docs/REFONTE-PANELS.md § 5.6).
+ */
 const SETTINGS_LABELS: Record<string, string> = {
-  dispatch_radii_m: "Rayons de recherche", dispatch_retry_radii_m: "Relance", offer_timeout_seconds: "Délai de réponse du chauffeur", max_search_seconds: "Durée maximale de recherche",
-  max_offers_per_wave: "Chauffeurs sollicités par vague", instant_threshold_minutes: "Seuil course immédiate",
-  scheduled_dispatch_lead_minutes: "Anticipation des courses planifiées", reminder_offsets_minutes: "Rappels",
-  location_max_age_seconds: "Fraîcheur de la position GPS", default_payment_method: "Paiement par défaut",
+  dispatch_radii_m: "Zones de recherche successives", dispatch_retry_radii_m: "Zones de relance",
+  offer_timeout_seconds: "Temps laissé aux chauffeurs pour accepter", max_search_seconds: "Durée maximale de recherche",
+  max_offers_per_wave: "Chauffeurs prévenus au maximum à chaque vague", instant_threshold_minutes: "Course immédiate",
+  scheduled_dispatch_lead_minutes: "Recherche avant une course réservée", reminder_offsets_minutes: "Rappels au chauffeur",
+  location_max_age_seconds: "Âge maximal de la position", default_payment_method: "Paiement par défaut",
 };
 
 /** Libellés des champs pour les messages d'erreur (« E-mail : adresse invalide » au lieu de « Vérifiez les champs »). */
@@ -48,7 +52,7 @@ export async function updateOrganization(input: z.input<typeof organizationUpdat
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = organizationUpdateSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: describeError(parsed.error, ORG_LABELS) };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, ORG_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const { error } = await ctx.supabase
     .from("organizations")
@@ -70,7 +74,7 @@ export async function updateDispatchSettings(input: z.input<typeof orgSettingsSc
   const refused = refuseInPrivateFleet(ctx);
   if (refused) return refused;
   const parsed = orgSettingsSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: describeError(parsed.error, SETTINGS_LABELS) };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, SETTINGS_LABELS), fieldErrors: fieldErrors(parsed.error) };
   // Mode centrale : la commission se règle dans « Commission & encaissement » (jamais écrasée d'ici)
   const { driver_commission_percent: _commission, ...dispatch } = parsed.data;
   const patch = ctx.org.dispatch_model === "centrale" ? dispatch : parsed.data;
@@ -90,7 +94,7 @@ export async function updateCentraleSettings(input: z.input<typeof centraleSetti
   const parsed = centraleSettingsSchema.safeParse(input);
   if (!parsed.success) {
     const issues = centraleIssues(parsed.error);
-    return { ok: false, error: Object.values(issues)[0] ?? "Réglages invalides." };
+    return { ok: false, error: Object.values(issues)[0] ?? "Réglages invalides.", fieldErrors: issues };
   }
   const v = parsed.data;
   const { error } = await ctx.supabase
@@ -156,7 +160,7 @@ export async function savePricingRule(input: z.input<typeof pricingSchema>): Pro
   const ctx = await adminCtx();
   if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
   const parsed = pricingSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: describeError(parsed.error, PRICING_LABELS) };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, PRICING_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const { data: existing } = await ctx.supabase
     .from("pricing_rules")
@@ -209,7 +213,7 @@ export async function inviteMember(
   const refused = refuseInPrivateFleet(ctx);
   if (refused) return refused;
   const parsed = inviteSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: describeError(parsed.error, INVITE_LABELS) };
+  if (!parsed.success) return { ok: false, error: describeError(parsed.error, INVITE_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const admin = createAdminClient();
 

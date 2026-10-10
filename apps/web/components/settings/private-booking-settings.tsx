@@ -1,8 +1,8 @@
 "use client";
-// Flotte Privée, Réglages › Réservations (docs/FLOTTE-PRIVEE.md § 3.3 et § 7.3) : ce que le chauffeur-propriétaire
-// règle lui-même — confirmation au plus tard avant la prise en charge, délai de réponse à une réservation immédiate,
-// rappels, paiement par défaut. Choix proposés seulement (privateBookingSettingsSchema) ; le reste du profil de dispatch
-// (seuil, rayons du dernier appel) est posé par l'équipe Rydar.
+// Flotte Privée, Réglages › Délais et rappels (onglet « bookings », docs/FLOTTE-PRIVEE.md § 3.3 et § 7.3) : ce que le
+// chauffeur-propriétaire règle lui-même — confirmation au plus tard avant la prise en charge, délai de réponse à une
+// réservation immédiate, rappels, paiement par défaut. Choix proposés seulement (privateBookingSettingsSchema) ; le
+// reste du profil de dispatch (seuil, rayons du dernier appel) est posé par l'équipe Rydar.
 import {
   PAYMENT_METHOD_LABELS, PAYMENT_METHODS, PRIVATE_BOOKING_LEAD_CHOICES, PRIVATE_BOOKING_REMINDER_CHOICES, PRIVATE_BOOKING_TIMEOUT_CHOICES,
   type PaymentMethod,
@@ -41,7 +41,7 @@ export function PrivateBookingSettingsForm({ settings, readOnly }: { settings: P
     <Card className="max-w-3xl">
       <CardHeader
         icon={<CalendarClock />}
-        title="Réservations"
+        title="Délais et rappels"
         description="Chaque réservation de votre site vous est proposée à confirmer, application ouverte ou non. Sans réponse à temps, elle passe « Non confirmée » et votre site en est informé."
       />
       <CardBody>
@@ -105,7 +105,7 @@ export function PrivateBookingSettingsForm({ settings, readOnly }: { settings: P
 
           <fieldset>
             <legend className="text-[12.5px] font-medium text-fg-muted">Rappels avant la prise en charge</legend>
-            <p className="mt-0.5 text-[12px] text-fg-subtle">Aussi utilisés pour vous rappeler une réservation encore à confirmer.</p>
+            <p className="mt-0.5 text-[12.5px] text-fg-muted">Aussi utilisés pour vous rappeler une réservation encore à confirmer.</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {PRIVATE_BOOKING_REMINDER_CHOICES.map((m) => {
                 const on = reminders.includes(m);
@@ -117,7 +117,7 @@ export function PrivateBookingSettingsForm({ settings, readOnly }: { settings: P
                     aria-pressed={on}
                     onClick={() => toggle(m)}
                     className={cn(
-                      "rounded-lg border px-3 py-1.5 text-[12.5px] transition-colors disabled:opacity-50",
+                      "min-h-10 rounded-lg border px-3 text-[13px] transition-colors disabled:opacity-50 max-sm:min-h-11",
                       on ? "border-brand/50 bg-brand/[0.08] text-brand" : "border-line text-fg-muted hover:text-fg",
                     )}
                   >
@@ -141,7 +141,7 @@ export function PrivateBookingSettingsForm({ settings, readOnly }: { settings: P
 
           {!readOnly && (
             <div className="flex justify-end">
-              <Button type="submit" variant="primary" loading={pending}>
+              <Button type="submit" variant="primary" loading={pending} className="max-sm:w-full">
                 Enregistrer
               </Button>
             </div>

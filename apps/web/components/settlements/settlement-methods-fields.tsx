@@ -5,10 +5,13 @@
 import { SETTLEMENT_LINK_EXAMPLES, formatIban, formatPrice, isValidIban, settlementPaymentLink, type SettlementMethod } from "@rydar/shared";
 import { Check, ExternalLink, Landmark } from "lucide-react";
 import { useId } from "react";
-import { METHOD_ICON, methodLabel } from "@/components/settlements/settlement-ui";
+import { METHOD_ICON, METHOD_ORDER, methodLabel } from "@/components/settlements/settlement-ui";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { NewTabHint } from "@/components/ui/new-tab";
 import { cn } from "@/lib/utils";
+
+const NB = "\u00a0";
 
 export type SettlementMethodsValue = {
   methods: SettlementMethod[];
@@ -19,7 +22,13 @@ export type SettlementMethodsValue = {
   bic: string;
 };
 
+/** Ordre d'enregistrement des moyens (organization_settings.settlement_methods), inchangé. */
 export const SETTLEMENT_METHODS_ORDER: SettlementMethod[] = ["link", "transfer", "cash", "other"];
+/**
+ * Ordre d'affichage des boutons : celui de tous les sélecteurs du web (METHOD_ORDER : Virement, Lien de paiement,
+ * Espèces, Autre moyen), docs/REFONTE-PANELS.md § 5.5.
+ */
+const DISPLAY_ORDER = METHOD_ORDER.filter((m): m is SettlementMethod => (SETTLEMENT_METHODS_ORDER as string[]).includes(m));
 /** Bouton affiché au chauffeur dans l'application */
 const DRIVER_BUTTON: Record<SettlementMethod, string> = {
   link: "Payer par lien",
@@ -94,9 +103,9 @@ export function SettlementMethodsFields({
     <div className="space-y-6">
       {/* Boutons à bascule (aria-pressed) groupés sous leur intitulé, erreur reliée au groupe (pas de champ unique) */}
       <div role="group" aria-labelledby={`${methodsId}-label`} aria-describedby={errors.methods ? `${methodsId}-error` : undefined}>
-        <p id={`${methodsId}-label`} className="mb-2 text-[12.5px] font-medium text-fg-muted">Moyens acceptés</p>
+        <p id={`${methodsId}-label`} className="mb-2 text-[13px] font-medium text-fg">Moyens de paiement acceptés</p>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {SETTLEMENT_METHODS_ORDER.map((m) => {
+          {DISPLAY_ORDER.map((m) => {
             const Icon = METHOD_ICON[m];
             const on = f.methods.includes(m);
             return (
@@ -111,9 +120,9 @@ export function SettlementMethodsFields({
                   on ? "border-brand/50 bg-brand/[0.07] text-fg" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
                 )}
               >
-                <Icon className={cn("size-4", on ? "text-brand" : "text-fg-subtle")} />
+                <Icon aria-hidden className={cn("size-4", on ? "text-brand" : "text-fg-subtle")} />
                 <span className="flex-1">{methodLabel(m)}</span>
-                {on && <Check className="size-4 text-brand" />}
+                {on && <Check aria-hidden className="size-4 text-brand" />}
               </button>
             );
           })}
@@ -132,8 +141,7 @@ export function SettlementMethodsFields({
             error={errors.link}
             hint={
               <>
-                Variables : <code className="mono text-fg-muted">{"{montant}"}</code> (19.00), <code className="mono text-fg-muted">{"{montant_centimes}"}</code> (1900),{" "}
-                <code className="mono text-fg-muted">{"{reference}"}</code> (C1783) — remplacées pour chaque règlement.
+                <code className="mono text-fg-muted">{"{montant}"}</code> est remplacé par la somme due.
               </>
             }
           >
@@ -142,22 +150,28 @@ export function SettlementMethodsFields({
               value={f.link}
               disabled={readOnly}
               onChange={(e) => set("link", e.target.value)}
-              placeholder="https://revolut.me/votre-identifiant/{montant}"
+              placeholder={`ex.${NB}: https://revolut.me/votre-identifiant/{montant}`}
               className="mono text-[13px]"
               aria-invalid={!!errors.link}
               spellCheck={false}
             />
           </Field>
+          <Disclosure title="Autres variables du lien" className="text-[13px]" summaryClassName="text-[13px] font-normal text-fg-muted">
+            <p className="pb-2 text-[12.5px] text-fg-muted">
+              Remplacées pour chaque règlement{NB}: <code className="mono text-fg">{"{montant}"}</code> (19.00),{" "}
+              <code className="mono text-fg">{"{montant_centimes}"}</code> (1900), <code className="mono text-fg">{"{reference}"}</code> (C1783).
+            </p>
+          </Disclosure>
           {!readOnly && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[12px] text-fg-subtle">Exemples :</span>
+              <span className="text-[12.5px] text-fg-muted">Exemples{NB}:</span>
               {SETTLEMENT_LINK_EXAMPLES.map((x) => (
                 <button
                   key={x.label}
                   type="button"
                   onClick={() => set("link", x.value)}
                   title={x.value}
-                  className="rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
+                  className="min-h-8 rounded-full border border-line px-2.5 text-[12.5px] text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
                 >
                   {x.label}
                 </button>
@@ -165,7 +179,9 @@ export function SettlementMethodsFields({
             </div>
           )}
           <div className="rounded-xl border border-line bg-white/[0.02] px-3.5 py-3">
-            <p className="text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Aperçu pour {formatPrice(SAMPLE_AMOUNT, currency)} · réf. {SAMPLE_REF}</p>
+            <p className="text-[12.5px] font-medium text-fg-muted">
+              Aperçu pour {formatPrice(SAMPLE_AMOUNT, currency)} · réf. {SAMPLE_REF}
+            </p>
             {linkPreview ? (
               <a href={linkPreview} target="_blank" rel="noopener noreferrer" className="mono mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-blue hover:underline">
                 <span className="truncate">{linkPreview}</span>
@@ -176,7 +192,7 @@ export function SettlementMethodsFields({
               <p className="mt-1 text-[12.5px] text-fg-subtle">{f.link.trim() ? "Lien invalide : il doit commencer par https://" : "Collez le lien de votre compte (Revolut, PayPal, Lydia, Stripe…)."}</p>
             )}
             {linkPreview && !/\{montant(_centimes)?\}/.test(f.link) && (
-              <p className="mt-1.5 text-[12px] text-amber">Sans {"{montant}"}, le chauffeur devra saisir le montant lui-même.</p>
+              <p className="mt-1.5 text-[12.5px] text-amber">Sans {"{montant}"}, le chauffeur devra saisir le montant lui-même.</p>
             )}
           </div>
         </div>
@@ -185,8 +201,8 @@ export function SettlementMethodsFields({
       {f.methods.includes("transfer") && (
         <div className="space-y-3 rounded-xl border border-line bg-white/[0.02] p-4">
           <p className="flex items-center gap-2 text-[13px] font-medium">
-            <Landmark className="size-4 text-fg-subtle" />
-            Virement : vos coordonnées bancaires (RIB)
+            <Landmark aria-hidden className="size-4 text-fg-subtle" />
+            Virement{NB}: vos coordonnées bancaires (RIB)
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Bénéficiaire" optional hint="Nom du titulaire du compte, affiché au chauffeur." error={errors.payeeName}>
@@ -210,7 +226,9 @@ export function SettlementMethodsFields({
               spellCheck={false}
             />
           </Field>
-          <p className="text-[12px] text-fg-subtle">{audience} copie l&apos;IBAN et la référence depuis l&apos;application, puis signale « J&apos;ai payé par virement ».</p>
+          <p className="text-[12.5px] text-fg-muted">
+            {audience} copie l&apos;IBAN et la référence depuis l&apos;application, puis signale «{NB}J&apos;ai payé par virement{NB}».
+          </p>
         </div>
       )}
 
@@ -219,7 +237,7 @@ export function SettlementMethodsFields({
         optional={!f.methods.includes("other")}
         hint={
           f.methods.includes("other")
-            ? "Ex. Wero ou Lydia au 06 12 34 56 78, ou au bureau du lundi au vendredi."
+            ? `Ex.${NB}: Wero ou Lydia au 06 12 34 56 78, ou au bureau du lundi au vendredi.`
             : whatsapp
               ? "Affichées avec le montant à régler (application et message WhatsApp)."
               : `Affichées au ${noun} avec le montant à régler, dans l'application.`
@@ -232,13 +250,17 @@ export function SettlementMethodsFields({
           disabled={readOnly}
           maxLength={500}
           onChange={(e) => set("instructions", e.target.value)}
-          placeholder={f.methods.includes("other") ? "Ex. Wero au 06 12 34 56 78 en indiquant la référence (C1783)." : "Ex. indiquez la référence (C1783) dans le commentaire du paiement."}
+          placeholder={
+            f.methods.includes("other")
+              ? `ex.${NB}: Wero au 06 12 34 56 78 en indiquant la référence (C1783).`
+              : `ex.${NB}: indiquez la référence (C1783) dans le commentaire du paiement.`
+          }
           className="min-h-[72px]"
         />
       </Field>
 
       <div className="rounded-xl bg-white/[0.03] px-4 py-3">
-        <p className="mb-2 text-[11.5px] font-medium uppercase tracking-wide text-fg-subtle">Dans l&apos;application, le {noun} voit</p>
+        <p className="mb-2 text-[12.5px] font-medium text-fg-muted">Dans l&apos;application, le {noun} voit</p>
         <div className="flex flex-wrap gap-1.5">
           {f.methods.map((m) => (
             <span key={m} className={cn("rounded-lg border px-2.5 py-1 text-[12.5px]", ready[m] ? "border-line-strong text-fg" : "border-amber/40 text-amber")}>

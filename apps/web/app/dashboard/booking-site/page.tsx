@@ -1,4 +1,4 @@
-import { ERROR_MESSAGES } from "@rydar/shared";
+import { ERROR_MESSAGES, bookingOperatorGaps } from "@rydar/shared";
 import { Globe } from "lucide-react";
 import type { Metadata } from "next";
 import { BookingSiteForm } from "@/components/booking/booking-site-form";
@@ -14,13 +14,17 @@ import { domainToken } from "./actions";
 export const metadata: Metadata = { title: "Mini-site" };
 export const dynamic = "force-dynamic";
 
+/**
+ * Mini-site de réservation (docs/REFONTE-PANELS.md § 5.6, lot R10 ; coupé en production par la plateforme) : mise en
+ * page sans débordement, liste « Pour mettre en ligne » sous l'interrupteur (bookingSitePublishable +
+ * bookingOperatorGaps, mêmes règles que l'enregistrement), vocabulaire du lexique. Lectures et action inchangées, plus
+ * l'identité de l'organisation (lecture seule) pour la liste.
+ */
 export default async function BookingSitePage() {
   const ctx = await requireOrg();
   // Flotte Privée : son site est relié par l'API v1 (mini-sites coupés pour la plateforme) → « Mon site »
   privateFleetPage(ctx, { redirect: "/dashboard/site" });
-  const header = (
-    <PageHeader eyebrow="Canaux" title="Mini-site de réservation" description="Option pour les rattacheurs sans site : vos clients réservent en 30 secondes, sans compte ni application." />
-  );
+  const header = <PageHeader title="Mini-site de réservation" description="Une page de réservation prête à l'emploi, si vous n'avez pas de site." />;
   // Mini-sites coupés par la plateforme (super admin) : explication à la place de l'éditeur ; les réglages de la
   // centrale sont conservés et reviennent tels quels à la réactivation
   if (!(await bookingSitesEnabled())) {
@@ -39,9 +43,12 @@ export default async function BookingSitePage() {
       </>
     );
   }
-  const [{ data: site }, { data: usage }] = await Promise.all([
+  const admin = isAdminRole(ctx.role);
+  const [{ data: site }, { data: usage }, { data: identity }] = await Promise.all([
     ctx.supabase.from("booking_sites").select("*").eq("organization_id", ctx.org.id).single(),
     ctx.supabase.rpc("org_usage", { p_org: ctx.org.id }),
+    // Identité de l'exploitant (bas du mini-site) : ce qui manque pour la mise en ligne, dit avant l'enregistrement
+    ctx.supabase.from("organizations").select("legal_name, siret, address, postal_code, city, vtc_registration").eq("id", ctx.org.id).maybeSingle(),
   ]);
   const limits = (usage as any)?.limits ?? {};
   return (
@@ -54,9 +61,11 @@ export default async function BookingSitePage() {
           rootDomain={env.rootDomain}
           appUrl={env.appUrl}
           token={await domainToken(ctx.org.id)}
-          canEdit={isAdminRole(ctx.role)}
+          canEdit={admin}
           planAllows={Boolean(limits.booking_site)}
           customDomainAllowed={Boolean(limits.custom_domain)}
+          operatorGaps={identity ? bookingOperatorGaps(identity as never) : null}
+          offersHref={admin ? "/dashboard/settings?tab=billing" : null}
         />
       </PageBody>
     </>

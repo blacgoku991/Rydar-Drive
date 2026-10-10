@@ -24,12 +24,13 @@ import {
   setWebhookEnabled,
   testWebhook,
 } from "@/app/dashboard/integrations/actions";
-import { CopyButton } from "@/components/dashboard-integrations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { CopyButton } from "@/components/ui/copy-button";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/misc";
+import { EmptyState, Switch } from "@/components/ui/misc";
 import { useNow } from "@/hooks/use-now";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
@@ -182,22 +183,23 @@ export function WebhooksPanel({
     return (
       <div key={d.id} className="px-4 py-2.5 text-[12.5px]">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-          <span className="num w-32 shrink-0 text-fg-subtle">{formatRideDate(d.occurred_at, timezone)}</span>
-          <div className="min-w-[180px] flex-1">
+          <div className="min-w-0 flex-1 basis-[14rem]">
             <p className="text-fg">
               {webhookEventLabel(d.event_type)}
               {d.ride_number != null && <span className="text-fg-muted"> · course n°&nbsp;{d.ride_number}</span>}
             </p>
-            <p className="mono truncate text-[11.5px] text-fg-subtle">{d.event_type}</p>
+            <p className="text-[12px] text-fg-muted [overflow-wrap:anywhere]">
+              <span className="num">{formatRideDate(d.occurred_at, timezone)}</span> · <span className="mono">{d.event_type}</span>
+            </p>
           </div>
           <Badge tone={meta.tone}>{meta.label}</Badge>
-          <span className="num w-12 text-right text-fg-muted" title="Code HTTP de la dernière réponse">
-            {d.last_status_code ?? "—"}
+          <span className="num text-fg-muted" title="Code HTTP de la dernière réponse">
+            {d.last_status_code ? `HTTP ${d.last_status_code}` : "—"}
           </span>
-          <span className="num w-20 text-right text-fg-muted" title="Tentatives d'envoi, réussie comprise">
+          <span className="num text-fg-muted" title="Tentatives d'envoi, réussie comprise">
             {tries}&nbsp;essai{tries > 1 ? "s" : ""}
           </span>
-          <div className="flex w-40 justify-end text-right text-fg-muted">
+          <div className="flex min-w-0 justify-end text-right text-fg-muted">
             {d.status === "pending" ? (
               d.attempts > 0 ? `Nouvel essai ${formatRelative(d.next_attempt_at, now)}` : "En file d'envoi"
             ) : d.status === "sending" ? (
@@ -222,7 +224,7 @@ export function WebhooksPanel({
             ) : null}
           </div>
         </div>
-        {d.last_error && d.status !== "delivered" && <p className="mono mt-1 truncate text-[11.5px] text-fg-muted">{d.last_error}</p>}
+        {d.last_error && d.status !== "delivered" && <p className="mono mt-1 text-[12px] text-fg-muted [overflow-wrap:anywhere]">{d.last_error}</p>}
       </div>
     );
   }
@@ -230,14 +232,15 @@ export function WebhooksPanel({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-[12.5px] text-fg-muted">
-          Votre serveur reçoit une requête POST signée (HMAC-SHA256) à chaque étape d&apos;une course&nbsp;: création, chauffeur attribué,
-          arrivée, fin, annulation… En cas d&apos;échec, nouveaux essais automatiques pendant près de 2&nbsp;jours.
+        <p className="max-w-2xl text-[13px] text-fg-muted">
+          Votre site est prévenu à chaque étape d&apos;une course&nbsp;: création, chauffeur attribué, arrivée, fin, annulation… En cas
+          d&apos;échec, nouveaux essais automatiques pendant près de 2&nbsp;jours.
         </p>
         {canManage && (
           <Button
-            variant="primary"
+            variant="secondary"
             size="sm"
+            className="max-sm:min-h-11 max-sm:w-full"
             disabled={full}
             title={full ? `${WEBHOOK_MAX_ENDPOINTS} adresses au plus` : undefined}
             onClick={() => {
@@ -252,29 +255,27 @@ export function WebhooksPanel({
 
       <div className="divide-y divide-line rounded-xl border border-line">
         {endpoints.length === 0 && (
-          <div className="flex items-center gap-3 px-4 py-6 text-[13px] text-fg-subtle">
-            <Webhook className="size-4 shrink-0" /> Aucune adresse. Ajoutez celle de votre serveur pour suivre vos courses en direct.
-          </div>
+          <EmptyState size="compact" icon={<Webhook />} title="Aucune adresse." description="Ajoutez celle de votre serveur pour suivre vos courses en direct." />
         )}
         {endpoints.map((e) => {
           const h = health(e, now);
           return (
-            <div key={e.id} className="flex flex-wrap items-start gap-4 px-4 py-3.5">
-              <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.02]">
+            <div key={e.id} className="flex flex-wrap items-start gap-x-4 gap-y-3 px-4 py-3.5">
+              <div aria-hidden className="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[0.02]">
                 <Webhook className={cn("size-4", e.enabled ? "text-brand" : "text-fg-subtle")} />
               </div>
-              <div className="min-w-[220px] flex-1 space-y-1.5">
+              <div className="min-w-0 flex-1 basis-[14rem] space-y-1.5">
                 <p className="mono break-all text-[13px] text-fg">{e.url}</p>
                 {e.description && <p className="text-[12.5px] text-fg-muted">{e.description}</p>}
                 <div className="flex flex-wrap gap-1">
                   {(e.events.length ? e.events.map((ev) => WEBHOOK_EVENT_META[ev]?.label ?? ev) : ["Tous les événements"]).map((label) => (
-                    <span key={label} className="rounded-md border border-line bg-white/[0.03] px-1.5 py-0.5 text-[11px] text-fg-muted">
+                    <span key={label} className="rounded-md border border-line bg-white/[0.03] px-1.5 py-0.5 text-[12px] text-fg-muted">
                       {label}
                     </span>
                   ))}
                 </div>
                 <p className="text-[12px] text-fg-muted">{h.text}</p>
-                {h.error && <p className="mono break-all text-[11.5px] text-red">{h.error}</p>}
+                {h.error && <p className="mono break-all text-[12px] text-red">{h.error}</p>}
                 {!e.enabled && e.disabled_reason && <p className="text-[12px] text-amber">{e.disabled_reason}</p>}
               </div>
               <Badge tone={e.enabled ? "green" : "neutral"}>{e.enabled ? "Actif" : "Désactivé"}</Badge>
@@ -297,6 +298,7 @@ export function WebhooksPanel({
                   <Button
                     variant="ghost"
                     size="icon-sm"
+                    className="max-sm:size-11"
                     aria-label="Envoyer un test"
                     title={e.enabled ? `Envoyer un test (événement «${NB}ping${NB}»)` : "Réactivez le webhook pour l'essayer"}
                     disabled={!e.enabled}
@@ -315,13 +317,14 @@ export function WebhooksPanel({
                 <Button
                   variant="ghost"
                   size="icon-sm"
+                  className="max-sm:size-11"
                   aria-label="Nouveau secret"
                   title="Nouveau secret de signature"
                   onClick={() => setConfirm({ kind: "rotate", endpoint: e })}
                 >
                   <RotateCcwKey />
                 </Button>
-                <Button variant="ghost" size="icon-sm" aria-label="Supprimer" title="Supprimer" onClick={() => setConfirm({ kind: "delete", endpoint: e })}>
+                <Button variant="ghost" size="icon-sm" className="max-sm:size-11" aria-label="Supprimer" title="Supprimer" onClick={() => setConfirm({ kind: "delete", endpoint: e })}>
                   <Trash2 className="text-red" />
                 </Button>
               </div>
@@ -331,12 +334,12 @@ export function WebhooksPanel({
       </div>
 
       <div className="space-y-2">
-        <p className="text-[12.5px] font-medium text-fg-muted">
-          Derniers envois <span className="font-normal text-fg-subtle">· par adresse, échecs plus anciens compris</span>
+        <p className="text-[13px] font-medium text-fg">
+          Derniers envois <span className="font-normal text-fg-muted">· par adresse, échecs plus anciens compris</span>
         </p>
         <div className="divide-y divide-line/70 rounded-xl border border-line">
           {groups.length === 0 && (
-            <p className="px-4 py-5 text-[13px] text-fg-subtle">
+            <p className="px-4 py-4 text-[13px] text-fg-muted">
               Aucun envoi pour le moment. Le bouton d&apos;essai envoie un événement «&nbsp;ping&nbsp;» à l&apos;adresse choisie.
             </p>
           )}
@@ -370,13 +373,13 @@ export function WebhooksPanel({
                 maxLength={500}
                 inputMode="url"
                 aria-invalid={!!urlError}
-                placeholder="https://www.mon-site.fr/api/rydar/webhook"
+                placeholder={`ex.${NB}: https://www.monsite.fr/api/rydar/webhook`}
                 className="mono"
                 onChange={() => urlError && setUrlError(undefined)}
               />
             </Field>
             <Field label="Description" optional>
-              <Input name="description" maxLength={120} placeholder="Site de réservation" />
+              <Input name="description" maxLength={120} placeholder={`ex.${NB}: Site de réservation`} />
             </Field>
             <Field
               label="Événements"
@@ -385,9 +388,10 @@ export function WebhooksPanel({
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
+                  aria-pressed={allEvents}
                   onClick={() => setAllEvents((v) => !v)}
                   className={cn(
-                    "rounded-lg border px-3 py-1.5 text-[12.5px]",
+                    "min-h-9 rounded-lg border px-3 text-[13px] max-sm:min-h-11",
                     allEvents ? "border-brand/50 bg-brand/[0.08] text-brand" : "border-line text-fg-muted",
                   )}
                 >
@@ -398,10 +402,11 @@ export function WebhooksPanel({
                     key={ev}
                     type="button"
                     disabled={allEvents}
+                    aria-pressed={allEvents || events.includes(ev)}
                     title={WEBHOOK_EVENT_META[ev].description}
                     onClick={() => toggleEvent(ev)}
                     className={cn(
-                      "rounded-lg border px-3 py-1.5 text-[12.5px] disabled:cursor-not-allowed disabled:opacity-60",
+                      "min-h-9 rounded-lg border px-3 text-[13px] disabled:cursor-not-allowed disabled:opacity-60 max-sm:min-h-11",
                       !allEvents && events.includes(ev) ? "border-brand/50 bg-brand/[0.08] text-brand" : "border-line text-fg-muted",
                     )}
                   >
@@ -410,62 +415,53 @@ export function WebhooksPanel({
                 ))}
               </div>
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-                Annuler
-              </Button>
+            <DialogFooter backDisabled={loading("create")}>
               <Button type="submit" variant="primary" loading={loading("create")}>
-                Ajouter
+                Ajouter l&apos;adresse
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
-        <DialogContent
-          size="sm"
-          title={confirm?.kind === "delete" ? `Supprimer ce webhook${NB}?` : `Remplacer le secret${NB}?`}
-          description={
-            confirm?.kind === "delete"
-              ? `Votre serveur ne recevra plus aucun événement à cette adresse${NB}; les envois en attente sont abandonnés.`
-              : `L'ancien secret cesse aussitôt de signer${NB}: mettez à jour votre serveur avec le nouveau, affiché une seule fois.`
-          }
-        >
-          <p className="mono break-all rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-[12.5px] text-fg">{confirm?.endpoint.url}</p>
-          <div className="mt-5 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setConfirm(null)}>
-              Annuler
-            </Button>
-            <Button
-              variant={confirm?.kind === "delete" ? "danger" : "primary"}
-              loading={!!confirm && loading(`${confirm.kind}:${confirm.endpoint.id}`)}
-              onClick={confirmAction}
-            >
-              {confirm?.kind === "delete" ? "Supprimer" : "Générer un nouveau secret"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!confirm}
+        onOpenChange={(o) => {
+          if (!o) setConfirm(null);
+        }}
+        title={confirm?.kind === "delete" ? `Supprimer ce webhook${NB}?` : `Remplacer le secret${NB}?`}
+        consequence={
+          confirm?.kind === "delete"
+            ? `Votre serveur ne recevra plus aucun événement à cette adresse${NB}; les envois en attente sont abandonnés.`
+            : `L'ancien secret cesse aussitôt de signer${NB}: mettez à jour votre serveur avec le nouveau, affiché une seule fois.`
+        }
+        confirmLabel={confirm?.kind === "delete" ? "Supprimer le webhook" : "Générer un nouveau secret"}
+        tone={confirm?.kind === "delete" ? "danger" : "primary"}
+        loading={!!confirm && loading(`${confirm.kind}:${confirm.endpoint.id}`)}
+        onConfirm={confirmAction}
+      >
+        <p className="mono break-all rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-[12.5px] text-fg">{confirm?.endpoint.url}</p>
+      </ConfirmDialog>
 
       <Dialog open={!!revealed} onOpenChange={(o) => !o && setRevealed(null)}>
         <DialogContent
           title={revealed?.rotated ? "Nouveau secret de signature" : "Secret de signature"}
           description={`Copiez-le maintenant${NB}: il ne sera plus jamais affiché. Votre serveur s'en sert pour vérifier l'en-tête X-Rydar-Signature de chaque envoi.`}
         >
-          <p className="mono mb-2 break-all text-[12px] text-fg-subtle">{revealed?.url}</p>
+          <p className="mono mb-2 break-all text-[12px] text-fg-muted">{revealed?.url}</p>
           <div className="rounded-xl border border-brand/30 bg-brand/[0.05] p-4">
             <p className="mono break-all text-[13px] text-fg">{revealed?.secret}</p>
           </div>
-          <div className="mt-3 flex items-start gap-2 text-[12px] text-amber">
-            <ShieldAlert className="mt-0.5 size-4 shrink-0" /> Gardez-le côté serveur (variable d&apos;environnement)&nbsp;: quiconque le connaît peut fabriquer de faux événements.
-          </div>
-          <div className="mt-5 flex justify-end gap-2">
+          <p className="mt-3 flex items-start gap-2 text-[12.5px] text-amber">
+            <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0" /> Gardez-le côté serveur (variable d&apos;environnement)&nbsp;: quiconque le connaît
+            peut fabriquer de faux événements.
+          </p>
+          <DialogFooter hideBack>
             {revealed && <CopyButton value={revealed.secret} label="Copier le secret" />}
             <Button variant="primary" onClick={() => setRevealed(null)}>
               J&apos;ai copié le secret
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

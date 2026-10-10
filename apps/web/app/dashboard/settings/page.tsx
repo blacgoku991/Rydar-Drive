@@ -1,58 +1,89 @@
-import type { OrgSettings } from "@rydar/shared";
-import { HandCoins, Landmark } from "lucide-react";
+import { bookingOperatorGaps, type OrgSettings, type VehicleCategory } from "@rydar/shared";
+import { HandCoins, Landmark, Lock } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { feeTermsText } from "@/components/platform-fees/org-platform-format";
 import { platformFeesPaths } from "@/components/platform-fees/org-platform-paths";
-import { BillingPanel } from "@/components/settings/billing-panel";
+import { BillingPanel, type BillingInvoice, type BillingPlan, type BillingSubscription, type BillingUsage } from "@/components/settings/billing-panel";
+import { DispatchSettingsForm } from "@/components/settings/dispatch-settings-form";
+import { OrganizationForm, type OrganizationRow } from "@/components/settings/organization-form";
+import { PricingEditor } from "@/components/settings/pricing-editor";
+import type { StoredRule } from "@/components/settings/pricing-rows";
 import { PrivateBookingSettingsForm, type PrivateBookingSettingsRow } from "@/components/settings/private-booking-settings";
-import { DispatchSettingsForm, OrganizationForm, PricingEditor, TeamPanel } from "@/components/settings/settings-forms";
+import { TeamPanel, type TeamMember } from "@/components/settings/team-panel";
 import { CentraleSettingsForm, type CentraleSettingsRow } from "@/components/settlements/centrale-settings-form";
 import { ReminderSettings } from "@/components/settlements/reminder-settings";
+import { Callout } from "@/components/ui/callout";
+import { FilterTabs } from "@/components/ui/filter-tabs";
 import type { WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { bookingSitesEnabled } from "@/lib/booking-sites";
+import { serverEnv } from "@/lib/env";
 import { isPrivateFleet } from "@/lib/private-fleet";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cn } from "@/lib/utils";
+import { upperFirst } from "@/lib/wording";
 
 export const metadata: Metadata = { title: "Réglages" };
 export const dynamic = "force-dynamic";
 
+const NB = " ";
+
+/**
+ * Onglets (docs/REFONTE-PANELS.md § 5.6, lot R10) : du plus simple au plus technique, « Organisation » ouvert par défaut
+ * pour tous (adresse sans onglet ou onglet inconnu). « Commission & encaissement » : mode centrale ; « Abonnement » :
+ * propriétaire et administrateurs (offres, factures et consommation leur sont réservées). Clés d'adresse inchangées.
+ */
 const TABS = [
-  { key: "dispatch", label: "Dispatch" },
-  // Mode centrale uniquement
-  { key: "centrale", label: "Commission & encaissement" },
   { key: "org", label: "Organisation" },
   { key: "pricing", label: "Tarifs" },
+  { key: "dispatch", label: "Dispatch" },
+  { key: "centrale", label: "Commission & encaissement" },
   { key: "team", label: "Équipe" },
   { key: "billing", label: "Abonnement" },
 ] as const;
 
 /**
- * Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.3) : « Mon entreprise », « Tarifs », « Réservations », « Abonnement » ;
- * Dispatch, Commission et encaissement, Équipe retirés (et leurs actions refusées) ; onglet inconnu → « Mon entreprise ».
+ * Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.3) : « Coordonnées », « Tarifs », « Délais et rappels », « Abonnement » (clés
+ * org, pricing, bookings, billing) ; Dispatch, Commission et encaissement, Équipe retirés (et leurs actions refusées) ;
+ * onglet inconnu → « Coordonnées ».
  */
 const PRIVATE_TABS = [
-  { key: "org", label: "Mon entreprise" },
+  { key: "org", label: "Coordonnées" },
   { key: "pricing", label: "Tarifs" },
-  { key: "bookings", label: "Réservations" },
+  { key: "bookings", label: "Délais et rappels" },
   { key: "billing", label: "Abonnement" },
 ] as const;
 
 const CENTRALE_COLUMNS =
   "driver_commission_percent, driver_commission_fixed_cents, settlement_grace_hours, settlement_credit_limit_cents, block_unpaid, new_driver_max_price_cents, trust_after_rides, settlement_methods, settlement_link, settlement_instructions, settlement_payee_name, settlement_iban, settlement_bic, reminder_channels";
 
-export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+/** « a, b et c » */
+const joinFr = (parts: string[]) => (parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} et ${parts.at(-1)}`);
+
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string; checkout?: string }> }) {
   const ctx = await requireOrg();
-  const { tab: t } = await searchParams;
+  const { tab: t, checkout } = await searchParams;
   const centrale = ctx.org.dispatch_model === "centrale";
   const privateFleet = isPrivateFleet(ctx.org);
-  const tabs: readonly { key: string; label: string }[] = privateFleet ? PRIVATE_TABS : TABS.filter((x) => x.key !== "centrale" || centrale);
-  const tab = tabs.some((x) => x.key === t) ? t! : privateFleet ? "org" : "dispatch";
   const admin = isAdminRole(ctx.role);
+  const tabs: readonly { key: string; label: string }[] = (privateFleet ? PRIVATE_TABS : TABS).filter(
+    (x) => (x.key !== "centrale" || centrale) && (x.key !== "billing" || admin),
+  );
+  const tab = tabs.some((x) => x.key === t) ? t! : "org";
   const orgId = ctx.org.id;
+
+  // Pastilles « À compléter » (administrateurs) : identité de l'entreprise incomplète (même règle que la mise en ligne
+  // du mini-site), aucun tarif. Lectures seules, lancées en même temps que celles de l'onglet ; illisible : pas de pastille
+  const todo = admin
+    ? Promise.all([
+        ctx.supabase.from("organizations").select("legal_name, siret, address, postal_code, city, vtc_registration").eq("id", orgId).maybeSingle(),
+        ctx.supabase.from("pricing_rules").select("id", { count: "exact", head: true }).eq("organization_id", orgId).eq("is_active", true),
+      ]).then(([identity, pricing]) => ({
+        org: !identity.error && !!identity.data && bookingOperatorGaps(identity.data as never).length > 0,
+        pricing: !pricing.error && pricing.count === 0,
+      }))
+    : Promise.resolve({ org: false, pricing: false });
 
   let content: React.ReactNode = null;
   if (tab === "bookings") {
@@ -71,20 +102,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         readOnly={!admin}
         commissionNote={
           centrale ? (
-            <Link
-              href="/dashboard/settings?tab=centrale"
-              prefetch={false}
-              className="surface flex items-center gap-3 rounded-xl px-5 py-4 transition-colors hover:border-line-strong hover:bg-ink-700"
-            >
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted">
-                <HandCoins className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[14px] font-semibold tracking-tight">Commission chauffeur</span>
-                <span className="block text-[12.5px] text-fg-muted">Mode centrale : commission, délai de règlement et lien de paiement se règlent dans « Commission & encaissement ».</span>
-              </span>
-              <span className="shrink-0 text-[13px] text-brand">Ouvrir →</span>
-            </Link>
+            <Callout tone="neutral" role={null} icon={<HandCoins />} title="Commission chauffeur">
+              Votre commission, le délai de règlement et le lien de paiement se règlent dans{" "}
+              <Link href="/dashboard/settings?tab=centrale" prefetch={false} className="font-medium text-fg underline underline-offset-2 hover:text-brand">
+                Commission &amp; encaissement
+              </Link>
+              .
+            </Callout>
           ) : undefined
         }
       />
@@ -101,30 +125,37 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         .maybeSingle(),
     ]);
     const o = (org ?? {}) as { name?: string; legal_name?: string | null; currency?: string; platform_fee_percent?: number; platform_fee_fixed_cents?: number };
-    const channels = ((settings as { reminder_channels?: ("app" | "whatsapp")[] } | null)?.reminder_channels ?? ["app"]);
+    const channels = (settings as { reminder_channels?: ("app" | "whatsapp")[] } | null)?.reminder_channels ?? ["app"];
     content = (
-      <div className="space-y-6">
-        <CentraleSettingsForm
-          settings={settings as CentraleSettingsRow}
-          platformFee={{ percent: Number(o.platform_fee_percent ?? 0), fixed_cents: Number(o.platform_fee_fixed_cents ?? 0) }}
-          orgName={o.name ?? ctx.org.name}
-          legalName={o.legal_name ?? null}
-          currency={o.currency ?? "EUR"}
-          readOnly={!admin}
-        />
-        {admin && (
-          <div className="xl:max-w-[calc(100%-364px)]">
-            <ReminderSettings channels={channels} whatsapp={(whatsapp ?? null) as WhatsAppRow | null} readOnly={!admin} />
-          </div>
-        )}
-      </div>
+      <CentraleSettingsForm
+        settings={settings as CentraleSettingsRow}
+        platformFee={{ percent: Number(o.platform_fee_percent ?? 0), fixed_cents: Number(o.platform_fee_fixed_cents ?? 0) }}
+        orgName={o.name ?? ctx.org.name}
+        legalName={o.legal_name ?? null}
+        currency={o.currency ?? "EUR"}
+        readOnly={!admin}
+        reminders={admin ? <ReminderSettings channels={channels} whatsapp={(whatsapp ?? null) as WhatsAppRow | null} readOnly={!admin} /> : null}
+      />
     );
-  } else if (tab === "org") {
-    const { data } = await ctx.supabase.from("organizations").select("name, legal_name, siret, email, phone, address, city, postal_code, vtc_registration").eq("id", orgId).single();
-    content = <OrganizationForm org={data} readOnly={!admin} privateFleet={privateFleet} />;
   } else if (tab === "pricing") {
-    const { data } = await ctx.supabase.from("pricing_rules").select("*").eq("organization_id", orgId).eq("is_active", true);
-    content = <PricingEditor rules={data ?? []} readOnly={!admin} privateFleet={privateFleet} />;
+    const [{ data }, vehicle] = await Promise.all([
+      ctx.supabase.from("pricing_rules").select("*").eq("organization_id", orgId).eq("is_active", true),
+      // Flotte Privée : catégorie du véhicule du chauffeur, mise en tête de la grille
+      privateFleet && ctx.driverId
+        ? ctx.supabase.from("drivers").select("vehicle:vehicles(category)").eq("id", ctx.driverId).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    const v = (vehicle.data as { vehicle?: { category?: string } | { category?: string }[] | null } | null)?.vehicle;
+    const category = ((Array.isArray(v) ? v[0] : v)?.category ?? null) as VehicleCategory | null;
+    content = (
+      <PricingEditor
+        rules={(data ?? []) as StoredRule[]}
+        readOnly={!admin}
+        privateFleet={privateFleet}
+        vehicleCategory={category}
+        timezone={ctx.org.timezone}
+      />
+    );
   } else if (tab === "team") {
     const { data } = await ctx.supabase
       .from("organization_users")
@@ -139,8 +170,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       const byId = new Map(((emails ?? []) as { id: string; email: string }[]).map((u) => [u.id, u.email]));
       for (const m of members) if (m.status === "invited" && !m.user) m.user = { full_name: null, email: byId.get(m.user_id) ?? "" };
     }
-    content = <TeamPanel members={members} isOwner={ctx.role === "owner"} canInvite={admin} />;
-  } else {
+    content = <TeamPanel members={members as TeamMember[]} isOwner={ctx.role === "owner"} canInvite={admin} />;
+  } else if (tab === "billing") {
     const [{ data: plans }, { data: usage }, { data: subscription }, { data: invoices }, sitesOn, fees] = await Promise.all([
       // Flotte Privée : seulement l'offre attribuée par l'équipe Rydar, même non publique (illisible par la RLS des
       // offres : lue en service role, la seule de l'organisation) ; jamais les offres publiques (Checkout verrouillé)
@@ -164,67 +195,72 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     content = (
       <div className="space-y-6">
         {perRide && fee && (
-          <Link
-            href={platformFeesPaths("fleet").page}
-            prefetch={false}
-            className="surface flex items-center gap-3 rounded-xl px-5 py-4 transition-colors hover:border-line-strong hover:bg-ink-700"
-          >
-            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted">
-              <Landmark className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[14px] font-semibold tracking-tight">Frais Rydar par course</span>
-              <span className="block text-[12.5px] text-fg-muted">
-                En plus de l&apos;abonnement{"\u00a0"}: {feeTermsText({ fee_percent: Number(fee.platform_fee_percent), fee_fixed_cents: Number(fee.platform_fee_fixed_cents), currency: fee.currency || "EUR" })}.
-                Solde, échéance et paiements dans «{"\u00a0"}Frais Rydar{"\u00a0"}».
-              </span>
-            </span>
-            <span className="shrink-0 text-[13px] text-brand">Ouvrir →</span>
-          </Link>
+          <Callout tone="neutral" role={null} icon={<Landmark />} title="Frais Rydar par course">
+            En plus de l&apos;abonnement{NB}:{" "}
+            {feeTermsText({ fee_percent: Number(fee.platform_fee_percent), fee_fixed_cents: Number(fee.platform_fee_fixed_cents), currency: fee.currency || "EUR" })}.
+            Solde, échéance et paiements dans{" "}
+            <Link href={platformFeesPaths("fleet").page} prefetch={false} className="font-medium text-fg underline underline-offset-2 hover:text-brand">
+              Frais Rydar
+            </Link>
+            .
+          </Callout>
         )}
         <BillingPanel
-          plans={plans ?? []}
+          plans={(plans ?? []) as BillingPlan[]}
           currentPlanId={ctx.org.plan_id}
-          usage={usage}
-          subscription={subscription}
-          invoices={invoices ?? []}
+          usage={(usage ?? null) as BillingUsage}
+          subscription={(subscription ?? null) as BillingSubscription | null}
+          invoices={(invoices ?? []) as BillingInvoice[]}
           isOwner={ctx.role === "owner"}
           bookingSitesEnabled={sitesOn}
           privateFleet={privateFleet}
+          onlinePayment={!!serverEnv().stripeSecretKey}
+          checkoutSuccess={checkout === "success"}
+          timezone={ctx.org.timezone}
         />
       </div>
     );
+  } else {
+    const { data } = await ctx.supabase.from("organizations").select("name, legal_name, siret, email, phone, address, city, postal_code, vtc_registration").eq("id", orgId).single();
+    content = <OrganizationForm org={data as OrganizationRow} readOnly={!admin} privateFleet={privateFleet} />;
   }
+
+  const needs = await todo;
+  const pill = (
+    <span className="rounded-full bg-amber/[0.12] px-1.5 text-[12px] font-medium leading-5 text-amber">À compléter</span>
+  );
+  const parts = privateFleet
+    ? ["vos coordonnées", "vos tarifs", "vos délais de réponse"]
+    : ["votre entreprise", "vos tarifs", "la recherche des chauffeurs", ...(centrale ? ["votre commission"] : []), "votre équipe"];
+  if (admin) parts.push("votre abonnement");
 
   return (
     <>
-      <PageHeader
-        eyebrow={privateFleet ? "Mon entreprise" : "Organisation"}
-        title="Réglages"
-        description={
-          privateFleet
-            ? "Votre entreprise, vos tarifs, vos réservations et votre abonnement."
-            : centrale
-              ? "Moteur de dispatch, commission et encaissement, identité, tarifs, équipe et abonnement."
-              : "Moteur de dispatch, identité, tarifs, équipe et abonnement."
-        }
-      >
-        <nav aria-label="Rubriques des réglages" className="-mb-px flex gap-1 overflow-x-auto">
-          {tabs.map((x) => (
-            <Link
-              key={x.key}
-              href={`/dashboard/settings?tab=${x.key}`}
-              prefetch={false}
-              aria-current={tab === x.key ? "page" : undefined}
-              className={cn("shrink-0 whitespace-nowrap border-b-2 px-3 pb-3 pt-1 text-[13px] font-medium", tab === x.key ? "border-brand text-fg" : "border-transparent text-fg-muted hover:text-fg")}
-            >
-              {x.label}
-            </Link>
-          ))}
-        </nav>
+      <PageHeader title="Réglages" description={`${upperFirst(joinFr(parts))}.`}>
+        <FilterTabs
+          label="Rubriques des réglages"
+          variant="rubriques"
+          wrap
+          items={tabs.map((x) => ({
+            href: `/dashboard/settings?tab=${x.key}`,
+            active: tab === x.key,
+            label: (x.key === "org" && needs.org) || (x.key === "pricing" && needs.pricing) ? (
+              <>
+                {x.label}
+                {pill}
+              </>
+            ) : (
+              x.label
+            ),
+          }))}
+        />
       </PageHeader>
       <PageBody>
-        {!admin && <p className="mb-4 rounded-lg border border-line bg-white/[0.02] px-4 py-2.5 text-[12.5px] text-fg-muted">Lecture seule : seuls les administrateurs peuvent modifier ces réglages.</p>}
+        {!admin && (
+          <Callout tone="neutral" role={null} icon={<Lock />} className="mb-5">
+            Lecture seule{NB}: seuls le propriétaire et les administrateurs peuvent modifier ces réglages.
+          </Callout>
+        )}
         {content}
       </PageBody>
     </>

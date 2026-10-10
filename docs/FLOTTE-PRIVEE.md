@@ -687,11 +687,14 @@ avec les mêmes identifiants ». Aucune action de statut, bannissement, niveau d
 Sans fiche : « Votre fiche chauffeur a été supprimée : contactez l'équipe Rydar pour la recréer. » Organisation
 standard : redirection vers `/dashboard/drivers`.
 
-**Réglages** — onglets : « Mon entreprise » (`OrganizationForm`, n° de registre VTC compris), « Tarifs »
-(`PricingEditor`), « Réservations » (nouveau formulaire, action `updatePrivateBookingSettings`, schéma
-`privateBookingSettingsSchema` : confirmation au plus tard, délai de réponse, rappels, paiement par défaut — colonnes
-déjà ouvertes en écriture), « Abonnement ». Onglets Dispatch, Commission et encaissement, Équipe retirés ; `?tab=` hors
-liste → onglet « Mon entreprise ».
+**Réglages** — onglets (noms donnés par la refonte des panneaux, lot R10 ; clés d'adresse inchangées) :
+« Coordonnées » (`?tab=org`, `OrganizationForm` : identité de l'entreprise, n° de registre VTC compris, ce qui manque dit
+en tête), « Tarifs » (`?tab=pricing`, `PricingEditor` : catégorie du véhicule en tête, les autres repliées sous « Autres
+catégories (réservations à vérifier) », un seul « Enregistrer »), « Délais et rappels » (`?tab=bookings`, action
+`updatePrivateBookingSettings`, schéma `privateBookingSettingsSchema` : confirmation au plus tard, délai de réponse,
+rappels, paiement par défaut — colonnes déjà ouvertes en écriture), « Abonnement » (`?tab=billing` : son offre seule,
+sans jauges « Chauffeurs » ni « Administrateurs » ni « Le plus choisi »). Onglets Dispatch, Commission et encaissement,
+Équipe retirés ; `?tab=` hors liste → onglet « Coordonnées ».
 
 **Activité (`/dashboard/stats`)** — page existante (`components/charts/stats-view.tsx`), blocs propres aux chauffeurs
 d'une flotte masqués ; mot « réservation » partout ; période sans réservation : une carte qui le dit au lieu de

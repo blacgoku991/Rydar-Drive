@@ -446,12 +446,12 @@ export const bookingSiteSchema = bookingSiteSchemaFor(null);
 
 export const API_SCOPES = ["rides:create", "rides:read", "rides:cancel", "rides:quote", "webhooks:manage"] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
-/** Libellés des permissions (Dashboard → Intégrations). */
+/** Libellés des permissions (tableau de bord › API & site web), en mots simples ; « Webhooks » gardé (webhooks.test.ts). */
 export const API_SCOPE_LABELS: Record<ApiScope, string> = {
   "rides:create": "Créer des courses",
-  "rides:read": "Lire le statut",
-  "rides:cancel": "Annuler",
-  "rides:quote": "Devis",
+  "rides:read": "Suivre les courses",
+  "rides:cancel": "Annuler des courses",
+  "rides:quote": "Calculer des devis",
   "webhooks:manage": "Webhooks",
 };
 /**

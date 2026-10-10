@@ -1,20 +1,27 @@
-import { formatTime, type WebhookEndpoint } from "@rydar/shared";
-import { Activity, BookOpen, Code2, KeyRound, Webhook } from "lucide-react";
+import { formatRelative, formatTime, type WebhookEndpoint } from "@rydar/shared";
+import { Activity, BookOpen, Code2, Globe, KeyRound, Lock, Webhook } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ApiKeysPanel, type ApiKeyRow } from "@/components/dashboard-integrations";
 import { WebhooksPanel, type WebhookDeliveryRow } from "@/components/dashboard-webhooks";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
+import { siteLink } from "@/components/private-fleet/site-status";
 import { Badge } from "@/components/ui/badge";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { privateFleetPage } from "@/lib/private-fleet";
 import { env } from "@/lib/env";
+import { cn } from "@/lib/utils";
 import { WEBHOOK_ENDPOINT_SELECT } from "@/lib/webhooks";
 
 export const metadata: Metadata = { title: "API & site web" };
 export const dynamic = "force-dynamic";
+
+const NB = " ";
 
 const DELIVERY_SELECT =
   "id, endpoint_id, ride_id, event_type, occurred_at, status, attempts, next_attempt_at, last_status_code, last_error, delivered_at, created_at";
@@ -69,6 +76,13 @@ async function loadWebhooks(ctx: OrgCtx): Promise<{ endpoints: WebhookEndpoint[]
   };
 }
 
+const METHOD_TONE: Record<string, string> = { POST: "bg-brand/12 text-brand", DELETE: "bg-red/12 text-red", GET: "bg-blue/12 text-blue" };
+
+/**
+ * API & site web (docs/REFONTE-PANELS.md § 5.6, lot R10) : l'état du site d'abord (siteLink, même règle que « Mon site »
+ * de la Flotte Privée), puis les clés de connexion et les webhooks (propriétaire et administrateurs), et la
+ * documentation technique repliée (points d'entrée, exemples, journal des requêtes). Lectures et actions inchangées.
+ */
 export default async function IntegrationsPage() {
   const ctx = await requireOrg();
   // Flotte Privée : clés et webhooks gérés par l'équipe Rydar (D16) → « Mon site », en lecture seule
@@ -89,9 +103,11 @@ export default async function IntegrationsPage() {
     admin ? loadWebhooks(ctx) : Promise.resolve({ endpoints: [], deliveries: [] }),
   ]);
   const apiEnabled = Boolean((usage as any)?.limits?.api_access);
-  // Heure du rendu : temps relatifs des webhooks identiques au serveur et à l'hydratation
+  // Heure du rendu : temps relatifs identiques au serveur et à l'hydratation
   const serverNow = Date.now();
   const base = `${env.appUrl}/api/v1`;
+  const keyRows = (keys ?? []) as ApiKeyRow[];
+  const link = admin ? siteLink(keyRows, webhooks.endpoints, serverNow) : null;
 
   const curl = `curl -X POST ${base}/rides \\
   -H "Authorization: Bearer rdk_live_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \\
@@ -167,64 +183,87 @@ export async function POST(req) {
   }
 }`;
 
+  const endpointsList: [string, string, string][] = [
+    ["POST", "/rides", "Créer une course (recherche immédiate ou planifiée)"],
+    ["GET", "/rides/{id}", "Statut, chauffeur attribué, horodatages"],
+    ["GET", "/rides?external_reference=…", "Retrouver une réservation"],
+    ["POST", "/rides/{id}/cancel", "Annuler (avant prise en charge)"],
+    ["GET", "/ping", "Vérifier la clé"],
+    ["POST", "/webhooks", "Enregistrer l'adresse qui reçoit les événements (permission « Webhooks »)"],
+    ["DELETE", "/webhooks/{id}", "Supprimer une adresse de webhook"],
+  ];
+
   return (
     <>
       <PageHeader
-        eyebrow="Canaux"
         title="API & site web"
-        description="Connectez le formulaire de réservation de votre site : chaque réservation crée la course et lance le dispatch automatiquement."
+        description={`Reliez le formulaire de réservation de votre site${NB}: chaque réservation crée la course et lance la recherche d'un chauffeur.`}
       />
       <PageBody className="space-y-6">
         {!apiEnabled && (
-          <div className="rounded-xl border border-amber/30 bg-amber/[0.06] px-4 py-3 text-[13px] text-amber">
-            L&apos;API n&apos;est pas incluse dans votre offre actuelle. Passez à l&apos;offre Pro pour connecter votre site.
-          </div>
+          <Callout
+            tone="warning"
+            title="Non compris dans votre offre."
+            action={
+              admin ? (
+                <Link
+                  href="/dashboard/settings?tab=billing"
+                  prefetch={false}
+                  className="inline-flex min-h-11 items-center font-medium text-fg underline underline-offset-2 hover:text-brand sm:min-h-0"
+                >
+                  Voir les offres
+                </Link>
+              ) : undefined
+            }
+          >
+            L&apos;API de réservation n&apos;est pas incluse dans votre offre actuelle{NB}: votre site ne peut pas encore envoyer de réservations.
+          </Callout>
         )}
-        <div className="grid gap-6 xl:grid-cols-[1.3fr_1fr]">
-          <Card>
-            <CardHeader title="Clés API" icon={<KeyRound />} description="Hashées (HMAC-SHA256) : jamais stockées en clair. Rotation sans interruption." />
-            <CardBody>
-              {admin ? <ApiKeysPanel keys={(keys ?? []) as ApiKeyRow[]} canManage={apiEnabled} /> : <p className="text-[13px] text-fg-subtle">Réservé aux administrateurs.</p>}
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title="Points d'entrée" icon={<BookOpen />} description={base} />
-            <CardBody className="space-y-2.5 text-[13px]">
-              {[
-                ["POST", "/rides", "Créer une course (dispatch immédiat ou planifié)"],
-                ["GET", "/rides/{id}", "Statut, chauffeur attribué, horodatages"],
-                ["GET", "/rides?external_reference=…", "Retrouver une réservation"],
-                ["POST", "/rides/{id}/cancel", "Annuler (avant prise en charge)"],
-                ["GET", "/ping", "Vérifier la clé"],
-                ["POST", "/webhooks", "Enregistrer l'adresse qui reçoit les événements (permission Webhooks)"],
-                ["DELETE", "/webhooks/{id}", "Supprimer une adresse de webhook"],
-              ].map(([m, p, d]) => (
-                <div key={`${m} ${p}`} className="flex items-start gap-3">
-                  <span className={`num w-14 shrink-0 rounded-md px-1.5 py-0.5 text-center text-[10.5px] font-semibold ${m === "POST" ? "bg-brand/12 text-brand" : m === "DELETE" ? "bg-red/12 text-red" : "bg-blue/12 text-blue"}`}>{m}</span>
-                  <div>
-                    <p className="num text-fg">{p}</p>
-                    <p className="text-[12px] text-fg-subtle">{d}</p>
-                  </div>
-                </div>
-              ))}
-              <div className="mt-4 space-y-1.5 border-t border-line pt-4 text-[12px] text-fg-muted">
-                <p>• Authentification : <span className="num text-fg">Authorization: Bearer &lt;clé&gt;</span></p>
-                <p>• <span className="num text-fg">organization_id</span> est interdit dans le corps : la clé détermine le tenant (403 sinon).</p>
-                <p>• Idempotence : en-tête <span className="num text-fg">Idempotency-Key</span> (un UUID par réservation, unique et imprévisible : pas de doublon en cas de ré-essai).</p>
-                <p>• Limite par clé (429 + <span className="num text-fg">Retry-After</span>), journal de chaque requête.</p>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
 
-        <Card>
-          <CardHeader
-            title="Webhooks"
-            icon={<Webhook />}
-            description="Votre serveur est prévenu à chaque changement de statut d'une course (requête signée, nouveaux essais automatiques)."
-          />
-          <CardBody>
-            {admin ? (
+        {link ? (
+          <Card>
+            <CardBody className="flex flex-wrap items-center gap-x-4 gap-y-3">
+              <span aria-hidden className="grid size-10 shrink-0 place-items-center rounded-xl border border-line bg-white/[0.03]">
+                <Globe className={cn("size-5", link.linked ? "text-brand" : "text-fg-subtle")} />
+              </span>
+              <div className="min-w-0 flex-1 basis-[14rem]">
+                <h2 className="text-[15px] font-semibold text-fg [overflow-wrap:anywhere]">
+                  {link.linked ? `Votre site est relié${link.host ? ` (${link.host})` : ""}` : "Aucun site relié pour l'instant"}
+                </h2>
+                <p className="mt-0.5 text-[13px] text-fg-muted">
+                  {link.linked
+                    ? link.lastUsedAt
+                      ? `Dernière utilisation ${formatRelative(link.lastUsedAt, new Date(serverNow))} · ${link.activeKeys.length} clé${link.activeKeys.length > 1 ? "s" : ""} active${link.activeKeys.length > 1 ? "s" : ""}`
+                      : "Clé active, pas encore utilisée par votre site."
+                    : "Créez une clé ci-dessous et donnez-la à la personne qui gère votre site."}
+                </p>
+              </div>
+              <Badge tone={link.linked ? "green" : "neutral"}>{link.linked ? "Relié" : "Non relié"}</Badge>
+            </CardBody>
+          </Card>
+        ) : (
+          <Callout tone="neutral" role={null} icon={<Lock />}>
+            Les clés de connexion et les webhooks sont gérés par le propriétaire ou un administrateur.
+          </Callout>
+        )}
+
+        {admin && (
+          <Card>
+            <CardHeader
+              title="Clés de connexion"
+              icon={<KeyRound />}
+              description="Une clé relie votre site à votre compte. Donnez-la seulement à la personne qui gère votre site."
+            />
+            <CardBody>
+              <ApiKeysPanel keys={keyRows} canManage={apiEnabled} serverNow={serverNow} />
+            </CardBody>
+          </Card>
+        )}
+
+        {admin && (
+          <Card>
+            <CardHeader title="Notifications envoyées à votre site (webhooks)" icon={<Webhook />} />
+            <CardBody>
               <WebhooksPanel
                 endpoints={webhooks.endpoints}
                 deliveries={webhooks.deliveries}
@@ -232,49 +271,120 @@ export async function POST(req) {
                 timezone={ctx.org.timezone}
                 serverNow={serverNow}
               />
-            ) : (
-              <p className="text-[13px] text-fg-subtle">Réservé aux administrateurs.</p>
-            )}
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader title="Exemples d'intégration" icon={<Code2 />} description="Appelez l'API depuis votre serveur : la clé ne doit jamais apparaître dans le navigateur." />
-          <CardBody>
-            <Tabs defaultValue="curl">
-              <TabsList>
-                <TabsTrigger value="curl">cURL</TabsTrigger>
-                <TabsTrigger value="php">PHP / WordPress</TabsTrigger>
-                <TabsTrigger value="node">Node.js</TabsTrigger>
-                <TabsTrigger value="response">Réponse</TabsTrigger>
-                <TabsTrigger value="webhook">Webhook</TabsTrigger>
-              </TabsList>
-              <TabsContent value="curl" className="mt-4"><CodeBlock code={curl} language="bash" /></TabsContent>
-              <TabsContent value="php" className="mt-4"><CodeBlock code={php} language="php" /></TabsContent>
-              <TabsContent value="node" className="mt-4"><CodeBlock code={node} language="javascript" /></TabsContent>
-              <TabsContent value="response" className="mt-4"><CodeBlock code={response} language="http" /></TabsContent>
-              <TabsContent value="webhook" className="mt-4"><CodeBlock code={webhook} language="javascript" /></TabsContent>
-            </Tabs>
-          </CardBody>
-        </Card>
-
-        {admin && (
-          <Card className="overflow-hidden">
-            <CardHeader title="Journal des requêtes" icon={<Activity />} description="40 dernières requêtes API (conservées 90 jours)." />
-            <div className="divide-y divide-line/70">
-              {!logs?.length && <p className="px-5 py-6 text-[13px] text-fg-subtle">Aucune requête pour le moment.</p>}
-              {(logs ?? []).map((l: any) => (
-                <div key={l.id} className="num grid grid-cols-[80px_56px_1fr_60px_70px] items-center gap-3 px-5 py-2 text-[12.5px]">
-                  <span className="text-fg-subtle">{formatTime(l.created_at, ctx.org.timezone, true)}</span>
-                  <span className="font-semibold text-fg-muted">{l.method}</span>
-                  <span className="truncate text-fg">{l.path}{l.error_code ? <span className="ml-2 text-fg-subtle">{l.error_code}</span> : null}</span>
-                  <Badge tone={l.status_code < 300 ? "green" : l.status_code < 500 ? "amber" : "red"} dot={false} className="justify-center">{l.status_code}</Badge>
-                  <span className="text-right text-fg-subtle">{l.latency_ms ?? "—"} ms</span>
-                </div>
-              ))}
-            </div>
+            </CardBody>
           </Card>
         )}
+
+        <Disclosure
+          title="Documentation pour votre développeur"
+          hint={<span className="hidden text-[12.5px] font-normal text-fg-muted sm:inline">Points d&apos;entrée, exemples, journal des requêtes</span>}
+          className="surface rounded-xl px-5"
+          summaryClassName="py-2"
+          contentClassName="space-y-6 border-t border-line pb-5 pt-5"
+        >
+          <section aria-labelledby="doc-points" className="space-y-3">
+            <h3 id="doc-points" className="flex items-center gap-2 text-[14px] font-semibold text-fg">
+              <BookOpen aria-hidden className="size-4 text-fg-muted" /> Points d&apos;entrée
+            </h3>
+            <p className="mono text-[12.5px] text-fg-muted [overflow-wrap:anywhere]">{base}</p>
+            <ul className="space-y-2.5 text-[13px]">
+              {endpointsList.map(([m, p, d]) => (
+                <li key={`${m} ${p}`} className="flex items-start gap-3">
+                  <span className={cn("num w-16 shrink-0 rounded-md px-1.5 py-0.5 text-center text-[12px] font-semibold", METHOD_TONE[m])}>{m}</span>
+                  <div className="min-w-0">
+                    <p className="num text-fg [overflow-wrap:anywhere]">{p}</p>
+                    <p className="text-[12.5px] text-fg-muted">{d}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <ul className="space-y-1.5 border-t border-line pt-3 text-[12.5px] text-fg-muted">
+              <li>
+                Authentification{NB}: <span className="num text-fg">Authorization: Bearer &lt;clé&gt;</span>
+              </li>
+              <li>
+                <span className="num text-fg">organization_id</span> est interdit dans le corps{NB}: la clé désigne votre compte (403 sinon).
+              </li>
+              <li>
+                Idempotence{NB}: en-tête <span className="num text-fg">Idempotency-Key</span> (un UUID par réservation, unique et imprévisible{NB}: pas de
+                doublon en cas de nouvel essai).
+              </li>
+              <li>
+                Limite par clé (429 + <span className="num text-fg">Retry-After</span>), journal de chaque requête.
+              </li>
+            </ul>
+          </section>
+
+          <section aria-labelledby="doc-exemples" className="space-y-3">
+            <h3 id="doc-exemples" className="flex items-center gap-2 text-[14px] font-semibold text-fg">
+              <Code2 aria-hidden className="size-4 text-fg-muted" /> Exemples d&apos;intégration
+            </h3>
+            <p className="text-[12.5px] text-fg-muted">Appelez l&apos;API depuis votre serveur{NB}: la clé ne doit jamais apparaître dans le navigateur.</p>
+            <Tabs defaultValue="curl">
+              <TabsList className="flex h-auto max-w-full flex-wrap">
+                <TabsTrigger value="curl" className="h-9">
+                  cURL
+                </TabsTrigger>
+                <TabsTrigger value="php" className="h-9">
+                  PHP / WordPress
+                </TabsTrigger>
+                <TabsTrigger value="node" className="h-9">
+                  Node.js
+                </TabsTrigger>
+                <TabsTrigger value="response" className="h-9">
+                  Réponse
+                </TabsTrigger>
+                <TabsTrigger value="webhook" className="h-9">
+                  Webhook
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="curl" className="mt-4">
+                <CodeBlock code={curl} language="bash" />
+              </TabsContent>
+              <TabsContent value="php" className="mt-4">
+                <CodeBlock code={php} language="php" />
+              </TabsContent>
+              <TabsContent value="node" className="mt-4">
+                <CodeBlock code={node} language="javascript" />
+              </TabsContent>
+              <TabsContent value="response" className="mt-4">
+                <CodeBlock code={response} language="http" />
+              </TabsContent>
+              <TabsContent value="webhook" className="mt-4">
+                <CodeBlock code={webhook} language="javascript" />
+              </TabsContent>
+            </Tabs>
+          </section>
+
+          {admin && (
+            <section aria-labelledby="doc-journal" className="space-y-2">
+              <h3 id="doc-journal" className="flex items-center gap-2 text-[14px] font-semibold text-fg">
+                <Activity aria-hidden className="size-4 text-fg-muted" /> Journal des requêtes
+              </h3>
+              <p className="text-[12.5px] text-fg-muted">40 dernières requêtes reçues par l&apos;API (conservées 90 jours).</p>
+              {!logs?.length ? (
+                <p className="py-2 text-[13px] text-fg-muted">Aucune requête pour le moment.</p>
+              ) : (
+                <ul className="divide-y divide-line/70 rounded-xl border border-line px-4">
+                  {(logs ?? []).map((l: any) => (
+                    <li key={l.id} className="num flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-[12.5px]">
+                      <span className="order-1 w-[4.5rem] shrink-0 text-fg-muted">{formatTime(l.created_at, ctx.org.timezone, true)}</span>
+                      <span className="order-2 w-14 shrink-0 font-semibold text-fg-muted">{l.method}</span>
+                      <span className="order-5 min-w-0 basis-full truncate text-fg sm:order-3 sm:basis-0 sm:flex-1" title={l.path}>
+                        {l.path}
+                        {l.error_code ? <span className="ml-2 text-fg-muted">{l.error_code}</span> : null}
+                      </span>
+                      <Badge tone={l.status_code < 300 ? "green" : l.status_code < 500 ? "amber" : "red"} dot={false} className="order-3 justify-center sm:order-4">
+                        {l.status_code}
+                      </Badge>
+                      <span className="order-4 text-right text-fg-muted sm:order-5 sm:w-16">{l.latency_ms ?? "—"}{NB}ms</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+        </Disclosure>
       </PageBody>
     </>
   );
