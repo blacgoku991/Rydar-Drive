@@ -1,21 +1,23 @@
 "use client";
-import { slugify, type DispatchModel } from "@rydar/shared";
-import { Building2 } from "lucide-react";
+import { DISPATCH_MODEL_META, slugify, type DispatchModel } from "@rydar/shared";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createOrganization, savePlan, setOrganizationStatus, updateOrganizationPlan } from "@/app/admin/actions";
-import { DispatchModelPicker, FeeFields, feeRule } from "@/components/admin/dispatch-model";
+import { FeeFields, feeRule } from "@/components/admin/dispatch-model";
 import { readFees } from "@/components/admin/fees";
 import { NO_PLAN_LIMITS, limitEnabled } from "@/components/admin/private-fleet-state";
+import { frSpaces } from "@/components/platform-fees/org-platform-format";
 import { Columns, DataTable } from "@/components/charts/charts";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, SheetContent } from "@/components/ui/dialog";
+import { Disclosure } from "@/components/ui/disclosure";
+import { FormSection } from "@/components/ui/form-section";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import type { SuspensionBasis } from "@/lib/suspension";
-import { submitWith } from "@/lib/utils";
+import { cn, submitWith } from "@/lib/utils";
 
 const dayLabel = (v: string) => {
   const d = new Date(v);
@@ -31,24 +33,45 @@ export function PlatformDailyChart({ data }: { data: { date: string; rides: numb
   );
 }
 
-export function CreateOrganizationSheet({ plans }: { plans: { code: string; name: string }[] }) {
+/** Types d'une organisation standard (Flotte Privée : CreatePrivateFleetSheet), dans l'ordre de « Nouveau client ». */
+const ORG_MODELS: DispatchModel[] = ["fleet", "centrale"];
+
+/**
+ * Nouveau client Flotte ou Centrale à commission (docs/REFONTE-PANELS.md, R3) : ouvert par « Nouveau client »
+ * (components/admin/new-client.tsx) avec le type choisi (`initialModel`, modifiable ici). Champs, charge envoyée à
+ * createOrganization, fieldErrors et frais appliqués dès la création : inchangés. Sans mot de passe provisoire (case
+ * décochée : champ absent, donc vide), le propriétaire est invité par e-mail.
+ */
+export function CreateOrganizationSheet({
+  plans,
+  rootDomain,
+  initialModel = "fleet",
+  open,
+  onOpenChange,
+}: {
+  plans: { code: string; name: string }[];
+  /** NEXT_PUBLIC_ROOT_DOMAIN : adresse du client (identifiant.domaine) */
+  rootDomain: string;
+  /** Type choisi dans « Nouveau client » */
+  initialModel?: DispatchModel;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const uid = useId();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [touched, setTouched] = useState(false);
-  const [model, setModel] = useState<DispatchModel>("fleet");
+  const [model, setModel] = useState<DispatchModel>(initialModel);
   const [feePercent, setFeePercent] = useState("0");
   const [feeFixed, setFeeFixed] = useState("0");
   const [feeErrors, setFeeErrors] = useState<{ percent?: string; fixed?: string }>({});
+  const [temporary, setTemporary] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <Button variant="primary" onClick={() => setOpen(true)}>
-        <Building2 /> Créer un rattacheur
-      </Button>
-      <SheetContent title="Nouveau rattacheur" description="Espace totalement isolé : données, chauffeurs, API et mini-site dédiés.">
+    <Dialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
+      <SheetContent title="Nouveau client" description={"Chaque client a son espace séparé\u00a0: ses chauffeurs, ses courses, son API et son mini-site."}>
         <form
           onSubmit={submitWith((f) =>
             start(() => runAction(async () => {
@@ -73,63 +96,136 @@ export function CreateOrganizationSheet({ plans }: { plans: { code: string; name
                 return void toast.error(res.error);
               }
               if (res.ownerInvited) {
-                toast.success("Rattacheur créé", {
-                  description: [
-                    "Cette adresse a déjà un compte Rydar Drive : le propriétaire activera son accès en choisissant son mot de passe avec le lien reçu par e-mail.",
-                    res.passwordIgnored ? "Le mot de passe provisoire n'est pas appliqué." : "",
-                    res.emailSent ? "" : "L'e-mail n'a pas pu partir : renvoyez l'invitation depuis la fiche du rattacheur (Accès).",
-                  ].filter(Boolean).join(" "),
+                toast.success("Client créé", {
+                  description: frSpaces(
+                    [
+                      "Cette adresse a déjà un compte Rydar Drive : le propriétaire activera son accès en choisissant son mot de passe avec le lien reçu par e-mail.",
+                      res.passwordIgnored ? "Le mot de passe provisoire n'est pas appliqué." : "",
+                      res.emailSent ? "" : "L'e-mail n'a pas pu partir : renvoyez l'invitation depuis la fiche du client (Accès).",
+                    ].filter(Boolean).join(" "),
+                  ),
                   duration: 12000,
                 });
-              } else toast.success("Rattacheur créé");
-              setOpen(false);
+              } else toast.success("Client créé");
+              onOpenChange(false);
               router.push(`/admin/organizations/${res.id}`);
             })),
           )}
-          className="space-y-6 px-6 py-6"
+          className="space-y-7 px-6 py-6"
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Nom de la centrale" className="sm:col-span-2" error={errors.name}>
-              <Input value={name} required onChange={(e) => { setName(e.target.value); if (!touched) setSlug(slugify(e.target.value)); }} placeholder="Élite Chauffeurs Paris" />
-            </Field>
-            <Field label="Identifiant (slug)" hint={`${slug || "slug"}.rydar.app`} error={errors.slug}>
-              <Input value={slug} required onChange={(e) => { setTouched(true); setSlug(slugify(e.target.value)); }} className="num" />
-            </Field>
-            <Field label="Offre" optional hint="Sans offre : aucune limite" error={errors.planCode}>
-              <NativeSelect name="plan" defaultValue="">
-                <option value="">Sans offre</option>
-                {plans.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
-              </NativeSelect>
-            </Field>
-            <Field label="E-mail de la centrale" error={errors.email}><Input name="email" type="email" required /></Field>
-            <Field label="Téléphone" optional error={errors.phone}><Input name="phone" /></Field>
-            <Field label="Ville" optional className="sm:col-span-2" error={errors.city}><Input name="city" /></Field>
-          </div>
-          <div className="space-y-3">
-            <p className="text-[13px] font-medium text-fg-muted">Modèle d&apos;exploitation</p>
-            <DispatchModelPicker value={model} onChange={setModel} disabled={pending} />
-            <div className="rounded-xl border border-line bg-white/[0.02] p-4">
-              <p className="mb-1 text-[13px] font-medium text-fg">Frais plateforme Rydar</p>
-              <p className="mb-1 text-[12px] text-fg-muted">{feeRule(model)}</p>
-              <p className="mb-3 text-[12px] text-fg-muted">
-                Appliqués dès la création. Ensuite, une hausse est annoncée au moins 30{"\u00a0"}jours à l&apos;avance (ou appliquée sur accord écrit de
-                l&apos;organisation), depuis la fiche du rattacheur.
+          <FormSection step={1} title="Client">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Nom commercial" className="sm:col-span-2" error={errors.name}>
+                <Input
+                  value={name}
+                  required
+                  onChange={(e) => { setName(e.target.value); if (!touched) setSlug(slugify(e.target.value)); }}
+                  placeholder={"ex.\u00a0: Élite Chauffeurs Paris"}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Identifiant" hint={`Adresse\u00a0: ${slug || "identifiant"}.${rootDomain}`} error={errors.slug}>
+                <Input value={slug} required onChange={(e) => { setTouched(true); setSlug(slugify(e.target.value)); }} className="num" autoComplete="off" />
+              </Field>
+              <Field label="Offre" optional hint={"Sans offre\u00a0: aucune limite"} error={errors.planCode}>
+                <NativeSelect name="plan" defaultValue="">
+                  <option value="">Sans offre</option>
+                  {plans.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
+                </NativeSelect>
+              </Field>
+              <Field label="E-mail de contact" error={errors.email} hint="Adresse de l'entreprise (factures, annonces des frais).">
+                <Input name="email" type="email" required autoComplete="off" />
+              </Field>
+              <Field label="Téléphone" optional error={errors.phone}>
+                <Input name="phone" type="tel" autoComplete="off" />
+              </Field>
+              <Field label="Ville" optional className="sm:col-span-2" error={errors.city}>
+                <Input name="city" autoComplete="off" />
+              </Field>
+            </div>
+          </FormSection>
+
+          <FormSection step={2} title="Type et frais Rydar">
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="mb-1.5 text-[12.5px] font-medium text-fg-muted">Type de client</legend>
+              <div className="grid grid-cols-2 gap-1 rounded-xl border border-line bg-ink-850 p-1">
+                {ORG_MODELS.map((m) => (
+                  <label
+                    key={m}
+                    className={cn(
+                      "flex min-h-11 cursor-pointer items-center justify-center rounded-lg px-2 text-center text-[13px] font-medium transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand/50",
+                      model === m ? "bg-ink-600 text-fg" : "text-fg-muted hover:text-fg",
+                      pending && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name={`${uid}-model`}
+                      value={m}
+                      checked={model === m}
+                      onChange={() => setModel(m)}
+                      disabled={pending}
+                      className="sr-only"
+                    />
+                    {DISPATCH_MODEL_META[m].label}
+                  </label>
+                ))}
+              </div>
+              <p className="text-[13px] leading-relaxed text-fg-muted">{frSpaces(DISPATCH_MODEL_META[model].description)}</p>
+            </fieldset>
+            <div className="space-y-3 rounded-xl border border-line bg-white/[0.02] p-4">
+              <p className="text-[13px] leading-relaxed text-fg-muted">
+                Frais dus à Rydar pour chaque course terminée, en plus de l&apos;abonnement (0{"\u00a0"}: aucun frais).
               </p>
               <FeeFields model={model} percent={feePercent} fixed={feeFixed} onPercent={setFeePercent} onFixed={setFeeFixed} errors={feeErrors} disabled={pending} />
+              <Disclosure title="En savoir plus" summaryClassName="text-[13px]" contentClassName="space-y-2 pb-1 text-[12.5px] leading-relaxed text-fg-muted">
+                <p>{frSpaces(feeRule(model))}</p>
+                <p>
+                  Appliqués dès la création. Ensuite, une hausse est annoncée au moins 30{"\u00a0"}jours à l&apos;avance (ou appliquée sur accord
+                  écrit du client), depuis la fiche du client.
+                </p>
+              </Disclosure>
             </div>
-          </div>
-          <div className="grid gap-4 rounded-xl border border-line bg-white/[0.02] p-4 sm:grid-cols-2">
-            <p className="text-[13px] font-medium text-fg-muted sm:col-span-2">Compte propriétaire</p>
-            <Field label="Nom complet" error={errors.ownerName}><Input name="ownerName" required /></Field>
-            <Field label="E-mail" error={errors.ownerEmail}><Input name="ownerEmail" type="email" required /></Field>
-            <Field label="Mot de passe provisoire" optional hint="Vide = invitation par e-mail (10 caractères minimum sinon)" className="sm:col-span-2" error={errors.ownerPassword}>
-              <Input name="ownerPassword" className="num" />
-            </Field>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
-            <Button type="submit" variant="primary" loading={pending}>Créer</Button>
-          </div>
+          </FormSection>
+
+          <FormSection step={3} title="Compte du propriétaire" description="Par défaut, le propriétaire reçoit un e-mail pour choisir son mot de passe.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Nom complet" error={errors.ownerName}>
+                <Input name="ownerName" required autoComplete="off" />
+              </Field>
+              <Field label="E-mail" error={errors.ownerEmail}>
+                <Input name="ownerEmail" type="email" required autoComplete="off" />
+              </Field>
+            </div>
+            <label htmlFor={`${uid}-temporary`} className="flex cursor-pointer items-start gap-2.5">
+              <input
+                id={`${uid}-temporary`}
+                type="checkbox"
+                checked={temporary}
+                onChange={(e) => setTemporary(e.target.checked)}
+                disabled={pending}
+                className="mt-1 size-4 shrink-0 accent-brand"
+              />
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-fg">Définir un mot de passe provisoire (serveur sans e-mail)</span>
+                <span className="block text-[12.5px] leading-[18px] text-fg-muted">
+                  À n&apos;utiliser que si l&apos;envoi des e-mails n&apos;est pas configuré{"\u00a0"}: transmettez-le au propriétaire, qui le changera dès sa
+                  première connexion.
+                </span>
+              </span>
+            </label>
+            {temporary && (
+              <Field label="Mot de passe provisoire" error={errors.ownerPassword} hint="10 caractères au moins.">
+                <Input name="ownerPassword" type="text" required minLength={10} maxLength={72} className="num" autoComplete="new-password" />
+              </Field>
+            )}
+          </FormSection>
+
+          <DialogFooter sticky backDisabled={pending}>
+            <Button type="submit" variant="primary" loading={pending}>
+              {temporary ? "Créer le client" : "Créer et inviter"}
+            </Button>
+          </DialogFooter>
         </form>
       </SheetContent>
     </Dialog>

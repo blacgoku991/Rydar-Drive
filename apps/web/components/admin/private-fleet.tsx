@@ -26,7 +26,9 @@ import { frSpaces } from "@/components/platform-fees/org-platform-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/ui/code-block";
-import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, SheetContent } from "@/components/ui/dialog";
+import { Disclosure } from "@/components/ui/disclosure";
+import { FormSection } from "@/components/ui/form-section";
 import { Field, Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
@@ -134,7 +136,10 @@ function readDriver(f: FormData) {
 /**
  * « Nouveau client Flotte Privée » : client, chauffeur-propriétaire (compte neuf, invité par e-mail), véhicule, frais
  * Rydar par course (0 par défaut : aucun montant proposé), offre facultative avec l'API, référence du contrat signé.
- * Depuis une demande de contact (`contactRequestId`) : formulaire prérempli, demande marquée traitée après la création.
+ * Ouverture : par « Nouveau client » de la liste des clients (`open` / `onOpenChange`, sans bouton propre ;
+ * components/admin/new-client.tsx) ou par son propre bouton (`label`), depuis une demande de contact
+ * (`contactRequestId`) : formulaire prérempli, demande marquée traitée après la création. Sections numérotées
+ * (docs/REFONTE-PANELS.md, R3) ; champs, libellés, charge envoyée et fieldErrors inchangés.
  */
 export function CreatePrivateFleetSheet({
   plans,
@@ -142,6 +147,8 @@ export function CreatePrivateFleetSheet({
   prefill,
   contactRequestId,
   label = "Nouveau client Flotte Privée",
+  open: openProp,
+  onOpenChange,
 }: {
   plans: PlanOption[];
   /** NEXT_PUBLIC_ROOT_DOMAIN (indice de l'identifiant) */
@@ -149,10 +156,16 @@ export function CreatePrivateFleetSheet({
   prefill?: PrivateFleetPrefill;
   contactRequestId?: string;
   label?: string;
+  /** Ouverture pilotée (« Nouveau client ») : pas de bouton propre */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const router = useRouter();
   const uid = useId();
-  const [open, setOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlled ? openProp : ownOpen;
+  const setOpen = (o: boolean) => (controlled ? onOpenChange?.(o) : setOwnOpen(o));
   const [pending, start] = useTransition();
   const [name, setName] = useState(prefill?.name ?? "");
   const [slug, setSlug] = useState(prefill?.name ? slugify(prefill.name) : "");
@@ -203,92 +216,94 @@ export function CreatePrivateFleetSheet({
       }),
     );
 
+  // Informations légales repliées (facultatives) : ouvertes d'office si l'une d'elles est refusée
+  const legalError = !!(errors.legalName || errors.siret || errors.vtcRegistration);
+
   return (
     <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
-      <Button variant={contactRequestId ? "primary" : "outline"} onClick={() => setOpen(true)} className={contactRequestId ? "w-full" : undefined}>
-        <Sparkles /> {label}
-      </Button>
+      {!controlled && (
+        <Button variant={contactRequestId ? "primary" : "outline"} onClick={() => setOpen(true)} className={contactRequestId ? "w-full" : undefined}>
+          <Sparkles /> {label}
+        </Button>
+      )}
       <SheetContent
         title="Nouveau client Flotte Privée"
         description={frSpaces("Un chauffeur VTC indépendant : une seule fiche (la sienne, sur son compte), les réservations de son site rien que pour lui.")}
       >
-        <form onSubmit={submitWith(submit)} className="space-y-6 px-6 py-6">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <p className="text-[13px] font-medium text-fg-muted sm:col-span-2">Client</p>
-            <Field label="Nom commercial" className="sm:col-span-2" error={errors.name}>
-              <Input
-                value={name}
-                required
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (!touched) setSlug(slugify(e.target.value));
-                }}
-                placeholder="VTC Martin"
-                autoComplete="off"
-              />
-            </Field>
-            <Field label="Identifiant" hint={`${slug || "identifiant"}.${rootDomain}`} error={errors.slug}>
-              <Input
-                value={slug}
-                required
-                onChange={(e) => {
-                  setTouched(true);
-                  setSlug(slugify(e.target.value));
-                }}
-                className="num"
-                autoComplete="off"
-              />
-            </Field>
-            <Field label="Ville" error={errors.city}>
-              <Input name="city" required maxLength={80} autoComplete="off" />
-            </Field>
-            <Field label="E-mail du client" error={errors.email} hint="Adresse de l'entreprise (factures, annonces des frais).">
-              <Input name="email" type="email" required defaultValue={prefill?.email} autoComplete="off" />
-            </Field>
-            <Field label="Téléphone du client" error={errors.phone}>
-              <Input name="phone" type="tel" required defaultValue={prefill?.phone} autoComplete="off" />
-            </Field>
-            <Field label="Raison sociale" optional error={errors.legalName}>
-              <Input name="legalName" autoComplete="off" />
-            </Field>
-            <Field label="SIRET" optional error={errors.siret} hint="14 chiffres.">
-              <Input name="siret" inputMode="numeric" className="num" autoComplete="off" />
-            </Field>
-            <Field label="N° d'inscription au registre VTC" optional className="sm:col-span-2" error={errors.vtcRegistration}>
-              <Input name="vtcRegistration" className="num" autoComplete="off" />
-            </Field>
-          </div>
-
-          <DriverFields
-            prefill={prefill}
-            errors={errors}
-            emailField={
-              <Field
-                label="E-mail de connexion"
-                className="sm:col-span-2"
-                error={errors.ownerEmail}
-                hint={frSpaces("Adresse sans compte Rydar : elle sert à l'espace web ET à l'application (mêmes identifiants).")}
-              >
-                <Input name="ownerEmail" type="email" required defaultValue={prefill?.ownerEmail} autoComplete="off" />
+        <form onSubmit={submitWith(submit)} className="space-y-7 px-6 py-6">
+          <FormSection step={1} title="Client">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Nom commercial" className="sm:col-span-2" error={errors.name}>
+                <Input
+                  value={name}
+                  required
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (!touched) setSlug(slugify(e.target.value));
+                  }}
+                  placeholder={"ex.\u00a0: VTC Martin"}
+                  autoComplete="off"
+                />
               </Field>
-            }
-          />
+              <Field label="Identifiant" hint={`${slug || "identifiant"}.${rootDomain}`} error={errors.slug}>
+                <Input
+                  value={slug}
+                  required
+                  onChange={(e) => {
+                    setTouched(true);
+                    setSlug(slugify(e.target.value));
+                  }}
+                  className="num"
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Ville" error={errors.city}>
+                <Input name="city" required maxLength={80} autoComplete="off" />
+              </Field>
+              <Field label="E-mail du client" error={errors.email} hint="Adresse de l'entreprise (factures, annonces des frais).">
+                <Input name="email" type="email" required defaultValue={prefill?.email} autoComplete="off" />
+              </Field>
+              <Field label="Téléphone du client" error={errors.phone}>
+                <Input name="phone" type="tel" required defaultValue={prefill?.phone} autoComplete="off" />
+              </Field>
+            </div>
+            <Disclosure
+              title="Informations légales (facultatif)"
+              hint={<span className="max-sm:hidden">raison sociale, SIRET, n° VTC</span>}
+              forceOpen={legalError}
+              className="rounded-xl border border-line px-4"
+              contentClassName="grid gap-4 pb-4 pt-1 sm:grid-cols-2"
+            >
+              <Field label="Raison sociale" optional error={errors.legalName}>
+                <Input name="legalName" autoComplete="off" />
+              </Field>
+              <Field label="SIRET" optional error={errors.siret} hint="14 chiffres.">
+                <Input name="siret" inputMode="numeric" className="num" autoComplete="off" />
+              </Field>
+              <Field label="N° d'inscription au registre VTC" optional className="sm:col-span-2" error={errors.vtcRegistration}>
+                <Input name="vtcRegistration" className="num" autoComplete="off" />
+              </Field>
+            </Disclosure>
+          </FormSection>
 
-          <div className="rounded-xl border border-line bg-white/[0.02] p-4">
-            <p className="mb-1 text-[13px] font-medium text-fg">Frais Rydar par course</p>
-            <p className="mb-3 text-[12px] text-fg-muted">{feeRule("fleet")}</p>
-            <FeeFields
-              model="fleet"
-              percent={feePercent}
-              fixed={feeFixed}
-              onPercent={setFeePercent}
-              onFixed={setFeeFixed}
-              errors={{ percent: errors.platformFeePercent, fixed: errors.platformFeeFixedCents }}
-              disabled={pending}
+          <FormSection step={2} title="Chauffeur et véhicule">
+            <DriverFields
+              prefill={prefill}
+              errors={errors}
+              emailField={
+                <Field
+                  label="E-mail de connexion"
+                  className="sm:col-span-2"
+                  error={errors.ownerEmail}
+                  hint={frSpaces("Adresse sans compte Rydar : elle sert à l'espace web ET à l'application (mêmes identifiants).")}
+                >
+                  <Input name="ownerEmail" type="email" required defaultValue={prefill?.ownerEmail} autoComplete="off" />
+                </Field>
+              }
             />
-          </div>
+          </FormSection>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <FormSection step={3} title="Offre et frais">
             <Field label="Offre" optional error={errors.planId} hint={frSpaces("Offre avec l'accès à l'API (le site réserve par l'API). Sans offre : aucune limite, sauf 1 chauffeur et 1 accès.")}>
               <NativeSelect name="planId" defaultValue="">
                 <option value="">Sans offre</option>
@@ -299,6 +314,22 @@ export function CreatePrivateFleetSheet({
                 ))}
               </NativeSelect>
             </Field>
+            <div className="rounded-xl border border-line bg-white/[0.02] p-4">
+              <p className="mb-1 text-[13px] font-medium text-fg">Frais Rydar par course</p>
+              <p className="mb-3 text-[12.5px] leading-relaxed text-fg-muted">{feeRule("fleet")}</p>
+              <FeeFields
+                model="fleet"
+                percent={feePercent}
+                fixed={feeFixed}
+                onPercent={setFeePercent}
+                onFixed={setFeeFixed}
+                errors={{ percent: errors.platformFeePercent, fixed: errors.platformFeeFixedCents }}
+                disabled={pending}
+              />
+            </div>
+          </FormSection>
+
+          <FormSection step={4} title="Accès et contrat">
             <Field
               label="Référence du contrat signé"
               error={errors.contractRef}
@@ -306,47 +337,43 @@ export function CreatePrivateFleetSheet({
             >
               <Input name="contractRef" required minLength={3} maxLength={200} autoComplete="off" />
             </Field>
-          </div>
-
-          <div className="space-y-3 rounded-xl border border-line bg-white/[0.02] p-4">
-            <p className="text-[13px] font-medium text-fg">Accès du client</p>
-            <p className="text-[12px] text-fg-muted">
-              {frSpaces(
-                "Par défaut : invitation par e-mail. Le client choisit son mot de passe, accepte les CGV dans son espace web, puis se connecte à l'application avec les mêmes identifiants.",
-              )}
-            </p>
-            <label htmlFor={`${uid}-temporary`} className="flex cursor-pointer items-start gap-2.5">
-              <input
-                id={`${uid}-temporary`}
-                type="checkbox"
-                checked={temporary}
-                onChange={(e) => setTemporary(e.target.checked)}
-                className="mt-1 size-4 shrink-0 accent-brand"
-              />
-              <span className="min-w-0">
-                <span className="block text-[13px] font-medium text-fg">Mot de passe provisoire (serveur sans e-mail)</span>
-                <span className="block text-[12px] leading-[18px] text-amber">
-                  {frSpaces(
-                    "Accès connu de l'équipe : à transmettre au client, qui doit le changer par « Mot de passe oublié » dès sa première connexion. À n'utiliser que si l'envoi des e-mails n'est pas configuré.",
-                  )}
+            <div className="space-y-3 rounded-xl border border-line bg-white/[0.02] p-4">
+              <p className="text-[13px] font-medium text-fg">Accès du client</p>
+              <p className="text-[12.5px] leading-relaxed text-fg-muted">
+                {frSpaces(
+                  "Par défaut : invitation par e-mail. Le client choisit son mot de passe, accepte les CGV dans son espace web, puis se connecte à l'application avec les mêmes identifiants.",
+                )}
+              </p>
+              <label htmlFor={`${uid}-temporary`} className="flex cursor-pointer items-start gap-2.5">
+                <input
+                  id={`${uid}-temporary`}
+                  type="checkbox"
+                  checked={temporary}
+                  onChange={(e) => setTemporary(e.target.checked)}
+                  className="mt-1 size-4 shrink-0 accent-brand"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-medium text-fg">Mot de passe provisoire (serveur sans e-mail)</span>
+                  <span className="block text-[12.5px] leading-[18px] text-amber">
+                    {frSpaces(
+                      "Accès connu de l'équipe : à transmettre au client, qui doit le changer par « Mot de passe oublié » dès sa première connexion. À n'utiliser que si l'envoi des e-mails n'est pas configuré.",
+                    )}
+                  </span>
                 </span>
-              </span>
-            </label>
-            {temporary && (
-              <Field label="Mot de passe provisoire" error={errors.password} hint="10 caractères au moins.">
-                <Input name="password" type="text" required minLength={10} maxLength={72} className="num" autoComplete="new-password" />
-              </Field>
-            )}
-          </div>
+              </label>
+              {temporary && (
+                <Field label="Mot de passe provisoire" error={errors.password} hint="10 caractères au moins.">
+                  <Input name="password" type="text" required minLength={10} maxLength={72} className="num" autoComplete="new-password" />
+                </Field>
+              )}
+            </div>
+          </FormSection>
 
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" disabled={pending} onClick={() => setOpen(false)}>
-              Annuler
-            </Button>
+          <DialogFooter sticky backDisabled={pending}>
             <Button type="submit" variant="primary" loading={pending}>
               {temporary ? "Créer le client" : "Créer et inviter"}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </SheetContent>
     </Dialog>

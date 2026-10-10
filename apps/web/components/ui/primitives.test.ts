@@ -37,6 +37,7 @@ const { CardHeader } = await import("./card");
 const { Badge } = await import("./badge");
 const { Dialog, DialogFooter } = await import("./dialog");
 const { PageHeader, PageBody, StatCard } = await import("../layout/page-header");
+const { FormSection } = await import("./form-section");
 
 describe("Callout", () => {
   it("rôle selon l'urgence : status par défaut, alert pour danger, aucun sur demande", () => {
@@ -294,9 +295,21 @@ describe("PageHeader, PageBody, StatCard", () => {
   });
 });
 
+describe("FormSection (R3 : formulaires de création d'un client)", () => {
+  it("fieldset nommé par sa légende ; numéro d'étape décoratif ; une phrase sous la légende", () => {
+    const out = html(createElement(FormSection, { step: 2, title: "Chauffeur et véhicule", description: "Sa fiche et son véhicule.", children: createElement("input", { name: "x" }) }));
+    expect(out).toMatch(/^<fieldset class="min-w-0 /);
+    expect(out).toMatch(/<legend[^>]*>.*Chauffeur et véhicule.*<\/legend>/);
+    expect(out).toMatch(/<span aria-hidden="true"[^>]*>2<\/span>/);
+    expect(out).toContain("Sa fiche et son véhicule.");
+    expect(out).toContain('<input name="x"/>');
+    expect(html(createElement(FormSection, { title: "Client", children: "x" }))).not.toContain("aria-hidden");
+  });
+});
+
 describe("règles de design des nouveaux fichiers", () => {
   it("aucune couleur en dur, aucune taille sous 12 px, aucun stockage local", () => {
-    for (const file of ["callout.tsx", "disclosure.tsx", "filter-tabs.tsx", "pagination.tsx", "copy-button.tsx", "search-field.tsx", "switch-row.tsx", "confirm-dialog.tsx"]) {
+    for (const file of ["callout.tsx", "disclosure.tsx", "filter-tabs.tsx", "pagination.tsx", "copy-button.tsx", "search-field.tsx", "switch-row.tsx", "confirm-dialog.tsx", "form-section.tsx"]) {
       const src = source(file);
       expect(src, file).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
       expect(src, file).not.toMatch(/text-\[(10|10\.5|11|11\.5)px\]/);
