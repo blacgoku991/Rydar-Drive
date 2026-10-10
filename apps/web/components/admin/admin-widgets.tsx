@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { createOrganization, savePlan, setOrganizationStatus, updateOrganizationPlan } from "@/app/admin/actions";
 import { DispatchModelPicker, FeeFields, feeRule } from "@/components/admin/dispatch-model";
 import { readFees } from "@/components/admin/fees";
+import { NO_PLAN_LIMITS, limitEnabled } from "@/components/admin/private-fleet-state";
 import { Columns, DataTable } from "@/components/charts/charts";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, SheetContent } from "@/components/ui/dialog";
@@ -213,9 +214,23 @@ const LIMIT_FIELDS = [
   { key: "advanced_stats", label: "Stats avancées", type: "bool" },
 ] as const;
 
-const NO_PLAN_LIMITS: Record<string, unknown> = { api_access: true, booking_site: true, custom_domain: true, advanced_stats: true };
+/** Flotte Privée : limites imposées par private.org_limits APRÈS l'offre et la surcharge. */
+const PRIVATE_FLEET_FIXED: Record<string, string> = { max_drivers: "1", max_admins: "1" };
 
-export function OrganizationPlanForm({ orgId, plans, planId, override }: { orgId: string; plans: { id: string; name: string; limits: any }[]; planId: string | null; override: Record<string, any> }) {
+export function OrganizationPlanForm({
+  orgId,
+  plans,
+  planId,
+  override,
+  privateFleet = false,
+}: {
+  orgId: string;
+  plans: { id: string; name: string; limits: any }[];
+  planId: string | null;
+  override: Record<string, any>;
+  /** Flotte Privée : 1 chauffeur et 1 accès imposés ; offre (et surcharge) sans accès à l'API refusée */
+  privateFleet?: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [plan, setPlan] = useState(planId ?? "");
@@ -224,17 +239,27 @@ export function OrganizationPlanForm({ orgId, plans, planId, override }: { orgId
   const base = plan ? (plans.find((p) => p.id === plan)?.limits ?? {}) : NO_PLAN_LIMITS;
   return (
     <div className="space-y-4">
+      {privateFleet && (
+        <p className="rounded-lg border border-brand/25 bg-brand/[0.05] px-3 py-2 text-[12.5px] text-fg-muted">
+          1 chauffeur et 1 accès imposés par la Flotte Privée, quelles que soient l&apos;offre et les surcharges. Offre avec l&apos;accès à l&apos;API
+          exigée (le site du client réserve par l&apos;API).
+        </p>
+      )}
       <Field label="Offre" hint={plan ? undefined : "Sans offre : aucune limite, toutes les options"}>
         <NativeSelect value={plan} onChange={(e) => setPlan(e.target.value)}>
           <option value="">Sans offre</option>
-          {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {plans.map((p) => (
+            <option key={p.id} value={p.id}>
+              {privateFleet && !limitEnabled(p.limits?.api_access) ? `${p.name} (sans API)` : p.name}
+            </option>
+          ))}
         </NativeSelect>
       </Field>
       <p className="text-[12px] text-fg-subtle">Surcharges spécifiques (vide = valeur de l&apos;offre)</p>
       <div className="grid grid-cols-2 gap-3">
         {LIMIT_FIELDS.map((f) =>
           f.type === "number" ? (
-            <Field key={f.key} label={f.label} hint={`offre : ${base[f.key] ?? "∞"}`}>
+            <Field key={f.key} label={f.label} hint={privateFleet && PRIVATE_FLEET_FIXED[f.key] ? `imposé : ${PRIVATE_FLEET_FIXED[f.key]} (Flotte Privée)` : `offre : ${base[f.key] ?? "∞"}`}>
               <Input
                 type="number"
                 value={o[f.key] ?? ""}

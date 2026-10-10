@@ -146,7 +146,10 @@ export type OrgTermsStatus = {
   notifiedEffectiveOn?: string | null;
 };
 
-/** Fiche organisation : choix du modèle + frais par course (hausse annoncée ou sur accord écrit), confirmations. */
+/**
+ * Fiche organisation : choix du modèle + frais par course (hausse annoncée ou sur accord écrit), confirmations. Flotte
+ * Privée (`modelLocked`) : modèle flotte imposé (sortie d'abord, par « Changer d'offre de service ») ; taux réglables.
+ */
 export function DispatchModelForm({
   orgId,
   model,
@@ -157,6 +160,7 @@ export function DispatchModelForm({
   schedule,
   terms,
   today,
+  modelLocked = false,
 }: {
   orgId: string;
   model: DispatchModel;
@@ -171,6 +175,8 @@ export function DispatchModelForm({
   terms: OrgTermsStatus | null;
   /** Aujourd'hui (« AAAA-MM-JJ », fuseau de l'organisation) : date d'effet au plus un an après (366 jours, comme la base) */
   today: string;
+  /** Flotte Privée : choix du modèle désactivé */
+  modelLocked?: boolean;
 }) {
   const router = useRouter();
   const maxEffectiveOn = addIsoDays(today, 366);
@@ -279,7 +285,13 @@ export function DispatchModelForm({
 
   return (
     <div className="space-y-5">
-      <DispatchModelPicker value={value} onChange={setValue} disabled={pending} />
+      <DispatchModelPicker value={value} onChange={setValue} disabled={pending || modelLocked} />
+      {modelLocked && (
+        <p className="-mt-3 text-[12px] text-fg-muted">
+          Flotte Privée{"\u00a0"}: modèle flotte imposé. Sortez d&apos;abord de la Flotte Privée («{"\u00a0"}Passer en flotte standard{"\u00a0"}» ou «{"\u00a0"}Passer en
+          centrale{"\u00a0"}», carte Flotte Privée){"\u00a0"}; les frais par course restent réglables ici.
+        </p>
+      )}
       {errors.dispatchModel && <p className="-mt-3 text-xs text-red">{errors.dispatchModel}</p>}
       <div className="space-y-3.5 rounded-xl border border-line bg-white/[0.015] p-4">
         <div>

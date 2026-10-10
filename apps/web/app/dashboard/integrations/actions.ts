@@ -2,58 +2,36 @@
 import { apiKeyCreateSchema, BROWSER_KEY_SCOPES, describeError, ERROR_MESSAGES, humanizeError, webhookUpsertSchema, type WebhookEvent } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { generateApiKey, hashApiKey } from "@/lib/api-keys";
+import { insertKey } from "@/lib/api-keys-server";
 import { audit } from "@/lib/audit";
 import { isAdminRole } from "@/lib/auth";
-import { serverEnv } from "@/lib/env";
 import { getOrgContext } from "@/lib/org-context";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { UUID_RE, webhookRpc, webhookTestRpc, type WebhookRpc } from "@/lib/webhooks";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+type AdminCtx = NonNullable<Awaited<ReturnType<typeof getOrgContext>>>;
 
-async function adminCtx() {
+/**
+ * Contexte owner / admin des clés et des webhooks. Flotte Privée (docs/FLOTTE-PRIVEE.md, D16) : clés API et webhooks
+ * gérés par l'équipe Rydar (fiche du client, super admin), jamais depuis le tableau de bord → PRIVATE_FLEET_RESTRICTED.
+ * Le drapeau est lu ici, dans organizations (grant de lecture par colonne), jamais d'après la session ; lecture
+ * impossible : refus (rien n'est écrit).
+ */
+async function adminCtx(): Promise<{ ok: true; ctx: AdminCtx } | { ok: false; error: string }> {
   const ctx = await getOrgContext();
-  return ctx && isAdminRole(ctx.role) ? ctx : null;
-}
-
-async function insertKey(
-  orgId: string,
-  userId: string,
-  input: { name: string; scopes: string[]; rateLimitPerMinute: number; allowedOrigins: string[]; expiresAt: string | null; rotatedFrom?: string },
-) {
-  const admin = createAdminClient();
-  const { key, prefix, last4 } = generateApiKey("live");
-  const hash = hashApiKey(key, serverEnv().apiKeyPepper);
-  const { data, error } = await admin
-    .from("api_keys")
-    .insert({
-      organization_id: orgId,
-      name: input.name,
-      prefix,
-      last4,
-      scopes: input.scopes,
-      rate_limit_per_minute: input.rateLimitPerMinute,
-      allowed_origins: input.allowedOrigins,
-      expires_at: input.expiresAt,
-      created_by: userId,
-      rotated_from_id: input.rotatedFrom ?? null,
-    } as never)
-    .select("id")
-    .single();
-  if (error || !data) return { error };
-  const { error: sErr } = await admin.from("api_key_secrets").insert({ api_key_id: (data as { id: string }).id, key_hash: hash } as never);
-  if (sErr) {
-    await admin.from("api_keys").delete().eq("id", (data as { id: string }).id);
-    return { error: sErr };
-  }
-  return { id: (data as { id: string }).id, key, prefix };
+  if (!ctx || !isAdminRole(ctx.role)) return { ok: false, error: "Réservé aux administrateurs." };
+  const { data, error } = await ctx.supabase.from("organizations").select("private_fleet").eq("id", ctx.org.id).maybeSingle();
+  if (error || !data) return { ok: false, error: "Vérification impossible pour le moment : réessayez." };
+  if ((data as { private_fleet?: boolean | null }).private_fleet === true) return { ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_RESTRICTED };
+  return { ok: true, ctx };
 }
 
 /** Crée une clé : la valeur complète n'est renvoyée qu'UNE fois. */
 export async function createApiKey(input: z.input<typeof apiKeyCreateSchema>): Promise<Result<{ key: string; prefix: string }>> {
-  const ctx = await adminCtx();
-  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const c = await adminCtx();
+  if (!c.ok) return c;
+  const { ctx } = c;
   const parsed = apiKeyCreateSchema.safeParse(input);
   if (!parsed.success) {
     // Règle des clés « navigateur » : message explicite ; le reste est guidé par le formulaire
@@ -74,8 +52,9 @@ export async function createApiKey(input: z.input<typeof apiKeyCreateSchema>): P
 }
 
 export async function revokeApiKey(id: string): Promise<Result> {
-  const ctx = await adminCtx();
-  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const c = await adminCtx();
+  if (!c.ok) return c;
+  const { ctx } = c;
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("api_keys")
@@ -93,8 +72,9 @@ export async function revokeApiKey(id: string): Promise<Result> {
 
 /** Rotation : nouvelle clé immédiate, l'ancienne reste valide 24 h pour la bascule. */
 export async function rotateApiKey(id: string): Promise<Result<{ key: string; prefix: string }>> {
-  const ctx = await adminCtx();
-  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+  const c = await adminCtx();
+  if (!c.ok) return c;
+  const { ctx } = c;
   const admin = createAdminClient();
   const { data: old } = await admin
     .from("api_keys")
@@ -105,10 +85,11 @@ export async function rotateApiKey(id: string): Promise<Result<{ key: string; pr
     .maybeSingle();
   if (!old) return { ok: false, error: "Clé introuvable." };
   const o = old as any;
-  // Clé « navigateur » (origines autorisées) : la nouvelle clé n'a que la création de courses
+  // Clé « navigateur » (origines autorisées) : la nouvelle clé ne garde que les portées permises au navigateur
+  // (BROWSER_KEY_SCOPES : création de courses et devis)
   const browser = ((o.allowed_origins ?? []) as string[]).length > 0;
   const scopes = browser ? (o.scopes as string[]).filter((s) => (BROWSER_KEY_SCOPES as readonly string[]).includes(s)) : (o.scopes as string[]);
-  if (!scopes.length) return { ok: false, error: "Clé utilisée depuis le navigateur sans permission de création : créez une nouvelle clé." };
+  if (!scopes.length) return { ok: false, error: "Clé utilisée depuis le navigateur sans permission de création ni de devis : créez une nouvelle clé." };
   const res = await insertKey(ctx.org.id, ctx.user.id, {
     name: o.name,
     scopes,
@@ -135,9 +116,10 @@ const WEBHOOK_FIELD_LABELS = { url: "Adresse", description: "Description", event
  * Contexte owner / admin ; `needApi` : l'offre doit inclure l'API (ajout, réactivation, test, nouvel envoi).
  * Couper, supprimer ou changer le secret reste possible sans l'API (une centrale qui change d'offre fait le ménage).
  */
-async function webhookCtx(needApi: boolean): Promise<{ ok: true; ctx: NonNullable<Awaited<ReturnType<typeof adminCtx>>> } | { ok: false; error: string }> {
-  const ctx = await adminCtx();
-  if (!ctx) return { ok: false, error: "Réservé aux administrateurs." };
+async function webhookCtx(needApi: boolean): Promise<{ ok: true; ctx: AdminCtx } | { ok: false; error: string }> {
+  const c = await adminCtx();
+  if (!c.ok) return c;
+  const { ctx } = c;
   if (needApi) {
     const { data } = await ctx.supabase.rpc("org_usage", { p_org: ctx.org.id });
     if (!(data as { limits?: { api_access?: boolean } } | null)?.limits?.api_access) {

@@ -11,6 +11,7 @@ import { OrganizationPlanForm, OrganizationStatusActions } from "@/components/ad
 import { DispatchModelForm, type OrgTermsStatus } from "@/components/admin/dispatch-model";
 import { OrgNetworkCard } from "@/components/admin/org-network-card";
 import { OrganizationAccessCard, type AccessMember } from "@/components/admin/organization-access";
+import { PrivateFleetCard, PrivateFleetEntryCard, type CardMember, type CardOrg, type CardPlan } from "@/components/admin/private-fleet-card";
 import { OrgPlatformFeesCard } from "@/components/platform-fees/admin-org-fees-card";
 import { PageBody, StatCard } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import { env } from "@/lib/env";
 import { sharedNetworkEnabled } from "@/lib/shared-network";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { NewTabHint } from "@/components/ui/new-tab";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Rattacheur" };
 export const dynamic = "force-dynamic";
@@ -70,7 +72,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
     // lecture seule par le client admin, après requireSuperAdmin
     createAdminClient().from("organizations").select("*").eq("id", id).maybeSingle(),
     db.rpc("org_kpis", { p_org: id }),
-    db.from("plans").select("id, name, limits").order("sort_order"),
+    db.from("plans").select("id, name, limits, is_active").order("sort_order"),
     db.from("subscriptions").select("*").eq("organization_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     db.from("drivers").select("id, first_name, last_name, number, presence, status, location:driver_locations(updated_at)").eq("organization_id", id).neq("presence", "offline").order("number"),
     db.from("ride_events").select("id, level, message, created_at").eq("organization_id", id).in("level", ["warning", "error"]).gte("created_at", since).order("id", { ascending: false }).limit(20),
@@ -95,6 +97,8 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
   const k = (kpis.data ?? {}) as any;
   const status = org.status as OrgStatus;
   const model = (org.dispatch_model ?? "fleet") as DispatchModel;
+  // Flotte Privée (docs/FLOTTE-PRIVEE.md § 8.3) : carte en tête, choix du modèle verrouillé, accès et réseau masqués
+  const privateFleet = org.private_fleet === true;
   const memberRows = (members.data ?? []) as any[];
   const accessMembers = memberRows.map(
     ({ user_id, ...m }) =>
@@ -142,6 +146,7 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
               <h1 className="text-[26px] font-semibold tracking-tight">{org.name}</h1>
               <Badge tone={ORG_STATUS_META[status].tone}>{ORG_STATUS_META[status].label}</Badge>
               <Badge tone={model === "centrale" ? "violet" : "neutral"} dot={false}>{DISPATCH_MODEL_META[model].short}</Badge>
+              {privateFleet && <Badge tone="brand" dot={false}>Flotte Privée</Badge>}
             </div>
             <p className="mt-1.5 text-[13px] text-fg-muted [overflow-wrap:anywhere]">{org.slug} · {org.email} · {org.city ?? "—"}{org.suspended_reason ? ` · motif : ${org.suspended_reason}` : ""}</p>
           </div>
@@ -149,6 +154,18 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
         </div>
       </div>
       <PageBody className="space-y-6">
+        {privateFleet && (
+          <PrivateFleetCard
+            db={db}
+            org={org as CardOrg}
+            members={memberRows as CardMember[]}
+            plans={(plans.data ?? []) as CardPlan[]}
+            schedule={schedule}
+            terms={terms}
+            today={localIsoDay(new Date(), timeZone)}
+            timeZone={timeZone}
+          />
+        )}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
           <StatCard label="Chauffeurs" value={formatNumber(k.drivers_total)} sub={`${k.drivers_online ?? 0} en ligne`} tone="brand" />
           <StatCard label="Courses auj." value={formatNumber(k.rides_today)} sub={`${k.rides_week ?? 0} cette semaine`} />
@@ -158,7 +175,8 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
           <StatCard label="Clés API" value={formatNumber(keys.count ?? 0)} sub="actives" />
         </div>
 
-        <div className="grid items-start gap-6 xl:grid-cols-[1.15fr_1fr]">
+        {/* Flotte Privée : accès et réseau masqués, la colonne de droite n'a que les frais Rydar (s'il y en a) */}
+        <div className={cn("grid items-start gap-6", (!privateFleet || showPlatform) && "xl:grid-cols-[1.15fr_1fr]")}>
           <Card>
             <CardHeader
               title="Modèle d'exploitation"
@@ -178,9 +196,10 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
                 schedule={schedule}
                 terms={terms}
                 today={localIsoDay(new Date(), timeZone)}
+                modelLocked={privateFleet}
               />
-              {/* Lien d'inscription des chauffeurs : flotte comme centrale (20260924006300) */}
-              {(model === "centrale" || org.join_code) && (
+              {/* Lien d'inscription des chauffeurs : flotte comme centrale (20260924006300) ; fermé en Flotte Privée */}
+              {!privateFleet && (model === "centrale" || org.join_code) && (
                 <div className="grid gap-3 rounded-xl border border-line bg-white/[0.015] p-4 text-[12.5px] sm:grid-cols-3">
                   <div>
                     <p className="text-fg-subtle">Lien d&apos;inscription</p>
@@ -206,26 +225,41 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
               )}
             </CardBody>
           </Card>
-          <div className="min-w-0 space-y-6">
-            <OrganizationAccessCard orgId={id} orgName={org.name} members={accessMembers} />
-            {showPlatform && platformAccount && <OrgPlatformFeesCard orgId={id} account={platformAccount} timeZone={org.timezone ?? "Europe/Paris"} />}
-            {/* Réseau partagé : réseau ouvert, ou organisation qui y a déjà participé (réglages conservés) */}
-            {(networkOn || networkRow.data) && (
-              <OrgNetworkCard
-                orgId={id}
-                membership={(networkRow.error ? null : (networkRow.data ?? null)) as NetworkMembership | null}
-                enabled={networkOn}
-                timeZone={timeZone}
-                currency={org.currency ?? "EUR"}
-              />
-            )}
-          </div>
+          {(!privateFleet || showPlatform) && (
+            <div className="min-w-0 space-y-6">
+              {/* Flotte Privée : un seul accès (le propriétaire) ; l'équipe agit depuis la carte Flotte Privée */}
+              {!privateFleet && <OrganizationAccessCard orgId={id} orgName={org.name} members={accessMembers} />}
+              {showPlatform && platformAccount && <OrgPlatformFeesCard orgId={id} account={platformAccount} timeZone={org.timezone ?? "Europe/Paris"} />}
+              {/* Réseau partagé : réseau ouvert, ou organisation qui y a déjà participé (réglages conservés) ; jamais en Flotte Privée */}
+              {!privateFleet && (networkOn || networkRow.data) && (
+                <OrgNetworkCard
+                  orgId={id}
+                  membership={(networkRow.error ? null : (networkRow.data ?? null)) as NetworkMembership | null}
+                  enabled={networkOn}
+                  timeZone={timeZone}
+                  currency={org.currency ?? "EUR"}
+                />
+              )}
+              {!privateFleet && status !== "archived" && (
+                <PrivateFleetEntryCard
+                  db={db}
+                  org={org as CardOrg}
+                  members={memberRows as CardMember[]}
+                  plans={(plans.data ?? []) as CardPlan[]}
+                  schedule={schedule}
+                  today={localIsoDay(new Date(), timeZone)}
+                  timeZone={timeZone}
+                  network={(networkRow.error ? null : (networkRow.data ?? null)) as NetworkMembership | null}
+                />
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid gap-6 xl:grid-cols-2">
           <Card>
             <CardHeader title="Offre & limites" description={subscription.data ? `Abonnement ${subscription.data.status}` : "Sans abonnement Stripe"} />
-            <CardBody><OrganizationPlanForm orgId={id} plans={(plans.data ?? []) as any} planId={org.plan_id} override={org.limits_override ?? {}} /></CardBody>
+            <CardBody><OrganizationPlanForm orgId={id} plans={(plans.data ?? []) as any} planId={org.plan_id} override={org.limits_override ?? {}} privateFleet={privateFleet} /></CardBody>
           </Card>
           <Card>
             <CardHeader title="Chauffeurs connectés" description={`${drivers.data?.length ?? 0} en ligne`} />

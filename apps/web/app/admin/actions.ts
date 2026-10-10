@@ -1,11 +1,13 @@
 "use server";
 import {
-  describeError, dispatchModelSchema, emailSchema, fieldErrors, humanizeError, ORG_LEGAL_EFFECTIVE_AT, ORG_LEGAL_VERSION, ORGANIZATION_CREATE_LABELS,
-  organizationCreateSchema, planSchema, platformFeeSettingSchema, type CancelPlatformFeeChangeResult, type DispatchModelInput,
-  type OrganizationCreateInput, type PlatformScheduledFeeChange, type SetPlatformFeesResult,
+  describeError, dispatchModelSchema, emailSchema, ERROR_MESSAGES, extractErrorCode, fieldErrors, humanizeError, ORG_LEGAL_EFFECTIVE_AT,
+  ORG_LEGAL_VERSION, ORGANIZATION_CREATE_LABELS, organizationCreateSchema, planSchema, platformFeeSettingSchema, type CancelPlatformFeeChangeResult,
+  type DispatchModelInput, type OrganizationCreateInput, type PlatformScheduledFeeChange, type SetPlatformFeesResult,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+// Chemin relatif : module neutre, chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
+import { apiAccessOf, effectiveLimits } from "../../components/admin/private-fleet-state";
 import { audit } from "@/lib/audit";
 import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
@@ -168,6 +170,13 @@ function revalidateFees(orgId: string) {
   revalidatePath(`/admin/frais/${orgId}`);
 }
 
+/** Flotte Privée : changement de modèle refusé (sortie d'abord, par « Changer d'offre de service »). */
+const privateFleetModelLocked = () => ({
+  ok: false as const,
+  error: ERROR_MESSAGES.PRIVATE_FLEET_MODEL,
+  fieldErrors: { dispatchModel: "Sortez d'abord de la Flotte Privée" },
+});
+
 export type PlatformFeeSaveResult =
   | {
       ok: true;
@@ -201,6 +210,11 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof p
   const parsed = platformFeeSettingSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, FEE_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
+  // Flotte Privée : modèle flotte imposé (la base le refuse aussi : PRIVATE_FLEET_MODEL) ; les taux restent réglables
+  if (v.dispatchModel === "centrale") {
+    const { data: org } = await createAdminClient().from("organizations").select("private_fleet").eq("id", orgId).maybeSingle();
+    if ((org as { private_fleet?: boolean } | null)?.private_fleet === true) return privateFleetModelLocked();
+  }
   const { data, error } = await createAdminClient().rpc("svc_platform_set_fees", {
     p_org: orgId,
     p_actor: session.user.id,
@@ -218,6 +232,8 @@ export async function updateDispatchModel(orgId: string, input: z.input<typeof p
     // Garde SQL (organizations_dispatch_model_guard) : règlement ouvert entre-temps
     const open = /SETTLEMENTS_OPEN: (\d+)/.exec(error.message ?? "");
     if (open) return { ok: false, error: openSettlements(Number(open[1])), fieldErrors: { dispatchModel: "Règlements chauffeur encore ouverts" } };
+    // Garde SQL de la Flotte Privée (passée en Flotte Privée entre-temps)
+    if (extractErrorCode(error.message) === "PRIVATE_FLEET_MODEL") return privateFleetModelLocked();
     return { ok: false, error: actionError(error, "Mise à jour impossible.") };
   }
   const res = (data ?? null) as SetPlatformFeesResult | null;
@@ -280,8 +296,13 @@ export async function grantOrganizationAccess(
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, ACCESS_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
   const admin = createAdminClient();
-  const { data: org } = await admin.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
+  const { data: org } = await admin.from("organizations").select("id, name, private_fleet").eq("id", orgId).maybeSingle();
   if (!org) return { ok: false, error: "Organisation introuvable." };
+  // Flotte Privée : un seul accès, celui du propriétaire (org_limits : max_admins 1) ; l'équipe Rydar ne devient jamais
+  // membre, elle lit par la RLS du super admin et agit depuis la fiche de l'organisation
+  if ((org as { private_fleet?: boolean }).private_fleet === true) {
+    return { ok: false, error: `${ERROR_MESSAGES.PRIVATE_FLEET_RESTRICTED} Un seul accès, celui du propriétaire\u00a0: l'équipe Rydar agit depuis cette fiche.` };
+  }
 
   let userId = (await findUserIdByEmail(v.email)) ?? undefined;
   const existingAccount = !!userId;
@@ -749,7 +770,25 @@ export async function updateOrganizationPlan(orgId: string, planId: string | nul
   if (planId && !uuid.safeParse(planId).success) return { ok: false, error: "Offre inconnue." };
   const parsed = limitsOverrideSchema.safeParse(limitsOverride);
   if (!parsed.success) return { ok: false, error: "Limites invalides." };
-  const { error } = await createAdminClient().from("organizations").update({ plan_id: planId || null, limits_override: parsed.data } as never).eq("id", orgId);
+  const admin = createAdminClient();
+  // Flotte Privée : le site du client réserve par l'API v1 → offre (et surcharge) sans accès à l'API refusée ; 1 chauffeur
+  // et 1 accès restent imposés par la base quelles que soient l'offre et la surcharge
+  const { data: org, error: orgError } = await admin.from("organizations").select("private_fleet").eq("id", orgId).maybeSingle();
+  if (orgError) return { ok: false, error: "Vérification impossible pour le moment : réessayez." };
+  if ((org as { private_fleet?: boolean } | null)?.private_fleet === true) {
+    const { data: plan, error: planError } = planId
+      ? await admin.from("plans").select("limits").eq("id", planId).maybeSingle()
+      : { data: null, error: null };
+    if (planError) return { ok: false, error: "Vérification impossible pour le moment : réessayez." };
+    const limits = effectiveLimits({
+      planId: planId || null,
+      planLimits: (plan as { limits: Record<string, unknown> | null } | null)?.limits,
+      override: parsed.data,
+      privateFleet: true,
+    });
+    if (!apiAccessOf(limits)) return { ok: false, error: ERROR_MESSAGES.PRIVATE_FLEET_PLAN_INVALID };
+  }
+  const { error } = await admin.from("organizations").update({ plan_id: planId || null, limits_override: parsed.data } as never).eq("id", orgId);
   if (error) return { ok: false, error: "Mise à jour impossible." };
   await audit({ organizationId: orgId, actorUserId: session.user.id, actorType: "super_admin", action: "organization.plan_changed", entityType: "organizations", entityId: orgId, metadata: { planId, limitsOverride: parsed.data } });
   revalidatePath(`/admin/organizations/${orgId}`);

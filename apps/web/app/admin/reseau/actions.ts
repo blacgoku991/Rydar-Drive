@@ -4,7 +4,7 @@
 // pour manquement à la convention ou aux CGV, rétablissement. Écriture par le service role après requireSuperAdmin() ;
 // chaque RPC svc_* revérifie l'auteur (p_actor) et écrit audit_logs. Fichier « use server » : fonctions async seulement.
 import {
-  describeError, fieldErrors,
+  describeError, extractErrorCode, fieldErrors,
   type SvcNetworkApproveResult, type SvcNetworkSuspendResult, type SvcSharedNetworkResult,
 } from "@rydar/shared";
 import { revalidatePath } from "next/cache";
@@ -18,6 +18,20 @@ export type AdminNetworkResult<T = object> =
   | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 const PATH = "/admin/reseau";
+
+/**
+ * Flotte Privée (garde network_memberships_private_fleet_guard, PRIVATE_FLEET_RESTRICTED) : ni adhésion, ni partage,
+ * ni demande ; une adhésion existante reste suspendable, mais une organisation qui n'en a pas n'a rien à valider ni à
+ * suspendre (la RPC commence par créer la ligne).
+ */
+const PRIVATE_FLEET_NETWORK =
+  "Flotte Privée\u00a0: cette organisation ne participe pas au réseau partagé (ni adhésion, ni partage) — rien à valider ni à suspendre.";
+
+/** Erreur levée par la base → message de l'écran. */
+function rpcError(error: { code?: string; message?: string }) {
+  if (extractErrorCode(error.message)?.startsWith("PRIVATE_FLEET")) return PRIVATE_FLEET_NETWORK;
+  return actionError(error, "Décision impossible pour le moment.");
+}
 
 function refresh(orgId?: string) {
   revalidatePath(PATH);
@@ -59,7 +73,7 @@ export async function reviewNetworkOrg(input: { orgId: string; approved: boolean
     p_fee_waiver: v.approved ? v.feeWaiver : false,
     p_reason: v.approved ? null : v.reason,
   });
-  if (error) return { ok: false, error: actionError(error, "Décision impossible pour le moment.") };
+  if (error) return { ok: false, error: rpcError(error) };
   const res = (data ?? {}) as SvcNetworkApproveResult;
   if (!res.ok) {
     if (res.code === "IDENTITY_INCOMPLETE") {
@@ -91,7 +105,7 @@ export async function suspendNetworkOrg(input: { orgId: string; suspended: boole
     p_suspended: v.suspended,
     p_reason: v.reason,
   });
-  if (error) return { ok: false, error: actionError(error, "Décision impossible pour le moment.") };
+  if (error) return { ok: false, error: rpcError(error) };
   const res = (data ?? {}) as SvcNetworkSuspendResult;
   if (!res.ok) {
     if (res.code === "REASON_REQUIRED") return { ok: false, error: "Indiquez le manquement constaté.", fieldErrors: { reason: "Motif obligatoire" } };

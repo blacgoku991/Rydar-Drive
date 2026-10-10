@@ -9,17 +9,20 @@ import {
   formatTime,
   type ContactRequestTopic,
 } from "@rydar/shared";
-import { ArrowLeft, Mail, MessageSquareText, Send, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, Mail, MessageSquareText, Send, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { ContactReplyForm, ContactStatusForm, DeleteContactButton, RetryEmailButton } from "@/components/admin/contact-tools";
+import { CreatePrivateFleetSheet } from "@/components/admin/private-fleet";
+import { apiAccessOf, effectiveLimits, prefillFromContact } from "@/components/admin/private-fleet-state";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
 import { emailProgress } from "@/lib/email-status";
+import { env } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Demande de contact" };
 export const dynamic = "force-dynamic";
@@ -76,10 +79,18 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
   const req = reqData as Request | null;
   if (!req) notFound();
   const emails = (emailData ?? []) as Email[];
-  const [plan, handler] = await Promise.all([
+  // Test d'éligibilité Flotte Privée : passerelle vers la création du client (formulaire prérempli, offres avec l'API)
+  const eligibility = req.topic === "eligibility" && req.status !== "spam";
+  const [plan, handler, plans] = await Promise.all([
     req.plan_code ? db.from("plans").select("name").eq("code", req.plan_code).maybeSingle() : Promise.resolve({ data: null }),
     req.handled_by ? db.from("users").select("full_name, email").eq("id", req.handled_by).maybeSingle() : Promise.resolve({ data: null }),
+    eligibility ? db.from("plans").select("id, name, limits").eq("is_active", true).order("sort_order") : Promise.resolve({ data: null }),
   ]);
+  const planOptions = ((plans.data ?? []) as { id: string; name: string; limits: Record<string, unknown> | null }[]).map((p) => ({
+    id: p.id,
+    name: p.name,
+    api: apiAccessOf(effectiveLimits({ planId: p.id, planLimits: p.limits, override: null, privateFleet: false })),
+  }));
   const planName = (plan.data as { name?: string } | null)?.name ?? req.plan_code;
   const handledBy = handler.data as { full_name?: string | null; email?: string } | null;
   const st = CONTACT_STATUS_META[req.status];
@@ -187,6 +198,24 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
           </div>
 
           <div className="space-y-6">
+            {eligibility && (
+              <Card>
+                <CardHeader icon={<Sparkles />} title="Flotte Privée" />
+                <CardBody className="space-y-3">
+                  <p className="text-[12.5px] leading-relaxed text-fg-muted">
+                    Contrat signé{"\u00a0"}? Créez le client à partir de cette demande (nom, e-mail et téléphone repris){"\u00a0"}: elle passe ensuite
+                    «{"\u00a0"}Traitée{"\u00a0"}», avec le nom du client dans la note.
+                  </p>
+                  <CreatePrivateFleetSheet
+                    plans={planOptions}
+                    rootDomain={env.rootDomain}
+                    prefill={prefillFromContact(req)}
+                    contactRequestId={req.id}
+                    label="Créer le client Flotte Privée"
+                  />
+                </CardBody>
+              </Card>
+            )}
             <Card>
               <CardHeader icon={<SlidersHorizontal />} title="Suivi" />
               <CardBody className="space-y-4">
