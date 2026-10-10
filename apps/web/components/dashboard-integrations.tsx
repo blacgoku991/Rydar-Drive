@@ -53,7 +53,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
   const [revealed, setRevealed] = useState<{ key: string; prefix: string } | null>(null);
   const [scopes, setScopes] = useState<string[]>(["rides:create", "rides:read"]);
   const [originsText, setOriginsText] = useState("");
-  // Clé « navigateur » (origines saisies) : visible par tout visiteur du site → création de courses seule
+  // Clé « navigateur » (origines saisies) : visible par tout visiteur du site → création de courses et devis seulement
   const browserKey = originsText.trim().length > 0;
   const effectiveScopes = browserKey ? [...BROWSER_KEY_SCOPES] : scopes;
 
@@ -105,7 +105,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
                 </p>
               </div>
               <div className="flex flex-wrap gap-1">
-                {/* Clé « navigateur » : seule la création de courses est acceptée par l'API, quelles que soient ses portées */}
+                {/* Clé « navigateur » : seules la création de courses et les devis sont acceptés par l'API, quelles que soient ses portées */}
                 {(k.allowed_origins?.length ? k.scopes.filter((s) => (BROWSER_KEY_SCOPES as readonly string[]).includes(s)) : k.scopes).map((s) => (
                   <span key={s} className="rounded-md border border-line bg-white/[0.03] px-1.5 py-0.5 text-[11px] text-fg-muted">
                     {SCOPE_LABELS[s] ?? s}
@@ -176,7 +176,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
               label="Permissions"
               hint={
                 browserKey
-                  ? "Clé utilisée depuis le navigateur : création de courses uniquement."
+                  ? "Clé utilisée depuis le navigateur : création de courses et devis uniquement."
                   : "« Webhooks » : votre serveur enregistre lui-même l'adresse qui reçoit les changements de statut des courses (POST /api/v1/webhooks)."
               }
             >
@@ -203,7 +203,7 @@ export function ApiKeysPanel({ keys, canManage }: { keys: ApiKeyRow[]; canManage
             <Field
               label="Origines autorisées (CORS)"
               optional
-              hint="Uniquement si le formulaire appelle l'API depuis le navigateur : la clé est alors visible par tout visiteur du site, elle ne peut que créer des courses (prix et paiement fixés par votre grille). Recommandé : appel serveur."
+              hint="Uniquement si le formulaire appelle l'API depuis le navigateur : la clé est alors visible par tout visiteur du site, elle ne peut que créer des courses et demander des devis (prix et paiement fixés par votre grille). Recommandé : appel serveur."
             >
               <Textarea name="origins" value={originsText} onChange={(e) => setOriginsText(e.target.value)} placeholder="https://www.ma-centrale.fr" className="min-h-[60px]" />
             </Field>

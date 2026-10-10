@@ -1,7 +1,8 @@
 # Flotte Privée — spécification finale
 
-> **Statut : livré** — lots L1 à L6 faits le 10/10/2026 (commits au § 15), recette de bout en bout (L7) à faire. Les
-> écarts entre cette spécification et le code livré sont listés au § 15.1 : là où ils divergent, le code fait foi.
+> **Statut : livré et recetté** — lots L1 à L7 faits le 10/10/2026 (commits au § 15) ; recette de bout en bout du
+> § 13.3 passée sur la pile locale complète (compte rendu, contrôles et captures : `docs/EN-COURS.md`). Les écarts entre
+> cette spécification et le code livré sont listés au § 15.1 : là où ils divergent, le code fait foi.
 > Rédigée le 10/10/2026 sur `claude/confident-clarke-rpfwmo` (HEAD `76847b8`, dernière migration
 > `20260924007500_eligibility.sql`).
 >
@@ -1129,6 +1130,9 @@ exclue, `unassigned` nul ; jamais une course d'une autre organisation ; limites 
    règlement.
 9. Retour en Flotte Privée refusé (2 fiches).
 
+Recette du 10/10/2026 (lot L7) : les 9 étapes passent sur la pile locale (base neuve, web en build de production,
+worker, app en rendu web, Chromium) ; détail, contrôles et captures dans `docs/EN-COURS.md`.
+
 ---
 
 ## 14. Risques et parades
@@ -1168,7 +1172,7 @@ ne modifier que les chemins autorisés ; pas de commit ni de push sans demande ;
 | L4 | API v1 du site (devis, prix attendu, limites par IP) + `docs/API.md` | L1 | fait : `df72170` ; revue : `8e93b18` (débit des clés, limite du site) |
 | L5 | App chauffeur (Flotte Privée, agenda) | L1 | fait : `106dbc1` ; revue : `695f23a` (app) |
 | L6 | Documentation | L1 à L5 | fait : commit « Flotte Privée (lot 6) : documentation » |
-| L7 | Recette de bout en bout et contrôle final | L1 à L6 | à faire |
+| L7 | Recette de bout en bout et contrôle final | L1 à L6 | fait : commit « Flotte Privée (lot 7) : recette de bout en bout et contrôle final » (9 étapes du § 13.3 OK ; corrigés : sous-titre « Flotte Privée », fiche transmise par `getOrgContext`, textes de la clé navigateur) |
 
 Écarts entre la spécification et le code livré : § 15.1, après la description des lots.
 
@@ -1362,6 +1366,9 @@ d'origine.
 
 **Espace web du client (§ 7)**
 
+- § 7.2, sous-titre de la barre latérale : « Flotte Privée » s'affiche sous le nom de l'organisation, à la place du rôle
+  (`sidebarOrgCaption`, `components/shell/dashboard-nav.ts`) ; il n'était que l'attribut `title` du logo, invisible
+  (corrigé à la recette L7, test dans `dashboard-nav.test.ts`). Organisation standard : rôle affiché, inchangé.
 - `driverId` dans la session : `requireOrg` ne le garde que pour l'organisation affichée ; `getOrgContext` le transmet
   tel quel (aucune action ne s'en sert). `checkoutPlanAllowed` dans `app/api/billing/checkout/plan-access.ts` ; Checkout
   en 503 si l'organisation est illisible.

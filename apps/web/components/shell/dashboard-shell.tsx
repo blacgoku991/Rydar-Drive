@@ -14,7 +14,7 @@ import { useLiveSync } from "@/components/realtime/use-live-sync";
 import { CentraleProvider, type CentraleInfo } from "@/components/settlements/centrale-context";
 import { EMPTY_CENTRALE_COUNTS, fetchCentraleCounts, fetchNetworkNav, type CentraleCounts } from "@/components/settlements/counts";
 import { countExpiringDocuments, countQueue } from "@/components/private-fleet/queue";
-import { dashboardNav } from "@/components/shell/dashboard-nav";
+import { dashboardNav, sidebarOrgCaption } from "@/components/shell/dashboard-nav";
 import { Sidebar } from "@/components/shell/sidebar";
 import { SkipToContent } from "@/components/shell/skip-to-content";
 import { Button } from "@/components/ui/button";
@@ -309,6 +309,7 @@ function ShellBody({
         headerAction={<AlertsBell />}
         sections={sections}
         subtitle={privateFleet ? "Flotte Privée" : "Dispatch"}
+        orgCaption={sidebarOrgCaption(!!privateFleet)}
         user={user}
         orgs={orgs}
         currentOrgId={org.id}

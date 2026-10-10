@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { networkNavItem } from "../network-share/nav";
 import { NETWORK_SHARE_PATH } from "../network-share/paths";
-import { dashboardNav } from "./dashboard-nav";
+import { dashboardNav, sidebarOrgCaption } from "./dashboard-nav";
 
 // Menu du tableau de bord (docs/FLOTTE-PRIVEE.md § 7.2) : organisation standard → menu historique À L'IDENTIQUE
 // (instantané écrit d'après le tableau de dashboard-shell.tsx avant son extraction) ; Flotte Privée → « Mon activité »
@@ -194,5 +196,19 @@ describe("menu Flotte Privée (§ 7.2)", () => {
     // Réservation refusée par le chauffeur lui-même : dans le compte brut (NO_DRIVER_FOUND), jamais dans la pastille
     expect(rides({ alerts: 1, notConfirmed: 0 })).toMatchObject({ badge: 0, badgeLabel: "0 réservation non confirmée" });
     expect(rides({ alerts: 5, notConfirmed: 2 })).toMatchObject({ badge: 2, badgeTone: "red", badgeLabel: "2 réservations non confirmées" });
+  });
+});
+
+describe("sous-titre de la barre latérale (§ 7.2)", () => {
+  it("Flotte Privée : « Flotte Privée » sous le nom de l'organisation ; standard : rien (le rôle reste affiché)", () => {
+    expect(sidebarOrgCaption(true)).toBe("Flotte Privée");
+    expect(sidebarOrgCaption(false)).toBeNull();
+  });
+
+  it("le sous-titre est visible : le tableau de bord le passe à la barre latérale, qui l'affiche à la place du rôle", () => {
+    // Recette L7 : « Flotte Privée » n'était qu'un attribut title du logo (invisible), le rôle « Propriétaire » restait affiché
+    const read = (f: string) => readFileSync(join(import.meta.dirname, f), "utf8");
+    expect(read("dashboard-shell.tsx")).toMatch(/orgCaption=\{sidebarOrgCaption\(!!privateFleet\)\}/);
+    expect(read("sidebar.tsx")).toMatch(/\{orgCaption \?\? ORG_ROLE_LABELS\[current\.role as OrgRole\] \?\? current\.role\}/);
   });
 });

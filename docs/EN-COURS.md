@@ -1,6 +1,6 @@
 # Travail en cours (10/10/2026)
 
-## Flotte Privée : pack livré, lots L1 à L6 faits (10/10/2026) — recette L7 à faire
+## Flotte Privée : pack livré et recetté, lots L1 à L7 faits (10/10/2026)
 
 Spécification, statuts des lots (commits) et écarts livrés : `docs/FLOTTE-PRIVEE.md` (§ 15 et § 15.1). Migrations
 `20260924007600_private_fleet` et `20260924007700_private_fleet_owner_settlements` **pas encore poussées** (modifiables
@@ -19,11 +19,72 @@ jusqu'au push) ; la migration du copilote (`007500` sur sa branche, en collision
   (ordre de déploiement, création d'un client), STORES § 10 ; CLAUDE.md (ligne « Métier » soumise au propriétaire).
 - **Déploiement** (DEPLOYMENT § 7) : migrations, puis web et worker (`bash deploy/update-production.sh`, dans cet
   ordre), puis mise à jour EAS de l'app (runtime 1.1.0, JS seul) avant le premier client, puis 1.2.0 des stores.
-- **Contrôles** : chaque lot a fait passer les siens (typecheck, unitaires, base réelle, builds, export de l'app) ; lot 6
-  (documentation seule) : `pnpm test` vert (146 fichiers, 1 560 tests).
+- **Recette de bout en bout (L7, FLOTTE-PRIVEE § 13.3)** : pile locale complète sur base neuve
+  (`scripts/local-stack/setup.sh` puis `start.sh` : migrations jusqu'à 007700 + seed), web en build de production
+  (`next start`), worker (`pnpm dev:worker`), app chauffeur en rendu web (`pnpm --filter @rydar/driver web`, :8081), géo
+  de dev (`scripts/dev-geo`), Chromium 141 (Playwright 1.56) ; scripts de recette hors dépôt. **114 contrôles, 0 échec** :
+  1. super admin : `/admin/legal` rempli (préalable des CGV), « Nouveau client Flotte Privée » (adresse déjà connue
+     refusée avant tout compte ; création par invitation : organisation flotte, lien fermé, offre Pro, fiche
+     `owner_driver` « Confirmé » sur le compte du propriétaire, profil Flotte Privée, audit avec la référence du
+     contrat) ; badge et filtre de la liste ;
+  2. client : lien d'invitation → mot de passe → CGV et DPA (avec CGU et confidentialité) avant tout → menu exact du
+     § 7.2 et sous-titre « Flotte Privée » ; 7 adresses interdites redirigées, `/dashboard/network` et
+     `/dashboard/reseau-partage` en 404 ; Réglages sans Équipe ni Dispatch ; grille « Business » et délai de réponse
+     (1 min) réglés par le client ;
+  3. super admin : clé navigateur (`https://vtc-moreau-recette.fr` et sa variante www) et clé serveur, affichées une
+     fois (en base : préfixe et 4 derniers caractères), audit `api_key.created` ; « Mon site » du client en lecture seule ;
+  4. site simulé dans Chromium sous `https://www.vtc-moreau-recette.fr` (appels `fetch` du navigateur : origine et
+     CORS réels) : webhook enregistré par la clé serveur ; devis 73 € (Orly → Saint-Lazare, 18,9 km) ; prix attendu
+     faux → 409 `PRICE_CHANGED`, rien de créé ; réservation #1001 au prix affiché (201, `OFFERED`) ; autre origine
+     bloquée (403 `ORIGIN_NOT_ALLOWED`) ; offre `fleet` à sa fiche, échéance = prise en charge − 60 min, « NOUVELLE
+     RÉSERVATION » (`ride_offer_scheduled`), 3 rappels « RÉSERVATION À CONFIRMER », webhook `ride.created` en file ;
+  5. app : accueil (pastille « 1 réservation à traiter », « À confirmer (1) », ni Messages ni Signaler), agenda en vue
+     Mois avec le bloc « À confirmer », « Confirmer » → `ACCEPTED`, rappels « à confirmer » annulés, rappels de course
+     programmés, webhook `ride.accepted` en file ; Mois (« lundi 12 octobre, 1 course ») et Jour (08:30) ;
+  6. réservation immédiate #1002 laissée sans réponse : offre de 60 s qui sonne (`ride_offer`), dernier appel GPS, puis
+     `NO_DRIVER_FOUND` en 2 min 3 s, « RÉSERVATION NON CONFIRMÉE » sans `data.ride_id`, webhook `ride.no_driver_found` ;
+     web : « À traiter » et pastille rouge ; app : « Non confirmées » → « La prendre » (confirmation) → `ACCEPTED`,
+     `ride.taken_by_driver`, aucune « COURSE ATTRIBUÉE » vers lui-même, webhook `ride.accepted` ;
+  7. agenda web Mois, Semaine, Jour, Liste (téléphone sans défilement horizontal) ; Réservations (filtres), fiche (Je la
+     prends, Refuser, Annuler, Modifier le prix ; jamais Attribuer, Relancer, Retirer) ; « Refuser » web → « Refusée »
+     sans « non confirmée » ; « Je la prends » web → offre acceptée sans « COURSE ATTRIBUÉE » ; Mon profil chauffeur,
+     Activité ;
+  8. passage en flotte (offre Pro, note) : profil standard, limites de l'offre, audit, diffusion `platform.updated` et
+     `driver.updated`, rien de perdu (courses, fiches, clés, webhooks, tarifs, acceptations) ; menu standard ; 2e
+     chauffeur créé par le client ; centrale avec la note (CGV art. 3) et commission de 20 % réglée par le client ;
+     courses du gérant terminées dans l'app (glissière, 5 étapes) → aucun règlement (007700), prix affiché sans
+     commission ; course d'un autre chauffeur → règlement « dû » (non-régression) ;
+  9. retour en Flotte Privée refusé par la base (`model`, `drivers`), raisons en rouge dans le dialogue, rien d'écrit.
+  En plus : organisation standard inchangée (rôle sous le nom, textes de la clé navigateur) ; `pnpm dev` (6 pages,
+  aucune erreur).
+- **Corrigé pendant la recette** (test ajouté pour chacun) : sous-titre « Flotte Privée » de la barre latérale (§ 7.2)
+  invisible (simple attribut `title` du logo) → affiché sous le nom de l'organisation (`sidebarOrgCaption`) ;
+  `getOrgContext` transmettait la fiche chauffeur d'une autre organisation du compte → filtrée comme dans `requireOrg` ;
+  Intégrations : clé navigateur décrite « création de courses uniquement » → « création de courses et devis ».
+- **Contrôles** (après les corrections) : `pnpm typecheck` OK ; `pnpm test` 148 fichiers, 1 568 tests ;
+  `TEST_DATABASE_NAME=rydar_test_e2e pnpm test:db` 51 fichiers, 869 tests ; `pnpm build` OK ;
+  `pnpm --filter @rydar/driver export:check` OK ; `setup.sh` (3 organisations, 29 chauffeurs) puis `start.sh` ;
+  `pnpm dev`, `pnpm dev:worker` et `pnpm --filter @rydar/driver web` démarrés et utilisés.
+- **Captures** (hors dépôt, `scratchpad/flotte-privee-captures/` de la session) : 01 à 04 super admin (formulaire, adresse
+  refusée, fiche, liste filtrée) ; 05 à 14 client (mot de passe, conditions, accueil, 404, onglets, tarifs,
+  réservations, clés, Mon site) ; 15 à 22 app (accueil, à confirmer, après confirmation, Mois, Jour, non confirmée,
+  après « La prendre ») ; 23 à 25f web (agenda Mois, Jour, téléphone, Réservations, fiche, actions, profil, activité) ;
+  26 à 34 bascules (dialogue flotte, fiche, menu standard, 2e chauffeur, confirmation centrale, course du gérant,
+  retour refusé) ; 35 organisation standard (clé navigateur).
+- **Observations de la recette (non bloquantes)** :
+  - « Application utilisée » (accueil web, Premiers pas, carte du super admin) = `drivers.last_seen_at`, posé seulement
+    en ligne ou en course : un chauffeur qui confirme depuis ses notifications sans passer en ligne reste
+    « application jamais ouverte » (signal plus juste à décider : jeton de notification enregistré, connexion) ;
+  - app en rendu web : `Alert.alert` ne fait rien (react-native-web), donc « La prendre » et « Refuser » (confirmés par
+    une alerte) n'aboutissent pas dans un navigateur ; la recette a simulé l'alerte native, à refaire sur appareil ;
+  - `driver_network_ping` et `driver_network_state` répondent 500 `NETWORK_DISABLED` à chaque ouverture de l'app tant
+    que le réseau partagé est fermé (géré par l'app ; une Flotte Privée pourrait s'en passer) ;
+  - pile locale : lien d'invitation de GoTrue sans le préfixe `/auth/v1` (`start.sh` ne règle pas
+    `GOTRUE_MAILER_URLPATHS_*`) ; `expo start --web` réécrit `apps/driver/tsconfig.json` (rétabli) ; webhooks non
+    livrés faute de DNS dans le bac à sable (file et nouvelles tentatives du worker vérifiées).
 - **Reste** :
-  1. L7 : recette de bout en bout (FLOTTE-PRIVEE § 13.3) sur la pile locale, puis sur appareil (frise du jour sous
-     Android, feuille d'annulation avec le clavier).
+  1. Recette sur appareil (iOS et Android) : notifications réelles et sonnerie, plein écran d'une immédiate, frise du
+     jour sous Android, feuille d'annulation avec le clavier, glissière de course.
   2. Propriétaire (FLOTTE-PRIVEE § 16, valeurs « proposées » appliquées) : prix et facturation du pack, contrat
      (conditions particulières et contrat de prestations à faire rédiger et **signer avant toute activation** ;
      acceptation en ligne plus tard, § 12.2), hébergement du site, nom commercial, délais par défaut, plage de silence
@@ -32,11 +93,7 @@ jusqu'au push) ; la migration du copilote (`007500` sur sa branche, en collision
      Stripe. `/eligibilite` promet un « suivi des réservations venues de tes pubs » (l. 48) que Rydar ne fournit pas : à
      retirer ou à prévoir.
   3. Points ouverts des lots, hors de leurs chemins :
-     - `apps/web/components/dashboard-integrations.tsx` : textes « création de courses uniquement » pour une clé
-       navigateur, qui reçoit aussi les devis (`BROWSER_KEY_SCOPES`) ;
      - `/api/billing/portal` : aucune configuration de portail propre aux Flottes Privées (voir ci-dessus) ;
-     - `apps/web/lib/org-context.ts` : `getOrgContext` transmet la fiche chauffeur du compte sans la filtrer par
-       organisation (aucune action ne s'en sert ; `requireOrg` filtre) ;
      - app : une réservation « à vérifier » n'est signalée que par sa notification ; chauffeur hors ligne avec les
        notifications refusées, l'accueil et l'agenda ne se relisent qu'au retour dans l'app (option : `driver.updated`
        à la mise en file de `ride_unconfirmed`) ;

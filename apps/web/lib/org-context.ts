@@ -16,5 +16,8 @@ export async function getOrgContext() {
   // chez elle). Refus ; le rechargement de la page affiche la centrale réellement accessible.
   const viewed = jar.get(ORG_VIEW_COOKIE)?.value;
   if (viewed && viewed !== current.org.id) return null;
-  return { ...session, org: current.org, role: current.role };
+  // Fiche chauffeur du compte DANS cette organisation (Flotte Privée : celle du propriétaire), sinon null — même règle
+  // que requireOrg (une fiche d'une autre organisation du compte n'est jamais transmise)
+  const driverId = session.driverOrgId === current.org.id ? session.driverId : null;
+  return { ...session, org: current.org, role: current.role, driverId };
 }

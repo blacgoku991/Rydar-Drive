@@ -56,9 +56,11 @@ type Props = {
   notice?: React.ReactNode;
   /** Action à droite du logo (ex. cloche des notifications). */
   headerAction?: React.ReactNode;
+  /** Ligne sous le nom de l'organisation à la place du rôle (Flotte Privée : sidebarOrgCaption) ; absente : le rôle. */
+  orgCaption?: string | null;
 };
 
-function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, notice, headerAction, onNavigate }: Props & { onNavigate?: () => void }) {
+function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, notice, headerAction, orgCaption, onNavigate }: Props & { onNavigate?: () => void }) {
   const pathname = usePathname();
   const current = orgs?.find((o) => o.id === currentOrgId);
   return (
@@ -79,7 +81,7 @@ function NavContent({ sections, subtitle, user, orgs, currentOrgId, onSwitchOrg,
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-semibold text-fg">{current.name}</span>
-                <span className="block text-[11px] text-fg-subtle">{ORG_ROLE_LABELS[current.role as OrgRole] ?? current.role}</span>
+                <span className="block text-[11px] text-fg-subtle">{orgCaption ?? ORG_ROLE_LABELS[current.role as OrgRole] ?? current.role}</span>
               </span>
               <ChevronsUpDown className="size-4 text-fg-subtle group-hover:text-fg-muted" />
             </DropdownMenuTrigger>

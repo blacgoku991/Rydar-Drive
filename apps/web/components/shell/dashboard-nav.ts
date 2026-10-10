@@ -58,6 +58,14 @@ export function dashboardNav(input: DashboardNavInput): NavSection[] {
   return input.privateFleet ? privateFleetNav(input) : standardNav(input);
 }
 
+/**
+ * Sous-titre de la barre latérale (§ 7.2), sous le nom de l'organisation : « Flotte Privée » à la place du rôle (le
+ * propriétaire en est le seul accès). Organisation standard : null, le rôle reste affiché (barre inchangée).
+ */
+export function sidebarOrgCaption(privateFleet: boolean): string | null {
+  return privateFleet ? "Flotte Privée" : null;
+}
+
 /** Menu des flottes et des centrales (inchangé). */
 function standardNav({ model, role, counts = {}, flags = {} }: DashboardNavInput): NavSection[] {
   const isCentrale = model === "centrale";
