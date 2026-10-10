@@ -2,9 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   DRIVER_FLOW, FLEET_REPORT_META, RIDE_STATUS_META, formatPrice, formatRideDate, haversine, shortAddress, type RideStatus,
 } from "@rydar/shared";
+import * as Notifications from "expo-notifications";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Linking, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
+import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { frTypo, SettlementBanner } from "@/components/centrale";
 import { ReportCard, ReportSheet } from "@/components/fleet-report";
@@ -17,6 +18,7 @@ import { useMyPosition } from "@/hooks/use-my-position";
 import { useNetworkTermsPrompt } from "@/hooks/use-network-terms-prompt";
 import { useReturnFlash } from "@/hooks/use-return-flash";
 import { useNow } from "@/hooks/use-now";
+import { agendaBadge, homeTodoLine } from "@/lib/agenda-view";
 import { api } from "@/lib/api";
 import { batteryRestricted, requestBatteryExemption } from "@/lib/battery";
 import { useFleetRules } from "@/lib/chat-moderation";
@@ -52,8 +54,34 @@ const CURRENT_RIDE_RETRY_MS = 5000;
 
 const openSettings = () => void Linking.openSettings().catch(() => null);
 
+/** Flotte Privée : texte d'information du panneau (les réservations sont proposées en ligne ou non). */
+const PRIVATE_FLEET_INFO = "Vos réservations arrivent même application fermée.";
+
+/**
+ * Flotte Privée : notifications refusées dans les réglages du téléphone (relu au retour dans l'app) — les réservations
+ * arriveraient sans prévenir le chauffeur. Rien sur le web (aperçu, pas de notifications).
+ */
+function useNotificationsDenied(enabled: boolean) {
+  const [denied, setDenied] = useState(false);
+  useEffect(() => {
+    if (!enabled || Platform.OS === "web") return setDenied(false);
+    let alive = true;
+    const check = () =>
+      void Notifications.getPermissionsAsync()
+        .then((p) => alive && setDenied(p.status === "denied"))
+        .catch(() => null);
+    check();
+    const sub = AppState.addEventListener("change", (s) => s === "active" && check());
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, [enabled]);
+  return denied;
+}
+
 export default function Home() {
-  const { home, homeError, refresh, offers, setOnline, busy, chat, refreshChat } = useDriver();
+  const { home, homeError, refresh, offers, setOnline, busy, chat, refreshChat, privateFleet, ownerDriver } = useDriver();
   const params = useLocalSearchParams<{ report?: string }>();
   const insets = useSafeAreaInsets();
   const flash = useFlash(insets.top + 66);
@@ -78,9 +106,15 @@ export default function Home() {
   const online = presence !== "offline";
   const scheduledOffers = offers.filter((o) => o.mode === "fleet").length;
   const unread = chat?.unread_total ?? 0;
-  // Mode centrale : gains nets du jour (part chauffeur), commissions à régler / blocage, période d'essai
+  // Flotte Privée : pastille de l'agenda (à confirmer + à traiter), ligne « À confirmer », notifications refusées
+  const badge = agendaBadge(scheduledOffers, home?.private?.unassigned);
+  const todoLine = privateFleet ? homeTodoLine(scheduledOffers, home?.private?.unassigned) : null;
+  const notificationsDenied = useNotificationsDenied(privateFleet);
+  // Mode centrale : gains nets du jour (part chauffeur), commissions à régler / blocage, période d'essai ; fiche du gérant
+  // (Flotte Privée passée en centrale) : aucune commission sur ses courses, le prix seul
   const centrale = (home?.model ?? home?.organization.dispatch_model) === "centrale";
-  const settlement = centrale ? home?.settlement ?? null : null;
+  const ownShare = centrale && !ownerDriver;
+  const settlement = ownShare ? home?.settlement ?? null : null;
   const blockedOffers = Boolean(settlement?.blocked);
   const isNew = centrale && home?.driver.trust_level === "new";
   // Réseau partagé : conditions proposées une fois, accueil au premier plan (jamais pendant une offre ou une course)
@@ -91,7 +125,8 @@ export default function Home() {
       return () => setFocused(false);
     }, []),
   );
-  useNetworkTermsPrompt(focused, now);
+  // Flotte Privée : ni réseau partagé, ni conditions à proposer
+  useNetworkTermsPrompt(focused && !privateFleet, now);
   // Retour de l'écran des conditions (proposé ici) : « Courses du réseau partagé activées »
   useReturnFlash(flash.show);
   // Serveur antérieur à driver_ride : argent de la course en cours déduit du modèle de l'organisation
@@ -126,16 +161,19 @@ export default function Home() {
   // Course connue de l'accueil mais pas encore lue (réseau) : carte minimale, l'écran de course se charge lui-même
   const currentShown = current != null && current.id === currentRideId ? current : null;
   // Argent de la course en cours (driver_ride.money) : sa part (centrale, course partenaire), sinon le prix
-  const currentMoney = currentShown ? rideMoneyView(currentShown) : null;
+  const currentMoney = currentShown ? rideMoneyView(currentShown, { ownerDriver }) : null;
   // Nouvelle course en cours : panneau rouvert (le chauffeur voit la course sans avoir à le tirer)
   useEffect(() => {
     if (currentRideId) setCollapsed(false);
   }, [currentRideId]);
 
-  // Signalements actifs de la flotte (masqués dès leur expiration, sans attendre le serveur)
+  // Signalements actifs de la flotte (masqués dès leur expiration, sans attendre le serveur) ; Flotte Privée : aucun
   const activeReports = useMemo(
-    () => (chat?.reports ?? []).filter((r) => r.report_type && r.lat != null && r.lng != null && r.expires_at && new Date(r.expires_at).getTime() > now),
-    [chat?.reports, now],
+    () =>
+      privateFleet
+        ? []
+        : (chat?.reports ?? []).filter((r) => r.report_type && r.lat != null && r.lng != null && r.expires_at && new Date(r.expires_at).getTime() > now),
+    [chat?.reports, now, privateFleet],
   );
   const mapReports = useMemo<MapReport[]>(
     () => activeReports.map((r) => ({ id: r.id, type: r.report_type!, lat: r.lat!, lng: r.lng! })),
@@ -277,10 +315,10 @@ export default function Home() {
   );
 
   const initials = home ? `${(home.driver.first_name ?? "").charAt(0)}${(home.driver.last_name ?? "").charAt(0)}`.toUpperCase() : "";
-  const todayCents = centrale ? home?.today.net_cents ?? 0 : home?.today.revenue_cents ?? 0;
+  const todayCents = ownShare ? home?.today.net_cents ?? 0 : home?.today.revenue_cents ?? 0;
   const todayRides = home?.today.rides ?? 0;
   const todayRidesText = `${todayRides}${NBSP}course${todayRides > 1 ? "s" : ""}`;
-  const todayLabel = centrale ? "Votre part aujourd'hui" : "Aujourd'hui";
+  const todayLabel = ownShare ? "Votre part aujourd'hui" : "Aujourd'hui";
 
   const statusTitle = loading ? (homeError ? "Connexion impossible" : "Chargement…") : online ? "Vous êtes en ligne" : "Vous êtes hors ligne";
   const statusText = loading
@@ -290,10 +328,10 @@ export default function Home() {
     : online
       ? blockedOffers
         ? "Aucune course ne vous est proposée tant que vos commissions ne sont pas réglées."
-        : "Les courses proches vous sont proposées automatiquement."
+        : privateFleet ? PRIVATE_FLEET_INFO : "Les courses proches vous sont proposées automatiquement."
       : locationBlocked
         ? frTypo("Localisation refusée : autorisez-la dans les réglages pour recevoir des courses.")
-        : "Passez en ligne pour recevoir des courses.";
+        : privateFleet ? PRIVATE_FLEET_INFO : "Passez en ligne pour recevoir des courses.";
   const dotColor = online ? (blockedOffers ? colors.red : colors.brand) : colors.subtle;
 
   // Panneau réduit : une ligne d'état et l'action principale (même logique que le panneau ouvert). Titre court :
@@ -344,7 +382,7 @@ export default function Home() {
   const nextWhen = next ? formatRideDate(next.pickup_at, home?.organization.timezone) : "";
   // Prochaine course dont l'heure est passée sans démarrage : signalée (clôturée par le serveur quelques heures après)
   const nextLate = next != null && overdue({ type: "scheduled", status: "ACCEPTED", pickup_at: next.pickup_at }, now) != null;
-  const nextPrice = next ? formatPrice(centrale && next.driver_payout_cents != null ? next.driver_payout_cents : next.price_cents) : "";
+  const nextPrice = next ? formatPrice(ownShare && next.driver_payout_cents != null ? next.driver_payout_cents : next.price_cents) : "";
 
   return (
     <Screen>
@@ -360,7 +398,7 @@ export default function Home() {
         controlsTop={insets.top + 72}
       />
 
-      {/* Barre supérieure : profil, gains du jour, messages, planning */}
+      {/* Barre supérieure : profil, gains du jour, messages, planning (Flotte Privée : profil, gains du jour, agenda) */}
       <SafeAreaView edges={["top"]} style={styles.top} pointerEvents="box-none">
         <Pressable
           onPress={() => router.push("/profile")}
@@ -382,24 +420,38 @@ export default function Home() {
             {home ? <Text style={styles.todaySub}>{` · ${todayRidesText}`}</Text> : null}
           </Text>
         </Pressable>
-        <Pressable
-          onPress={() => router.push("/messages")}
-          style={({ pressed }) => [styles.round, pressed && styles.pressed]}
-          accessibilityRole="button"
-          accessibilityLabel={unread > 0 ? `Messages, ${unread} non lu${unread > 1 ? "s" : ""}` : "Messages"}
-        >
-          <Ionicons name="chatbubble-outline" size={22} color={colors.fg} />
-          <CountBadge count={unread} />
-        </Pressable>
-        <Pressable
-          onPress={() => router.push("/planning")}
-          style={({ pressed }) => [styles.round, pressed && styles.pressed]}
-          accessibilityRole="button"
-          accessibilityLabel={scheduledOffers > 0 ? `Planning, ${scheduledOffers} course${scheduledOffers > 1 ? "s" : ""} proposée${scheduledOffers > 1 ? "s" : ""}` : "Planning"}
-        >
-          <Ionicons name="calendar-outline" size={22} color={colors.fg} />
-          <CountBadge count={scheduledOffers} color={colors.violet} />
-        </Pressable>
+        {!privateFleet && (
+          <Pressable
+            onPress={() => router.push("/messages")}
+            style={({ pressed }) => [styles.round, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel={unread > 0 ? `Messages, ${unread} non lu${unread > 1 ? "s" : ""}` : "Messages"}
+          >
+            <Ionicons name="chatbubble-outline" size={22} color={colors.fg} />
+            <CountBadge count={unread} />
+          </Pressable>
+        )}
+        {privateFleet ? (
+          <Pressable
+            onPress={() => router.push("/planning")}
+            style={({ pressed }) => [styles.round, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel={badge.a11y}
+          >
+            <Ionicons name="calendar-outline" size={22} color={colors.fg} />
+            <CountBadge count={badge.count} color={badge.alert ? colors.amber : colors.violet} />
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => router.push("/planning")}
+            style={({ pressed }) => [styles.round, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel={scheduledOffers > 0 ? `Planning, ${scheduledOffers} course${scheduledOffers > 1 ? "s" : ""} proposée${scheduledOffers > 1 ? "s" : ""}` : "Planning"}
+          >
+            <Ionicons name="calendar-outline" size={22} color={colors.fg} />
+            <CountBadge count={scheduledOffers} color={colors.violet} />
+          </Pressable>
+        )}
       </SafeAreaView>
 
       {flash.node}
@@ -418,7 +470,8 @@ export default function Home() {
         </SafeAreaView>
       ) : (
         <View style={styles.bottom} pointerEvents="box-none" onLayout={onPanelLayout}>
-          {/* Colonne de droite posée sur la carte : « Signaler » (et « Recentrer » juste au-dessus, dans la carte) */}
+          {/* Colonne de droite posée sur la carte : « Signaler » (et « Recentrer » juste au-dessus, dans la carte) ; Flotte
+              Privée : ni flotte à prévenir, ni signalement */}
           <View style={styles.fabRow} pointerEvents="box-none">
             {nearest && (
               <Pressable
@@ -437,15 +490,17 @@ export default function Home() {
                 </Text>
               </Pressable>
             )}
-            <Pressable
-              onPress={() => void openReportSheet()}
-              style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
-              accessibilityRole="button"
-              accessibilityLabel="Signaler à la flotte"
-              accessibilityHint="Police, contrôle, accident, bouchon ou danger à votre position"
-            >
-              <Ionicons name="warning-outline" size={24} color={colors.fg} />
-            </Pressable>
+            {!privateFleet && (
+              <Pressable
+                onPress={() => void openReportSheet()}
+                style={({ pressed }) => [styles.fab, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Signaler à la flotte"
+                accessibilityHint="Police, contrôle, accident, bouchon ou danger à votre position"
+              >
+                <Ionicons name="warning-outline" size={24} color={colors.fg} />
+              </Pressable>
+            )}
           </View>
 
           <CollapsibleSheet collapsed={collapsed} onCollapsedChange={setCollapsed} peek={renderPeek}>
@@ -491,7 +546,22 @@ export default function Home() {
                     <SettlementBanner s={settlement} tz={home?.organization.timezone} now={now} onPress={() => router.push("/commissions")} />
                   )}
                   {/* Réseau partagé : sommes à régler aux organisations partenaires (blocage de leurs courses), part à recevoir */}
-                  <NetworkBanner n={home?.network} executor={home?.organization.name} onPress={() => router.push(settleHref("network"))} />
+                  {!privateFleet && (
+                    <NetworkBanner n={home?.network} executor={home?.organization.name} onPress={() => router.push(settleHref("network"))} />
+                  )}
+
+                  {/* Flotte Privée : notifications refusées → réservations non vues */}
+                  {notificationsDenied && (
+                    <View style={styles.notifBanner} accessibilityRole="alert">
+                      <View style={styles.notifRow}>
+                        <Ionicons name="notifications-off-outline" size={20} color={colors.amber} />
+                        <Text style={styles.notifText}>
+                          {frTypo("Notifications désactivées : vous ne serez pas prévenu de vos réservations.")}
+                        </Text>
+                      </View>
+                      <BigButton title="Ouvrir les réglages" icon="settings-outline" variant="secondary" height={control.sm} onPress={openSettings} />
+                    </View>
+                  )}
 
                   <View style={styles.status} accessibilityLiveRegion="polite">
                     <View style={styles.statusHead}>
@@ -519,6 +589,23 @@ export default function Home() {
                         Période d'essai{NBSP}: certaines courses sont réservées aux chauffeurs confirmés.
                       </Text>
                     </View>
+                  )}
+
+                  {/* Flotte Privée : réservations à confirmer (et non confirmées à traiter) → agenda, bloc « À traiter » */}
+                  {todoLine && (
+                    <Pressable
+                      onPress={() => router.push("/planning")}
+                      style={({ pressed }) => [styles.next, pressed && { backgroundColor: colors.surface3 }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${todoLine.title}${todoLine.sub ? `, ${todoLine.sub}` : ""}. Ouvrir l'agenda`}
+                    >
+                      <Ionicons name="calendar-outline" size={20} color={todoLine.alert ? colors.amber : colors.muted} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.nextWhen} numberOfLines={1}>{todoLine.title}</Text>
+                        {todoLine.sub ? <Text style={[styles.nextRoute, styles.todoAlert]} numberOfLines={1}>{todoLine.sub}</Text> : null}
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+                    </Pressable>
                   )}
 
                   {next && (
@@ -622,4 +709,10 @@ const styles = StyleSheet.create({
   nextLate: { color: colors.amber },
   nextRoute: { color: colors.muted, fontSize: type.subhead, marginTop: 2 },
   nextPrice: { color: colors.fg, fontSize: type.callout, fontWeight: weight.bold, ...mono },
+  todoAlert: { color: colors.amber },
+  notifBanner: {
+    gap: space.md, padding: space.lg, borderRadius: radius.lg, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
+  },
+  notifRow: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
+  notifText: { flex: 1, color: colors.fg, fontSize: type.body, lineHeight: 21 },
 });

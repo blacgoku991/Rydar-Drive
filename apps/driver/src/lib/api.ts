@@ -1,8 +1,8 @@
 import type {
-  ChatThreadKey, DocumentType, DriverAccountState, DriverAccountStateKind, DriverChatOverview, DriverDeletionDebt, DriverDocumentItem,
-  DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverOfferV2, DriverSettlements, FleetReportType, FleetReportVoteResult, LatLng,
-  MarkChatReadResult, NavStep, NetworkRpcArgs, NetworkRpcName, NetworkRpcResult, OfferBlocker, Ride, RideStatus, RpcResult,
-  SendChatMessageResult, SettlementMethod,
+  AgendaBooking, ChatThreadKey, DocumentType, DriverAccountState, DriverAccountStateKind, DriverAgenda, DriverChatOverview, DriverDeletionDebt,
+  DriverDocumentItem, DriverDocuments, DriverEarnings, DriverHome, DriverOffer, DriverOfferV2, DriverSettlements, DriverTakeRideResult,
+  FleetReportType, FleetReportVoteResult, LatLng, MarkChatReadResult, NavStep, NetworkRpcArgs, NetworkRpcName, NetworkRpcResult, OfferBlocker,
+  Ride, RideStatus, RpcResult, SendChatMessageResult, SettlementMethod,
 } from "@rydar/shared";
 import { NETWORK_DOCUMENTS, extractErrorCode, humanizeError } from "@rydar/shared";
 import { appConfig } from "./config";
@@ -149,6 +149,31 @@ export type AcceptResult = RpcResult & { ride_id?: string; reason?: OfferBlocker
 
 /** driver_declare_payment : « J'ai payé » (à confirmer par la centrale). */
 export type DeclarePaymentResult = RpcResult & { count?: number; amount_cents?: number };
+
+/**
+ * Agenda lu par l'app (driver_agenda, 20260924007600) : ses courses de la période, et (Flotte Privée) les réservations
+ * de son organisation à traiter. legacy : serveur sans driver_agenda (PGRST202) — courses à venir seulement
+ * (driver_rides_upcoming), ni fuseau, ni réservations à traiter.
+ */
+export type AgendaRead = {
+  timezone: string | null;
+  privateFleet: boolean;
+  rides: AppRide[];
+  /** null : chauffeur standard, non membre de son organisation, ou serveur antérieur */
+  unassigned: AgendaBooking[] | null;
+  legacy: boolean;
+};
+
+/** Normalisation de driver_agenda (clés manquantes : listes vides). */
+function agendaRead(a: DriverAgenda): AgendaRead {
+  return {
+    timezone: a.timezone || null,
+    privateFleet: a.private_fleet === true,
+    rides: (a.rides ?? []) as AppRide[],
+    unassigned: a.unassigned ?? null,
+    legacy: false,
+  };
+}
 
 /** Connexion acceptée : chauffeur actif ou candidat en attente de validation (null : inconnu, relu ensuite). */
 export type SignInResult = { state: DriverAccountStateKind | null };
@@ -505,6 +530,24 @@ export const api = {
         return ((data ?? []) as Ride[]).map((r) => legacyRide(r, legacy));
       },
     ),
+  /**
+   * Agenda sur une période ([from, to[, 62 jours au plus : fetchWindow de @rydar/shared) : driver_agenda. Serveur
+   * antérieur (PGRST202) : repli sur driver_rides_upcoming (à venir seulement, sans réservations à traiter).
+   */
+  agenda: (from: string, to: string, driverId: string, legacy?: LegacyRideContext) =>
+    withLegacy<AgendaRead>(
+      "driver_agenda",
+      async () => agendaRead(await rpc<DriverAgenda>("driver_agenda", { p_from: from, p_to: to })),
+      async () => ({ timezone: null, privateFleet: false, rides: await api.upcoming(driverId, legacy), unassigned: null, legacy: true }),
+    ),
+  /**
+   * « La prendre » / « La prendre à la suite » (Flotte Privée) : réservation de son organisation encore sans chauffeur,
+   * acceptée (offre en attente) ou attribuée (enchaînée après la course en cours) ; refus : PRIVATE_FLEET_ONLY,
+   * RIDE_NOT_ASSIGNABLE, RIDE_TOO_LATE…
+   */
+  takeRide: (rideId: string) => rpc<DriverTakeRideResult>("driver_take_ride", { p_ride_id: rideId }),
+  /** « Annuler la réservation » (Flotte Privée : le chauffeur est le propriétaire, membre de l'organisation). */
+  cancelRide: (rideId: string, reason: string) => rpc<RpcResult>("cancel_ride", { p_ride_id: rideId, p_reason: reason.trim() }),
   // --- Réseau partagé (contrat @rydar/shared network.ts ; serveur antérieur : PGRST202, voir isMissingRpc) ------------
   /** Réglage « Courses du réseau partagé », conditions, lisibilité, coordonnées bancaires masquées. */
   networkState: () => gated("driver_network_state", () => networkRpc("driver_network_state", {})),

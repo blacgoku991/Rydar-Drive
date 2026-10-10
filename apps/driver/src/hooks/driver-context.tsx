@@ -8,8 +8,10 @@ import { router } from "expo-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Linking, Platform, Vibration } from "react-native";
 import { frTypo } from "@/components/centrale";
+import { takenText } from "@/lib/agenda-view";
 import { api, ApiError, isMissingRpc, refusalText, type AcceptResult } from "@/lib/api";
 import { chatSession } from "@/lib/chat-session";
+import { driverMode, unconfirmedBookingId } from "@/lib/driver-mode";
 import { appEvents } from "@/lib/events";
 import {
   ensureTracking, locationPermissionState, MAX_ACCURACY_M, onServerOffline, requestLocationPermissions, setHighAccuracy, startTracking, stopTracking,
@@ -17,6 +19,7 @@ import {
 import { offerBlockView, settleHref, type SettleTarget } from "@/lib/network";
 import { dismissClosedOfferNotifications, presentedOfferNotifications, registerForPush, setupNotificationChannels, unregisterPush } from "@/lib/notifications";
 import { offerSession } from "@/lib/offer-session";
+import { isUrgentOffer, shouldOpenOffer } from "@/lib/offer-urgency";
 import { settlementSession } from "@/lib/settlement-session";
 import { hasStoredSession, signOutThisDevice, supabase } from "@/lib/supabase";
 
@@ -78,6 +81,13 @@ type Ctx = {
   refreshNetwork: () => Promise<DriverNetworkState | null>;
   /** État réseau renvoyé par une action (driver_set_network) : appliqué sans relecture. */
   applyNetwork: (state: DriverNetworkState | null) => void;
+  /**
+   * Flotte Privée (driver_home, sinon driver_account_state ; clé absente : standard) : agenda, réservations « à
+   * confirmer » ; ni messagerie, ni signalements, ni commissions, ni réseau partagé.
+   */
+  privateFleet: boolean;
+  /** Fiche du gérant (gardée après une bascule en centrale) : le prix, jamais « votre part » ni commission. */
+  ownerDriver: boolean;
 };
 
 /** Valeur numérique d'une donnée de notification (FCM/APNs transportent des chaînes). */
@@ -109,16 +119,6 @@ function alertRideWithoutLocation() {
     { text: "Plus tard", style: "cancel" },
     { text: "Ouvrir les réglages", onPress: () => void Linking.openSettings().catch(() => null) },
   ]);
-}
-
-/** Fenêtre (s) en deçà de laquelle une offre est traitée comme urgente (sonnerie, compte à rebours). */
-export const URGENT_OFFER_S = 120;
-
-/** Offre à traiter tout de suite : dispatch GPS, ou fenêtre courte (course planifiée proche). */
-export function isUrgentOffer(o: Pick<DriverOfferV2, "mode" | "sent_at" | "expires_at">) {
-  if (o.mode === "geo") return true;
-  if (!o.expires_at) return false;
-  return new Date(o.expires_at).getTime() - new Date(o.sent_at).getTime() <= URGENT_OFFER_S * 1000;
 }
 
 /**
@@ -200,6 +200,25 @@ export function alertDriverBlocked(res: { reason?: string | null; message?: stri
   Alert.alert("Acceptation impossible", block?.message ?? frTypo("Réglez vos commissions pour accepter des courses."), [
     { text: payable ? "Plus tard" : "OK", style: "cancel" },
     ...(payable && block ? [{ text: block.actionLabel, onPress: () => router.push(settleHref(block.target)) }] : []),
+  ]);
+}
+
+/**
+ * Flotte Privée, réservation confirmée pendant une course immédiate (DRIVER_BUSY) : « La prendre à la suite ? » →
+ * driver_take_ride (attribuée, enchaînée après la course en cours). `after` : relecture une fois la réponse connue.
+ */
+export function alertTakeAfterCurrent(rideId: string, after?: () => unknown) {
+  const take = async () => {
+    const res = await api.takeRide(rideId).catch((e: unknown) => ({ ok: false as const, code: e instanceof ApiError ? e.code ?? "NETWORK" : "NETWORK", message: (e as Error).message }));
+    if (res.ok) {
+      const done = takenText(res);
+      Alert.alert(done.title, done.message);
+    } else Alert.alert("Action impossible", frTypo(refusalText(res, "Réessayez.")));
+    after?.();
+  };
+  Alert.alert(frTypo("La prendre à la suite ?"), frTypo("Vous avez déjà une course en cours : cette réservation commencera après elle."), [
+    { text: "Annuler", style: "cancel" },
+    { text: "La prendre à la suite", onPress: () => void take() },
   ]);
 }
 
@@ -337,6 +356,17 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     if (userId) void checkAccount();
   }, [userId, checkAccount, applyHome, applyOffers, applyNetwork]);
 
+  // Flotte Privée et fiche du gérant : relues à chaque rafraîchissement de l'accueil (dont « driver.updated », diffusé par
+  // la bascule) et de l'état du compte (60 s)
+  const { privateFleet, ownerDriver } = driverMode(home, account);
+  const privateFleetRef = useRef(privateFleet);
+  privateFleetRef.current = privateFleet;
+  /** Rappels stables (offres, notifications) : accueil appliqué à l'instant (ref, sans attendre le rendu), même règle. */
+  const isPrivateNow = useCallback(() => {
+    const h = homeRef.current;
+    return h ? h.organization.private_fleet === true : privateFleetRef.current;
+  }, []);
+
   const accountChecked = userId != null && accountFor === userId;
   const ready = sessionReady && (!userId || accountChecked);
   // État illisible (hors ligne) : comportement historique, l'app reste utilisable
@@ -458,9 +488,9 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     if (seenOffers.current.has(offer.offer_id)) return;
     seenOffers.current.add(offer.offer_id);
     if (offerSession.openId === offer.offer_id) return;
-    if (isUrgentOffer(offer)) router.push({ pathname: "/offer/[id]", params: { id: offer.offer_id } });
+    if (isUrgentOffer(offer, { privateFleet: isPrivateNow() })) router.push({ pathname: "/offer/[id]", params: { id: offer.offer_id } });
     else Vibration.vibrate([0, 200, 120, 200]);
-  }, []);
+  }, [isPrivateNow]);
 
   const fetchOnce = useCallback(async (): Promise<DriverHome | null> => {
     const uid = userIdRef.current;
@@ -490,14 +520,16 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
     if (o) {
       offersReadAtRef.current = Date.now();
       applyOffers(o);
-      // Offre flotte à fenêtre courte : ouverte aussi, sauf en pleine course (la flotte entière la reçoit)
+      // Offre flotte à fenêtre courte (Flotte Privée : réponse attendue dans 15 min au plus) : ouverte aussi, sauf en
+      // pleine course (la flotte entière la reçoit ; Flotte Privée : « La prendre à la suite » depuis l'agenda)
       const onRide = Boolean((h ?? homeRef.current)?.driver.current_ride_id);
-      const fresh = o.find((x) => !seenOffers.current.has(x.offer_id) && (x.mode === "geo" || (!onRide && isUrgentOffer(x))));
+      const privateNow = isPrivateNow();
+      const fresh = o.find((x) => !seenOffers.current.has(x.offer_id) && shouldOpenOffer(x, { privateFleet: privateNow, onRide }));
       if (fresh) openOffer(fresh);
       void dismissClosedOfferNotifications(presented, new Set(o.map((x) => x.offer_id)));
     }
     return h ?? homeRef.current;
-  }, [openOffer, checkAccount, applyHome, applyOffers]);
+  }, [openOffer, checkAccount, applyHome, applyOffers, isPrivateNow]);
 
   // Une seule relecture à la fois : les demandes arrivées pendant ce temps (temps réel, notification,
   // écran) déclenchent UNE relecture de plus à la fin, au lieu de 3 ou 4 en parallèle
@@ -788,6 +820,15 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         router.dismissTo("/home");
         return;
       }
+      // Flotte Privée : réservation non confirmée ou à vérifier (jamais de ride_id : elle n'est pas encore la sienne) →
+      // agenda, bloc « À traiter », réservation mise en avant
+      if (type === "ride_unconfirmed") {
+        const bookingId = unconfirmedBookingId(data);
+        await refresh();
+        router.dismissTo("/home");
+        router.push(bookingId ? { pathname: "/planning", params: { focus: bookingId } } : "/planning");
+        return;
+      }
       // Réseau partagé : course partenaire annulée par l'organisation qui l'avait confiée (« COURSE ANNULÉE — {A} », sans
       // adresse) : direction le planning, sans ouvrir la course (elle n'est plus lisible)
       if (type === "ride_cancelled" && isNetworkData(data)) {
@@ -804,14 +845,19 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
         .catch((e: unknown): AcceptResult | null => (e instanceof ApiError && e.code ? { ok: false, code: e.code, message: e.message } : null));
       if (res?.ok) offerSession.accepted.add(offerId);
       await refresh();
+      const rideId = data.ride_id ? String(data.ride_id) : null;
       if (!res) router.push({ pathname: "/offer/[id]", params: { id: offerId } }); // réseau : réessai depuis l'offre
       else if (!res.ok && res.code === "DRIVER_BLOCKED") alertDriverBlocked(res, { executor: homeRef.current?.organization.name });
+      else if (!res.ok && res.code === "DRIVER_BUSY" && isPrivateNow() && rideId) alertTakeAfterCurrent(rideId, refresh);
       else if (!res.ok) Alert.alert(res.code === "OFFER_EXPIRED" ? "Offre expirée" : "Course indisponible", frTypo(refusalText(res)));
       else if (data.ride_type === "instant" && res.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(res.ride_id) } });
       else {
-        // Course planifiée (offre flotte ou GPS à l'approche) : direction le planning
+        // Course planifiée (offre flotte ou GPS à l'approche) : direction le planning (Flotte Privée : l'agenda)
         router.push("/planning");
-        Alert.alert("Course attribuée", "Ajoutée à votre planning. Rappels programmés.");
+        if (isPrivateNow()) {
+          const done = takenText(res);
+          Alert.alert(done.title, done.message);
+        } else Alert.alert("Course attribuée", "Ajoutée à votre planning. Rappels programmés.");
       }
       return;
     }
@@ -825,7 +871,7 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       // Bannière touchée alors que l'offre est déjà à l'écran : rien à ouvrir
       if (offerSession.openId !== offerId) router.push({ pathname: "/offer/[id]", params: { id: offerId } });
     } else if (data.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(data.ride_id) } });
-  }, [refresh, refreshChat, checkAccount]);
+  }, [refresh, refreshChat, checkAccount, isPrivateNow]);
 
   // Notifications : réception au premier plan + actions
   useEffect(() => {
@@ -835,6 +881,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
       const type = typeof data?.type === "string" ? (data.type as string) : "";
       if (type === "ride_offer" || type === "ride_offer_scheduled") void refresh();
       if (type === "ride_cancelled" || type === "ride_assigned" || type === "ride_unassigned") void refresh();
+      // Flotte Privée : réservation non confirmée ou à vérifier — accueil (pastille) et agenda ouvert relus
+      if (type === "ride_unconfirmed") {
+        void refresh();
+        appEvents.emit("ride", unconfirmedBookingId(data) ?? undefined);
+      }
       // Au premier plan : écrans à jour sans attendre le temps réel (la bannière est tue si le fil est ouvert)
       if (type === "chat_message" || type === "fleet_report") scheduleChat();
       if (type === "flight_update") {
@@ -989,11 +1040,11 @@ export function DriverProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       session, ready, restoring, home, homeError, offers, offersReadAt, forgetOffer, refresh, setOnline, signOut, busy, chat, refreshChat,
-      account, canDrive, checkAccount, network, refreshNetwork, applyNetwork,
+      account, canDrive, checkAccount, network, refreshNetwork, applyNetwork, privateFleet, ownerDriver,
     }),
     [
       session, ready, restoring, home, homeError, offers, offersReadAt, forgetOffer, refresh, setOnline, signOut, busy, chat, refreshChat,
-      account, canDrive, checkAccount, network, refreshNetwork, applyNetwork,
+      account, canDrive, checkAccount, network, refreshNetwork, applyNetwork, privateFleet, ownerDriver,
     ],
   );
   return <DriverContext.Provider value={value}>{children}</DriverContext.Provider>;

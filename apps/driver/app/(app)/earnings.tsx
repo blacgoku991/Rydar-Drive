@@ -17,6 +17,7 @@ import { PartnerBadge } from "@/components/network";
 import { BigButton, Card, Label, Pill, Screen, ScreenHeader, Segmented } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
+import { moneyModel } from "@/lib/driver-mode";
 import { useAppEvent } from "@/lib/events";
 import { earningsPartner, earningsPartnerPeriod, earningsPartnerText, PARTNER_SETTLEMENTS_TITLE, partnerAccess, settleHref } from "@/lib/network";
 import { alpha, colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
@@ -47,7 +48,7 @@ function periodTitle(p: Period, e: DriverEarnings) {
 }
 
 export default function Earnings() {
-  const { home, network } = useDriver();
+  const { home, network, ownerDriver } = useDriver();
   const [data, setData] = useState<DriverEarnings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("today");
@@ -72,8 +73,9 @@ export default function Earnings() {
   // Réseau partagé : part des organisations partenaires de la période (jamais comptée comme une commission)
   const partnerPart = p ? earningsPartnerPeriod(p, currency) : null;
   const commission = data?.commission_percent ?? null;
-  // Mode centrale : la part chauffeur (driver_payout_cents) est le montant qui compte
-  const centrale = data?.model === "centrale";
+  // Mode centrale : la part chauffeur (driver_payout_cents) est le montant qui compte ; fiche du gérant (Flotte Privée
+  // passée en centrale) : aucune commission sur ses courses, le prix (comme en flotte)
+  const centrale = moneyModel(data?.model, ownerDriver) === "centrale";
   const dayValue = useCallback((d: { revenue_cents: number; net_cents: number | null }) => (centrale ? d.net_cents ?? 0 : d.revenue_cents), [centrale]);
   const series = data?.series ?? [];
   const max = useMemo(() => Math.max(1, ...series.map(dayValue)), [series, dayValue]);
@@ -96,7 +98,9 @@ export default function Earnings() {
   // Flotte : accès aux règlements des courses partenaires (centrale : onglet de l'écran Commissions) ; réseau coupé ou
   // non reçu, sans somme partenaire : aucune entrée (lib/network.ts : partnerAccess)
   const partnerNet = home?.network ?? null;
-  const showPartners = partnerAccess({ model: data?.model ?? home?.model ?? home?.organization.dispatch_model, homeNetwork: partnerNet, network }).entry;
+  const showPartners = partnerAccess({
+    model: moneyModel(data?.model ?? home?.model ?? home?.organization.dispatch_model, ownerDriver), homeNetwork: partnerNet, network,
+  }).entry;
   const partnerState = partnerNet && partnerNet.owed_cents > 0
     ? { icon: "wallet-outline" as const, color: colors.amber, text: `${formatPrice(partnerNet.owed_cents, currency)} à régler` }
     : partnerNet && partnerNet.payout_due_cents > 0

@@ -244,8 +244,12 @@ export type RideMoneyView =
   | { kind: "centrale"; gainCents: number; deductionCents: number; collects: boolean; currency: string }
   | { kind: "plain"; currency: string };
 
-/** Affichage de l'argent d'une course, décidé par driver_ride.money (et le bloc network). */
-export function rideMoneyView(r: Pick<AppRide, "money" | "network" | "currency">): RideMoneyView {
+/**
+ * Affichage de l'argent d'une course, décidé par driver_ride.money (et le bloc network). Fiche du gérant (Flotte Privée
+ * passée en centrale, `ownerDriver`) : aucune commission due sur ses propres courses (20260924007700) → le prix, jamais
+ * « votre part » ; une course partenaire garde son affichage.
+ */
+export function rideMoneyView(r: Pick<AppRide, "money" | "network" | "currency">, opts: { ownerDriver?: boolean } = {}): RideMoneyView {
   const m = r.money;
   const currency = m?.currency || r.currency || "EUR";
   if (r.network && m && m.driver_part_cents != null) {
@@ -259,7 +263,7 @@ export function rideMoneyView(r: Pick<AppRide, "money" | "network" | "currency">
       }, giver)),
     };
   }
-  if (m && m.driver_part_cents != null) {
+  if (m && m.driver_part_cents != null && !opts.ownerDriver) {
     return { kind: "centrale", gainCents: m.driver_part_cents, deductionCents: m.giver_part_cents ?? 0, collects: m.collects, currency };
   }
   return { kind: "plain", currency };

@@ -12,6 +12,7 @@ import { AuthField, FormScroll, Notice } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
 import { BigButton, hapticResult, Screen, ScreenHeader, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
+import { usePrivateFleetGuard } from "@/hooks/use-private-fleet-guard";
 import { api } from "@/lib/api";
 import { maskIban, payoutFormErrors, type PayoutForm } from "@/lib/network";
 import { colors, control, mono, radius, space, type, weight } from "@/theme";
@@ -20,7 +21,13 @@ type Errors = Partial<Record<keyof PayoutForm, string>>;
 
 const CONSULTATION_NOTE = "Seules les organisations qui vous doivent un versement peuvent les consulter, et vous êtes prévenu à chaque consultation.";
 
-export default function Payout() {
+/** Flotte Privée : écran sans objet, retour à l'accueil (docs/FLOTTE-PRIVEE.md § 10.4). */
+export default function PayoutScreen() {
+  const hidden = usePrivateFleetGuard();
+  return hidden ? <Screen>{null}</Screen> : <Payout />;
+}
+
+function Payout() {
   const { network, refreshNetwork, home } = useDriver();
   const insets = useSafeAreaInsets();
   const flash = useFlash(insets.top + 64);

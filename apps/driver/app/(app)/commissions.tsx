@@ -19,10 +19,12 @@ import { NetworkSettlementsView } from "@/components/network-settlements";
 import { METHOD_BUTTON, PaySheet, type ManualMethod, type PaySheetState, type PaySnapshot } from "@/components/pay-sheet";
 import { BigButton, hapticResult, Label, Pill, Screen, ScreenHeader, Segmented, useFlash } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
+import { usePrivateFleetGuard } from "@/hooks/use-private-fleet-guard";
 import { useNow } from "@/hooks/use-now";
 import { usePayoutInfo } from "@/hooks/use-payout-info";
 import { api, isMissingRpc } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
+import { moneyModel } from "@/lib/driver-mode";
 import { useAppEvent } from "@/lib/events";
 import { ownTabBadge, PARTNER_SETTLEMENTS_TITLE, PARTNER_TAB_LABEL, partnerAccess, partnerTabBadge } from "@/lib/network";
 import { pastWhen } from "@/lib/settlement-text";
@@ -35,8 +37,14 @@ const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? m
 
 type Tab = "own" | "network";
 
-export default function Commissions() {
-  const { home, refresh, network } = useDriver();
+/** Flotte Privée : écran sans objet, retour à l'accueil (docs/FLOTTE-PRIVEE.md § 10.4). */
+export default function CommissionsScreen() {
+  const hidden = usePrivateFleetGuard();
+  return hidden ? <Screen>{null}</Screen> : <Commissions />;
+}
+
+function Commissions() {
+  const { home, refresh, network, ownerDriver } = useDriver();
   const params = useLocalSearchParams<{ tab?: string }>();
   const insets = useSafeAreaInsets();
   const flash = useFlash(insets.top + 64);
@@ -93,7 +101,8 @@ export default function Commissions() {
 
   // Commissions de la centrale (mode centrale) et courses partenaires (réseau partagé) : une seule décision, testée
   // (lib/network.ts : partnerAccess) — réseau coupé ou non reçu, sans somme partenaire : écran « Commissions » inchangé
-  const model = data?.model ?? home?.model ?? home?.organization.dispatch_model;
+  // Fiche du gérant (Flotte Privée passée en centrale) : aucune commission sur ses courses → comme en flotte
+  const model = moneyModel(data?.model ?? home?.model ?? home?.organization.dispatch_model, ownerDriver);
   const netData = net && net !== "unsupported" ? net : null;
   const access = partnerAccess({ model, homeNetwork: home?.network, network, settlements: net, requested: params.tab === "network", tab });
   const { showNetwork, title } = access;

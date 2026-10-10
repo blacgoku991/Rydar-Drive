@@ -14,11 +14,13 @@ import { RydarMap } from "@/components/map/rydar-map";
 import { MoneyLine } from "@/components/network";
 import { CountdownRing } from "@/components/radar";
 import { BigButton, Chip, RouteLine, Screen, Sheet } from "@/components/ui";
-import { URGENT_OFFER_S, useDriver } from "@/hooks/driver-context";
+import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
+import { takenText, vehicleWarnings } from "@/lib/agenda-view";
 import { api, ApiError, refusalText } from "@/lib/api";
 import { offerBlockView, partnerOfferView, settleHref } from "@/lib/network";
 import { offerSession } from "@/lib/offer-session";
+import { answerBeforeText, countdownView, isUrgentWindow } from "@/lib/offer-urgency";
 import { approachSeconds, colors, control, mono, overlay, radius, space, toneColor, type, weight } from "@/theme";
 
 const RING_PATTERN = [0, 600, 300, 600, 300, 1000];
@@ -47,8 +49,8 @@ const luggageText = (n: number) => (n > 0 ? `${n}${NBSP}bagage${n > 1 ? "s" : ""
 type OfferState = "open" | "accepting" | "taken" | "expired" | "declined";
 
 /**
- * Compte à rebours de l'offre (anneau + secondes). Son propre minuteur (4 rendus par seconde) : seul
- * l'anneau se redessine, pas l'écran ni la carte.
+ * Compte à rebours de l'offre (anneau + secondes ; réservation Flotte Privée à longue fenêtre : minutes). Son propre
+ * minuteur (4 rendus par seconde) : seul l'anneau se redessine, pas l'écran ni la carte.
  */
 function OfferCountdown({ expiresAt, total }: { expiresAt: string | null; total: number }) {
   const [now, setNow] = useState(Date.now);
@@ -59,12 +61,12 @@ function OfferCountdown({ expiresAt, total }: { expiresAt: string | null; total:
     return () => clearInterval(t);
   }, [expiresAt]);
   const remaining = expiresAt ? (new Date(expiresAt).getTime() - now) / 1000 : total;
-  return <CountdownRing total={total} remaining={remaining} size={76} />;
+  return <CountdownRing total={total} remaining={remaining} size={76} display={countdownView(remaining, total)} />;
 }
 
 export default function OfferScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { offers, offersReadAt, forgetOffer, refresh, home } = useDriver();
+  const { offers, offersReadAt, forgetOffer, refresh, home, privateFleet, ownerDriver } = useDriver();
   const me = useMyPosition();
   const snapshot = useRef<DriverOfferV2 | null>(null);
   const live = offers.find((o) => o.offer_id === id) ?? null;
@@ -76,6 +78,8 @@ export default function OfferScreen() {
   const [message, setMessage] = useState<string | null>(null);
   // Ouverture directe (notification) : la liste des offres n'est peut-être pas encore chargée
   const [checked, setChecked] = useState(live != null);
+  // Flotte Privée : réservation immédiate confirmée pendant une course (DRIVER_BUSY) → « La prendre à la suite »
+  const [chain, setChain] = useState(false);
   // Centrale ou réseau partagé : acceptation refusée (DRIVER_BLOCKED) en attendant la relecture de l'offre (champ blocked)
   const [blockedLocal, setBlockedLocal] = useState<{ reason: string; message?: string } | null>(null);
   useEffect(() => setBlockedLocal(null), [offers]);
@@ -110,8 +114,9 @@ export default function OfferScreen() {
     return Math.max(1, (new Date(offer.expires_at).getTime() - from) / 1000);
   }, [offer?.expires_at, offer?.sent_at]);
   const remaining = offer?.expires_at ? (new Date(offer.expires_at).getTime() - now) / 1000 : total;
-  // Urgente : dispatch GPS ou fenêtre courte → compte à rebours + sonnerie en boucle ; sinon un carillon
-  const urgent = offer != null && (offer.mode === "geo" || (offer.expires_at != null && total <= URGENT_OFFER_S));
+  // Urgente : dispatch GPS ou fenêtre courte (Flotte Privée : réponse attendue dans 15 min au plus) → compte à rebours +
+  // sonnerie en boucle ; sinon un carillon
+  const urgent = offer != null && (offer.mode === "geo" || (offer.expires_at != null && isUrgentWindow(total, { privateFleet })));
   const route = useMemo(() => (offer?.route_polyline ? decodePolyline(offer.route_polyline) : null), [offer?.route_polyline]);
   // Points de la carte : mêmes objets tant que les coordonnées ne changent pas (carte mémorisée, pas de rendu natif inutile)
   const pickupLat = offer?.pickup_lat;
@@ -188,9 +193,13 @@ export default function OfferScreen() {
   useEffect(() => {
     if (state !== "open" || live || !snapshot.current) return;
     closedExpiry.current = snapshot.current.expires_at;
-    // Accepter depuis la notification : instantanée → course en cours ; planifiée → planning
+    // Accepter depuis la notification : instantanée → course en cours ; planifiée → planning (Flotte Privée : agenda)
     if (home?.driver.current_ride_id === snapshot.current.ride_id || offerSession.accepted.has(snapshot.current.offer_id)) {
-      setMessage(snapshot.current.ride_type === "instant" ? "Course acceptée." : "Course attribuée, ajoutée à votre planning.");
+      setMessage(
+        snapshot.current.ride_type === "instant"
+          ? "Course acceptée."
+          : privateFleet ? "Réservation confirmée, ajoutée à votre agenda." : "Course attribuée, ajoutée à votre planning.",
+      );
       setState("declined");
       return;
     }
@@ -198,7 +207,7 @@ export default function OfferScreen() {
     // Échéance relue à l'instant (l'horloge de l'écran n'avance que toutes les secondes)
     const left = snapshot.current.expires_at ? new Date(snapshot.current.expires_at).getTime() - Date.now() : remaining;
     setState(left <= 0 ? "expired" : "taken");
-  }, [live, state, remaining, home?.driver.current_ride_id]);
+  }, [live, state, remaining, home?.driver.current_ride_id, privateFleet]);
 
   // Échéance atteinte mais offre toujours listée : le serveur peut la prolonger (vague suivante) → on vérifie
   const overdue = urgent && state === "open" && live != null && remaining <= 0;
@@ -282,9 +291,43 @@ export default function OfferScreen() {
     await refresh();
     if (offer.ride_type === "instant" && rideId) router.replace({ pathname: "/ride/[id]", params: { id: String(rideId) } });
     else {
-      setMessage("Course planifiée ajoutée à votre planning.");
+      setMessage(privateFleet ? "Réservation confirmée, ajoutée à votre agenda." : "Course planifiée ajoutée à votre planning.");
       setState("declined");
     }
+  }
+
+  /**
+   * Flotte Privée : réservation immédiate confirmée pendant une course (DRIVER_BUSY) → attribuée, enchaînée après la
+   * course en cours (driver_take_ride).
+   */
+  async function takeAfterCurrent() {
+    if (!offer) return;
+    setState("accepting");
+    const res = await api
+      .takeRide(offer.ride_id)
+      .catch((e: unknown) => ({ ok: false as const, code: e instanceof ApiError ? e.code ?? "NETWORK" : "NETWORK", message: (e as Error).message }));
+    if (res.ok) {
+      offerSession.accepted.add(offer.offer_id);
+      if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const done = takenText(res);
+      setChain(false);
+      setMessage(`${done.title}. ${done.message}`);
+      setState("declined");
+      void refresh();
+      return;
+    }
+    if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    if (res.code === "NETWORK") {
+      // Réponse perdue : nouvel essai possible depuis le même bouton
+      setMessage(res.message);
+      setState("open");
+      return;
+    }
+    closedExpiry.current = offer.expires_at;
+    setChain(false);
+    setMessage(refusalText(res, "Réessayez."));
+    setState("taken");
+    void refresh();
   }
 
   async function accept() {
@@ -296,6 +339,12 @@ export default function OfferScreen() {
         await accepted(res.ride_id);
       } else if (res.code === "RIDE_ALREADY_ASSIGNED" && (await alreadyMine())) {
         await accepted(offer.ride_id);
+      } else if (res.code === "DRIVER_BUSY" && privateFleet) {
+        // Flotte Privée : en course, la réservation immédiate peut être prise à la suite (enchaînée)
+        if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        setMessage(null);
+        setChain(true);
+        setState("open");
       } else if (res.code === "DRIVER_BLOCKED") {
         // Mode centrale : commission en retard / contestée, plafond… L'offre reste ouverte : le chauffeur
         // peut régler (ou signaler son paiement) puis accepter.
@@ -360,13 +409,18 @@ export default function OfferScreen() {
   const flight = flightBadge(offer, home?.organization.timezone);
   // Réseau partagé : « Course partenaire · {A} » (mot clé d'abord), sa part et UNE ligne d'argent (jamais commission ni frais)
   const partner = partnerOfferView(offer);
-  // Mode centrale : « Vous gagnez 40 € » (part chauffeur), course 59 € · commission 19 € (commission + frais)
-  const centrale = !partner && offer.dispatch_model === "centrale" && offer.driver_payout_cents != null;
+  // Mode centrale : « Vous gagnez 40 € » (part chauffeur), course 59 € · commission 19 € (commission + frais) ; fiche du
+  // gérant (Flotte Privée passée en centrale) : aucune commission sur ses courses, le prix seul
+  const centrale = !partner && !ownerDriver && offer.dispatch_model === "centrale" && offer.driver_payout_cents != null;
   const deduction = deductionCents(offer);
   const collects = offer.driver_collects ?? driverCollects(offer.payment_method);
   // Motif renvoyé par le serveur (centrale, réseau partagé), même pour une course sans répartition (prix absent)
   const blocked = block != null && !closed;
-  const kicker = partner ? partner.title : offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée";
+  // Flotte Privée : réservation de son site (« Nouvelle réservation »), échéance de réponse, véhicule à vérifier
+  const booking = privateFleet && !partner;
+  const kicker = partner ? partner.title : booking ? "Nouvelle réservation" : offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée";
+  const answerBefore = booking && !urgent ? answerBeforeText(offer.expires_at, home?.organization.timezone) : null;
+  const warnings = booking ? vehicleWarnings({ category: offer.vehicle_category, passengers: offer.passengers }, home?.vehicle) : [];
   const busy = state === "accepting";
   // Fermée après acceptation (course acceptée / ajoutée au planning) : confirmation ; sinon expirée / prise / refusée
   const success = state === "declined" && message != null;
@@ -411,11 +465,11 @@ export default function OfferScreen() {
             style={styles.headBox}
             accessible
             accessibilityRole="header"
-            accessibilityLabel={`${partner ? partner.label : kicker}, course ${offer.number}, ${category}`}
+            accessibilityLabel={`${partner ? partner.label : kicker}, ${booking ? "réservation" : "course"} ${offer.number}, ${category}`}
           >
             {/* Course partenaire : « Course partenaire » toujours lisible, nom long sur une deuxième ligne */}
             <Text style={styles.kicker} numberOfLines={partner ? 2 : 1}>{kicker}</Text>
-            <Text style={styles.number} numberOfLines={1}>Course {offer.number} · {category}</Text>
+            <Text style={styles.number} numberOfLines={1}>{booking ? "Réservation" : "Course"} {offer.number} · {category}</Text>
           </View>
           {urgent && !closed && (
             <View style={styles.ring}>
@@ -482,7 +536,15 @@ export default function OfferScreen() {
             <Chip icon="people-outline" text={passengersText(offer.passengers)} />
             <Chip icon="briefcase-outline" text={luggageText(offer.luggage)} />
             {flight && <Chip icon="airplane-outline" text={flight.text} color={toneColor(flight.tone)} />}
+            {answerBefore && <Chip icon="time-outline" text={answerBefore} color={colors.fg} />}
           </View>
+          {/* Flotte Privée : catégorie ou places au-delà de son véhicule (la réservation reste prenable) */}
+          {warnings.map((w) => (
+            <View key={w} style={styles.comment} accessibilityRole="alert">
+              <Ionicons name="warning-outline" size={20} color={colors.amber} style={styles.commentIcon} />
+              <Text style={styles.commentText}>{w}</Text>
+            </View>
+          ))}
           {offer.comment ? (
             <View style={styles.comment}>
               <Ionicons name="chatbubble-outline" size={20} color={colors.muted} style={styles.commentIcon} />
@@ -504,6 +566,22 @@ export default function OfferScreen() {
                   {state === "expired" ? "Offre expirée." : message ? frTypo(message) : state === "declined" ? "Offre refusée." : "Offre retirée."}
                 </Text>
               </View>
+            ) : chain ? (
+              // Flotte Privée : en course, la réservation immédiate commence après la course en cours
+              <>
+                <View style={styles.blockBox} accessibilityRole="alert">
+                  <Ionicons name="time-outline" size={20} color={colors.amber} style={styles.commentIcon} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.chainTitle}>Vous êtes en course</Text>
+                    <Text style={styles.blockText}>{frTypo("Prenez cette réservation à la suite : elle commencera après votre course en cours.")}</Text>
+                  </View>
+                </View>
+                {state === "open" && message ? (
+                  <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="assertive">{frTypo(message)}</Text>
+                ) : null}
+                <BigButton title="La prendre à la suite" height={ACCEPT_H} onPress={takeAfterCurrent} loading={busy} />
+                {secondary}
+              </>
             ) : blocked && block ? (
               // Centrale : commission en retard / contestée, plafond d'encours… ; réseau partagé : impayé ou plafond envers
               // l'organisation partenaire, plafond de la sienne → acceptation impossible
@@ -576,6 +654,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line, marginBottom: space.xs,
   },
   blockTitle: { color: colors.red, fontSize: type.callout, fontWeight: weight.bold },
+  chainTitle: { color: colors.amber, fontSize: type.callout, fontWeight: weight.bold },
   blockText: { color: colors.fg, fontSize: type.body, lineHeight: 21, marginTop: 2 },
   closedBox: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, minHeight: ACCEPT_H, paddingHorizontal: space.lg,

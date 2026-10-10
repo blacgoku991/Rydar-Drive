@@ -13,12 +13,19 @@ import { announce, Notice } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
 import { BigButton, hapticResult, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
+import { usePrivateFleetGuard } from "@/hooks/use-private-fleet-guard";
 import { api, ApiError, networkTermsUrl } from "@/lib/api";
 import { networkTermsContent } from "@/lib/network";
 import { returnFlash } from "@/lib/return-flash";
 import { colors, control, space, type, weight } from "@/theme";
 
-export default function NetworkTerms() {
+/** Flotte Privée : écran sans objet, retour à l'accueil (docs/FLOTTE-PRIVEE.md § 10.4). */
+export default function NetworkTermsScreen() {
+  const hidden = usePrivateFleetGuard();
+  return hidden ? <Screen>{null}</Screen> : <NetworkTerms />;
+}
+
+function NetworkTerms() {
   const { network, applyNetwork, refreshNetwork } = useDriver();
   const [loading, setLoading] = useState(network == null);
   const [busy, setBusy] = useState(false);

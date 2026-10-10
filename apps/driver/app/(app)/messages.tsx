@@ -18,6 +18,7 @@ import { frTypo } from "@/components/centrale";
 import { ReportCard, ReportSheet, type ReportView } from "@/components/fleet-report";
 import { BigButton, BottomSheet, hapticResult, Screen, ScreenHeader, Segmented, useFlash } from "@/components/ui";
 import { prepareFleetReport, useDriver } from "@/hooks/driver-context";
+import { usePrivateFleetGuard } from "@/hooks/use-private-fleet-guard";
 import { useMyPosition } from "@/hooks/use-my-position";
 import { api, ApiError, legalUrl } from "@/lib/api";
 import { blockChatAuthor, reportChatMessage, unblockChatAuthor, useFleetRules, usePublisherContact } from "@/lib/chat-moderation";
@@ -67,7 +68,13 @@ type Row =
   | { kind: "report"; key: string; r: ReportView }
   | { kind: "pending"; key: string; body: string };
 
-export default function Messages() {
+/** Flotte Privée : écran sans objet, retour à l'accueil (docs/FLOTTE-PRIVEE.md § 10.4). */
+export default function MessagesScreen() {
+  const hidden = usePrivateFleetGuard();
+  return hidden ? <Screen>{null}</Screen> : <Messages />;
+}
+
+function Messages() {
   const { chat, refreshChat, home, session } = useDriver();
   const params = useLocalSearchParams<{ tab?: string }>();
   const [tab, setTab] = useState<ChatTab>(params.tab === "fleet" ? "fleet" : "dispatch");

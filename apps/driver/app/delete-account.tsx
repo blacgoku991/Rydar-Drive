@@ -25,6 +25,14 @@ const DELETED = [
   "Vos messages avec la centrale, vos signalements et vos votes",
 ];
 
+/**
+ * Flotte Privée (docs/FLOTTE-PRIVEE.md § 10.4) : seule la fiche chauffeur est supprimée, le compte de gestion reste
+ * (DRIVER_PROFILE_DELETED) ; les réservations du site ne sont plus proposées tant que l'équipe Rydar n'a pas recréé la
+ * fiche.
+ */
+const PRIVATE_FLEET_NOTICE =
+  "Votre fiche chauffeur sera supprimée : les réservations de votre site ne vous seront plus proposées tant que l'équipe Rydar ne l'a pas recréée. Votre espace web et vos réservations restent.";
+
 /** Réponses qui demandent le mot de passe : session révoquée (compte suspendu, banni…) ou absente. */
 const NEEDS_PASSWORD = new Set(["UNAUTHORIZED", "SESSION"]);
 
@@ -53,7 +61,7 @@ function within<T>(read: Promise<T>, ms: number, fallback: T): Promise<T> {
  * « suppression en cours » (terminée par le serveur).
  */
 export default function DeleteAccount() {
-  const { session } = useDriver();
+  const { session, privateFleet } = useDriver();
   const params = useLocalSearchParams<{ email?: string }>();
   const sessionEmail = session?.user.email ?? "";
   const [phase, setPhase] = useState<Phase>(session ? "confirm" : "password");
@@ -232,6 +240,8 @@ export default function DeleteAccount() {
                 "La suppression est définitive. Si une course vous est attribuée, terminez-la ou demandez à votre centrale de la réattribuer avant de supprimer votre compte.",
               )}
             </Text>
+
+            {privateFleet && <Notice tone="info" message={frTypo(PRIVATE_FLEET_NOTICE)} />}
 
             {debtNotice && (
               <Notice tone="warning" icon="wallet-outline" title={frTypo(debtNotice.title)} message={frTypo(debtNotice.message)} />

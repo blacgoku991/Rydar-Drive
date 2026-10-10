@@ -1,243 +1,523 @@
-// Planning : courses planifiées proposées à la flotte (à prendre) et courses déjà attribuées (planifiées, et
-// instantanées pas encore démarrées : course suivante attribuée pendant la course en cours). Réseau partagé : offres
-// et courses partenaires marquées « Partenaire » (organisation qui confie la course, part du chauffeur, une ligne
-// d'argent).
-import { Ionicons } from "@expo/vector-icons";
-import { formatPrice, formatRideDate, shortAddress } from "@rydar/shared";
-import { router, useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+// Planning / Agenda (route /planning conservée : notifications et note App Review y mènent ; docs/FLOTTE-PRIVEE.md § 10.5).
+// Vues Liste · Jour · Semaine · Mois : Liste par défaut pour un chauffeur standard (Planning inchangé : « Courses
+// proposées » puis « Mes courses »), Mois en Flotte Privée ; vue choisie gardée en mémoire le temps de la session (aucun
+// stockage sur le téléphone). Au-dessus de toutes les vues : « Courses proposées » (standard) ou le bloc « À traiter »
+// (Flotte Privée : à confirmer, non confirmées — Confirmer, Refuser, La prendre, Annuler, Appeler). Données :
+// driver_agenda sur la fenêtre de la vue (fetchWindow de @rydar/shared), repli sur driver_rides_upcoming (serveur
+// antérieur) ; « Mes courses » : driver_rides_upcoming. Modèle de vue pur : lib/agenda-view.ts.
+import { fetchWindow, type AgendaBooking, type AgendaView, type DriverOfferV2 } from "@rydar/shared";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { BookingCard, CancelBookingSheet } from "@/components/agenda/booking-card";
+import { DayTimeline } from "@/components/agenda/day-timeline";
+import { EntryRow } from "@/components/agenda/entry-row";
+import { MonthGrid } from "@/components/agenda/month-grid";
+import { PeriodBar, TodayChip } from "@/components/agenda/period-bar";
+import { MyRideCard, ProposedOfferCard } from "@/components/agenda/ride-cards";
+import { WeekList } from "@/components/agenda/week-list";
 import { frTypo } from "@/components/centrale";
-import { PartnerBadge } from "@/components/network";
-import { BigButton, Card, RouteLine, Screen, ScreenHeader } from "@/components/ui";
-import { alertDriverBlocked, useDriver } from "@/hooks/driver-context";
+import { BigButton, hapticResult, Screen, ScreenHeader, Segmented, useFlash } from "@/components/ui";
+import { alertDriverBlocked, alertTakeAfterCurrent, useDriver } from "@/hooks/driver-context";
 import { useNow } from "@/hooks/use-now";
-import { api, refusalText, type AcceptResult } from "@/lib/api";
-import { offerBlockView, partnerOfferView, rideMoneyView, settleHref, type AppRide, type LegacyRideContext } from "@/lib/network";
-import { myRides, overdue, overdueHint, waitsForCurrentRide } from "@/lib/planning";
-import { alpha, colors, control, mono, radius, space, type, weight } from "@/theme";
+import {
+  agendaTitle, agendaViewOptions, calendarEntries, daySummaryText, defaultAgendaView, entriesByDay, entryTarget, entryView, listSections,
+  monthCells, periodLabel, periodNavLabels, shiftDay, takenText, todayIn, todoCards, todoCardView, weekRows,
+  type AgendaEntry, type EntryTarget, type TodoCard,
+} from "@/lib/agenda-view";
+import { api, ApiError, refusalText, type AcceptResult, type AgendaRead } from "@/lib/api";
+import { useAppEvent } from "@/lib/events";
+import type { AppRide, LegacyRideContext } from "@/lib/network";
+import { offerSession } from "@/lib/offer-session";
+import { answerBeforeText } from "@/lib/offer-urgency";
+import { myRides } from "@/lib/planning";
+import { colors, control, mono, space, type, weight } from "@/theme";
 
-const NBSP = "\u00A0";
+/** Vue choisie par le chauffeur, gardée en mémoire le temps de la session (aucune clé de stockage). */
+let rememberedView: { driverId: string; view: AgendaView } | null = null;
 
-/** Instantanée attribuée pendant une autre course : le serveur refuse de la démarrer avant (DRIVER_BUSY). */
-const AFTER_CURRENT = "À démarrer après votre course en cours";
+/** Fuseau de repli (serveur antérieur sans fuseau dans l'agenda, accueil pas encore lu). */
+const DEFAULT_TZ = "Europe/Paris";
 
-/** Planifiée acceptée, heure passée, pas démarrée : clôturée par le serveur quelques heures plus tard (lib/planning). */
-const LATE = "Heure de prise en charge dépassée";
+const AGENDA_ERROR = "Connexion impossible : l'agenda n'est peut-être pas à jour.";
 
-/** « 3 passagers », « 1 bagage » */
-const plural = (n: number, one: string, many: string) => `${n}${NBSP}${n > 1 ? many : one}`;
+/** Réponse d'une action perdue (réseau) : refus neutre, message de l'erreur. */
+const failed = (e: unknown) => ({ ok: false as const, code: e instanceof ApiError ? e.code ?? "NETWORK" : "NETWORK", message: (e as Error).message });
 
 export default function Planning() {
-  const { offers, refresh, home } = useDriver();
-  const [upcoming, setUpcoming] = useState<AppRide[] | null>(null);
-  // Lecture de « Mes courses » en échec (réseau) : dernière liste connue gardée, jamais « Aucune course »
-  const [loadError, setLoadError] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const tz = home?.organization.timezone;
-  const driverId = home?.driver.id;
-  const currentRideId = home?.driver.current_ride_id ?? null;
-  const available = offers.filter((o) => o.mode === "fleet");
-  const mine = useMemo(() => (upcoming && driverId ? myRides(upcoming, driverId) : null), [upcoming, driverId]);
-  // Planifiées en retard : heure de clôture automatique à jour
+  const { offers, refresh, home, privateFleet, ownerDriver } = useDriver();
+  const params = useLocalSearchParams<{ focus?: string }>();
+  const insets = useSafeAreaInsets();
+  const flash = useFlash(insets.top + 64);
+  // Heure dépassée, trait « maintenant », échéances : horloge de l'écran
   const now = useNow(30_000);
-  // Serveur antérieur à driver_rides_upcoming : argent déduit du modèle de l'organisation
+  const driverId = home?.driver.id;
+  const driverIdRef = useRef(driverId);
+  driverIdRef.current = driverId;
+  const currentRideId = home?.driver.current_ride_id ?? null;
+
+  // Vue : choisie (mémoire de session), sinon Liste (standard) ou Mois (Flotte Privée)
+  const [pickedView, setPickedView] = useState<AgendaView | null>(null);
+  const view = pickedView ?? (rememberedView && rememberedView.driverId === driverId ? rememberedView.view : null) ?? defaultAgendaView(privateFleet);
+  const chooseView = useCallback(
+    (v: AgendaView) => {
+      if (driverIdRef.current) rememberedView = { driverId: driverIdRef.current, view: v };
+      setPickedView(v);
+    },
+    [],
+  );
+  const listView = view === "list";
+
+  const [upcoming, setUpcoming] = useState<AppRide[] | null>(null);
+  const [agenda, setAgenda] = useState<{ key: string; data: AgendaRead } | null>(null);
+  // Réservations à traiter (Flotte Privée) : indépendantes de la période, gardées d'une lecture à l'autre
+  const [unassigned, setUnassigned] = useState<AgendaBooking[] | null>(null);
+  // Lecture en échec (réseau) : dernière vue gardée, jamais « Aucune course »
+  const [upError, setUpError] = useState(false);
+  const [agError, setAgError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const tz = agenda?.data.timezone || home?.organization.timezone || DEFAULT_TZ;
+  const today = todayIn(tz, now);
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const day = pickedDay ?? today;
+  // Fenêtre de lecture de la vue (jours affichés ± 1 jour, 44 jours au plus)
+  const span = useMemo(() => fetchWindow(view, day), [view, day]);
+  const spanKey = `${span.from}|${span.to}`;
+  const needUpcoming = listView || privateFleet;
+  const needAgenda = !listView || privateFleet;
+
+  // Serveur antérieur à driver_rides_upcoming / driver_agenda : argent déduit du modèle de l'organisation
   const legacy = useRef<LegacyRideContext>({});
   legacy.current = { model: home?.model ?? home?.organization.dispatch_model, organization: home?.organization.name };
 
-  // « Mes courses » lues par la fiche du chauffeur (filtre côté serveur) : en même temps que l'accueil si elle est
-  // connue, sinon après lui (accueil illisible : erreur affichée, jamais « Aucune course »)
-  const load = useCallback(async () => {
-    const read = (id: string | undefined) => (id ? api.upcoming(id, legacy.current).catch(() => null) : Promise.resolve(null));
-    const [h, known] = await Promise.all([refresh(), driverId ? read(driverId) : undefined]);
-    const list = known !== undefined ? known : await read(h?.driver.id);
-    setLoadError(list == null);
-    if (list) setUpcoming(list);
-  }, [refresh, driverId]);
-  useFocusEffect(useCallback(() => void load(), [load]));
+  // Relectures : à l'affichage (accueil compris), « tirer pour actualiser », course changée (temps réel, notification),
+  // offres, réservations à traiter ou période changées ; jamais écran caché (la relecture du retour suffit)
+  const [nonce, setNonce] = useState(0);
+  const focusedRef = useRef(false);
+  const homeWanted = useRef(false);
+  const reload = useCallback((withHome = false) => {
+    if (withHome) homeWanted.current = true;
+    setNonce((n) => n + 1);
+  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      focusedRef.current = true;
+      reload(true);
+      return () => {
+        focusedRef.current = false;
+      };
+    }, [reload]),
+  );
+  useAppEvent("ride", () => {
+    if (focusedRef.current) reload();
+  });
+  const offerKey = offers.filter((o) => !o.network).map((o) => `${o.offer_id}:${o.expires_at ?? ""}`).join(",");
+  const homeKey = `${home?.private?.unassigned ?? ""}|${home?.next_scheduled?.id ?? ""}|${currentRideId ?? ""}`;
 
-  const pull = useCallback(async () => {
+  useEffect(() => {
+    if (nonce === 0 || !focusedRef.current) return;
+    let alive = true;
+    const withHome = homeWanted.current;
+    homeWanted.current = false;
+    const read = (id: string) =>
+      Promise.all([
+        needUpcoming ? api.upcoming(id, legacy.current).catch(() => null) : Promise.resolve(undefined),
+        needAgenda ? api.agenda(span.from, span.to, id, legacy.current).catch(() => null) : Promise.resolve(undefined),
+      ]);
+    void (async () => {
+      // Fiche du chauffeur connue : lectures en même temps que l'accueil ; sinon après lui (accueil illisible : erreur)
+      const known = driverIdRef.current;
+      const [h, first] = await Promise.all([withHome ? refresh() : Promise.resolve(null), known ? read(known) : Promise.resolve(null)]);
+      const id = known ?? h?.driver.id;
+      const res = first ?? (id ? await read(id) : null);
+      if (!alive) return;
+      if (!res) {
+        setUpError(needUpcoming);
+        setAgError(needAgenda);
+        return;
+      }
+      const [up, ag] = res;
+      setUpError(up === null);
+      setAgError(ag === null);
+      if (up) setUpcoming(up);
+      if (ag) {
+        setAgenda({ key: spanKey, data: ag });
+        setUnassigned(ag.unassigned);
+      }
+    })().finally(() => {
+      if (alive) setRefreshing(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [nonce, spanKey, offerKey, homeKey, needUpcoming, needAgenda]);
+
+  const pull = useCallback(() => {
     setRefreshing(true);
-    try {
-      await load();
-    } finally {
-      setRefreshing(false);
+    reload(true);
+  }, [reload]);
+
+  // --- Données affichées -------------------------------------------------------------------------------------------
+  const mine = useMemo(() => (upcoming && driverId ? myRides(upcoming, driverId) : null), [upcoming, driverId]);
+  const sections = useMemo(() => (mine ? listSections(mine, tz, today) : []), [mine, tz, today]);
+  const loaded = agenda?.key === spanKey ? agenda.data : null;
+  const entries = useMemo(
+    () => (loaded ? calendarEntries<AgendaEntry>(loaded.rides, privateFleet ? loaded.unassigned : null) : []),
+    [loaded, privateFleet],
+  );
+  const byDay = useMemo(() => entriesByDay(entries, tz), [entries, tz]);
+  const week = useMemo(() => (view === "week" && loaded ? weekRows(day, byDay, { today, now, tz }) : null), [view, loaded, day, byDay, today, now, tz]);
+  const available = offers.filter((o) => o.mode === "fleet");
+  // Flotte Privée : réservations à traiter (agenda + offres en attente) ; chevauchements avec ses courses confirmées
+  const todo = useMemo(() => (privateFleet ? todoCards(unassigned, offers) : null), [privateFleet, unassigned, offers]);
+  const confirmed = useMemo<AgendaEntry[]>(() => [...(upcoming ?? []), ...(loaded?.rides ?? [])], [upcoming, loaded]);
+
+  // --- Réservation mise en avant (notification « non confirmée », élément touché dans le calendrier) ------------------
+  const [focusId, setFocusId] = useState<string | null>(typeof params.focus === "string" ? params.focus : null);
+  useEffect(() => {
+    if (typeof params.focus === "string" && params.focus) setFocusId(params.focus);
+  }, [params.focus]);
+  const scrollRef = useRef<ScrollView>(null);
+  const todoY = useRef<number | null>(null);
+  const cardY = useRef(new Map<string, number>());
+  const scrolledTo = useRef<string | null>(null);
+  const scrollToFocus = useCallback(() => {
+    if (!focusId || scrolledTo.current === focusId || todoY.current == null) return;
+    const y = cardY.current.get(focusId);
+    if (y == null) return;
+    scrolledTo.current = focusId;
+    scrollRef.current?.scrollTo({ y: Math.max(0, todoY.current + y - space.md), animated: true });
+  }, [focusId]);
+  useEffect(() => scrollToFocus(), [scrollToFocus, todo]);
+
+  const openEntry = useCallback((t: EntryTarget) => {
+    if (t.kind === "ride") router.push({ pathname: "/ride/[id]", params: { id: t.id } });
+    else if (t.kind === "offer") router.push({ pathname: "/offer/[id]", params: { id: t.id } });
+    else {
+      // Réservation sans offre (à vérifier, non confirmée, refusée) : sa carte du bloc « À traiter »
+      scrolledTo.current = null;
+      setFocusId(t.id);
     }
-  }, [load]);
+  }, []);
+
+  // --- Actions -----------------------------------------------------------------------------------------------------
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<TodoCard | null>(null);
+
+  /** Après une action : accueil (offres, pastille) et agenda relus. */
+  const after = useCallback(() => reload(true), [reload]);
+
+  /** « Prendre cette course » (offre planifiée de la flotte, chauffeur standard). */
+  async function takeOffer(o: DriverOfferV2) {
+    setBusyId(o.offer_id);
+    const res = await api.accept(o.offer_id).catch((e: Error) => ({ ok: false, code: "NETWORK", message: e.message }) as AcceptResult);
+    setBusyId(null);
+    if (!res.ok && res.code === "DRIVER_BLOCKED") alertDriverBlocked(res, { giver: o.network?.giver.name, executor: home?.organization.name });
+    else
+      Alert.alert(
+        res.ok ? "Course attribuée" : "Course indisponible",
+        res.ok ? "Ajoutée à votre planning. Rappels programmés." : frTypo(refusalText(res)),
+      );
+    after();
+  }
+
+  /** Confirmer (offre en attente) : DRIVER_BUSY → « La prendre à la suite ? ». */
+  async function confirm(c: TodoCard) {
+    if (busyId) return;
+    if (!c.offerId) return take(c);
+    setBusyId(c.rideId);
+    const res: AcceptResult = await api.accept(c.offerId).catch(failed);
+    setBusyId(null);
+    if (res.ok) {
+      offerSession.accepted.add(c.offerId);
+      hapticResult(true);
+      if (c.type === "instant" && res.ride_id) router.push({ pathname: "/ride/[id]", params: { id: String(res.ride_id) } });
+      else {
+        const done = takenText(res);
+        flash.show(`${done.title}. ${done.message}`);
+      }
+    } else if (res.code === "DRIVER_BUSY") alertTakeAfterCurrent(c.rideId, after);
+    else if (res.code === "DRIVER_BLOCKED") alertDriverBlocked(res, { executor: home?.organization.name });
+    else {
+      hapticResult(false);
+      Alert.alert(res.code === "OFFER_EXPIRED" ? "Délai de réponse dépassé" : "Réservation indisponible", frTypo(refusalText(res, "Réessayez.")));
+    }
+    after();
+  }
+
+  /** Refuser (confirmation) : la réservation passe « Refusée », le site en est informé. */
+  function decline(c: TodoCard) {
+    const offerId = c.offerId;
+    if (!offerId || busyId) return;
+    Alert.alert(frTypo(`Refuser la réservation ${c.number} ?`), frTypo("Elle passera « Refusée » et votre site en sera informé."), [
+      { text: "Annuler", style: "cancel" },
+      {
+        text: "Refuser",
+        style: "destructive",
+        onPress: async () => {
+          setBusyId(c.rideId);
+          const res = await api.decline(offerId).catch(failed);
+          setBusyId(null);
+          hapticResult(res.ok);
+          if (res.ok) flash.show("Réservation refusée.");
+          else Alert.alert("Refus impossible", frTypo(refusalText(res, "Réessayez.")));
+          after();
+        },
+      },
+    ]);
+  }
+
+  /** La prendre (confirmation) : driver_take_ride — acceptée, ou attribuée (enchaînée après la course en cours). */
+  function take(c: TodoCard) {
+    if (busyId) return;
+    Alert.alert(frTypo(`Prendre la réservation ${c.number} ?`), "Elle sera ajoutée à votre agenda et votre site en sera informé.", [
+      { text: "Annuler", style: "cancel" },
+      {
+        text: "La prendre",
+        onPress: async () => {
+          setBusyId(c.rideId);
+          const res = await api.takeRide(c.rideId).catch(failed);
+          setBusyId(null);
+          hapticResult(res.ok);
+          if (res.ok) {
+            if (c.offerId) offerSession.accepted.add(c.offerId);
+            const chained = res.code === "ACCEPTED" && res.chained === true;
+            if (c.type === "instant" && !chained && res.code === "ACCEPTED") router.push({ pathname: "/ride/[id]", params: { id: c.rideId } });
+            else {
+              const done = takenText(res);
+              flash.show(`${done.title}. ${done.message}`);
+            }
+          } else Alert.alert("Action impossible", frTypo(refusalText(res, "Réessayez.")));
+          after();
+        },
+      },
+    ]);
+  }
+
+  /** Annuler la réservation (motif) : cancel_ride — le chauffeur d'une Flotte Privée est le propriétaire. */
+  async function cancelBooking(reason: string): Promise<string | null> {
+    if (!cancelling) return null;
+    const res = await api.cancelRide(cancelling.rideId, reason).catch(failed);
+    if (!res.ok) {
+      hapticResult(false);
+      return refusalText(res, "Annulation impossible. Réessayez.");
+    }
+    hapticResult(true);
+    setCancelling(null);
+    flash.show("Réservation annulée.");
+    after();
+    return null;
+  }
+
+  function call(c: TodoCard) {
+    if (!c.customerPhone) return;
+    void Linking.openURL(`tel:${c.customerPhone}`).catch(() => Alert.alert("Appel impossible", frTypo(`Composez le ${c.customerPhone}.`)));
+  }
+
+  // --- Rendu -------------------------------------------------------------------------------------------------------
+  const nav = periodNavLabels(view);
+  const dayItems = byDay[day] ?? [];
+  const loading = <Text style={styles.empty} accessibilityLiveRegion="polite">{agError ? "" : "Chargement…"}</Text>;
 
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <ScreenHeader title="Planning" />
+        <ScreenHeader title={agendaTitle(privateFleet)} right={listView ? undefined : <TodayChip onPress={() => setPickedDay(null)} />} />
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={styles.content}
           refreshControl={<RefreshControl tintColor={colors.muted} colors={[colors.fg]} progressBackgroundColor={colors.surface2} refreshing={refreshing} onRefresh={pull} />}
         >
-          <Text style={styles.section} accessibilityRole="header">
-            Courses proposées <Text style={mono}>· {available.length}</Text>
-          </Text>
-          {available.length === 0 && <Text style={styles.empty}>Aucune course planifiée à prendre pour le moment.</Text>}
-          {available.map((o) => {
-            // Réseau partagé : organisation qui confie la course, part du chauffeur et UNE ligne d'argent ; mode centrale :
-            // part chauffeur (« Vous gagnez ») ; offre bloquée (commission en retard, impayé envers le partenaire…)
-            const partner = partnerOfferView(o);
-            const payout = partner ? partner.gainCents : o.dispatch_model === "centrale" ? o.driver_payout_cents ?? null : null;
-            const block = partner || o.dispatch_model === "centrale"
-              ? offerBlockView(o.blocked, o.blocked_message, { giver: o.network?.giver.name, executor: home?.organization.name })
-              : null;
-            const when = formatRideDate(o.pickup_at, tz);
-            return (
-              <Card key={o.offer_id} style={styles.card}>
-                {partner && <PartnerBadge giver={partner.giver} />}
-                <View style={styles.head}>
-                  <View style={{ flex: 1, gap: 2 }}>
-                    <Text style={styles.when}>{when}</Text>
-                    <Text style={styles.meta}>
-                      Course {o.number} · {plural(o.passengers, "passager", "passagers")}
-                      {o.luggage > 0 ? ` · ${plural(o.luggage, "bagage", "bagages")}` : ""}
-                    </Text>
-                  </View>
-                  {payout != null ? (
-                    <View style={{ alignItems: "flex-end", gap: 2 }}>
-                      <Text style={styles.price}>{formatPrice(payout, o.currency)}</Text>
-                      <Text style={styles.meta}>sur {formatPrice(o.price_cents, o.currency)}</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.price}>{formatPrice(o.price_cents, o.currency)}</Text>
-                  )}
-                </View>
-                {partner ? (
-                  <>
-                    <RouteLine from={partner.pickup} to={partner.dropoff} />
-                    <Text style={styles.hint}>{partner.line}</Text>
-                  </>
-                ) : (
-                  <RouteLine from={shortAddress(o.pickup_address)} to={shortAddress(o.dropoff_address)} />
-                )}
-                {block ? (
-                  <Pressable
-                    onPress={() => block.payable && router.push(settleHref(block.target))}
-                    disabled={!block.payable}
-                    style={({ pressed }) => [styles.blocked, pressed && { backgroundColor: colors.surface3 }]}
-                    accessibilityRole={block.payable ? "button" : "text"}
-                    accessibilityLabel={block.payable ? `${block.message} ${block.target === "network" ? "Voir mes courses partenaires." : "Voir mes commissions."}` : block.message}
-                  >
-                    <Ionicons name="lock-closed-outline" size={20} color={colors.red} />
-                    <Text style={styles.blockedText}>{block.message}</Text>
-                    {block.payable && <Ionicons name="chevron-forward" size={20} color={colors.muted} />}
-                  </Pressable>
-                ) : (
-                  <BigButton
-                    title="Prendre cette course"
-                    height={control.md}
-                    loading={busy === o.offer_id}
-                    disabled={busy != null && busy !== o.offer_id}
-                    onPress={async () => {
-                      setBusy(o.offer_id);
-                      const res = await api.accept(o.offer_id).catch((e: Error) => ({ ok: false, code: "NETWORK", message: e.message }) as AcceptResult);
-                      setBusy(null);
-                      if (!res.ok && res.code === "DRIVER_BLOCKED") alertDriverBlocked(res, { giver: o.network?.giver.name, executor: home?.organization.name });
-                      else
-                        Alert.alert(
-                          res.ok ? "Course attribuée" : "Course indisponible",
-                          res.ok ? "Ajoutée à votre planning. Rappels programmés." : frTypo(refusalText(res)),
-                        );
-                      await load();
-                    }}
-                  />
-                )}
-              </Card>
-            );
-          })}
+          <Segmented options={agendaViewOptions()} value={view} onChange={chooseView} />
 
-          <Text style={[styles.section, { marginTop: space.lg }]} accessibilityRole="header">
-            Mes courses {mine ? <Text style={mono}>· {mine.length}</Text> : null}
-          </Text>
-          {loadError ? (
+          {agError && (!listView || privateFleet) ? (
             <View style={styles.error} accessibilityRole="alert">
-              <Text style={styles.errorText}>
-                {frTypo(mine ? "Connexion impossible : cette liste n'est peut-être pas à jour." : "Connexion impossible : vos courses n'ont pas pu être chargées.")}
-              </Text>
+              <Text style={styles.errorText}>{frTypo(AGENDA_ERROR)}</Text>
               <BigButton title="Réessayer" icon="refresh-outline" variant="secondary" height={control.md} loading={refreshing} onPress={pull} />
             </View>
           ) : null}
-          {mine?.length === 0 && <Text style={styles.empty}>Aucune course à venir.</Text>}
-          {(mine ?? []).map((r) => {
-            // Instantanée attribuée : pas d'heure de prise en charge à afficher (dès que possible)
-            const when = r.type === "instant" ? "Course immédiate" : formatRideDate(r.pickup_at, tz);
-            const after = waitsForCurrentRide(r, currentRideId);
-            const late = overdue(r, now);
-            const lateHint = late ? overdueHint(late, tz, new Date(now)) : null;
-            // Sa part (centrale, course partenaire), sinon le prix — part chauffeur en mode centrale seulement (une course
-            // créée avant un retour au mode flotte garde sa répartition, jamais affichée : money calculé par le serveur)
-            const money = rideMoneyView(r);
-            const amount = money.kind === "plain" ? formatPrice(r.price_cents, r.currency) : formatPrice(money.gainCents, money.currency);
-            return (
-              <Pressable
-                key={r.id}
-                onPress={() => router.push({ pathname: "/ride/[id]", params: { id: r.id } })}
-                accessibilityRole="button"
-                accessibilityLabel={`Course ${r.number}${r.network ? `, partenaire, ${r.network.giver.name}` : ""}, ${when}${late ? `, ${LATE.toLowerCase()}. ${lateHint}` : ""}${after ? `, ${AFTER_CURRENT.toLowerCase()}` : ""}, ${shortAddress(r.pickup_address)} vers ${shortAddress(r.dropoff_address)}, ${amount}`}
-                accessibilityHint="Ouvre le détail de la course"
-              >
-                {({ pressed }) => (
-                  <Card style={[styles.card, styles.mineCard, pressed && { backgroundColor: colors.surface2 }]}>
-                    {r.network && <PartnerBadge giver={r.network.giver.name} />}
-                    <View style={styles.head}>
-                      <View style={{ flex: 1, gap: 2 }}>
-                        <Text style={styles.when}>{when}</Text>
-                        <Text style={styles.meta}>
-                          Course {r.number} · {plural(r.passengers, "passager", "passagers")}
-                          {r.luggage > 0 ? ` · ${plural(r.luggage, "bagage", "bagages")}` : ""}
-                        </Text>
-                        {after && <Text style={styles.hint}>{AFTER_CURRENT}</Text>}
+
+          {todo ? (
+            // Flotte Privée : bloc « À traiter »
+            <View
+              style={styles.block}
+              onLayout={(e) => {
+                todoY.current = e.nativeEvent.layout.y;
+                scrollToFocus();
+              }}
+            >
+              <Text style={styles.section} accessibilityRole="header">
+                À confirmer <Text style={mono}>· {todo.toConfirm.length}</Text>
+              </Text>
+              {todo.toConfirm.length === 0 && <Text style={styles.empty}>Aucune réservation à confirmer.</Text>}
+              {todo.toConfirm.map((c) => (
+                <BookingCard
+                  key={c.rideId}
+                  card={c}
+                  view={todoCardView(c, { tz, now, vehicle: home?.vehicle, rides: confirmed, answerBefore: answerBeforeText(c.expiresAt, tz, now) })}
+                  highlighted={c.rideId === focusId}
+                  busy={busyId === c.rideId}
+                  disabled={busyId != null && busyId !== c.rideId}
+                  onConfirm={() => void confirm(c)}
+                  onDecline={() => decline(c)}
+                  onTake={() => take(c)}
+                  onCancel={() => setCancelling(c)}
+                  onCall={() => call(c)}
+                  onLayout={(e) => {
+                    cardY.current.set(c.rideId, e.nativeEvent.layout.y);
+                    scrollToFocus();
+                  }}
+                />
+              ))}
+              {todo.unconfirmed.length > 0 && (
+                <Text style={[styles.section, styles.sectionGap]} accessibilityRole="header">
+                  Non confirmées <Text style={mono}>· {todo.unconfirmed.length}</Text>
+                </Text>
+              )}
+              {todo.unconfirmed.map((c) => (
+                <BookingCard
+                  key={c.rideId}
+                  card={c}
+                  view={todoCardView(c, { tz, now, vehicle: home?.vehicle, rides: confirmed, answerBefore: null })}
+                  highlighted={c.rideId === focusId}
+                  busy={busyId === c.rideId}
+                  disabled={busyId != null && busyId !== c.rideId}
+                  onConfirm={() => void confirm(c)}
+                  onDecline={() => decline(c)}
+                  onTake={() => take(c)}
+                  onCancel={() => setCancelling(c)}
+                  onCall={() => call(c)}
+                  onLayout={(e) => {
+                    cardY.current.set(c.rideId, e.nativeEvent.layout.y);
+                    scrollToFocus();
+                  }}
+                />
+              ))}
+            </View>
+          ) : (
+            // Chauffeur standard : offres planifiées de la flotte (comme le Planning d'avant l'agenda)
+            <View style={styles.block}>
+              <Text style={styles.section} accessibilityRole="header">
+                Courses proposées <Text style={mono}>· {available.length}</Text>
+              </Text>
+              {available.length === 0 && <Text style={styles.empty}>Aucune course planifiée à prendre pour le moment.</Text>}
+              {available.map((o) => (
+                <ProposedOfferCard
+                  key={o.offer_id}
+                  o={o}
+                  tz={home?.organization.timezone}
+                  organization={home?.organization.name}
+                  ownerDriver={ownerDriver}
+                  busy={busyId === o.offer_id}
+                  disabled={busyId != null && busyId !== o.offer_id}
+                  onTake={() => void takeOffer(o)}
+                />
+              ))}
+            </View>
+          )}
+
+          {listView ? (
+            <View style={[styles.block, styles.sectionGap]}>
+              <Text style={styles.section} accessibilityRole="header">
+                Mes courses {mine ? <Text style={mono}>· {mine.length}</Text> : null}
+              </Text>
+              {upError ? (
+                <View style={styles.error} accessibilityRole="alert">
+                  <Text style={styles.errorText}>
+                    {frTypo(mine ? "Connexion impossible : cette liste n'est peut-être pas à jour." : "Connexion impossible : vos courses n'ont pas pu être chargées.")}
+                  </Text>
+                  <BigButton title="Réessayer" icon="refresh-outline" variant="secondary" height={control.md} loading={refreshing} onPress={pull} />
+                </View>
+              ) : null}
+              {mine?.length === 0 && <Text style={styles.empty}>Aucune course à venir.</Text>}
+              {sections.map((s) => (
+                <View key={s.day} style={styles.block}>
+                  <Text style={styles.dayHeading} accessibilityRole="header">{s.title}</Text>
+                  {s.items.map((r) => (
+                    <MyRideCard key={r.id} r={r} tz={home?.organization.timezone} now={now} currentRideId={currentRideId} ownerDriver={ownerDriver} />
+                  ))}
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={[styles.block, styles.sectionGap]}>
+              <PeriodBar
+                label={periodLabel(view, day)}
+                prevLabel={nav.prev}
+                nextLabel={nav.next}
+                onPrev={() => setPickedDay(shiftDay(view, day, -1))}
+                onNext={() => setPickedDay(shiftDay(view, day, 1))}
+              />
+              {view === "day" &&
+                (!loaded ? (
+                  loading
+                ) : dayItems.length === 0 ? (
+                  <Text style={styles.empty}>Aucune course ce jour-là.</Text>
+                ) : (
+                  <>
+                    <Text style={styles.summary}>{daySummaryText(dayItems, now)}</Text>
+                    <DayTimeline day={day} items={dayItems} tz={tz} now={now} isToday={day === today} onOpen={openEntry} />
+                  </>
+                ))}
+              {view === "week" &&
+                (!week ? (
+                  loading
+                ) : (
+                  <>
+                    {week.every((r) => r.lines.length === 0) && <Text style={styles.empty}>Aucune course cette semaine.</Text>}
+                    <WeekList
+                      rows={week}
+                      onOpenDay={(d) => {
+                        setPickedDay(d);
+                        chooseView("day");
+                      }}
+                    />
+                  </>
+                ))}
+              {view === "month" && (
+                <>
+                  <MonthGrid cells={monthCells(day, loaded ? byDay : {}, { today, selected: day, now })} onSelect={setPickedDay} />
+                  {!loaded ? (
+                    loading
+                  ) : (
+                    <View style={styles.block}>
+                      <View style={styles.dayHead}>
+                        <Text style={styles.dayHeading} accessibilityRole="header">{periodLabel("day", day)}</Text>
+                        <Text style={styles.summary}>{daySummaryText(dayItems, now)}</Text>
                       </View>
-                      <Text style={styles.price}>{amount}</Text>
-                      <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+                      {dayItems.length === 0 ? (
+                        <Text style={styles.empty}>Aucune course ce jour-là.</Text>
+                      ) : (
+                        dayItems.map((e) => <EntryRow key={e.id} v={entryView(e, { tz, now })} onPress={() => openEntry(entryTarget(e))} />)
+                      )}
                     </View>
-                    {late && (
-                      <View style={styles.late}>
-                        <Ionicons name="time-outline" size={20} color={colors.amber} style={styles.lateIcon} />
-                        <View style={{ flex: 1, gap: 2 }}>
-                          <Text style={styles.lateTitle}>{LATE}</Text>
-                          <Text style={styles.hint}>{lateHint}</Text>
-                        </View>
-                      </View>
-                    )}
-                    <RouteLine from={shortAddress(r.pickup_address)} to={shortAddress(r.dropoff_address)} />
-                  </Card>
-                )}
-              </Pressable>
-            );
-          })}
+                  )}
+                </>
+              )}
+            </View>
+          )}
         </ScrollView>
       </SafeAreaView>
+      <CancelBookingSheet
+        target={cancelling ? { rideId: cancelling.rideId, number: cancelling.number, pickupAddress: cancelling.pickupAddress, dropoffAddress: cancelling.dropoffAddress } : null}
+        onClose={() => setCancelling(null)}
+        onSubmit={cancelBooking}
+      />
+      {flash.node}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   content: { paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.xxl + space.sm, gap: space.md },
+  block: { gap: space.md },
   section: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.semibold },
+  sectionGap: { marginTop: space.lg },
+  dayHeading: { color: colors.fg, fontSize: type.callout, fontWeight: weight.semibold },
+  dayHead: { gap: 2 },
+  summary: { color: colors.muted, fontSize: type.subhead, fontWeight: weight.medium, ...mono },
   empty: { color: colors.muted, fontSize: type.body, lineHeight: 21 },
   error: { gap: space.sm },
   errorText: { color: colors.fg, fontSize: type.body, lineHeight: 21 },
-  card: { gap: space.md },
-  // Course planifiée attribuée : liseré violet discret (état « planifiée », comme sur le dashboard)
-  mineCard: {},
-  head: { flexDirection: "row", alignItems: "flex-start", gap: space.md },
-  when: { color: colors.fg, fontSize: type.headline, fontWeight: weight.semibold, ...mono },
-  meta: { color: colors.muted, fontSize: type.footnote, fontWeight: weight.medium, ...mono },
-  hint: { color: colors.muted, fontSize: type.footnote, lineHeight: 18 },
-  late: { flexDirection: "row", alignItems: "flex-start", gap: space.sm },
-  lateIcon: { marginTop: 1 },
-  lateTitle: { color: colors.amber, fontSize: type.footnote, fontWeight: weight.semibold, lineHeight: 18 },
-  price: { color: colors.fg, fontSize: type.headline, fontWeight: weight.bold, ...mono },
-  blocked: {
-    flexDirection: "row", alignItems: "center", gap: space.md, minHeight: control.md, paddingHorizontal: space.md, paddingVertical: 10,
-    borderRadius: radius.md, backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.line,
-  },
-  blockedText: { flex: 1, color: colors.fg, fontSize: type.body, fontWeight: weight.medium, lineHeight: 20 },
 });

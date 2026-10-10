@@ -6,21 +6,26 @@ import { alpha, colors, mono, type, weight } from "@/theme";
 const LOW_S = 8;
 
 /**
- * Anneau de compte à rebours (temps de réponse à une offre) : secondes restantes au centre.
+ * Anneau de compte à rebours (temps de réponse à une offre) : secondes restantes au centre, ou la valeur fournie par
+ * l'écran (`display` : minutes d'une réservation à longue fenêtre, lib/offer-urgency.ts).
  * Aucune animation propre : l'anneau suit la valeur `remaining` fournie par l'écran.
  */
-export function CountdownRing({ total, remaining, size = 84, color = colors.brand }: { total: number; remaining: number; size?: number; color?: string }) {
+export function CountdownRing({
+  total, remaining, size = 84, color = colors.brand, display,
+}: { total: number; remaining: number; size?: number; color?: string; display?: { value: number; unit: string; label: string } }) {
   const stroke = 6;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const pct = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
   const seconds = Math.max(0, Math.ceil(remaining));
+  const value = display?.value ?? seconds;
+  const unit = display?.unit ?? "s";
   return (
     <View
       style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}
       accessible
       accessibilityRole="timer"
-      accessibilityLabel={`${seconds} seconde${seconds > 1 ? "s" : ""} pour répondre`}
+      accessibilityLabel={display?.label ?? `${seconds} seconde${seconds > 1 ? "s" : ""} pour répondre`}
     >
       <Svg width={size} height={size} style={{ position: "absolute", transform: [{ rotate: "-90deg" }] }}>
         <Circle cx={size / 2} cy={size / 2} r={r} stroke={alpha(colors.fg, 0.1)} strokeWidth={stroke} fill="none" />
@@ -36,8 +41,8 @@ export function CountdownRing({ total, remaining, size = 84, color = colors.bran
           strokeDashoffset={c * (1 - pct)}
         />
       </Svg>
-      <Text style={{ color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, lineHeight: type.title2 + 4, ...mono }}>{seconds}</Text>
-      <Text style={{ color: colors.muted, fontSize: type.caption, fontWeight: weight.medium, lineHeight: type.caption + 2 }}>s</Text>
+      <Text style={{ color: colors.fg, fontSize: type.title2, fontWeight: weight.bold, lineHeight: type.title2 + 4, ...mono }}>{value}</Text>
+      <Text style={{ color: colors.muted, fontSize: type.caption, fontWeight: weight.medium, lineHeight: type.caption + 2 }}>{unit}</Text>
     </View>
   );
 }

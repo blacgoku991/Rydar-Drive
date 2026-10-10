@@ -66,7 +66,7 @@ export default function RideScreen() {
   // le verrou peut ne pas être encore actif au démontage — pas d'erreur dans ce cas
   useKeepAwake(undefined, { suppressDeactivateWarnings: true });
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { refresh, home, setOnline, network } = useDriver();
+  const { refresh, home, setOnline, network, ownerDriver } = useDriver();
   const me = useMyPosition();
   const [ride, setRide] = useState<AppRide | null>(null);
   // Course invisible pour ce chauffeur dès l'ouverture (réattribuée, notification ou planning périmés)
@@ -171,8 +171,9 @@ export default function RideScreen() {
   const status = ride.status as RideStatus;
   const step = DRIVER_FLOW[status];
   // Argent décidé par driver_ride.money (et non par le modèle de l'organisation) : course partenaire (part du chauffeur,
-  // UN montant avec l'organisation qui la confie), centrale (part chauffeur / commission), flotte (prix seul)
-  const money = rideMoneyView(ride);
+  // UN montant avec l'organisation qui la confie), centrale (part chauffeur / commission), flotte (prix seul) ; fiche du
+  // gérant (Flotte Privée passée en centrale) : le prix seul
+  const money = rideMoneyView(ride, { ownerDriver });
   const partner = money.kind === "partner" ? money : null;
   const centrale = money.kind === "centrale";
   // Course partenaire déjà payée : le versement arrive sur le compte du chauffeur (coordonnées inconnues : rien)

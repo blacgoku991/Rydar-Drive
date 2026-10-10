@@ -1,5 +1,7 @@
 // Mon compte : identité, accès aux gains / commissions / documents / messages, véhicule, centrale, réseau partagé
-// (réglage, conditions, coordonnées bancaires), déconnexion.
+// (réglage, conditions, coordonnées bancaires), déconnexion. Flotte Privée : gains, agenda, documents, véhicule,
+// conditions, suppression du compte et déconnexion seulement (ni messagerie, ni commissions, ni réseau partagé, ni
+// « Appeler la centrale » : ce serait son propre numéro ; aucun lien vers l'espace web).
 import { Ionicons } from "@expo/vector-icons";
 import { VEHICLE_CATEGORY_META, formatPrice, type NetworkReadinessAction } from "@rydar/shared";
 import Constants from "expo-constants";
@@ -14,6 +16,7 @@ import { useDriver } from "@/hooks/driver-context";
 import { usePayoutInfo } from "@/hooks/use-payout-info";
 import { useReturnFlash } from "@/hooks/use-return-flash";
 import { api, ApiError, legalUrl } from "@/lib/api";
+import { moneyModel } from "@/lib/driver-mode";
 import { useAppEvent } from "@/lib/events";
 import {
   driverNetworkStatus, enableNeedsTerms, hasPartnerMoney, networkVisible, PARTNER_SETTLEMENTS_TITLE, partnerAccess, payoutRowDetail,
@@ -65,21 +68,24 @@ function Group({ children }: { children: React.ReactNode }) {
 const STATUS_COLOR: Record<NetworkStatusTone, string> = { green: colors.green, amber: colors.amber, red: colors.red, muted: colors.muted };
 
 export default function Profile() {
-  const { home, signOut, chat, network, refreshNetwork, applyNetwork } = useDriver();
+  const { home, signOut, chat, network, refreshNetwork, applyNetwork, privateFleet, ownerDriver } = useDriver();
   const insets = useSafeAreaInsets();
   const flash = useFlash(insets.top + 64);
   // Retour de l'écran des conditions : « Courses du réseau partagé activées »
   useReturnFlash(flash.show);
   const v = home?.vehicle;
   const tz = home?.organization.timezone;
-  // Réseau partagé : visible seulement si Rydar l'a ouvert ET que l'organisation du chauffeur le reçoit
-  const showNetwork = networkVisible(network);
+  // Réseau partagé : visible seulement si Rydar l'a ouvert ET que l'organisation du chauffeur le reçoit (jamais en Flotte
+  // Privée)
+  const showNetwork = !privateFleet && networkVisible(network);
   const status = network && showNetwork ? driverNetworkStatus(network, tz) : null;
+  // Fiche du gérant (Flotte Privée passée en centrale) : aucune commission sur ses courses → comme en flotte
+  const model = moneyModel(home?.model ?? home?.organization.dispatch_model, ownerDriver);
   // Entrée « Courses partenaires » (flotte) : réseau visible, ou sommes partenaires ouvertes (même réseau coupé ensuite)
-  const access = partnerAccess({ model: home?.model ?? home?.organization.dispatch_model, homeNetwork: home?.network, network });
+  const access = partnerAccess({ model, homeNetwork: home?.network, network });
   // Coordonnées bancaires : état réseau, sinon lues directement si des sommes partenaires existent (réseau coupé ensuite) ;
   // inconnues : rien n'est affirmé
-  const payout = usePayoutInfo(!status && hasPartnerMoney(home?.network));
+  const payout = usePayoutInfo(!privateFleet && !status && hasPartnerMoney(home?.network));
   const payoutDue = home?.network?.payout_due_cents ?? 0;
   const payoutDetail = payoutRowDetail(payout, payoutDue);
   const [toggling, setToggling] = useState(false);
@@ -146,7 +152,7 @@ export default function Profile() {
   useFocusEffect(useCallback(() => loadDocs(), [loadDocs]));
   useAppEvent("documents", loadDocs);
   // Mode centrale : gains nets (part chauffeur) et commissions à régler / à recevoir
-  const centrale = (home?.model ?? home?.organization.dispatch_model) === "centrale";
+  const centrale = model === "centrale";
   const s = centrale ? home?.settlement ?? null : null;
   const commissionsDetail = !s
     ? undefined
@@ -215,8 +221,10 @@ export default function Profile() {
                 onPress={() => router.push("/commissions")}
               />
             )}
+            {/* Flotte Privée : l'agenda (mêmes écrans que le bouton de l'accueil) */}
+            {privateFleet && <Row icon="calendar-outline" title="Agenda" onPress={() => router.push("/planning")} />}
             {/* Flotte : règlements des courses partenaires (le chauffeur règle lui-même l'organisation qui les confie) */}
-            {access.entry && (
+            {!privateFleet && access.entry && (
               <Row
                 icon="swap-horizontal-outline"
                 title={PARTNER_SETTLEMENTS_TITLE}
@@ -232,13 +240,15 @@ export default function Profile() {
               detailColor={docsTodo != null && docsTodo > 0 ? colors.amber : undefined}
               onPress={() => router.push("/documents")}
             />
-            <Row
-              icon="chatbubbles-outline"
-              title="Messages"
-              detail={unread > 0 ? `${unread} non lu${unread > 1 ? "s" : ""}` : undefined}
-              detailColor={colors.fg}
-              onPress={() => router.push("/messages")}
-            />
+            {!privateFleet && (
+              <Row
+                icon="chatbubbles-outline"
+                title="Messages"
+                detail={unread > 0 ? `${unread} non lu${unread > 1 ? "s" : ""}` : undefined}
+                detailColor={colors.fg}
+                onPress={() => router.push("/messages")}
+              />
+            )}
           </Group>
 
           <Text style={styles.section} accessibilityRole="header">Véhicule</Text>
@@ -326,7 +336,7 @@ export default function Profile() {
             </>
           )}
           {/* Réseau coupé ensuite : coordonnées bancaires encore utiles tant qu'un versement est attendu */}
-          {!status && (payout?.configured || payoutDue > 0) && (
+          {!privateFleet && !status && (payout?.configured || payoutDue > 0) && (
             <>
               <Text style={styles.section} accessibilityRole="header">{PARTNER_SETTLEMENTS_TITLE}</Text>
               <Group>
@@ -341,7 +351,7 @@ export default function Profile() {
             </>
           )}
 
-          {phone && (
+          {phone && !privateFleet && (
             <>
               <Text style={styles.section} accessibilityRole="header">Centrale</Text>
               <Group>
