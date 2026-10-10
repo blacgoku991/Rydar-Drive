@@ -323,6 +323,12 @@ describe("createPrivateFleet : compte neuf prouvé, invitation, puis RPC, tout o
     expect(res).toMatchObject({ ok: false, fieldErrors: { contractRef: expect.any(String) } });
     expect(res.ok === false && res.error.startsWith("Référence du contrat signé :")).toBe(true);
     expect(await fleet.createPrivateFleet({ ...CREATE, temporaryPassword: true, password: "" })).toMatchObject({ ok: false, fieldErrors: { password: expect.any(String) } });
+    // Ville obligatoire (§ 8.1), comme le nom commercial, l'identifiant, l'e-mail et le téléphone du client
+    expect(await fleet.createPrivateFleet({ ...CREATE, city: "  " })).toEqual({
+      ok: false,
+      error: "Ville : ville requise",
+      fieldErrors: { city: "Ville requise" },
+    });
     expect(h.ops).toEqual([]);
     expect(h.auth).toEqual([]);
   });

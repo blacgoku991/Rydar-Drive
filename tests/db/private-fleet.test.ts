@@ -211,14 +211,14 @@ describe("création (svc_platform_create_private_fleet)", () => {
     const orgId = res.organization_id as string;
 
     const [org] = await sql(
-      `select private_fleet, dispatch_model, join_enabled, plan_id, created_by, legal_name, siret, vtc_registration, platform_fee_percent::float8 as pct,
-              platform_fee_fixed_cents as fixed
+      `select private_fleet, dispatch_model, join_enabled, plan_id, created_by, city, legal_name, siret, vtc_registration,
+              platform_fee_percent::float8 as pct, platform_fee_fixed_cents as fixed
          from public.organizations where id = $1`,
       [orgId],
     );
     expect(org).toMatchObject({
-      private_fleet: true, dispatch_model: "fleet", join_enabled: false, plan_id: plan, created_by: actor, legal_name: "VTC Karim EI",
-      siret: "12345678900012", vtc_registration: "EVTC075230001", pct: 2, fixed: 50,
+      private_fleet: true, dispatch_model: "fleet", join_enabled: false, plan_id: plan, created_by: actor, city: "Paris",
+      legal_name: "VTC Karim EI", siret: "12345678900012", vtc_registration: "EVTC075230001", pct: 2, fixed: 50,
     });
     const members = await sql("select user_id, role, status, invited_by, activated_at from public.organization_users where organization_id = $1", [orgId]);
     expect(members).toHaveLength(1);
@@ -286,6 +286,10 @@ describe("création (svc_platform_create_private_fleet)", () => {
       expect(await create(createArgs(actor, owner, { slug }))).toMatchObject({ ok: false, code: "SUBDOMAIN_RESERVED", field: "slug" });
     }
     expect(await create(createArgs(actor, owner, { slug: "Pas Valide" }))).toMatchObject({ ok: false, code: "INVALID", field: "slug" });
+    // Ville obligatoire (§ 8.1) : absente, vide, blanche ou trop longue
+    for (const city of [null, "", "   ", "x".repeat(81)]) {
+      expect(await create(createArgs(actor, owner, { org: { city } })), String(city)).toMatchObject({ ok: false, code: "INVALID", field: "city" });
+    }
     for (const contract of ["", "   ", "ab"]) {
       expect(await create(createArgs(actor, owner, { contract }))).toMatchObject({ ok: false, code: "CONSENT_REQUIRED", field: "contractRef" });
     }

@@ -239,8 +239,8 @@ export function CreatePrivateFleetSheet({
                 autoComplete="off"
               />
             </Field>
-            <Field label="Ville" optional error={errors.city}>
-              <Input name="city" autoComplete="off" />
+            <Field label="Ville" error={errors.city}>
+              <Input name="city" required maxLength={80} autoComplete="off" />
             </Field>
             <Field label="E-mail du client" error={errors.email} hint="Adresse de l'entreprise (factures, annonces des frais).">
               <Input name="email" type="email" required defaultValue={prefill?.email} autoComplete="off" />

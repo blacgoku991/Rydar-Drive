@@ -369,7 +369,9 @@ p_org_legal_effective_on date, p_app_url text) returns jsonb`**
    - `p_owner` a déjà une adhésion, ou son `public.users.created_at` date de plus d'une heure → `OWNER_NOT_NEW`
      (défense en profondeur de D5 : le web refuse déjà toute adresse existante) ;
    - offre inactive, ou dont l'`api_access` effectif est faux → `PRIVATE_FLEET_PLAN_INVALID` ;
-   - slug pris → `SLUG_TAKEN` ; slug réservé (`private.is_reserved_subdomain`, `007500`) → `SUBDOMAIN_RESERVED`.
+   - slug pris → `SLUG_TAKEN` ; slug réservé (`private.is_reserved_subdomain`, `007500`) → `SUBDOMAIN_RESERVED` ;
+   - saisie incomplète ou invalide (nom commercial, identifiant, ville — obligatoire comme au § 8.1 —, fiche, véhicule)
+     → `INVALID` (`field` du formulaire).
 3. Sous-bloc `begin … exception` (tout ou rien) :
    1. `v_org := gen_random_uuid()` ; `set_config('rydar.private_fleet_change', v_org::text, true)` ;
       `insert into organizations (id, name, slug, email, phone, city, legal_name, siret, vtc_registration, plan_id,
@@ -496,7 +498,7 @@ l'adhésion (`assert_org_member`) — le chauffeur d'une Flotte Privée est le p
 | Fonction | Raison |
 |---|---|
 | `offer_to_fleet`, `run_geo_wave`, `dispatch_tick`, `dispatch_geo_step` | Chemin standard réutilisé tel quel (D7) ; le dernier appel GPS est le passage à T-lead existant. |
-| `accept_ride_offer`, `decline_ride_offer`, `assign_ride`, `redispatch_ride` | Acceptation atomique existante ; refus traité par H2 ; « La prendre » via `assign_ride`. |
+| `accept_ride_offer`, `decline_ride_offer`, `assign_ride`, `redispatch_ride` | Acceptation atomique existante ; refus traité par H2 ; « La prendre » (J1, dans l'app comme sur le web) appelle `accept_ride_offer`, sinon `assign_ride`, depuis `driver_take_ride`. |
 | `reassign_ride` | D13 : appelé par la suspension et le bannissement. |
 | `apply_flight_status` | Il rappelle `offer_to_fleet` ou réécrit `expires_at` : H1 replanifie les rappels. |
 | `set_join_link`, `svc_join_info`, `svc_driver_apply`, `approve_driver_application` | Le lien ne peut pas s'ouvrir (C) : `JOIN_LINK_INVALID` / `JOIN_DISABLED` ; la garde D tient en dernier rempart. |
@@ -537,9 +539,9 @@ les immédiates, `006800:1850`).
    récente (`own_geo_candidates`, `006800:573`). Puis `NO_DRIVER_FOUND` avec explication (existant) → H3 : notification
    « RÉSERVATION NON CONFIRMÉE », webhook `ride.no_driver_found`, alerte du tableau de bord (`layout.tsx`, compte des
    `NO_DRIVER_FOUND` sur 6 h).
-6. **Rattrapage** jusqu'à `pickup_at + 6 h` : « La prendre » (`driver_take_ride` dans l'app, `assign_ride` sur le web)
-   → `ACCEPTED`, webhook `ride.accepted` ; ou « Annuler la réservation » (`cancel_ride`, motif) → webhook
-   `ride.cancelled`.
+6. **Rattrapage** jusqu'à `pickup_at + 6 h` : « La prendre » (`driver_take_ride`, dans l'app comme sur le web, où
+   c'est « Je la prends », § 7.3) → `ACCEPTED`, webhook `ride.accepted` ; ou « Annuler la réservation » (`cancel_ride`,
+   motif) → webhook `ride.cancelled`.
 7. **Après acceptation** : inchangé (rappels, « Non effectuée » 6 h après l'heure prévue par
    `expire_unstarted_rides`, `005900:23`).
 
@@ -584,7 +586,7 @@ les immédiates, `006800:1850`).
 | `ride_offer` | Réservation dont l'échéance est à ≤ 15 min ; dernier appel GPS | NOUVELLE RÉSERVATION / NOUVELLE COURSE | `ride-offers-v2`, sonnerie, time-sensitive ; TTL `min(600, 2 × restant)` | `offer_id`, `ride_id`, `kind 'private_new'` |
 | `ride_offer_scheduled` | Réservation planifiée ; rappels | NOUVELLE RÉSERVATION ; RÉSERVATION À CONFIRMER | `ride-offers-scheduled`, son court ; TTL ≤ 1 h | `offer_id`, `ride_id`, `kind` (`private_new` ou `private_reminder`) |
 | `ride_unconfirmed` (nouveau) | Non confirmée (H3) ; véhicule incompatible (§ 4.3-G, étape 6) | RÉSERVATION NON CONFIRMÉE ; RÉSERVATION À VÉRIFIER | `ride-updates` (ajout à `RIDE_UPDATE_TYPES`, `apps/worker/src/push/types.ts:37`), « active » | `booking_id`, `number`, `reason` ; **jamais** `ride_id` |
-| `ride_assigned`, `ride_reminder`, `ride_cancelled` | Inchangés | — | — | `ride_assigned` vers lui-même annulé quand il agit lui-même (§ 4.3-G étape 3, J1) |
+| `ride_assigned`, `ride_reminder`, `ride_cancelled` | Inchangés | — | — | `ride_assigned` vers lui-même annulé quand il agit lui-même (§ 4.3-G étape 3, J1 ; sur le web, « Je la prends » passe par J1, jamais par `assign_ride`, § 7.3) |
 
 Titres et motifs : constantes partagées `PRIVATE_FLEET_TITLES` (un test compare le SQL et `@rydar/shared`, § 13).
 
@@ -625,9 +627,11 @@ membre, relecture `LiveRefresh` sur `ride.updated` et `offer.updated` :
 - en-tête : prénom, date, état de l'application (`drivers.presence`, `drivers.last_seen_at` : « en ligne », « hors
   ligne », « en course », « dernière activité il y a … ») ;
 - **À traiter** : réservations à confirmer (« Réponse avant HH:MM »), à vérifier, non confirmées ; actions **Je la
-  prends** (`assignRide` vers `ctx.driverId`), **Refuser** (nouvelle action `declineOffer` → `decline_ride_offer` avec
-  le client de l'utilisateur : même compte que la fiche), **Annuler** (dialogue + motif → `cancelRide`), **Appeler**
-  (`tel:`) ; toutes par `start(() => runAction(…))` ;
+  prends** (nouvelle action `takeBooking` → `driver_take_ride` avec le client de l'utilisateur, comme « Confirmer » /
+  « La prendre » dans l'app : offre acceptée, aucune notification « COURSE ATTRIBUÉE » vers son propre téléphone,
+  `RIDE_TOO_LATE` contrôlé en base ; jamais `assignRide`), **Refuser** (nouvelle action `declineOffer` →
+  `decline_ride_offer` avec le client de l'utilisateur : même compte que la fiche), **Annuler** (dialogue + motif →
+  `cancelRide`), **Appeler** (`tel:`) ; toutes par `start(() => runAction(…))` ;
 - **Prochaines courses** (5) et **Aujourd'hui** ;
 - 4 `StatCard` : réservations du site ce mois (`source = 'api'`), courses terminées, chiffre d'affaires (somme des prix
   terminés), panier moyen ;
@@ -685,7 +689,7 @@ d'une flotte masqués.
 | API & site web | `/dashboard/integrations` → `/dashboard/site` | clés et webhooks (lot L2, propriétaire du fichier `integrations/actions.ts`, D16) | — |
 | Mini-site | `/dashboard/booking-site` → `/dashboard/site` | (coupé pour la plateforme) | `booking_sites_enabled()` |
 | Réglages Dispatch / Centrale / WhatsApp | onglets retirés | `updateDispatchSettings`, `updateCentraleSettings`, `updateReminderChannels`, `saveOrgWhatsApp`, `removeOrgWhatsApp`, `testOrgWhatsApp` | profil posé par les RPC |
-| Relancer / Retirer une course | boutons absents | `redispatchRide`, `relaunchRide` | D13 |
+| Attribuer / Relancer / Retirer une course | boutons absents | `assignRide`, `redispatchRide`, `relaunchRide` | D13 |
 | Changement d'offre | panneau limité | `/api/billing/checkout` : en Flotte Privée, `allowed = plan.id === org.plan_id` (jamais une offre publique, l. 51) | `org_limits` |
 
 Un test statique `components/shell/private-fleet-guards.test.ts` (modèle : `dashboard-links.test.ts`) vérifie que
@@ -1037,8 +1041,8 @@ Aides ajoutées à `tests/db/helpers.ts` (ajouts seulement) : `superAdmin()` (co
    `trusted`, même compte), profil = `PRIVATE_FLEET_DISPATCH_PROFILE`, `platform_fee_changes` « initial », audit avec la
    référence du contrat ; refus : acteur non super admin (42501), `SELF_NOT_ALLOWED`, `ALREADY_REGISTERED`,
    `OWNER_NOT_NEW` (adhésion existante ; compte de plus d'une heure), `PRIVATE_FLEET_PLAN_INVALID`, `SLUG_TAKEN`,
-   `SUBDOMAIN_RESERVED`, `CONSENT_REQUIRED` ; taux invalide (60 %) → **rien d'écrit** (ni organisation, ni adhésion,
-   ni e-mail en file).
+   `SUBDOMAIN_RESERVED`, `CONSENT_REQUIRED`, `INVALID` (ville absente, saisie invalide) ; taux invalide (60 %) →
+   **rien d'écrit** (ni organisation, ni adhésion, ni e-mail en file).
 3. *Limites* : `org_limits` = `max_drivers` 1, `max_admins` 1 malgré une offre illimitée et
    `limits_override {"max_drivers": 50, "max_admins": 10}` ; organisation standard identique à la formule de `002800`.
 4. *Gardes* : 2e fiche (service role) → `PRIVATE_FLEET_SINGLE_DRIVER` ; candidat inactif inséré → même code ;
@@ -1073,9 +1077,10 @@ Aides ajoutées à `tests/db/helpers.ts` (ajouts seulement) : `superAdmin()` (co
    recherche ; `driver_take_ride` → `ACCEPTED`, `ride_assigned` vers lui annulé.
 8. Réservation saisie par le propriétaire (insertion en `authenticated`) → `ACCEPTED` d'office, aucune offre, aucun
    `ride_assigned` en file.
-9. `driver_take_ride` : sur `NO_DRIVER_FOUND` → `ACCEPTED` ; course d'une autre organisation → `RIDE_NOT_FOUND` ;
-   organisation standard → `PRIVATE_FLEET_ONLY` ; plus de 6 h après l'heure → `RIDE_TOO_LATE` ; immédiate pendant une
-   course → `ACCEPTED`, `current_ride_id` inchangé, enchaînée à la fin.
+9. `driver_take_ride` : réservation à confirmer (« Je la prends » sur le web) → offre acceptée, aucun `ride_assigned` ;
+   sur `NO_DRIVER_FOUND` → `ACCEPTED`, `ride_assigned` vers lui annulé ; course d'une autre organisation →
+   `RIDE_NOT_FOUND` ; organisation standard → `PRIVATE_FLEET_ONLY` ; plus de 6 h après l'heure → `RIDE_TOO_LATE` ;
+   immédiate pendant une course → `ACCEPTED`, `current_ride_id` inchangé, enchaînée à la fin.
 10. `auto_dispatch` mis à faux par le propriétaire → l'offre part quand même.
 11. Fiche suspendue → `NO_DRIVER_FOUND` immédiat (`dispatch.private_no_driver`).
 12. Vol retardé (`apply_flight_status`) → échéance recalculée, anciens rappels annulés, nouveaux posés.

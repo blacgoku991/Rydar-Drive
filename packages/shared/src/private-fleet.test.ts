@@ -63,6 +63,23 @@ describe("création d'un client Flotte Privée", () => {
     expect(issue({ ...create, vehicle: { ...create.vehicle, seats: 0 } })).toMatch(/^Places : /);
   });
 
+  it("champs obligatoires du client (§ 8.1) : nom commercial, identifiant, e-mail, téléphone et ville ; le reste facultatif", () => {
+    const refused = (input: Record<string, unknown>) => {
+      const res = privateFleetCreateSchema.safeParse(input);
+      expect(res.success).toBe(false);
+      return { path: res.error!.issues[0]!.path, message: describeError(res.error!, PRIVATE_FLEET_CREATE_LABELS) };
+    };
+    const noCity: Record<string, unknown> = { ...create };
+    delete noCity.city;
+    expect(refused(noCity)).toEqual({ path: ["city"], message: "Ville : champ obligatoire" });
+    for (const city of ["", "   "]) expect(refused({ ...create, city })).toEqual({ path: ["city"], message: "Ville : ville requise" });
+    expect(refused({ ...create, city: "x".repeat(81) }).path).toEqual(["city"]);
+    for (const field of ["name", "slug", "email", "phone"]) expect(refused({ ...create, [field]: "" }).path, field).toEqual([field]);
+    // Facultatifs : absents ou vides, envoyés à null
+    const minimal = privateFleetCreateSchema.parse({ ...create, city: "  Lyon ", legalName: "", siret: "", vtcRegistration: "" });
+    expect(privateFleetCreatePayload(minimal).p_org).toMatchObject({ city: "Lyon", legal_name: null, siret: null, vtc_registration: null });
+  });
+
   it("paramètres des RPC : organisation, fiche (e-mail de connexion), véhicule, offre, frais, contrat", () => {
     const payload = privateFleetCreatePayload(privateFleetCreateSchema.parse(create));
     expect(payload).toEqual({

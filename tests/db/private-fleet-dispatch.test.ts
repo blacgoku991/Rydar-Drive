@@ -36,6 +36,10 @@ const notifications = (rideId: string) =>
     [rideId],
   );
 
+/** Statuts des notifications « COURSE ATTRIBUÉE » (ride_assigned) de la course : jamais en file quand il agit lui-même (§ 6). */
+const assignedStatuses = async (rideId: string) =>
+  (await notifications(rideId)).filter((x) => x.type === "ride_assigned").map((x) => x.status as string);
+
 /** Rappels « à confirmer » de la réservation, par heure d'envoi. */
 const privateReminders = (rideId: string, status = "queued") =>
   sql(
@@ -257,7 +261,7 @@ describe("offre « à confirmer »", () => {
     const taker = state.events.filter((e) => e.type === "ride.taken_by_driver");
     expect(taker).toHaveLength(1);
     expect(taker[0]).toMatchObject({ actor_type: "driver", actor_id: pf.driverId });
-    expect((await notifications(ride.id)).filter((x) => x.type === "ride_assigned").map((x) => x.status)).toEqual(["cancelled"]);
+    expect(await assignedStatuses(ride.id)).toEqual(["cancelled"]);
   });
 
   it("8. saisie par le chauffeur au tableau de bord : ACCEPTED d'office, aucune offre, aucun « ride_assigned » en file", async () => {
@@ -277,7 +281,7 @@ describe("offre « à confirmer »", () => {
     expect(offers).toHaveLength(0);
     expect(events.find((e) => e.type === "dispatch.private_self")).toMatchObject({ level: "success" });
     const n = await notifications(row.id);
-    expect(n.filter((x) => x.type === "ride_assigned" && x.status === "queued")).toHaveLength(0);
+    expect(await assignedStatuses(row.id)).toEqual(["cancelled"]);
     expect(n.filter((x) => ["ride_offer", "ride_offer_scheduled", "ride_unconfirmed"].includes(x.type))).toHaveLength(0);
     expect(n.filter((x) => x.type === "ride_reminder" && x.status === "queued").length).toBeGreaterThan(0);
   });
@@ -285,6 +289,23 @@ describe("offre « à confirmer »", () => {
 
 // -----------------------------------------------------------------------------
 describe("9. « La prendre » (driver_take_ride)", () => {
+  it("« Je la prends » sur le web (takeBooking : driver_take_ride, jeton du propriétaire) : réservation à J+2 à confirmer → offre acceptée, aucune « COURSE ATTRIBUÉE » vers son propre téléphone", async () => {
+    const pf = await createPrivateFleet("Prendre Web");
+    const ride = await createApiRide(pf.id, { pickup_at: inMinutes(2 * 24 * 60) });
+    const offer = await pendingOffer(ride.id);
+    expect((await rideState(ride.id)).ride.status).toBe("OFFERED");
+    expect(await rpc(pf.ownerId, "driver_take_ride", [ride.id])).toMatchObject({ ok: true, code: "ACCEPTED" });
+    const state = await rideState(ride.id);
+    expect(state.ride).toMatchObject({ status: "ACCEPTED", driver_id: pf.driverId });
+    // Comme « Confirmer » dans l'application : l'offre est acceptée (taux de confirmation), pas fermée par une attribution
+    expect(state.offers.map((o) => [o.id, o.status])).toEqual([[offer.id, "accepted"]]);
+    expect(state.events.map((e) => e.type)).not.toContain("ride.assigned_manually");
+    expect(await assignedStatuses(ride.id)).toEqual([]);
+    const n = await notifications(ride.id);
+    expect(n.filter((x) => ["ride_offer", "ride_offer_scheduled"].includes(x.type) && x.status === "queued")).toHaveLength(0);
+    expect(n.filter((x) => x.type === "ride_reminder" && x.status === "queued").length).toBeGreaterThan(0);
+  });
+
   it("réservation refusée → ACCEPTED ; déjà à lui → UNCHANGED ; annulée → RIDE_NOT_ASSIGNABLE", async () => {
     const pf = await createPrivateFleet("Prendre Refusée");
     const ride = await createApiRide(pf.id, { pickup_at: inMinutes(2 * 24 * 60) });
@@ -294,6 +315,7 @@ describe("9. « La prendre » (driver_take_ride)", () => {
     const state = await rideState(ride.id);
     expect(state.ride).toMatchObject({ status: "ACCEPTED", driver_id: pf.driverId });
     expect(state.events.find((e) => e.type === "ride.taken_by_driver")?.data).toMatchObject({ previous_status: "NO_DRIVER_FOUND" });
+    expect(await assignedStatuses(ride.id)).toEqual(["cancelled"]);
     expect(await rpc(pf.ownerId, "driver_take_ride", [ride.id])).toEqual({ ok: true, code: "UNCHANGED", ride_id: ride.id });
 
     const cancelled = await insertRideBypass(pf, {
@@ -329,6 +351,7 @@ describe("9. « La prendre » (driver_take_ride)", () => {
     expect((await rideState(old)).ride.driver_id).toBeNull();
     const recent = await insertRideBypass(pf, { type: "scheduled", status: "NO_DRIVER_FOUND", pickup_at: new Date(Date.now() - 5 * 3600_000) });
     expect(await rpc(pf.ownerId, "driver_take_ride", [recent])).toMatchObject({ ok: true, code: "ACCEPTED" });
+    expect(await assignedStatuses(recent)).toEqual(["cancelled"]);
   });
 
   it("immédiate pendant une course : DRIVER_BUSY à l'acceptation, « La prendre » → ACCEPTED, enchaînée à la fin", async () => {
@@ -344,6 +367,7 @@ describe("9. « La prendre » (driver_take_ride)", () => {
     const taken = await rpc(pf.ownerId, "driver_take_ride", [second.id]);
     expect(taken).toMatchObject({ ok: true, code: "ACCEPTED", ride_id: second.id, chained: true });
     expect((await rideState(second.id)).ride).toMatchObject({ status: "ACCEPTED", driver_id: pf.driverId });
+    expect(await assignedStatuses(second.id)).toEqual(["cancelled"]);
     expect((await sql("select current_ride_id from public.drivers where id = $1", [pf.driverId]))[0].current_ride_id).toBe(first.id);
 
     for (const s of ["DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS", "COMPLETED"]) {

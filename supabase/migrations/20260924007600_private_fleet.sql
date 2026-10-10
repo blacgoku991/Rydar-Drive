@@ -1069,6 +1069,7 @@ declare
   v_ref text := left(nullif(btrim(regexp_replace(coalesce(p_contract_ref, ''), '\s+', ' ', 'g')), ''), 200);
   v_name text := btrim(regexp_replace(coalesce(p_org ->> 'name', ''), '\s+', ' ', 'g'));
   v_slug text := lower(btrim(coalesce(p_org ->> 'slug', '')));
+  v_city text := btrim(coalesce(p_org ->> 'city', ''));
   v_invalid jsonb;
   v_org uuid;
   v_driver uuid;
@@ -1121,6 +1122,11 @@ begin
   if exists (select 1 from public.organizations x where x.slug = v_slug) then
     return jsonb_build_object('ok', false, 'code', 'SLUG_TAKEN', 'field', 'slug', 'message', 'Ce slug est déjà utilisé.');
   end if;
+  -- Ville obligatoire (docs/FLOTTE-PRIVEE.md § 8.1, privateFleetCreateSchema)
+  if char_length(v_city) not between 1 and 80 then
+    return jsonb_build_object('ok', false, 'code', 'INVALID', 'field', 'city',
+      'message', 'Ville requise (80 caractères au plus).');
+  end if;
   v_invalid := private.private_fleet_driver_input_error(p_driver, p_vehicle);
   if v_invalid is not null then
     return v_invalid;
@@ -1132,7 +1138,7 @@ begin
     insert into public.organizations (id, name, slug, email, phone, city, legal_name, siret, vtc_registration, plan_id,
                                       created_by, private_fleet, join_enabled)
     values (v_org, v_name, v_slug, nullif(lower(btrim(p_org ->> 'email')), ''), nullif(btrim(p_org ->> 'phone'), ''),
-            nullif(btrim(p_org ->> 'city'), ''), nullif(btrim(p_org ->> 'legal_name'), ''),
+            v_city, nullif(btrim(p_org ->> 'legal_name'), ''),
             nullif(regexp_replace(coalesce(p_org ->> 'siret', ''), '\s', '', 'g'), ''),
             nullif(btrim(p_org ->> 'vtc_registration'), ''), p_plan_id, p_actor, true, false);
     perform set_config('rydar.private_fleet_change', '', true);

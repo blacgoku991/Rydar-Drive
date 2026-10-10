@@ -202,11 +202,12 @@ export const privateFleetDriverSchema = z.object({
 export type PrivateFleetDriverInput = z.output<typeof privateFleetDriverSchema>;
 
 /**
- * Nouveau client Flotte Privée (super admin) : client, chauffeur-propriétaire (compte NEUF : une adresse qui a déjà un
- * compte Rydar est refusée en phase 1), véhicule, frais Rydar par course du modèle flotte (0 par défaut : aucun montant
- * proposé), offre facultative (avec l'accès à l'API), référence du contrat signé (obligatoire). Invitation par e-mail
- * par défaut ; mot de passe provisoire seulement sur case cochée (accès connu de l'équipe, à changer par « Mot de passe
- * oublié »).
+ * Nouveau client Flotte Privée (super admin) : client (nom commercial, identifiant, e-mail, téléphone et ville
+ * obligatoires ; raison sociale, SIRET et n° d'inscription au registre VTC facultatifs — docs/FLOTTE-PRIVEE.md § 8.1),
+ * chauffeur-propriétaire (compte NEUF : une adresse qui a déjà un compte Rydar est refusée en phase 1), véhicule, frais
+ * Rydar par course du modèle flotte (0 par défaut : aucun montant proposé), offre facultative (avec l'accès à l'API),
+ * référence du contrat signé (obligatoire). Invitation par e-mail par défaut ; mot de passe provisoire seulement sur
+ * case cochée (accès connu de l'équipe, à changer par « Mot de passe oublié »).
  */
 export const privateFleetCreateSchema = privateFleetDriverSchema
   .extend({
@@ -214,7 +215,7 @@ export const privateFleetCreateSchema = privateFleetDriverSchema
     slug: slugSchema,
     email: emailSchema,
     phone: phoneSchema,
-    city: optionalText(80),
+    city: z.string().trim().min(1, "Ville requise").max(80),
     legalName: optionalText(160),
     siret: z
       .string()
@@ -301,7 +302,7 @@ export function privateFleetCreatePayload(v: PrivateFleetCreateInput) {
       slug: v.slug,
       email: v.email,
       phone: v.phone,
-      city: v.city ?? null,
+      city: v.city,
       legal_name: v.legalName ?? null,
       siret: v.siret ?? null,
       vtc_registration: v.vtcRegistration ?? null,
