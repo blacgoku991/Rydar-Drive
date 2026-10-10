@@ -1,8 +1,13 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   AUDIT_ACTIONS,
   AUDIT_ACTOR,
+  AUDIT_ALERT_SEVERITIES,
+  AUDIT_PEOPLE_FILTER,
   AUDIT_SEVERITY,
+  AUDIT_VIEWS,
   DISPATCH_LEVEL,
   INVOICE_STATUS,
   NOTIFICATION_ERRORS,
@@ -10,8 +15,12 @@ import {
   SUBSCRIPTION_STATUS,
   auditActionLabel,
   auditActorLabel,
+  auditHiddenByDefault,
   auditSeverity,
+  auditViewOf,
   dispatchLevel,
+  emailErrorParts,
+  groupRepeats,
   invoiceStatus,
   notificationErrorLabel,
   notificationStatus,
@@ -158,6 +167,59 @@ describe("audit", () => {
     }
   });
 
+  it("actions ajoutées en R6 (web et migrations) : accès, statut d'un client, offres, webhooks", () => {
+    expect(auditActionLabel("member.access_granted")).toBe("Accès au tableau de bord donné");
+    expect(auditActionLabel("member.access_restored")).toBe("Accès au tableau de bord rétabli");
+    expect(auditActionLabel("member.access_revoked")).toBe("Accès au tableau de bord retiré");
+    // « organization. » + statut (svc_platform_set_org_status)
+    expect(auditActionLabel("organization.active")).toBe("Client réactivé");
+    expect(auditActionLabel("organization.suspended")).toBe("Client suspendu");
+    expect(auditActionLabel("organization.archived")).toBe("Client archivé");
+    expect(auditActionLabel("plan.created")).toBe("Offre créée");
+    expect(auditActionLabel("plan.updated")).toBe("Offre modifiée");
+    expect(auditActionLabel("plan.something_new")).toBe(`Offre${NBSP}: something new`);
+    for (const code of ["webhook.created", "webhook.updated", "webhook.deleted", "webhook.enabled", "webhook.disabled", "webhook.secret_rotated", "webhook.ping", "webhook.redelivered"]) {
+      expect(AUDIT_ACTIONS, code).toHaveProperty([code]);
+      expect(auditActionLabel(code), code).toMatch(/webhook/i);
+    }
+    expect(auditActionLabel("webhook.disabled")).toBe("Webhook désactivé");
+    expect(auditActionLabel("webhook.ping")).toBe("Test d'un webhook envoyé");
+  });
+
+  it("toute action écrite par apps/web ou par les migrations a son libellé (jamais le repli)", () => {
+    const repo = join(import.meta.dirname, "..", "..", "..");
+    const codes = new Set<string>();
+    // Web : audit({ action: "…" }), action: cond ? "…" : "…" et `driver.${status}` (active, inactive, suspended)
+    const webFiles = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) return e.name === "node_modules" || e.name.startsWith(".") ? [] : webFiles(p);
+        return /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [p] : [];
+      });
+    for (const file of [...webFiles(join(repo, "apps/web/app")), ...webFiles(join(repo, "apps/web/lib"))]) {
+      for (const line of readFileSync(file, "utf8").split("\n")) {
+        if (!/\baction:/.test(line) || /^\s*(\/\/|\*)/.test(line)) continue;
+        for (const m of line.matchAll(/"([a-z_]+\.[a-z_]+)"/g)) codes.add(m[1]!);
+        if (line.includes("`driver.${status}`")) for (const s of ["active", "inactive", "suspended"]) codes.add(`driver.${s}`);
+      }
+    }
+    // Migrations : littéraux des insertions dans audit_logs et des appels à private.webhook_audit ; « organization. »
+    // suivi du statut (active, suspended, archived) ; déclencheur générique couvert par le test précédent
+    const dir = join(repo, "supabase/migrations");
+    for (const name of readdirSync(dir).filter((n) => n.endsWith(".sql"))) {
+      const sql = readFileSync(join(dir, name), "utf8");
+      for (const m of sql.matchAll(/insert\s+into\s+public\.audit_logs\b[^;]*|private\.webhook_audit\s*\([^;]*/gi)) {
+        for (const lit of m[0].matchAll(/'([a-z_]+\.[a-z_]+)'/g)) if (!/^(public|private)\./.test(lit[1]!)) codes.add(lit[1]!);
+        if (/'organization\.'\s*\|\|\s*p_status/.test(m[0])) for (const s of ["active", "suspended", "archived"]) codes.add(`organization.${s}`);
+      }
+    }
+    expect(codes.size).toBeGreaterThan(100);
+    for (const code of ["member.access_granted", "plan.updated", "webhook.ping", "organization.archived", "driver.inactive", "security.cross_tenant_access"]) {
+      expect(codes.has(code), code).toBe(true);
+    }
+    expect([...codes].filter((c) => !Object.prototype.hasOwnProperty.call(AUDIT_ACTIONS, c)).sort()).toEqual([]);
+  });
+
   it("déclencheur générique (table.insert / update / delete) : entité et accord", () => {
     expect(auditActionLabel("drivers.insert")).toBe("Fiche chauffeur ajoutée");
     expect(auditActionLabel("organizations.update")).toBe("Client modifié");
@@ -181,6 +243,90 @@ describe("audit", () => {
       expect(() => auditActionLabel(code)).not.toThrow();
       expect(auditActionLabel(code)).not.toMatch(/_/);
     }
+  });
+});
+
+describe("supervision : vues de l'audit", () => {
+  const ACTORS = ["system", "user", "driver", "api", "booking_site", "super_admin"];
+  const SEVERITIES = ["info", "warning", "critical"];
+
+  /** Évalue le filtre PostgREST « a.neq.x,b.neq.y » (or) sur une ligne : il doit dire la même chose que la règle. */
+  const keptByFilter = (row: Record<string, string>) =>
+    AUDIT_PEOPLE_FILTER.split(",").some((clause) => {
+      const [column, op, value] = clause.split(".");
+      expect(op).toBe("neq");
+      return row[column!] !== value;
+    });
+
+  it("vue par défaut « Actions des personnes » : seules les écritures « Info » du système sont masquées", () => {
+    for (const actor_type of ACTORS) {
+      for (const severity of SEVERITIES) {
+        const hidden = auditHiddenByDefault({ actor_type, severity });
+        expect(hidden, `${actor_type} ${severity}`).toBe(actor_type === "system" && severity === "info");
+        // Jamais une alerte masquée, quel que soit son auteur
+        if (severity !== "info") expect(hidden).toBe(false);
+        expect(keptByFilter({ actor_type, severity }), `${actor_type} ${severity}`).toBe(!hidden);
+      }
+    }
+  });
+
+  it("vue d'après l'adresse : ?severity=security (clé existante), ?vue=tout, sinon la vue par défaut", () => {
+    expect(auditViewOf({})).toBe("people");
+    expect(auditViewOf({ severity: "security" })).toBe("security");
+    expect(auditViewOf({ vue: "tout" })).toBe("all");
+    expect(auditViewOf({ severity: "security", vue: "tout" })).toBe("security");
+    for (const bad of [{ severity: "SECURITY" }, { vue: "autre" }, { vue: ["tout", "tout"] }, { severity: ["security"] }]) expect(auditViewOf(bad)).toBe("people");
+    expect(AUDIT_VIEWS).toEqual({ people: "Actions des personnes", security: "Alertes de sécurité", all: "Tout (détail technique)" });
+    expect([...AUDIT_ALERT_SEVERITIES]).toEqual(["warning", "critical"]);
+  });
+});
+
+describe("supervision : lignes identiques regroupées", () => {
+  const key = (e: { org: string; msg: string }) => `${e.org}|${e.msg}`;
+
+  it("seulement les lignes qui se suivent ; la première (la plus récente) est gardée avec le nombre", () => {
+    const events = [
+      { id: 6, org: "a", msg: "Plus de position GPS de Julien" },
+      { id: 5, org: "a", msg: "Plus de position GPS de Julien" },
+      { id: 4, org: "a", msg: "Plus de position GPS de Julien" },
+      { id: 3, org: "b", msg: "Plus de position GPS de Julien" },
+      { id: 2, org: "a", msg: "Plus de position GPS de Julien" },
+      { id: 1, org: "a", msg: "Course refusée" },
+    ];
+    expect(groupRepeats(events, key).map((g) => [g.item.id, g.count])).toEqual([
+      [6, 3],
+      [3, 1],
+      [2, 1],
+      [1, 1],
+    ]);
+  });
+
+  it("liste vide ou sans répétition : inchangée", () => {
+    expect(groupRepeats([], key)).toEqual([]);
+    const one = [{ org: "a", msg: "x" }];
+    expect(groupRepeats(one, key)).toEqual([{ item: one[0], count: 1 }]);
+  });
+});
+
+describe("supervision : motif d'échec d'un e-mail", () => {
+  it("motif en français affiché, message brut du serveur mail à part", () => {
+    expect(emailErrorParts("Serveur mail injoignable : connect ECONNREFUSED 127.0.0.1:25")).toEqual({
+      reason: "Serveur mail injoignable",
+      detail: "connect ECONNREFUSED 127.0.0.1:25",
+    });
+    expect(emailErrorParts("Refus définitif du serveur mail (550) : 550 5.1.1 <x@y.fr>: Recipient address rejected")).toEqual({
+      reason: "Refus définitif du serveur mail (550)",
+      detail: "550 5.1.1 <x@y.fr>: Recipient address rejected",
+    });
+    expect(emailErrorParts(`Délai dépassé avec le serveur mail${NBSP}: aucune réponse en 30 s`)?.reason).toBe("Délai dépassé avec le serveur mail");
+  });
+
+  it("sans séparateur : tout est le motif ; vide : null", () => {
+    expect(emailErrorParts("Adresse de réponse invalide")).toEqual({ reason: "Adresse de réponse invalide", detail: null });
+    expect(emailErrorParts("Échec de l'envoi (motif inconnu)")).toEqual({ reason: "Échec de l'envoi (motif inconnu)", detail: null });
+    expect(emailErrorParts("Échec de l'envoi : ")).toEqual({ reason: "Échec de l'envoi", detail: null });
+    expect(emailErrorParts(null)).toBeNull();
+    expect(emailErrorParts("   ")).toBeNull();
   });
 });
 

@@ -669,9 +669,10 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
 
       {/* Outils (bureau) */}
       <div className="glass absolute right-3 top-3 z-10 hidden items-center gap-0.5 rounded-2xl p-1.5 lg:flex">
+        {/* Libellé visible « Noms » (contenu dans le nom accessible : WCAG 2.5.3) */}
         <Tooltip content={showLabels ? "Masquer les noms" : "Afficher les noms"}>
-          <Button variant="ghost" size="icon-sm" onClick={() => setShowLabels((v) => !v)} aria-label="Noms des chauffeurs" aria-pressed={showLabels}>
-            <Tag className={cn(showLabels && "text-brand")} />
+          <Button variant="ghost" size="sm" onClick={() => setShowLabels((v) => !v)} aria-label="Noms des chauffeurs" aria-pressed={showLabels}>
+            <Tag className={cn(showLabels && "text-brand")} /> Noms
           </Button>
         </Tooltip>
         <Button variant="ghost" size="sm" onClick={recenter}>

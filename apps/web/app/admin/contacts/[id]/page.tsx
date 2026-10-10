@@ -9,9 +9,8 @@ import {
   formatTime,
   type ContactRequestTopic,
 } from "@rydar/shared";
-import { ArrowLeft, Mail, MessageSquareText, Send, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Mail, MessageSquareText, Send, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { ContactReplyForm, ContactStatusForm, DeleteContactButton, RetryEmailButton } from "@/components/admin/contact-tools";
@@ -20,9 +19,11 @@ import { apiAccessOf, effectiveLimits, prefillFromContact } from "@/components/a
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Disclosure } from "@/components/ui/disclosure";
 import { requireSuperAdmin } from "@/lib/auth";
 import { emailProgress } from "@/lib/email-status";
 import { env } from "@/lib/env";
+import { emailErrorParts } from "@/lib/wording";
 
 export const metadata: Metadata = { title: "Demande de contact" };
 export const dynamic = "force-dynamic";
@@ -121,14 +122,10 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
   return (
     <>
       <PageHeader
-        eyebrow={
-          <Link href="/admin/contacts" prefetch={false} className="inline-flex items-center gap-1.5 hover:text-fg">
-            <ArrowLeft className="size-3.5" aria-hidden /> Demandes de contact
-          </Link>
-        }
+        back={{ href: "/admin/contacts", label: "Demandes de contact" }}
         title={req.name}
-        description={[req.company, contactRequestTopicLabel(req.topic)].filter(Boolean).join(" · ")}
-        actions={<Badge tone={st?.tone ?? "neutral"}>{st?.label ?? req.status}</Badge>}
+        badges={<Badge tone={st?.tone ?? "neutral"}>{st?.label ?? "Statut inconnu"}</Badge>}
+        meta={[req.company, contactRequestTopicLabel(req.topic)].filter(Boolean).join(" · ")}
       />
       <PageBody>
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -157,13 +154,13 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
               <CardHeader
                 icon={<Send />}
                 title="Répondre par e-mail"
-                description="Envoyé par le serveur mail du VPS ; le demandeur vous répond à l'adresse qui reçoit les demandes."
+                description={"Envoyé par le serveur mail de Rydar\u00a0; le demandeur vous répond à l'adresse qui reçoit les demandes."}
               />
               <CardBody>
                 <ContactReplyForm
                   id={req.id}
                   to={req.email}
-                  disabledReason={req.status === "spam" ? "Demande classée indésirable : changez d'abord son statut." : undefined}
+                  disabledReason={req.status === "spam" ? "Demande classée indésirable\u00a0: changez d'abord son statut." : undefined}
                 />
               </CardBody>
             </Card>
@@ -177,18 +174,16 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
                   {emails.map((e) => {
                     const es = EMAIL_STATUS_META[e.status];
                     return (
-                      <li key={e.id} className="flex flex-col gap-2 px-5 py-3.5 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="min-w-0 text-[13px]">
-                          <p className="text-fg">
-                            {EMAIL_KIND_META[e.kind]?.label ?? e.kind} <span className="text-fg-muted">→ {e.to_email}</span>
+                      <li key={e.id} className="space-y-1.5 px-5 py-3.5 text-[13px]">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="min-w-0 text-fg [overflow-wrap:anywhere]">
+                            {EMAIL_KIND_META[e.kind]?.label ?? "E-mail"} <span className="text-fg-muted">→ {e.to_email}</span>
                           </p>
-                          <p className="num mt-0.5 text-[12px] text-fg-muted">{emailProgress(e)}</p>
-                          {e.last_error && e.status !== "sent" && <p className="mt-1 break-words text-[12px] text-red">{e.last_error}</p>}
+                          <Badge tone={es?.tone ?? "neutral"}>{es?.label ?? "Statut inconnu"}</Badge>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <Badge tone={es?.tone ?? "neutral"}>{es?.label ?? e.status}</Badge>
-                          {e.status === "failed" && <RetryEmailButton emailId={e.id} contactRequestId={req.id} />}
-                        </div>
+                        <p className="num text-[12px] text-fg-muted">{emailProgress(e)}</p>
+                        {e.status !== "sent" && <EmailError raw={e.last_error} />}
+                        {e.status === "failed" && <RetryEmailButton emailId={e.id} contactRequestId={req.id} />}
                       </li>
                     );
                   })}
@@ -241,5 +236,21 @@ export default async function ContactRequestPage({ params }: { params: Promise<{
         </div>
       </PageBody>
     </>
+  );
+}
+
+/** Motif d'échec en français ; message brut du serveur mail replié (pour le technicien). */
+function EmailError({ raw }: { raw: string | null }) {
+  const parts = emailErrorParts(raw);
+  if (!parts) return null;
+  return (
+    <div className="text-[12px]">
+      <p className="text-fg [overflow-wrap:anywhere]">Motif{"\u00a0"}: {parts.reason}</p>
+      {parts.detail && (
+        <Disclosure title="Message du serveur mail" summaryClassName="text-[12px] font-normal text-fg-muted hover:text-fg" contentClassName="pb-1">
+          <p className="mono text-[12px] text-fg-muted [overflow-wrap:anywhere]">{parts.detail}</p>
+        </Disclosure>
+      )}
+    </div>
   );
 }

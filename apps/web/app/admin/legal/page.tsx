@@ -1,4 +1,4 @@
-import { formatDate, legalAcceptanceState, legalDateLabel, localIsoDay, noticeMinDay, type LegalAcceptanceState } from "@rydar/shared";
+import { formatDate, formatNumber, legalAcceptanceState, legalDateLabel, localIsoDay, noticeMinDay, type LegalAcceptanceState } from "@rydar/shared";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -6,6 +6,7 @@ import { LegalInfoForm } from "@/components/admin/legal-form";
 import { OrgTermsNotifyButton } from "@/components/admin/org-terms-notify";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { LEGAL_LINKS } from "@/components/legal/legal-links";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { NewTabHint } from "@/components/ui/new-tab";
 import { requireSuperAdmin } from "@/lib/auth";
@@ -58,9 +59,8 @@ export default async function AdminLegalPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Plateforme"
         title="Informations légales"
-        description="Éditeur et hébergeurs affichés dans les pages légales publiques. À faire valider par un professionnel du droit avant l'ouverture au public."
+        description="Éditeur et hébergeurs affichés dans les pages légales publiques, à faire valider par un professionnel du droit."
       />
       <PageBody>
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -97,7 +97,7 @@ export default async function AdminLegalPage() {
             <Card>
               <CardHeader
                 title="Pages publiques"
-                description={`Versions : CGU et confidentialité ${LEGAL_VERSION} (tout utilisateur) · CGV et accord de traitement ${ORG_LEGAL_VERSION} (organisations).`}
+                description={`CGU et confidentialité (tous les utilisateurs)\u00a0: version du ${legalDateLabel(LEGAL_VERSION)}. CGV et accord de traitement (clients)\u00a0: version du ${legalDateLabel(ORG_LEGAL_VERSION)}.`}
               />
               <CardBody className="space-y-1.5 text-[13px]">
                 {LEGAL_LINKS.map((l) => (
@@ -115,7 +115,7 @@ export default async function AdminLegalPage() {
             <Card>
               <CardHeader
                 title="CGV et accord de traitement"
-                description={`${list.length - missing.length} / ${list.length} organisation${list.length > 1 ? "s" : ""} ont accepté la version ${ORG_LEGAL_VERSION}.`}
+                description={`${formatNumber(list.length - missing.length)} client${list.length - missing.length > 1 ? "s" : ""} sur ${formatNumber(list.length)} ${list.length - missing.length > 1 ? "ont" : "a"} accepté la version du ${legalDateLabel(ORG_LEGAL_VERSION)}.`}
               />
               <CardBody className="text-[13px] text-fg-muted">
                 {missing.length > 0 && (
@@ -123,24 +123,24 @@ export default async function AdminLegalPage() {
                     <p>
                       {effectivePassed
                         ? "Entrée en vigueur atteinte\u00a0: l'annonce par e-mail n'est plus envoyée."
-                        : `${missing.length - toNotify} prévenue${missing.length - toNotify > 1 ? "s" : ""} par e-mail sur ${missing.length} en attente.`}
+                        : `${formatNumber(missing.length - toNotify)} prévenu${missing.length - toNotify > 1 ? "s" : ""} par e-mail sur ${formatNumber(missing.length)} en attente.`}
                     </p>
                     {shortNotice && (
-                      <p className="text-amber">
-                        Envoi bloqué{"\u00a0"}: annoncée aujourd&apos;hui, la version ne pourrait entrer en vigueur avant le{" "}
-                        {legalDateLabel(minDay)}, et l&apos;annonce dit «{"\u00a0"}au plus tard le {legalDateLabel(ORG_LEGAL_EFFECTIVE_AT)}{"\u00a0"}»
-                        (article 16 des CGV{"\u00a0"}: au moins 30 jours avant). Repoussez d&apos;abord la date (ORG_LEGAL_EFFECTIVE_AT,
-                        @rydar/shared, au {legalDateLabel(minDay)} au plus tôt) puis redéployez.
-                      </p>
+                      <Callout tone="warning" title="Envoi bloqué" className="text-[13px]">
+                        Annoncée aujourd&apos;hui, la version ne pourrait entrer en vigueur avant le {legalDateLabel(minDay)}, et l&apos;annonce
+                        dit «{"\u00a0"}au plus tard le {legalDateLabel(ORG_LEGAL_EFFECTIVE_AT)}{"\u00a0"}» (article 16 des CGV{"\u00a0"}: au moins
+                        30 jours avant). Demandez à votre équipe technique de repousser la date d&apos;entrée en vigueur au{" "}
+                        {legalDateLabel(minDay)} au plus tôt.
+                      </Callout>
                     )}
                     <OrgTermsNotifyButton toNotify={toNotify} effectivePassed={effectivePassed} shortNotice={shortNotice} />
                   </div>
                 )}
                 {missing.length === 0 ? (
-                  <p>Toutes les organisations ont accepté.</p>
+                  <p>Tous les clients ont accepté.</p>
                 ) : (
                   <>
-                    <p className="mb-2">En attente (bandeau affiché au propriétaire et aux administrateurs) :</p>
+                    <p className="mb-2">En attente (bandeau affiché au propriétaire et aux administrateurs){"\u00a0"}:</p>
                     <ul className="space-y-1">
                       {missing.slice(0, 30).map((o) => (
                         <li key={o.id}>
@@ -148,11 +148,11 @@ export default async function AdminLegalPage() {
                             {o.name}
                           </Link>
                           {o.state === "updated" ? " · version antérieure acceptée" : " · aucune version acceptée"}
-                          {notified.has(o.id) ? ` · prévenue le ${formatDate(notified.get(o.id))}` : ""}
+                          {notified.has(o.id) ? ` · prévenu le ${formatDate(notified.get(o.id))}` : ""}
                         </li>
                       ))}
                     </ul>
-                    {missing.length > 30 && <p className="mt-2">… et {missing.length - 30} autres.</p>}
+                    {missing.length > 30 && <p className="mt-2">… et {formatNumber(missing.length - 30)} autres.</p>}
                   </>
                 )}
               </CardBody>

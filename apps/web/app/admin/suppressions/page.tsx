@@ -1,19 +1,24 @@
-import { AlertTriangle } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
+import { Callout } from "@/components/ui/callout";
+import { Disclosure } from "@/components/ui/disclosure";
+import { NewTabHint } from "@/components/ui/new-tab";
 import { requireSuperAdmin } from "@/lib/auth";
 import { getLegalInfo } from "@/lib/legal";
+import { plural } from "@/lib/wording";
 import { DeletionQueueList, DriverDeletionSearch } from "./deletion-tools";
 import type { DeletionQueue } from "./types";
-import { NewTabHint } from "@/components/ui/new-tab";
 
 export const metadata: Metadata = { title: "Suppressions de comptes" };
 export const dynamic = "force-dynamic";
 
+const code = "mono rounded bg-white/[0.05] px-1 py-px text-[12px] text-fg";
+
 /**
  * Super admin : demandes de suppression de compte reçues sans l'application (contact « données personnelles »
  * affiché sur /suppression-compte, à traiter sous 30 jours) et file des suppressions en cours ou en échec.
+ * Les réglages du serveur à vérifier sont dans « Détails techniques », pour le technicien (docs/REFONTE-PANELS.md, R6).
  */
 export default async function AdminDeletionsPage() {
   const session = await requireSuperAdmin();
@@ -26,44 +31,39 @@ export default async function AdminDeletionsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Supervision"
         title="Suppressions de comptes"
-        description="Demandes de suppression reçues par e-mail (chauffeur sans l'application, compte bloqué) : à traiter sous 30 jours. La suppression depuis l'application passe par la même file."
+        description="Demandes de suppression de compte d'un chauffeur, à traiter sous 30 jours, et suivi des suppressions."
       />
       <PageBody className="space-y-6">
         {!legal.privacyEmail && (
-          <p className="flex items-start gap-2 rounded-xl border border-amber/25 bg-amber/[0.06] px-4 py-3 text-[13px] text-fg-muted">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber" />
-            <span>
-              Aucune adresse de contact n&apos;est renseignée : la page publique{" "}
-              <Link href="/suppression-compte" prefetch={false} target="_blank" className="text-fg underline underline-offset-2">
-                Supprimer son compte
-                <NewTabHint />
-              </Link>{" "}
-              ne peut pas indiquer où écrire. Renseignez le contact « données personnelles » dans{" "}
-              <Link href="/admin/legal" prefetch={false} className="text-fg underline underline-offset-2">
-                Informations légales
-              </Link>
-              .
-            </span>
-          </p>
+          <Callout tone="warning" title="Aucune adresse de contact pour les suppressions">
+            La page publique{" "}
+            <Link href="/suppression-compte" prefetch={false} target="_blank" className="text-fg underline underline-offset-2">
+              Supprimer son compte
+              <NewTabHint />
+            </Link>{" "}
+            ne peut pas indiquer où écrire. Renseignez le contact «{"\u00a0"}données personnelles{"\u00a0"}» dans{" "}
+            <Link href="/admin/legal" prefetch={false} className="text-fg underline underline-offset-2">
+              Informations légales
+            </Link>
+            .
+          </Callout>
         )}
-        {error && (
-          <p className="rounded-xl border border-red/25 bg-red/[0.06] px-4 py-3 text-[13px] text-fg-muted">
-            File de suppression illisible pour le moment : rechargez la page.
-          </p>
-        )}
+        {error && <Callout tone="danger" title="Lecture impossible, réessayez dans un instant." />}
         {queue.stalled > 0 && (
-          <p className="flex items-start gap-2 rounded-xl border border-red/25 bg-red/[0.06] px-4 py-3 text-[13px] text-fg-muted">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red" />
-            <span>
-              {queue.stalled > 1 ? `${queue.stalled} suppressions attendent` : "Une suppression attend"} depuis plus de 30 min : le
-              worker ne reprend pas la file (fichiers, comptes de connexion). Vérifiez que son service reçoit{" "}
-              <span className="font-mono text-fg">SUPABASE_URL</span> et{" "}
-              <span className="font-mono text-fg">SUPABASE_SERVICE_ROLE_KEY</span> (journal du worker : « account deletions
-              cannot be completed »). En attendant, « Réessayer » termine la suppression depuis ce tableau de bord.
-            </span>
-          </p>
+          <Callout tone="danger" title={`${plural(queue.stalled, "suppression attend", "suppressions attendent")} depuis plus de 30${"\u00a0"}min`}>
+            <p>
+              Le serveur ne termine plus les suppressions (fichiers, comptes de connexion). En attendant, «{"\u00a0"}Réessayer{"\u00a0"}» les
+              termine depuis cette page.
+            </p>
+            <Disclosure title="Détails techniques (à transmettre à votre technicien)" summaryClassName="text-[13px] text-fg-muted hover:text-fg">
+              <p className="pb-1 text-[12.5px] leading-relaxed">
+                Le service <code className={code}>worker</code> ne reprend pas la file des suppressions. Vérifiez qu&apos;il reçoit{" "}
+                <code className={code}>SUPABASE_URL</code> et <code className={code}>SUPABASE_SERVICE_ROLE_KEY</code> (son journal indique
+                alors «{"\u00a0"}account deletions cannot be completed{"\u00a0"}»).
+              </p>
+            </Disclosure>
+          </Callout>
         )}
         <DriverDeletionSearch />
         <DeletionQueueList queue={queue} />

@@ -12,6 +12,7 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { requireSuperAdmin } from "@/lib/auth";
 import { emailProgress } from "@/lib/email-status";
 import { cn } from "@/lib/utils";
+import { emailErrorParts } from "@/lib/wording";
 
 export const metadata: Metadata = { title: "E-mails" };
 export const dynamic = "force-dynamic";
@@ -263,7 +264,7 @@ function EmailList({ emails, now, paused }: { emails: Email[]; now: number; paus
                 ? `${e.attempts > 0 ? `${e.attempts} essai${e.attempts > 1 ? "s" : ""} · ` : ""}en pause\u00a0: part dès que le serveur mail répond`
                 : emailProgress(e, now)}
             </p>
-            {e.last_error && e.status !== "sent" && <p className="break-words text-[12px] text-red">{e.last_error}</p>}
+            {e.status !== "sent" && <EmailError raw={e.last_error} />}
             {(e.status === "failed" || e.contact_request_id) && (
               <div className="flex flex-wrap items-center gap-3 pt-1">
                 {e.status === "failed" && <RetryEmailButton emailId={e.id} contactRequestId={e.contact_request_id ?? undefined} />}
@@ -278,5 +279,21 @@ function EmailList({ emails, now, paused }: { emails: Email[]; now: number; paus
         );
       })}
     </ul>
+  );
+}
+
+/** Motif d'échec en français ; message brut du serveur mail replié (pour le technicien). */
+function EmailError({ raw }: { raw: string | null }) {
+  const parts = emailErrorParts(raw);
+  if (!parts) return null;
+  return (
+    <div className="text-[12px]">
+      <p className="text-fg [overflow-wrap:anywhere]">Motif{"\u00a0"}: {parts.reason}</p>
+      {parts.detail && (
+        <Disclosure title="Message du serveur mail" summaryClassName="text-[12px] font-normal text-fg-muted hover:text-fg" contentClassName="pb-1">
+          <p className="mono text-[12px] text-fg-muted [overflow-wrap:anywhere]">{parts.detail}</p>
+        </Disclosure>
+      )}
+    </div>
   );
 }

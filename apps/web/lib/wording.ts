@@ -199,7 +199,15 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   "api_key.created": "Clé de connexion créée",
   "api_key.revoked": "Clé de connexion révoquée",
   "api_key.rotated": "Clé de connexion remplacée",
+  // Webhooks (private.webhook_audit, migrations 006000 et 006100)
   "webhook.created": "Webhook ajouté",
+  "webhook.updated": "Webhook modifié",
+  "webhook.deleted": "Webhook supprimé",
+  "webhook.enabled": "Webhook réactivé",
+  "webhook.disabled": "Webhook désactivé",
+  "webhook.secret_rotated": "Nouveau secret de signature d'un webhook",
+  "webhook.ping": "Test d'un webhook envoyé",
+  "webhook.redelivered": "Événement renvoyé à un webhook",
   // Abonnement
   "billing.checkout_started": "Paiement de l'abonnement commencé",
   "billing.plan_downgraded": "Offre réduite",
@@ -261,8 +269,16 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   "member.invitation_accepted": "Invitation acceptée",
   "member.updated": "Membre modifié",
   "member.login_unlocked": "Connexion d'un membre débloquée",
+  // Accès donnés par le super admin (fiche d'un client)
+  "member.access_granted": "Accès au tableau de bord donné",
+  "member.access_restored": "Accès au tableau de bord rétabli",
+  "member.access_revoked": "Accès au tableau de bord retiré",
   // Clients
   "organization.created": "Client créé",
+  // Statut changé par le super admin (« organization. » + statut, migrations 006650 et 007200)
+  "organization.active": "Client réactivé",
+  "organization.suspended": "Client suspendu",
+  "organization.archived": "Client archivé",
   "organization.plan_changed": "Offre du client modifiée",
   "organization.auth_unbanned": "Connexions débloquées après réactivation",
   "organization.dispatch_model_changed": "Modèle d'exploitation changé",
@@ -274,6 +290,9 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   "organization.private_fleet_enabled": "Passage en Flotte Privée",
   "organization.private_fleet_disabled": "Sortie de la Flotte Privée",
   "organization.terms_notice_sent": "Annonce des nouvelles conditions envoyée",
+  // Offres (Offres & limites)
+  "plan.created": "Offre créée",
+  "plan.updated": "Offre modifiée",
   // Plateforme
   "platform.booking_sites_enabled": "Mini-sites ouverts",
   "platform.booking_sites_disabled": "Mini-sites coupés",
@@ -350,6 +369,7 @@ const AUDIT_DOMAINS: Record<string, string> = {
   member: "Membre",
   network: "Réseau partagé",
   organization: "Client",
+  plan: "Offre",
   platform: "Plateforme",
   platform_billing: "Plateforme",
   platform_fee: "Frais Rydar",
@@ -430,6 +450,75 @@ export const INVOICE_STATUS: Record<"open" | "draft" | "paid" | "void" | "uncoll
 
 export function invoiceStatus(code: string | null | undefined): Labelled {
   return lookup(INVOICE_STATUS, code) ?? { label: "Statut inconnu", tone: "neutral" };
+}
+
+// ------------------------------------------------------------------------------------- Supervision (super admin, R6)
+
+/**
+ * Vues du journal d'audit (Supervision › Sécurité & audit). Par défaut, « Actions des personnes » : tout SAUF les
+ * écritures automatiques du système de gravité « Info » (déclencheur générique, numéros de documents…). Une ligne
+ * « Attention » ou « Critique » n'est jamais masquée, quel que soit son auteur.
+ */
+export type AuditView = "people" | "security" | "all";
+
+export const AUDIT_VIEWS: Record<AuditView, string> = {
+  people: "Actions des personnes",
+  security: "Alertes de sécurité",
+  all: "Tout (détail technique)",
+};
+
+/** Gravités de la vue « Alertes de sécurité ». */
+export const AUDIT_ALERT_SEVERITIES = ["warning", "critical"] as const;
+
+/**
+ * Vue « Actions des personnes » en filtre PostgREST (`or`) : auteur autre que le système, OU gravité autre que
+ * « Info ». Même règle que `auditHiddenByDefault` (testé : wording.test.ts).
+ */
+export const AUDIT_PEOPLE_FILTER = "actor_type.neq.system,severity.neq.info";
+
+/** Ligne masquée par la vue par défaut : écriture du système de gravité « Info », et rien d'autre. */
+export function auditHiddenByDefault(row: { actor_type: string | null | undefined; severity: string | null | undefined }): boolean {
+  return row.actor_type === "system" && row.severity === "info";
+}
+
+/**
+ * Vue demandée par l'adresse : `?severity=security` (clé existante, liens de la vue d'ensemble), `?vue=tout` ; sinon
+ * la vue par défaut. Une valeur inconnue ou répétée ramène à la vue par défaut, jamais à une erreur.
+ */
+export function auditViewOf(params: { severity?: unknown; vue?: unknown }): AuditView {
+  if (params.severity === "security") return "security";
+  if (params.vue === "tout") return "all";
+  return "people";
+}
+
+/**
+ * Lignes identiques qui se suivent regroupées (journaux de la supervision : « Plus de position GPS de Julien × 6 ») :
+ * même clé → une seule ligne et son nombre de répétitions. Liste du plus récent au plus ancien : la première de chaque
+ * série, la plus récente, est gardée (son heure est celle de la dernière répétition).
+ */
+export function groupRepeats<T>(items: readonly T[], key: (item: T) => string): { item: T; count: number }[] {
+  const out: { item: T; count: number; key: string }[] = [];
+  for (const item of items) {
+    const k = key(item);
+    const last = out[out.length - 1];
+    if (last && last.key === k) last.count += 1;
+    else out.push({ item, count: 1, key: k });
+  }
+  return out.map(({ item, count }) => ({ item, count }));
+}
+
+/**
+ * Motif d'échec d'un e-mail (email_outbox.last_error, écrit par le service d'envoi : « Motif en français : message du
+ * serveur mail ») : le motif s'affiche, le message brut du serveur reste dans un détail replié. Sans séparateur, tout
+ * est le motif ; rien : null.
+ */
+export function emailErrorParts(raw: string | null | undefined): { reason: string; detail: string | null } | null {
+  const text = (raw ?? "").trim();
+  if (!text) return null;
+  const m = /^(.+?)[ \u00a0]:(?:[ \u00a0]+([\s\S]*))?$/.exec(text);
+  if (!m) return { reason: text, detail: null };
+  const detail = (m[2] ?? "").trim();
+  return { reason: m[1]!.trim(), detail: detail || null };
 }
 
 // ------------------------------------------------------------------------------------------------------------ Outils

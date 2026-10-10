@@ -8,12 +8,15 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardHeader } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { Disclosure } from "@/components/ui/disclosure";
 import { Field, Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
+import { plural } from "@/lib/wording";
 import { deleteDriverOnRequest, findDriversForDeletion, retryDriverDeletion } from "./actions";
 import type { DeletionItem, DeletionQueue, DriverMatch } from "./types";
 
@@ -66,7 +69,7 @@ export function DriverDeletionSearch() {
       <CardHeader
         icon={<UserX />}
         title="Supprimer le compte d'un chauffeur"
-        description="Demande reçue sans l'application : vérifiez qu'elle vient de l'adresse e-mail (ou du numéro) du compte, supprimez, puis confirmez-lui la suppression par e-mail."
+        description={"Demande reçue sans l'application\u00a0: vérifiez qu'elle vient de l'adresse e-mail (ou du numéro) du compte, supprimez, puis confirmez-lui la suppression par e-mail."}
       />
       <div className="space-y-4 p-5">
         <form onSubmit={submitWith((data) => search(String(data.get("q") ?? "")))} className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -76,7 +79,7 @@ export function DriverDeletionSearch() {
               name="q"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="chauffeur@exemple.fr ou 06 12 34 56 78"
+              placeholder={"ex.\u00a0: chauffeur@exemple.fr ou 06 12 34 56 78"}
               autoComplete="off"
               spellCheck={false}
               aria-invalid={!!error}
@@ -89,10 +92,9 @@ export function DriverDeletionSearch() {
         </form>
 
         {results && results.length === 0 && (
-          <p className="rounded-lg border border-line bg-white/[0.02] px-4 py-3 text-[13px] text-fg-muted">
-            Aucun chauffeur avec cette adresse ou ce numéro, dans aucune centrale. Un compte déjà supprimé n&apos;est plus
-            retrouvable : ses coordonnées ont été effacées.
-          </p>
+          <Callout title="Aucun chauffeur avec cette adresse ou ce numéro, chez aucun client.">
+            Un compte déjà supprimé n&apos;est plus retrouvable{"\u00a0"}: ses coordonnées ont été effacées.
+          </Callout>
         )}
 
         {results && results.length > 0 && (
@@ -104,7 +106,7 @@ export function DriverDeletionSearch() {
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-[14px] font-semibold">
-                        {d.first_name} {d.last_name} <span className="num text-fg-subtle">#{d.number}</span>
+                        {d.first_name} {d.last_name} <span className="num text-fg-muted">#{d.number}</span>
                       </p>
                       <Badge tone={d.status === "active" ? "green" : d.status === "suspended" ? "amber" : "neutral"}>{STATUS_LABEL[d.status]}</Badge>
                       {d.application_status === "pending" && <Badge tone="blue">Candidature en attente</Badge>}
@@ -112,26 +114,27 @@ export function DriverDeletionSearch() {
                     </div>
                     <p className="text-[12.5px] text-fg-muted">
                       {d.organization.name}
-                      {d.organization.status !== "active" ? " (centrale suspendue)" : ""} · {d.email ?? d.account_email ?? "sans e-mail"} ·{" "}
+                      {d.organization.status === "archived" ? " (client archivé)" : d.organization.status !== "active" ? " (client suspendu)" : ""} ·{" "}
+                      <span className="[overflow-wrap:anywhere]">{d.email ?? d.account_email ?? "sans e-mail"}</span> ·{" "}
                       <span className="num">{d.phone || "sans téléphone"}</span> · inscrit le {formatDate(d.created_at)}
                     </p>
                     {d.account_email && d.email && d.account_email.toLowerCase() !== d.email.toLowerCase() && (
-                      <p className="text-[12px] text-fg-subtle">Compte de connexion : {d.account_email}</p>
+                      <p className="text-[12px] text-fg-muted [overflow-wrap:anywhere]">Compte de connexion{"\u00a0"}: {d.account_email}</p>
                     )}
                     {blocked && (
                       <p className="flex items-center gap-1.5 text-[12.5px] text-amber">
                         <AlertTriangle className="size-3.5 shrink-0" />
                         {d.rides_assigned > 1
-                          ? `${d.rides_assigned} courses attribuées : la centrale doit d'abord les terminer ou les réattribuer.`
-                          : "Une course attribuée : la centrale doit d'abord la terminer ou la réattribuer."}
+                          ? `${d.rides_assigned} courses attribuées\u00a0: le client doit d'abord les terminer ou les réattribuer.`
+                          : "Une course attribuée\u00a0: le client doit d'abord la terminer ou la réattribuer."}
                       </p>
                     )}
                     {d.keep_auth && (
                       <p className="text-[12.5px] text-fg-muted">
-                        Ce compte gère aussi une centrale (ou la plateforme) : seul le profil chauffeur sera supprimé.
+                        Ce compte sert aussi à gérer un client (ou la plateforme){"\u00a0"}: seul le profil chauffeur sera supprimé.
                       </p>
                     )}
-                    {!d.has_account && <p className="text-[12.5px] text-fg-muted">Fiche sans compte de connexion (créée par la centrale).</p>}
+                    {!d.has_account && <p className="text-[12.5px] text-fg-muted">Fiche sans compte de connexion (créée par le client).</p>}
                   </div>
                   <Button
                     variant="danger"
@@ -155,20 +158,20 @@ export function DriverDeletionSearch() {
         {target && (
           <DialogContent
             size="sm"
-            title={`Supprimer le compte de ${target.first_name} ${target.last_name} (#${target.number}) ?`}
+            title={`Supprimer le compte de ${target.first_name} ${target.last_name} (#${target.number})\u00a0?`}
             description={`Chauffeur de ${target.organization.name}. Suppression définitive, à la demande du chauffeur.`}
           >
             <div className="space-y-4 text-[13px] text-fg-muted">
               <ul className="list-disc space-y-1 pl-5 marker:text-fg-subtle">
                 <li>
-                  Supprimés : coordonnées, justificatifs et leurs fichiers, positions, appareils, messages et signalements,
+                  Supprimés{"\u00a0"}: coordonnées, justificatifs et leurs fichiers, positions, appareils, messages et signalements,
                   {target.keep_auth ? " profil chauffeur (compte de gestion conservé)." : " compte de connexion."}
                 </li>
                 <li>
-                  Conservés sans nom (obligations comptables de la centrale) : courses, règlements, gains, frais — fiche
-                  « Chauffeur supprimé (#{target.number}) ».
+                  Conservés sans nom (obligations comptables du client){"\u00a0"}: courses, règlements, gains, frais — fiche
+                  «{"\u00a0"}Chauffeur supprimé (#{target.number}){"\u00a0"}».
                 </li>
-                {target.banned && <li>Banni : les empreintes de ses identifiants et le motif restent (réinscription impossible).</li>}
+                {target.banned && <li>Banni{"\u00a0"}: les empreintes de ses identifiants et le motif restent (réinscription impossible).</li>}
               </ul>
               <form onSubmit={submitWith(() => remove())} className="space-y-3">
                 <Field label="Tapez SUPPRIMER pour confirmer" htmlFor="deletion-confirm">
@@ -181,14 +184,11 @@ export function DriverDeletionSearch() {
                     spellCheck={false}
                   />
                 </Field>
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="ghost" disabled={deleting} onClick={() => setTarget(null)}>
-                    Annuler
-                  </Button>
+                <DialogFooter backDisabled={deleting} className="mt-4">
                   <Button type="submit" variant="danger" loading={deleting} disabled={confirm.trim().toUpperCase() !== "SUPPRIMER"}>
                     <Trash2 /> Supprimer définitivement
                   </Button>
-                </div>
+                </DialogFooter>
               </form>
             </div>
           </DialogContent>
@@ -234,7 +234,6 @@ export function DeletionQueueList({ queue }: { queue: DeletionQueue }) {
       router.refresh();
     }));
 
-  const s = (n: number) => (n > 1 ? "s" : "");
   return (
     <Card className="overflow-hidden">
       <CardHeader
@@ -245,7 +244,7 @@ export function DeletionQueueList({ queue }: { queue: DeletionQueue }) {
         } · ${queue.failed} en échec.`}
       />
       {queue.items.length === 0 ? (
-        <EmptyState icon={<CheckCircle2 />} title="Aucune suppression récente" description="Les suppressions de compte des 90 derniers jours apparaissent ici." />
+        <EmptyState size="compact" icon={<CheckCircle2 />} title="Aucune suppression récente." description="Les suppressions de compte des 90 derniers jours apparaissent ici." />
       ) : (
         <ul className="divide-y divide-line">
           {queue.items.map((item) => {
@@ -258,23 +257,23 @@ export function DeletionQueueList({ queue }: { queue: DeletionQueue }) {
                     <p className="text-[13.5px] font-semibold">
                       Chauffeur supprimé <span className="num">#{item.number}</span>
                     </p>
-                    <span className="text-[12.5px] text-fg-muted">{item.organization?.name ?? "Centrale supprimée"}</span>
+                    <span className="text-[12.5px] text-fg-muted">{item.organization?.name ?? "Client supprimé"}</span>
                   </div>
                   <p className="text-[12.5px] text-fg-muted">
                     {SOURCE_LABEL[item.source]} · demandée{" "}
                     <span title={formatDate(item.requested_at)} suppressHydrationWarning>
                       {formatRelative(item.requested_at)}
                     </span>
-                    {" · "}justificatifs : {item.storage_done ? "supprimés" : "à supprimer"} · compte de connexion : {authStep(item)}
+                    {" · "}justificatifs{"\u00a0"}: {item.storage_done ? "supprimés" : "à supprimer"} · compte de connexion{"\u00a0"}: {authStep(item)}
                   </p>
                   {!item.done && (
-                    <p className="text-[12px] text-fg-subtle">
-                      {item.attempts} essai{s(item.attempts)}
+                    <p className="text-[12px] text-fg-muted">
+                      {plural(item.attempts, "essai")}
                       {item.status === "pending" &&
                         (item.stalled ? (
                           <>
                             {" · "}
-                            <span className="text-amber">en retard : le serveur ne reprend pas la file</span>
+                            <span className="text-amber">en retard{"\u00a0"}: le serveur ne reprend pas la file</span>
                           </>
                         ) : (
                           <>
@@ -282,13 +281,12 @@ export function DeletionQueueList({ queue }: { queue: DeletionQueue }) {
                             <span suppressHydrationWarning>{formatRelative(item.next_attempt_at)}</span>
                           </>
                         ))}
-                      {item.last_error && (
-                        <>
-                          {" · "}
-                          <span className="font-mono text-fg-muted">{item.last_error}</span>
-                        </>
-                      )}
                     </p>
+                  )}
+                  {!item.done && item.last_error && (
+                    <Disclosure title="Message technique du dernier essai" summaryClassName="text-[12px] font-normal text-fg-muted hover:text-fg" contentClassName="pb-1">
+                      <p className="mono text-[12px] text-fg-muted [overflow-wrap:anywhere]">{item.last_error}</p>
+                    </Disclosure>
                   )}
                 </div>
                 {!item.done && (

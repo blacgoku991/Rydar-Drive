@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Callout } from "@/components/ui/callout";
 import { Card, CardBody } from "@/components/ui/card";
 import { FilterTabs } from "@/components/ui/filter-tabs";
+import { EmptyState } from "@/components/ui/misc";
+import { DesktopTable, ListCard, MobileList } from "@/components/ui/table";
 import { requireSuperAdmin } from "@/lib/auth";
 import { plural } from "@/lib/wording";
 
@@ -115,42 +117,83 @@ export default async function AdminContactsPage({ searchParams }: { searchParams
           {rows.error ? (
             <CardBody className="text-[13px] text-fg-muted">Lecture impossible, réessayez dans un instant.</CardBody>
           ) : requests.length === 0 ? (
-            <CardBody className="flex flex-col items-center gap-3 py-14 text-center">
-              <Inbox className="size-8 text-fg-subtle" aria-hidden />
-              <p className="text-[14px] font-medium">Aucune demande {filter.key === "toutes" ? "pour l'instant" : "dans cette liste"}.</p>
-              <p className="max-w-sm text-[13px] text-fg-muted">
-                Les demandes envoyées depuis la page Contact du site (dont «&nbsp;Demander un tarif&nbsp;») arrivent ici.
-              </p>
-            </CardBody>
+            filter.key === "toutes" ? (
+              <EmptyState
+                icon={<Inbox />}
+                title="Aucune demande pour l'instant."
+                description={"Les demandes envoyées depuis la page Contact du site (dont «\u00a0Demander un tarif\u00a0») arrivent ici."}
+              />
+            ) : (
+              <EmptyState
+                size="compact"
+                title={`Aucune demande dans «\u00a0${filter.label}\u00a0».`}
+                action={
+                  <Link href="/admin/contacts?filtre=toutes" prefetch={false} className="inline-flex min-h-11 items-center text-[13px] font-medium text-brand hover:underline sm:min-h-0">
+                    Voir toutes les demandes
+                  </Link>
+                }
+              />
+            )
           ) : (
-            <ul className="divide-y divide-line">
-              {requests.map((r) => {
-                const st = CONTACT_STATUS_META[r.status];
-                return (
-                  <li key={r.id}>
-                    <Link
+            <>
+              {/* Téléphone : cartes (toute la carte est le lien) ; bureau : lignes en colonnes */}
+              <MobileList>
+                {requests.map((r) => {
+                  const st = CONTACT_STATUS_META[r.status];
+                  return (
+                    <ListCard
+                      key={r.id}
                       href={`/admin/contacts/${r.id}`}
-                      prefetch={false}
-                      className="flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-white/[0.025] sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-[14px] font-medium text-fg">
+                      title={
+                        <>
                           {r.name}
                           {r.company && <span className="font-normal text-fg-muted"> · {r.company}</span>}
-                        </p>
-                        <p className="mt-0.5 truncate text-[12.5px] text-fg-muted">
+                        </>
+                      }
+                      status={<Badge tone={st?.tone ?? "neutral"}>{st?.label ?? "Statut inconnu"}</Badge>}
+                      lines={[
+                        <span key="t" title={r.email}>
                           {contactRequestTopicLabel(r.topic)} · {r.email}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-3">
-                        <span className="num text-[12px] text-fg-muted">{dateTime(r.created_at)}</span>
-                        <Badge tone={st?.tone ?? "neutral"}>{st?.label ?? "Statut inconnu"}</Badge>
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+                        </span>,
+                        <span key="d" className="num">
+                          {dateTime(r.created_at)}
+                        </span>,
+                      ]}
+                    />
+                  );
+                })}
+              </MobileList>
+              <DesktopTable>
+                <ul className="divide-y divide-line">
+                  {requests.map((r) => {
+                    const st = CONTACT_STATUS_META[r.status];
+                    return (
+                      <li key={r.id}>
+                        <Link
+                          href={`/admin/contacts/${r.id}`}
+                          prefetch={false}
+                          className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-white/[0.025]"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-[14px] font-medium text-fg">
+                              {r.name}
+                              {r.company && <span className="font-normal text-fg-muted"> · {r.company}</span>}
+                            </p>
+                            <p className="mt-0.5 truncate text-[12.5px] text-fg-muted" title={r.email}>
+                              {contactRequestTopicLabel(r.topic)} · {r.email}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-3">
+                            <span className="num text-[12px] text-fg-muted">{dateTime(r.created_at)}</span>
+                            <Badge tone={st?.tone ?? "neutral"}>{st?.label ?? "Statut inconnu"}</Badge>
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </DesktopTable>
+            </>
           )}
         </Card>
         {requests.length === 200 && <p className="text-[12.5px] text-fg-muted">Les {formatNumber(200)} demandes les plus récentes sont affichées.</p>}
