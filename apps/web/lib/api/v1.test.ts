@@ -31,10 +31,22 @@ vi.mock("@/lib/rate-limit", () => {
     h.counts.set(key, n);
     return { ok: n <= limit, remaining: Math.max(0, limit - n), resetAt: Date.now() + windowSec * 1000, limit };
   };
-  return { rateLimit: async (k: string, l: number, w: number) => check(k, l, w) };
+  return {
+    rateLimit: async (k: string, l: number, w: number) => check(k, l, w),
+    rateLimitAll: async (checks: { key: string; limit: number; windowSec: number }[]) => {
+      let last = { ok: true, remaining: 0, resetAt: 0, limit: 0 };
+      for (const c of checks) {
+        last = check(c.key, c.limit, c.windowSec);
+        if (!last.ok) return last;
+      }
+      return last;
+    },
+  };
 });
 vi.mock("@/lib/api-keys", async () => await import("../api-keys"));
 vi.mock("@/lib/api/v1", async () => await import("./v1"));
+vi.mock("@/lib/api/trip", async () => await import("./trip"));
+vi.mock("@/lib/booking-price", async () => await import("../booking-price"));
 vi.mock("@/lib/request", async () => await import("../request"));
 vi.mock("@/lib/geocode", () => ({ geocodeOne: async () => null }));
 vi.mock("@/lib/geo/anchor", () => ({ orgAnchor: async () => null, coordinateProblem: () => null }));

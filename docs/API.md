@@ -19,12 +19,24 @@ Envoyez-la dans l'en-tête `Authorization: Bearer rdk_live_…`, ou `X-API-Key`.
 - **La clé identifie l'organisation.** Il n'existe aucun paramètre `organization_id`. Si vous en envoyez un, la requête est refusée en **403 `FORBIDDEN_TENANT_FIELD`**.
 - La clé est une donnée **serveur**. Appelez l'API depuis le back-end de votre site (PHP, WordPress, Node…), jamais depuis du JavaScript exécuté dans le navigateur du client. Pour un site sans back-end, utilisez le mini-site de réservation (voir plus bas).
 - **Clé « navigateur »** (seule exception) : une clé qui a des **origines autorisées** (champ « Origines autorisées (CORS) » du dashboard) est lisible par tout visiteur du site, elle est donc restreinte, y compris si elle a été créée avant cette règle :
-  - **création de course seulement** : elle ne peut avoir que la permission `rides:create` ; toute autre route (`GET /ping`, lecture, annulation, webhooks) répond **403 `INSUFFICIENT_SCOPE`** ;
-  - **origine listée obligatoire** : en-tête `Origin` absent ou absent de la liste → **403 `ORIGIN_NOT_ALLOWED`**. Seules les origines listées reçoivent les en-têtes CORS. Attention : hors d'un navigateur (`curl`, serveur), l'en-tête `Origin` se forge ; la vraie protection d'une clé « navigateur » est sa portée (création de course seulement, prix et paiement ignorés, rejeu réduit), pas l'origine ;
-  - **prix et paiement ignorés** : `price_cents` et `payment_method` de la requête ne sont pas pris en compte ; le prix est calculé avec la grille de l'organisation et le moyen de paiement est `card` (valeur par défaut).
+  - **création de courses et devis seulement** : elle ne peut avoir que les permissions `rides:create` et `rides:quote` ; toute autre route (`GET /ping`, lecture, annulation, webhooks) répond **403 `INSUFFICIENT_SCOPE`** ;
+  - **origine listée obligatoire** : en-tête `Origin` absent ou absent de la liste → **403 `ORIGIN_NOT_ALLOWED`**. Seules les origines listées reçoivent les en-têtes CORS. Attention : hors d'un navigateur (`curl`, serveur), l'en-tête `Origin` se forge ; la vraie protection d'une clé « navigateur » est sa portée (création de courses et devis seulement, prix et paiement ignorés, rejeu réduit) et ses limites par adresse IP, pas l'origine ;
+  - **prix et paiement ignorés** : `price_cents` et `payment_method` de la requête ne sont pas pris en compte ; le prix est calculé avec la grille de l'organisation (ou vérifié, avec `expected_price_cents`, voir [Prix attendu](#prix-attendu--expected_price_cents)) et le moyen de paiement est `card` (valeur par défaut) ;
+  - **limites par adresse IP et par téléphone** : voir [Limites d'une clé « navigateur »](#limites-dune-clé--navigateur-).
 - Côté Rydar, seul un hash **HMAC-SHA-256** (poivré) de la clé est stocké, dans une table inaccessible aux clients. La comparaison se fait en temps constant.
-- Chaque clé a des **permissions** : `rides:create`, `rides:read`, `rides:cancel`, `webhooks:manage` (gérer les webhooks, voir plus bas). Elle a aussi un **débit** (60 requêtes/min par défaut) et peut recevoir une date d'expiration. Elle se révoque instantanément depuis le dashboard.
-- **Limite par adresse IP** (IPv6 regroupée par /64) pour les requêtes non authentifiées : au-delà de 20 échecs d'authentification par minute (clé absente, inconnue ou invalide), les suivants reçoivent 429 et ne sont plus journalisés. Une clé valide n'a que **son propre débit**, quelle que soit l'adresse (un serveur ou un intégrateur qui sert plusieurs organisations depuis une même IP n'est pas plafonné). Les refus d'une clé reconnue (révoquée, expirée, origine non autorisée, débit dépassé…) gardent leur réponse, mais sont journalisés au plus 20 fois par minute et par clé.
+- Chaque clé a des **permissions** : `rides:create`, `rides:read`, `rides:cancel`, `rides:quote` (devis, voir plus bas), `webhooks:manage` (gérer les webhooks, voir plus bas). Elle a aussi un **débit** (60 requêtes/min par défaut) et peut recevoir une date d'expiration. Elle se révoque instantanément depuis le dashboard.
+- **Limite par adresse IP** (IPv6 regroupée par /64) pour les requêtes non authentifiées : au-delà de 20 échecs d'authentification par minute (clé absente, inconnue ou invalide), les suivants reçoivent 429 et ne sont plus journalisés. Une clé serveur valide n'a que **son propre débit**, quelle que soit l'adresse (un serveur ou un intégrateur qui sert plusieurs organisations depuis une même IP n'est pas plafonné) ; une clé « navigateur » a en plus ses limites par adresse IP et par téléphone. Les refus d'une clé reconnue (révoquée, expirée, origine non autorisée, débit dépassé…) gardent leur réponse, mais sont journalisés au plus 20 fois par minute et par clé.
+
+### Limites d'une clé « navigateur »
+
+Une clé « navigateur » est publique : n'importe qui peut la copier depuis le site et envoyer de fausses réservations. En plus du débit de la clé, chaque adresse IP (IPv6 regroupée par /64) est limitée, **site par site** (organisation par organisation), avec les mêmes plafonds que le mini-site :
+
+| Requête | Limite |
+| --- | --- |
+| `POST /rides` | 6 par 10 minutes et 20 par jour, par adresse IP ; 3 par heure pour un même téléphone client (numéro normalisé, quelle que soit l'adresse) |
+| `POST /quotes` | 30 par minute et 600 par jour, par adresse IP (une réservation demande souvent plusieurs devis) |
+
+Au-delà : **429 `RATE_LIMITED`** avec l'en-tête `Retry-After` (secondes). Les limites par adresse sont vérifiées **avant** le débit de la clé : un visiteur bloqué ne consomme pas le débit partagé par tous les visiteurs du site. Les jours et les fenêtres sont des périodes fixes (la journée se termine à minuit UTC). Une fois l'origine vérifiée, les réponses d'erreur portent aussi les en-têtes CORS, et `Access-Control-Expose-Headers` rend `Retry-After`, `X-Request-Id` et `X-RateLimit-*` lisibles par le JavaScript du site. Un renvoi avec la même `Idempotency-Key` (voir plus bas) ne compte pas dans la limite par téléphone. Les clés serveur n'ont aucune de ces limites.
 
 Test rapide :
 
@@ -69,10 +81,11 @@ curl https://app.rydar.app/api/v1/rides \
 | `luggage` | 0–30 | non | Défaut 0 |
 | `vehicle_category` | `standard` · `business` · `first` · `van` · `green` | non | Défaut `standard` |
 | `price_cents` | entier | non | Prix annoncé au client, affiché au chauffeur. Absent : calculé avec la grille de l'organisation (forfait reconnu, par ex. « Paris ↔ CDG », sinon tarif au km et à la minute). Compte en mode centrale : la part chauffeur, la commission et les frais sont calculés automatiquement à partir de ce prix |
+| `expected_price_cents` | entier | non | Prix **affiché au client** avant la commande (devis de [`POST /quotes`](#devis--post-quotes)) : Rydar le recalcule et ne crée la course que s'il est identique, voir [Prix attendu](#prix-attendu--expected_price_cents). Avec une clé serveur, `price_cents` doit alors être absent ou identique (sinon 422) |
 | `payment_method` | `card` · `cash` · `online` · `invoice` · `account` | non | Défaut `card` : carte payée **au chauffeur, à bord** (son terminal). Course déjà payée en ligne par le client : `online` ; facture ou compte client : `invoice` / `account` |
 | `flight_number`, `comment`, `external_reference` | string | non | `external_reference` : votre identifiant de réservation (100 car. max) |
 
-Tout champ inconnu est refusé (422). Une prise en charge dans moins de 45 min (seuil réglable) donne une course **instantanée**, dispatchée tout de suite par GPS. Au-delà, la course est **planifiée** et proposée à la flotte.
+Tout champ inconnu est refusé (422). Une prise en charge dans moins de 45 min (seuil réglable) donne une course **instantanée**, dispatchée tout de suite par GPS. Au-delà, la course est **planifiée** et proposée à la flotte. Client Flotte Privée : chaque réservation est proposée « à confirmer » à son unique chauffeur, voir [Site d'un client Flotte Privée](#site-dun-client-flotte-privée).
 
 Réponse **201** :
 
@@ -96,7 +109,62 @@ Réponse **201** :
 
 L'itinéraire routier (`route`) est calculé par Rydar à la création : distance, durée et tracé encodé en *polyline* (précision 5, format Google/OSRM).
 
-**Idempotence** : avec un en-tête `Idempotency-Key` (une valeur unique et imprévisible par réservation, un UUID par exemple ; 100 caractères au plus), un renvoi de la même requête **par la même clé API** (après un timeout réseau, par exemple) renvoie **200** et `"idempotent_replay": true` au lieu de créer un doublon. La valeur est unique pour toute l'organisation : déjà utilisée par une autre clé → **409 `IDEMPOTENCY_KEY_CONFLICT`**, sans jamais renvoyer la course existante. Avec une clé « navigateur », le rejeu ne renvoie que `{ "id", "number", "status" }`.
+**Idempotence** : avec un en-tête `Idempotency-Key` (une valeur unique et imprévisible par réservation, un UUID par exemple ; 100 caractères au plus), un renvoi de la même requête **par la même clé API** (après un timeout réseau, par exemple) renvoie **200** et `"idempotent_replay": true` au lieu de créer un doublon. Le renvoi est reconnu avant tout calcul (lieux, itinéraire, prix) : il renvoie la course créée, même si le prix a changé depuis (jamais `PRICE_CHANGED`). La valeur est unique pour toute l'organisation : déjà utilisée par une autre clé → **409 `IDEMPOTENCY_KEY_CONFLICT`**, sans jamais renvoyer la course existante. Avec une clé « navigateur », le rejeu ne renvoie que `{ "id", "number", "status" }`.
+
+### Prix attendu : `expected_price_cents`
+
+C'est la condition d'un bouton « Réserver avec obligation de paiement » : le client ne s'engage que sur un prix qui lui a été affiché, et Rydar enregistre exactement ce prix ou rien.
+
+- **Fourni** : Rydar recalcule le prix avec le **même calcul** que [`POST /quotes`](#devis--post-quotes) (mêmes lieux, même heure, même catégorie).
+  - Identique : la course est créée **à ce prix** (`price_cents` de la réponse).
+  - Différent : **409 `PRICE_CHANGED`**, **rien n'est créé**. `error.details.price_cents` donne le nouveau prix : montrez-le au client et renvoyez la réservation avec ce prix s'il l'accepte. `null` : plus de prix garanti en ligne (grille désactivée, par exemple) : proposez une demande sans prix (renvoi sans `expected_price_cents`), dont le prix est confirmé au client avant la course.
+- **Absent** : comportement inchangé (`price_cents` d'une clé serveur, sinon grille de l'organisation).
+
+```json
+{ "error": { "code": "PRICE_CHANGED", "message": "Le prix a changé : montrez le nouveau prix (details.price_cents) au client avant de réserver.", "details": { "price_cents": 9200 }, "request_id": "…" } }
+```
+
+## Devis : `POST /quotes`
+
+Permission `rides:quote` (permise à une clé « navigateur »). Prix d'un trajet **avant** la réservation, à afficher au client ; **aucune course n'est créée**. Le prix est calculé comme celui du mini-site de réservation : forfait de la grille reconnu par les adresses, sinon tarif au km et à la minute sur l'itinéraire calculé par Rydar, majoration de nuit comprise (heure locale de l'organisation).
+
+```bash
+curl https://app.rydar.app/api/v1/quotes \
+  -H "Authorization: Bearer $RYDAR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "pickup":  { "address": "Gare de Lyon, 75012 Paris", "lat": 48.8443, "lng": 2.3743 },
+    "dropoff": { "address": "Aéroport Paris-Orly, Terminal 1" },
+    "date": "2026-10-14", "time": "08:30",
+    "passengers": 2, "luggage": 2,
+    "vehicle_category": "business"
+  }'
+```
+
+Corps : les champs de trajet de `POST /rides` seulement, mêmes règles (`pickup`, `dropoff`, `pickup_at` **ou** `date` + `time`, `passengers`, `luggage`, `vehicle_category`). Tout autre champ est refusé (422), `organization_id` en 403. Erreurs propres au devis : `422 PICKUP_IN_PAST` (heure passée de plus de 10 minutes) et `422 PICKUP_TOO_FAR` (au-delà de 400 jours), contrôlées avant tout géocodage, comme le ferait la réservation.
+
+Réponse **200** :
+
+```json
+{
+  "data": {
+    "price_cents": 6500, "currency": "EUR", "fixed_fare": true,
+    "estimated_distance_m": null, "estimated_duration_s": null,
+    "vehicle_category": "business", "pickup_at": "2026-10-14T06:30:00.000Z"
+  }
+}
+```
+
+| Champ | Détail |
+| --- | --- |
+| `price_cents` | Prix TTC en centimes. `null` : pas de prix en ligne (aucune grille active pour la catégorie ; destination sans coordonnées ni forfait ; ou adresse de destination éloignée de plus de 2 km des coordonnées envoyées, pour ne jamais garantir un prix calculé sur un faux point) |
+| `currency` | Devise de l'organisation |
+| `fixed_fare` | `true` : forfait de la grille reconnu par les adresses (indépendant de la distance) |
+| `estimated_distance_m`, `estimated_duration_s` | Itinéraire calculé par Rydar ; `null` si la destination n'a pas pu être géolocalisée |
+| `vehicle_category` | Catégorie demandée (défaut `standard`) |
+| `pickup_at` | Heure retenue pour le prix (UTC). Sans heure dans la requête : maintenant |
+
+**Devis et réservation au même prix** : envoyez à `POST /rides` **exactement** les champs de trajet du devis (adresses, coordonnées, heure, catégorie) avec `expected_price_cents` = `price_cents` du devis. Pour une course immédiate, n'envoyez d'heure ni au devis ni à la réservation. Le devis n'engage personne : le prix est recalculé à la réservation (grille modifiée entre-temps, passage à l'heure de nuit…), et un prix différent donne `409 PRICE_CHANGED`.
 
 ## Suivre une course
 
@@ -135,10 +203,10 @@ Format commun :
 | 402 | `PLATFORM_FEES_OVERDUE` (centrale, ou flotte avec des frais Rydar : frais en retard, création de courses suspendue par Rydar) |
 | 403 | `FORBIDDEN_TENANT_FIELD`, `FORBIDDEN_TENANT`, `INSUFFICIENT_SCOPE`, `ORIGIN_NOT_ALLOWED` (clé « navigateur »), `ORGANIZATION_INACTIVE`, `PLAN_FEATURE_API` |
 | 404 | `RIDE_NOT_FOUND`, `WEBHOOK_NOT_FOUND` |
-| 409 | `IDEMPOTENCY_KEY_CONFLICT` (valeur déjà utilisée par une autre clé), codes métier d'annulation (ex. course déjà terminée), `WEBHOOK_LIMIT` (10 adresses au plus), `WEBHOOK_DISABLED` (test d'une adresse désactivée) |
+| 409 | `IDEMPOTENCY_KEY_CONFLICT` (valeur déjà utilisée par une autre clé), `PRICE_CHANGED` (prix attendu différent du prix recalculé : `details.price_cents`, rien n'est créé), codes métier d'annulation (ex. course déjà terminée), `WEBHOOK_LIMIT` (10 adresses au plus), `WEBHOOK_DISABLED` (test d'une adresse désactivée) |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 422 | `VALIDATION_ERROR`, `PICKUP_NOT_GEOCODED`, `INVALID_COORDINATES`, `PICKUP_IN_PAST`, `PICKUP_TOO_FAR`, `WEBHOOK_INVALID_URL`, `WEBHOOK_INVALID_EVENTS`, `WEBHOOK_INVALID_SECRET` |
-| 429 | `RATE_LIMITED` (débit de la clé, ou trop d'échecs d'authentification depuis une même adresse), avec l'en-tête `Retry-After` |
+| 429 | `RATE_LIMITED` (débit de la clé, limites par adresse IP ou par téléphone d'une clé « navigateur », ou trop d'échecs d'authentification depuis une même adresse), avec l'en-tête `Retry-After` |
 
 Chaque réponse porte `X-Request-Id` et `X-RateLimit-Limit` / `-Remaining` / `-Reset`. Les requêtes sont journalisées (`api_logs`, 90 jours) et visibles dans **Intégrations**, sauf les échecs d'authentification au-delà de 20 par minute et par IP, et les refus d'une clé reconnue au-delà de 20 par minute et par clé.
 
@@ -342,12 +410,66 @@ Réponse **201** :
 
 Les erreurs suivent le format commun : `422 VALIDATION_ERROR` (champ inconnu, plusieurs champs invalides), `422 WEBHOOK_INVALID_URL` / `WEBHOOK_INVALID_EVENTS` / `WEBHOOK_INVALID_SECRET`, `409 WEBHOOK_LIMIT` (10 adresses), `404 WEBHOOK_NOT_FOUND`, `409 WEBHOOK_DISABLED`, `409 WEBHOOK_TEST_PENDING`, `429 WEBHOOK_TEST_RATE_LIMITED`.
 
+## Site d'un client Flotte Privée
+
+Un client **Flotte Privée** est un chauffeur VTC indépendant : son organisation (modèle flotte) n'a qu'une fiche chauffeur, la sienne, sur le même compte que son espace web. Son site, construit en dehors de Rydar Drive, envoie les réservations de ses clients par cette API ; elles arrivent dans **son** application, rien que pour lui.
+
+### Clés
+
+Les clés sont créées par l'équipe Rydar sur la fiche du client, une fois les CGV et l'accord de traitement des données (DPA) acceptés au nom de son organisation. La clé complète n'est affichée **qu'une seule fois**. Le client voit ses clés en lecture seule dans **Mon site** ; création et révocation passent par l'équipe Rydar.
+
+| Clé | Permissions | Usage |
+| --- | --- | --- |
+| **Serveur** (recommandée) | `rides:create`, `rides:read`, `rides:cancel`, `rides:quote`, `webhooks:manage` | Back-end du site : devis, réservations, suivi et annulation ; le site enregistre lui-même ses webhooks (`POST /webhooks`) |
+| **Navigateur** | `rides:create`, `rides:quote` | JavaScript du site, depuis ses origines https (avec leur variante `www`) ; [limites par adresse IP et par téléphone](#limites-dune-clé--navigateur-). Ni lecture, ni webhooks : sans serveur, le site ne peut pas suivre la réservation |
+
+### Parcours d'une réservation
+
+1. **Devis** : [`POST /quotes`](#devis--post-quotes) avec le trajet. Affichez `price_cents` (TTC) avant la commande, ou proposez une « demande sans prix » s'il vaut `null`.
+2. **Réservation** : `POST /rides` avec **les mêmes champs de trajet**, le client (`customer`), `expected_price_cents` = prix affiché, un en-tête `Idempotency-Key` (un UUID par réservation) et votre `external_reference`. `409 PRICE_CHANGED` : montrez le nouveau prix (`error.details.price_cents`) et faites-le accepter avant de renvoyer la réservation.
+3. **Réponse 201** : la réservation est **proposée au chauffeur, à confirmer**. `status` vaut `OFFERED` (proposée), `SEARCHING_DRIVER` (catégorie ou nombre de places au-delà de son véhicule : il est prévenu et peut la prendre quand même) ou `NO_DRIVER_FOUND` (fiche chauffeur inactive : la réservation ne lui est pas proposée, invitez le client à appeler).
+4. **Suivi** par les webhooks (clé serveur), à relayer au client :
+
+| Événement | Pour le client |
+| --- | --- |
+| `ride.accepted` | Réservation **confirmée** par le chauffeur |
+| `ride.no_driver_found` | **Refusée** par le chauffeur, ou **non confirmée** à l'échéance |
+| `ride.cancelled` | Annulée (par le chauffeur, par votre serveur, ou « Non effectuée » 6 h après l'heure prévue) |
+| `ride.search_restarted` | De nouveau en attente de confirmation après `ride.no_driver_found` (par exemple, vol retardé qui la remet en service) |
+| `ride.driver_unassigned` | Confirmée puis remise en attente (fiche chauffeur suspendue, par exemple) |
+| `ride.rescheduled` | Heure de prise en charge modifiée (vol retardé) |
+
+Le chauffeur peut encore **prendre** une réservation refusée ou non confirmée jusqu'à 6 h après l'heure prévue : `ride.accepted` peut donc suivre `ride.no_driver_found`. Ne la présentez pas comme définitivement refusée : dites au client qu'elle n'est pas confirmée et proposez-lui d'appeler.
+
+### Ce que voit le chauffeur
+
+- Chaque réservation lui est proposée, **en ligne ou non, quelle que soit la distance** (notification « NOUVELLE RÉSERVATION »), avec des rappels jusqu'à l'échéance.
+- **Échéance de confirmation** : 60 minutes avant la prise en charge par défaut (réglable par le chauffeur), et au moins son délai de réponse après la réception (5 minutes par défaut, réglable) : une réservation immédiate ou très proche ne lui laisse que ce délai.
+- **Refus** : `ride.no_driver_found` aussitôt. **Sans réponse** à l'échéance : une dernière sollicitation s'il est en ligne (pendant son délai de réponse), puis « Non confirmée » (`ride.no_driver_found`).
+
+### Erreurs à prévoir
+
+- **402** `PLATFORM_FEES_OVERDUE` (frais Rydar en retard), **402** `PLAN_LIMIT_RIDES` (quota de l'offre atteint), **403** `ORGANIZATION_INACTIVE`, **429** : la réservation n'est pas enregistrée ; le site affiche un repli **« Appelez-nous »** avec le numéro du chauffeur.
+- **409** `PRICE_CHANGED` : nouveau prix à faire accepter (voir plus haut). **422** : saisie à corriger (adresse introuvable, date passée…), sinon le même repli.
+- **5xx**, délai dépassé ou erreur réseau : renvoyez la même requête avec la **même** `Idempotency-Key` (la course éventuellement créée est renvoyée, jamais dupliquée), puis, en cas de nouvel échec, le même repli.
+
+### Règles pour le site
+
+- Proposer **seulement la catégorie de son véhicule** et un nombre de passagers et de bagages qu'il peut prendre : sinon la réservation ne lui arrive pas comme une offre à confirmer, mais comme une réservation « à vérifier ».
+- Après la réservation, afficher « En attente de confirmation par votre chauffeur », jamais « confirmée » avant `ride.accepted`.
+- **Prix affiché avant la commande** (devis) et renvoyé dans `expected_price_cents` : c'est le seul cas où un bouton « Réserver avec obligation de paiement » est possible. Sans prix affiché, une **demande sans prix** (sans `expected_price_cents`), dont le prix est confirmé au client avant la course.
+- Un **délai minimal de réservation** est conseillé : une réservation immédiate ne laisse au chauffeur que son délai de réponse.
+- Repli « Appelez-nous » sur toute erreur (voir plus haut).
+- Clé serveur de préférence (la clé navigateur est publique) et champ piège anti-robot (pot de miel) dans le formulaire.
+- **Aucun traceur** (pixel publicitaire, mesure d'audience non exemptée) sans gestionnaire de consentement conforme aux recommandations de la CNIL. Le site a ses propres mentions légales (entreprise, n° d'inscription au registre VTC, hébergeur) et sa propre politique de confidentialité.
+- Les webhooks ne contiennent aucune donnée du client : retrouvez la réservation par `external_reference`.
+
 ## Mini-site de réservation (sans code)
 
-Offres Pro et Business. **Dashboard → Mini-site** permet d'activer une page de réservation aux couleurs de l'organisation : logo, couleur, textes, catégories proposées. Elle est servie par :
+Offres Pro et Business. **Dashboard → Mini-site** permet d'activer une page de réservation aux couleurs de l'organisation : logo, couleur, textes, catégories proposées. Un interrupteur de plateforme (super admin, **Offres & limites**) coupe tous les mini-sites : ni page, ni devis, ni réservation (coupés depuis la migration `20260924006200`). Ouverte, la page est servie par :
 
 - `https://{slug}.rydar.app` (sous-domaine) ou `https://app.rydar.app/book/{slug}` ;
 - un **domaine personnalisé** (Business), par exemple `reservation.ma-centrale.fr`, via un CNAME vers l'application ;
 - une **iframe** intégrée à un site existant : `<iframe src="https://app.rydar.app/book/{slug}" …>`.
 
-Le client ne crée **aucun compte**. Le formulaire est protégé par un pot de miel anti-robot, une limite de débit par IP (6 envois / 10 min) et un consentement RGPD explicite. La course arrive avec la source `booking_site` et suit le même dispatch.
+Le client ne crée **aucun compte**. Le formulaire est protégé par un pot de miel anti-robot et des limites de débit (6 envois par 10 minutes et 20 par jour par adresse IP, 3 par heure par téléphone) ; le client est informé, sous le formulaire, de l'usage de ses coordonnées (exécution de la course demandée), sans case à cocher. La course arrive avec la source `booking_site` et suit le même dispatch.

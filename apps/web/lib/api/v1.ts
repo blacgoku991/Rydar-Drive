@@ -1,9 +1,10 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { BROWSER_KEY_SCOPES, TENANT_FIELDS } from "@rydar/shared";
 import { NextResponse } from "next/server";
 import { extractApiKey, hashApiKey, parseApiKey, safeEqualHex } from "@/lib/api-keys";
 import { serverEnv } from "@/lib/env";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit, rateLimitAll } from "@/lib/rate-limit";
 import { ipBucket, ipFromHeaders } from "@/lib/request";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -12,29 +13,71 @@ export type ApiContext = {
   startedAt: number;
   orgId: string;
   orgTimezone: string;
+  /** Devise de l'organisation (celle de ses courses, private.before_ride_insert) */
+  orgCurrency: string;
   keyId: string;
   scopes: string[];
   origin: string | null;
   allowedOrigin: string | null;
   ip: string | null;
   rate: { limit: number; remaining: number; resetAt: number };
-  /** Clé « navigateur » (origines autorisées) : création de course seule, prix et paiement fixés par la centrale */
+  /**
+   * Clé « navigateur » (origines autorisées) : portées BROWSER_KEY_SCOPES seulement (création de courses et devis),
+   * prix et paiement fixés par la centrale, limites par IP (BROWSER_IP_LIMITS) et par téléphone (BROWSER_PHONE_LIMIT)
+   */
   browser: boolean;
 };
 
 export class ApiError extends Error {
-  /** Clé identifiée (hash valide) avant l'erreur : la requête refusée apparaît dans le journal de la centrale */
-  ctx?: { orgId: string; keyId: string };
+  /**
+   * Clé identifiée (hash valide) avant l'erreur : la requête refusée apparaît dans le journal de la centrale.
+   * allowedOrigin : origine d'une clé « navigateur » déjà vérifiée, la réponse d'erreur porte les en-têtes CORS.
+   */
+  ctx?: { orgId: string; keyId: string; allowedOrigin?: string | null };
   constructor(public status: number, public code: string, message: string, public details?: unknown, public headers?: Record<string, string>) {
     super(message);
   }
 }
 
+type BrowserScope = (typeof BROWSER_KEY_SCOPES)[number];
+type WindowLimit = { id: string; limit: number; windowSec: number };
+
+/**
+ * Clé « navigateur » (publique : réservations factices et sonneries en rafale possibles) : limites par adresse IP
+ * (IPv6 groupée par /64) et par organisation, vérifiées AVANT le débit de la clé (un visiteur refusé ne consomme pas
+ * le débit partagé par tous les visiteurs du site). Mêmes plafonds que le mini-site (app/book/[slug]/actions.ts et son
+ * devis app/api/book/[slug]/quote). Clé serveur : son seul débit. Une portée ajoutée à BROWSER_KEY_SCOPES sans ses
+ * limites ne compile pas.
+ */
+export const BROWSER_IP_LIMITS: Record<BrowserScope, readonly WindowLimit[]> = {
+  "rides:create": [
+    { id: "create", limit: 6, windowSec: 600 },
+    { id: "create:day", limit: 20, windowSec: 86_400 },
+  ],
+  "rides:quote": [
+    { id: "quote", limit: 30, windowSec: 60 },
+    { id: "quote:day", limit: 600, windowSec: 86_400 },
+  ],
+};
+
+/** Clé « navigateur » : réservations par téléphone du client et par organisation (même plafond que le mini-site). */
+export const BROWSER_PHONE_LIMIT = { limit: 3, windowSec: 3_600 } as const;
+
+/** Refus d'une portée hors BROWSER_KEY_SCOPES : même texte que la création de la clé (apiKeyCreateSchema). */
+const BROWSER_SCOPE_MESSAGE =
+  "Clé utilisée depuis le navigateur (origines autorisées) : seules la création de courses et les devis sont permis.";
+
+const isBrowserScope = (scope: string): scope is BrowserScope => (BROWSER_KEY_SCOPES as readonly string[]).includes(scope);
+
+/** En-têtes lisibles par le JavaScript du site (CORS) : Retry-After d'un 429, identifiant de requête pour le support. */
+const EXPOSED_HEADERS = "Retry-After, X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset";
+
 /**
  * Limite par IP (IPv6 groupée par /64) des requêtes NON authentifiées (clé absente, inconnue ou invalide) : au-delà de
- * 20 par minute, 429 et plus rien n'est journalisé. Une clé valide n'a que SA limite (rate_limit_per_minute), jamais
- * celle de l'IP : un serveur réglé à 1 000/min ou un intégrateur qui sert plusieurs centrales depuis une même adresse
- * n'est pas plafonné. Une requête sans clé bien formée est refusée sans aucune requête SQL.
+ * 20 par minute, 429 et plus rien n'est journalisé. Une clé serveur valide n'a que SA limite (rate_limit_per_minute),
+ * jamais celle de l'IP : un serveur réglé à 1 000/min ou un intégrateur qui sert plusieurs centrales depuis une même
+ * adresse n'est pas plafonné (une clé « navigateur », publique, a en plus BROWSER_IP_LIMITS). Une requête sans clé bien
+ * formée est refusée sans aucune requête SQL.
  */
 const AUTH_FAILURES_PER_MINUTE = 20;
 /** Refus d'une clé identifiée (origine non listée, clé révoquée ou expirée, débit de la clé…) journalisés par clé et par
@@ -60,18 +103,22 @@ export function preflight(req: Request) {
   return new NextResponse(null, { status: 204, headers: { ...CORS_HEADERS, "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*" } });
 }
 
-/** Authentifie la clé API : préfixe → hash HMAC (temps constant) → révocation/expiration → tenant actif → scope → débit. */
+/**
+ * Authentifie la clé API : préfixe → hash HMAC (temps constant) → révocation/expiration → tenant actif → scope → offre
+ * → clé « navigateur » : portée (BROWSER_KEY_SCOPES), origine, limites par IP → débit de la clé.
+ */
 export async function authenticate(req: Request, scope: string): Promise<ApiContext> {
   const requestId = randomUUID();
   const startedAt = Date.now();
   const origin = req.headers.get("origin");
+  const ip = clientIpOf(req);
   const parsed = parseApiKey(extractApiKey(req.headers));
   if (!parsed) throw new ApiError(401, "INVALID_API_KEY", "Clé API absente ou mal formée (Authorization: Bearer rdk_live_…).");
 
   const admin = createAdminClient();
   const { data: key } = await admin
     .from("api_keys")
-    .select("id, organization_id, scopes, rate_limit_per_minute, allowed_origins, expires_at, revoked_at, organization:organizations(status, timezone, plan_id, limits_override, plan:plans(limits))")
+    .select("id, organization_id, scopes, rate_limit_per_minute, allowed_origins, expires_at, revoked_at, organization:organizations(status, timezone, currency, plan_id, limits_override, plan:plans(limits))")
     .eq("prefix", parsed.prefix)
     .maybeSingle();
   const { data: secret } = key
@@ -84,8 +131,10 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
   }
   const k = key as any;
   const org = Array.isArray(k.organization) ? k.organization[0] : k.organization;
-  // Clé identifiée : toute erreur suivante est rattachée à la centrale et à la clé (journal api_logs)
-  const fail = (e: ApiError) => Object.assign(e, { ctx: { orgId: k.organization_id as string, keyId: k.id as string } });
+  // Clé identifiée : toute erreur suivante est rattachée à la centrale et à la clé (journal api_logs) ; origine d'une
+  // clé « navigateur » déjà vérifiée : la réponse d'erreur porte les en-têtes CORS
+  const fail = (e: ApiError, allowedOrigin: string | null = null) =>
+    Object.assign(e, { ctx: { orgId: k.organization_id as string, keyId: k.id as string, allowedOrigin } });
   if (k.revoked_at) throw fail(new ApiError(401, "API_KEY_REVOKED", "Cette clé API a été révoquée."));
   if (k.expires_at && new Date(k.expires_at).getTime() < Date.now()) throw fail(new ApiError(401, "API_KEY_EXPIRED", "Cette clé API a expiré."));
   if (!org || org.status !== "active") throw fail(new ApiError(403, "ORGANIZATION_INACTIVE", "Organisation suspendue ou archivée."));
@@ -95,24 +144,62 @@ export async function authenticate(req: Request, scope: string): Promise<ApiCont
   const limits = { ...(org.plan_id == null ? NO_PLAN_LIMITS : (plan?.limits ?? {})), ...(org.limits_override ?? {}) };
   if (!limits.api_access) throw fail(new ApiError(403, "PLAN_FEATURE_API", "L'API n'est pas incluse dans l'offre de cette organisation."));
 
-  // Clé « navigateur » : lisible par tout visiteur du site → création de course seule, depuis une origine listée
+  // Clé « navigateur » : lisible par tout visiteur du site → portées BROWSER_KEY_SCOPES seulement (création de courses
+  // et devis), depuis une origine listée, avec des limites par IP
   const allowedOrigins = (k.allowed_origins ?? []) as string[];
   const browser = allowedOrigins.length > 0;
-  if (browser && scope !== "rides:create") {
-    throw fail(new ApiError(403, "INSUFFICIENT_SCOPE", "Clé utilisée depuis le navigateur (origines autorisées) : seule la création de courses est permise."));
-  }
-  if (browser && (!origin || !allowedOrigins.includes(origin))) {
-    throw fail(new ApiError(403, "ORIGIN_NOT_ALLOWED", "Origine non autorisée pour cette clé."));
+  let allowedOrigin: string | null = null;
+  if (browser) {
+    if (!isBrowserScope(scope)) throw fail(new ApiError(403, "INSUFFICIENT_SCOPE", BROWSER_SCOPE_MESSAGE));
+    if (!origin || !allowedOrigins.includes(origin)) {
+      throw fail(new ApiError(403, "ORIGIN_NOT_ALLOWED", "Origine non autorisée pour cette clé."));
+    }
+    allowedOrigin = origin;
+    const bucket = ipBucket(ip);
+    const byIp = await rateLimitAll(
+      BROWSER_IP_LIMITS[scope].map((l) => ({ key: `api:ip:${l.id}:${k.organization_id}:${bucket}`, limit: l.limit, windowSec: l.windowSec })),
+    );
+    if (!byIp.ok) {
+      throw fail(
+        new ApiError(429, "RATE_LIMITED", "Trop de demandes depuis cette adresse : réessayez plus tard.", undefined, retryAfter(byIp.resetAt)),
+        allowedOrigin,
+      );
+    }
   }
 
   const rl = await rateLimit(`api:${k.id}`, k.rate_limit_per_minute, 60);
   const rate = { limit: rl.limit, remaining: rl.remaining, resetAt: rl.resetAt };
-  if (!rl.ok) throw fail(new ApiError(429, "RATE_LIMITED", "Trop de requêtes pour cette clé.", undefined, retryAfter(rl.resetAt)));
-  const allowedOrigin = origin && allowedOrigins.includes(origin) ? origin : null;
+  if (!rl.ok) throw fail(new ApiError(429, "RATE_LIMITED", "Trop de requêtes pour cette clé.", undefined, retryAfter(rl.resetAt)), allowedOrigin);
   return {
-    requestId, startedAt, origin, allowedOrigin, ip: clientIpOf(req),
-    orgId: k.organization_id, orgTimezone: org.timezone ?? "Europe/Paris", keyId: k.id, scopes: k.scopes, rate, browser,
+    requestId, startedAt, origin, allowedOrigin, ip,
+    orgId: k.organization_id, orgTimezone: org.timezone ?? "Europe/Paris", orgCurrency: org.currency || "EUR",
+    keyId: k.id, scopes: k.scopes, rate, browser,
   };
+}
+
+/**
+ * Clé « navigateur » : réservations par téléphone du client (BROWSER_PHONE_LIMIT), 429 + Retry-After au-delà. Clé
+ * serveur : aucune limite par téléphone (son seul débit).
+ */
+export async function limitBrowserPhone(ctx: ApiContext, phone: string) {
+  if (!ctx.browser) return;
+  const r = await rateLimit(`api:phone:${ctx.orgId}:${phone}`, BROWSER_PHONE_LIMIT.limit, BROWSER_PHONE_LIMIT.windowSec);
+  if (!r.ok) {
+    throw new ApiError(429, "RATE_LIMITED", "Trop de réservations pour ce numéro de téléphone : réessayez plus tard.", undefined, retryAfter(r.resetAt));
+  }
+}
+
+/**
+ * Le tenant vient EXCLUSIVEMENT de la clé API : un champ d'organisation dans le corps est refusé (403) et tracé dans
+ * l'audit (path : route concernée, absent pour POST /rides).
+ */
+export async function rejectTenantFields(ctx: ApiContext, body: unknown, path?: string) {
+  if (!body || typeof body !== "object" || !TENANT_FIELDS.some((f) => f in (body as Record<string, unknown>))) return;
+  await createAdminClient().from("audit_logs").insert({
+    organization_id: ctx.orgId, actor_type: "api", action: "security.tenant_field_rejected", entity_type: "api_keys",
+    entity_id: ctx.keyId, severity: "warning", ip: ctx.ip, metadata: path ? { request_id: ctx.requestId, path } : { request_id: ctx.requestId },
+  } as never);
+  throw new ApiError(403, "FORBIDDEN_TENANT_FIELD", "organization_id ne peut pas être fourni : la clé API détermine l'organisation.");
 }
 
 function baseHeaders(ctx: Partial<ApiContext> & { requestId: string }) {
@@ -124,6 +211,7 @@ function baseHeaders(ctx: Partial<ApiContext> & { requestId: string }) {
   }
   if (ctx.allowedOrigin) {
     h["Access-Control-Allow-Origin"] = ctx.allowedOrigin;
+    h["Access-Control-Expose-Headers"] = EXPOSED_HEADERS;
     h["Vary"] = "Origin";
   }
   return h;

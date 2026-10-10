@@ -1,11 +1,11 @@
-import { TENANT_FIELDS, WEBHOOK_FIELD_ERROR_CODES, fieldErrors, webhookUpsertSchema } from "@rydar/shared";
-import { ApiError, handle, readJson } from "@/lib/api/v1";
+import { WEBHOOK_FIELD_ERROR_CODES, fieldErrors, webhookUpsertSchema } from "@rydar/shared";
+import { ApiError, handle, readJson, rejectTenantFields } from "@/lib/api/v1";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { WEBHOOK_ENDPOINT_SELECT, webhookRpc } from "@/lib/webhooks";
 
 export const dynamic = "force-dynamic";
 // Pas d'OPTIONS/CORS : gestion des webhooks depuis un serveur seulement (une clé « navigateur » est refusée par
-// authenticate(), seule la création de courses lui est permise).
+// authenticate(), seules la création de courses et les devis lui sont permis : BROWSER_KEY_SCOPES).
 
 const SCOPE = "webhooks:manage";
 
@@ -30,13 +30,7 @@ export async function POST(req: Request) {
   return handle(req, SCOPE, async (ctx) => {
     const body = await readJson(req, 8_192);
     // Le tenant vient EXCLUSIVEMENT de la clé API (même règle que POST /rides).
-    if (body && typeof body === "object" && TENANT_FIELDS.some((f) => f in (body as Record<string, unknown>))) {
-      await createAdminClient().from("audit_logs").insert({
-        organization_id: ctx.orgId, actor_type: "api", action: "security.tenant_field_rejected", entity_type: "api_keys",
-        entity_id: ctx.keyId, severity: "warning", ip: ctx.ip, metadata: { request_id: ctx.requestId, path: "/api/v1/webhooks" },
-      } as never);
-      throw new ApiError(403, "FORBIDDEN_TENANT_FIELD", "organization_id ne peut pas être fourni : la clé API détermine l'organisation.");
-    }
+    await rejectTenantFields(ctx, body, "/api/v1/webhooks");
     const parsed = webhookUpsertSchema.safeParse(body);
     if (!parsed.success) {
       // Un seul champ en cause (url, events, secret) : même code que la vérification en base
