@@ -15,8 +15,9 @@ export async function setBookingSitesEnabled(enabled: boolean): Promise<Result> 
   if (error) return { ok: false, error: actionError(error, "Enregistrement impossible.") };
   const res = (data ?? {}) as { ok?: boolean; message?: string; enabled?: boolean; changed?: boolean };
   if (!res.ok) return { ok: false, error: res.message ?? "Enregistrement impossible." };
-  // Menu de tous les tableaux de bord, éditeur du mini-site, offres
+  // Menu de tous les tableaux de bord, éditeur du mini-site, offres, réglages de la plateforme (interrupteur)
   revalidatePath("/admin/plans");
+  revalidatePath("/admin/reglages");
   revalidatePath("/dashboard", "layout");
   return { ok: true, enabled: res.enabled === true, changed: res.changed === true };
 }

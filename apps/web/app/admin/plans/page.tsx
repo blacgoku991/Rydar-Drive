@@ -1,10 +1,11 @@
-import { formatPrice, formatRelative } from "@rydar/shared";
+import { formatPrice } from "@rydar/shared";
 import { Check, X } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { PlanEditor } from "@/components/admin/admin-widgets";
-import { BookingSitesSwitchCard } from "@/components/admin/booking-sites-switch";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Callout } from "@/components/ui/callout";
 import { requireSuperAdmin } from "@/lib/auth";
 
 export const metadata: Metadata = { title: "Offres" };
@@ -20,32 +21,35 @@ const SITE_ROWS = new Set(["booking_site", "custom_domain"]);
 
 export default async function PlansPage() {
   const session = await requireSuperAdmin();
-  const [{ data: plans }, { data: counts }, { data: platform }, sites] = await Promise.all([
+  const [{ data: plans }, { data: counts }, { data: platform }] = await Promise.all([
     session.supabase.from("plans").select("*").order("sort_order"),
     session.supabase.from("organizations").select("plan_id").neq("status", "archived"),
-    // Interrupteur plateforme des mini-sites (lecture RLS du super admin) ; absent = coupé, comme la base
-    session.supabase.from("platform_settings").select("booking_sites_enabled, updated_at").maybeSingle(),
-    // Mini-sites activés par une centrale ACTIVE (réglage conservé pendant une coupure) : seuls ceux-là sont servis
-    // (resolve_booking_host, /book) ; centrales suspendues ou archivées non comptées
-    session.supabase
-      .from("booking_sites")
-      .select("organization_id, org:organizations!inner(status)", { count: "exact", head: true })
-      .eq("enabled", true)
-      .eq("org.status", "active"),
+    // Interrupteur plateforme des mini-sites (lecture RLS du super admin ; il se règle dans « Réglages de la
+    // plateforme ») : mention « coupé » des options qu'il retire ; absent = coupé, comme la base
+    session.supabase.from("platform_settings").select("booking_sites_enabled").maybeSingle(),
   ]);
-  const switchState = (platform ?? null) as { booking_sites_enabled: boolean; updated_at: string } | null;
-  const sitesOff = switchState?.booking_sites_enabled !== true;
+  const sitesOff = (platform as { booking_sites_enabled: boolean } | null)?.booking_sites_enabled !== true;
   const usage = new Map<string, number>();
   for (const c of counts ?? []) usage.set(c.plan_id, (usage.get(c.plan_id) ?? 0) + 1);
   return (
     <>
       <PageHeader eyebrow="Plateforme" title="Offres & limites" description="Les limites sont appliquées en base (triggers) : impossible de les contourner côté client." actions={<PlanEditor plan={null} />} />
-      <PageBody>
-        <BookingSitesSwitchCard
-          enabled={!sitesOff}
-          configured={sites.error ? null : (sites.count ?? 0)}
-          updatedLabel={switchState?.updated_at ? formatRelative(switchState.updated_at) : null}
-        />
+      <PageBody className="space-y-6">
+        {/* Explique la mention « coupé » des cartes ; l'interrupteur est dans Réglages de la plateforme */}
+        {sitesOff && (
+          <Callout
+            tone="info"
+            title="Mini-sites coupés pour toute la plateforme"
+            action={
+              <Link href="/admin/reglages" prefetch={false} className="inline-flex min-h-11 items-center text-[13px] font-medium text-brand hover:underline sm:min-h-0">
+                Réglages de la plateforme
+              </Link>
+            }
+          >
+            Les options «&nbsp;Mini-site&nbsp;» et «&nbsp;Domaine personnalisé&nbsp;» des offres ne sont servies nulle part tant qu&apos;ils
+            sont coupés.
+          </Callout>
+        )}
         <div className="grid gap-4 lg:grid-cols-3">
           {(plans ?? []).map((p: any) => (
             <div key={p.id} className={`surface rounded-2xl p-6 ${p.highlighted ? "border-brand/40" : ""}`}>

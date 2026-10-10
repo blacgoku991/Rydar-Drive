@@ -1,5 +1,6 @@
 import { formatRelative } from "@rydar/shared";
 import type { Metadata } from "next";
+import { SupervisionTabs } from "@/components/admin/supervision-tabs";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -30,7 +31,9 @@ export default async function AdminNotificationsPage() {
   const failures = n(failed);
   return (
     <>
-      <PageHeader eyebrow="Supervision" title="Notifications push" description="File d'envoi (outbox transactionnelle) livrée par le worker : Expo / FCM / APNs." />
+      <PageHeader eyebrow="Supervision" title="Notifications push" description="File d'envoi (outbox transactionnelle) livrée par le worker : Expo / FCM / APNs.">
+        <SupervisionTabs current="notifications" />
+      </PageHeader>
       <PageBody className="space-y-6">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <StatCard label="Envoyées 24 h" value={n(sent) ?? "—"} tone="brand" />

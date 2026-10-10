@@ -3,17 +3,15 @@ import { AlarmClock, Ban, Banknote, CircleDollarSign, HandCoins, Inbox, Network,
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
-import { BillingCard } from "@/components/platform-fees/admin-billing";
-import { PlatformWhatsAppCard } from "@/components/platform-fees/admin-whatsapp";
-import type { WhatsAppRow } from "@/components/whatsapp/whatsapp-card";
 import { PlatformLive } from "@/components/platform-fees/admin-platform-live";
 import { Metric } from "@/components/platform-fees/admin-platform-metric";
 import { CentralesTable, PaymentsToConfirm, PendingReductions } from "@/components/platform-fees/admin-platform-sections";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
 
-export const metadata: Metadata = { title: "Frais plateforme" };
+export const metadata: Metadata = { title: "Frais Rydar" };
 export const dynamic = "force-dynamic";
 
 const RULES = [
@@ -30,14 +28,8 @@ const RULES = [
 
 export default async function PlatformFeesPage() {
   const session = await requireSuperAdmin();
-  const [{ data, error }, { data: whatsapp }] = await Promise.all([
-    session.supabase.rpc("admin_platform_overview"),
-    // RLS : super admin (le jeton d'accès n'est jamais lisible)
-    session.supabase
-      .from("platform_whatsapp")
-      .select("phone_number_id, display_phone, verified_name, template, language, enabled, sent_count, last_sent_at, last_error, last_error_at")
-      .maybeSingle(),
-  ]);
+  // Coordonnées de paiement de Rydar et WhatsApp de Rydar : page « Réglages de la plateforme » (/admin/reglages)
+  const { data, error } = await session.supabase.rpc("admin_platform_overview");
   const o = (data ?? null) as AdminPlatformOverview | null;
   const rows = o?.organizations ?? [];
   const t = o?.totals;
@@ -49,12 +41,12 @@ export default async function PlatformFeesPage() {
     <>
       <PageHeader
         eyebrow="Plateforme"
-        title="Frais plateforme"
+        title="Frais Rydar"
         description="Ce que les centrales et les flottes doivent régler à Rydar : frais de chaque course terminée, paiements déclarés à confirmer, retards et relances."
         actions={
           <Button asChild variant="secondary" size="sm">
             <Link href="/admin/centrales" prefetch={false}>
-              <Network /> Centrales
+              <Network /> Commissions des centrales
             </Link>
           </Button>
         }
@@ -63,6 +55,21 @@ export default async function PlatformFeesPage() {
         {error && (
           <p className="rounded-xl border border-red/25 bg-red/[0.07] px-4 py-3 text-[13px] text-red">Frais plateforme indisponibles&nbsp;: {error.message}</p>
         )}
+        {/* Coordonnées absentes : vos clients ne savent pas comment payer (elles se règlent dans Réglages de la plateforme) */}
+        {o && !(o.billing.iban || o.billing.payment_link) && (
+          <Callout
+            tone="warning"
+            title="Vos clients ne voient aucune coordonnée de paiement"
+            action={
+              <Link href="/admin/reglages" prefetch={false} className="inline-flex min-h-11 items-center text-[13px] font-medium text-brand hover:underline sm:min-h-0">
+                Réglages de la plateforme
+              </Link>
+            }
+          >
+            Renseignez au moins un IBAN ou un lien de paiement.
+          </Callout>
+        )}
+
         {t && (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Metric
@@ -137,11 +144,7 @@ export default async function PlatformFeesPage() {
         </Card>
 
         {o && (
-          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-            <div className="space-y-6">
-              <BillingCard billing={o.billing} />
-              <PlatformWhatsAppCard row={(whatsapp ?? null) as WhatsAppRow | null} />
-            </div>
+          <div className="max-w-4xl">
             <Card>
               <CardHeader title="Règles" description="Appliquées par la base de données, pour chaque centrale et chaque flotte." />
               <CardBody className="pt-4">

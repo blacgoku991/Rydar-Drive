@@ -159,6 +159,7 @@ export async function savePlatformWhatsApp(input: z.input<typeof whatsappConfigS
   const session = await requireSuperAdmin();
   const res = await saveWhatsApp(null, session.user.id, input);
   if (res.ok) revalidatePath("/admin/frais");
+  if (res.ok) revalidatePath("/admin/reglages");
   return res;
 }
 
@@ -166,6 +167,7 @@ export async function removePlatformWhatsApp(): Promise<WhatsAppActionResult> {
   const session = await requireSuperAdmin();
   const res = await removeWhatsApp(null, session.user.id);
   if (res.ok) revalidatePath("/admin/frais");
+  if (res.ok) revalidatePath("/admin/reglages");
   return res;
 }
 
@@ -182,6 +184,7 @@ export async function testPlatformWhatsApp(to: string): Promise<WhatsAppActionRe
     metadata: { to: digits ? `…${digits.slice(-2)}` : null, ok: res.ok },
   });
   revalidatePath("/admin/frais");
+  revalidatePath("/admin/reglages");
   return res;
 }
 
@@ -210,6 +213,7 @@ export async function updatePlatformBilling(input: z.input<typeof platformBillin
     p_payment_link: v.paymentLink,
     p_instructions: v.instructions,
   });
+  if (res.ok) revalidatePath("/admin/reglages");
   // Erreur de la RPC rattachée à un champ : « IBAN : IBAN invalide. »
   if (!res.ok && res.fieldErrors) {
     const [field] = Object.keys(res.fieldErrors);

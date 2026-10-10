@@ -1,7 +1,7 @@
 "use client";
-// Super admin : actions sur les demandes de contact (statut et note, réponse par e-mail, suppression, nouvel essai
-// d'un e-mail en échec, relance des e-mails en attente, e-mail de test) et suivi de la file d'envoi. Actions serveur :
-// app/admin/contacts/actions.ts.
+// Super admin : actions sur les demandes de contact (statut et note, réponse par e-mail, suppression) et sur la file
+// d'envoi (nouvel essai d'un e-mail en échec, relance des e-mails en attente, e-mail de test, suivi : Supervision ›
+// E-mails, /admin/emails). Actions serveur : app/admin/contacts/actions.ts.
 import { CONTACT_LIMITS, CONTACT_STATUS_META, CONTACT_STATUSES, type ContactStatus } from "@rydar/shared";
 import { RotateCw, Save, Send, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -214,7 +214,7 @@ export function TestEmailForm({ defaultTo }: { defaultTo: string }) {
           return void toast.error(res.error);
         }
         setError(undefined);
-        toast.success("E-mail de test mis en file : suivez son état ci-dessus");
+        toast.success("E-mail de test mis en file d'envoi", { description: "Suivez son état dans « Derniers e-mails »." });
         router.refresh();
       }),
     );

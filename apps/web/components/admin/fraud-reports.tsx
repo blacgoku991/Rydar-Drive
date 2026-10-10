@@ -1,5 +1,6 @@
 "use client";
-// Super admin : signalements de fraude envoyés par les centrales → bannissement de toute la plateforme.
+// Super admin (page « Signalements de fraude », /admin/signalements) : signalements envoyés par les centrales →
+// bannissement de toute la plateforme, levée, ou classement sans suite. Lecture : fraud-data.ts.
 import {
   BAN_CATEGORY_META, DRIVER_STATUS_META, IDENTITY_KIND_LABELS, formatDate, formatRelative, isPlatformBanCategory, type FraudReport,
 } from "@rydar/shared";
@@ -11,7 +12,7 @@ import { toast } from "sonner";
 import { dismissFraudReport, fraudReportMatches, liftPlatformBan, platformBanReport } from "@/app/admin/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/misc";
 import { runAction } from "@/lib/run-action";
@@ -29,7 +30,7 @@ export type AdminFraudReport = FraudReport & {
 export const REPORT_STATUS_META: Record<FraudReport["status"], { label: string; tone: "amber" | "red" | "neutral" | "blue" }> = {
   open: { label: "À examiner", tone: "amber" },
   platform_banned: { label: "Banni de la plateforme", tone: "red" },
-  dismissed: { label: "Classé", tone: "neutral" },
+  dismissed: { label: "Classé sans suite", tone: "neutral" },
   lifted: { label: "Bannissement levé", tone: "blue" },
 };
 
@@ -51,7 +52,7 @@ export function IdentityChips({ identities }: { identities: FraudReport["identit
   return (
     <ul className="flex flex-wrap gap-1.5">
       {identities.map((i) => (
-        <li key={`${i.kind}-${i.hash}`} className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white/[0.03] px-2 py-1 text-[11.5px]">
+        <li key={`${i.kind}-${i.hash}`} className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white/[0.03] px-2 py-1 text-[12px]">
           <span className="text-fg-subtle">{IDENTITY_KIND_LABELS[i.kind] ?? i.kind}</span>
           <span className="num font-medium text-fg">{i.hint ?? "••••"}</span>
         </li>
@@ -112,14 +113,21 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
       } else {
         const res = await dismissFraudReport(report.id, text);
         if (!res.ok) return void toast.error(res.error);
-        toast.success("Signalement classé", { description: "Le bannissement reste limité à la centrale." });
+        toast.success("Signalement classé sans suite", { description: "Le bannissement reste limité à la centrale." });
       }
       setPending(null);
       router.refresh();
     }));
 
   if (!reports.length) {
-    return <EmptyState icon={<ShieldCheck />} title="Aucun signalement" description="Les centrales signalent ici les chauffeurs bannis pour fraude ou faux document : vous décidez d'un bannissement sur toute la plateforme." />;
+    return (
+      <EmptyState
+        size="compact"
+        icon={<ShieldCheck />}
+        title="Aucun signalement à examiner."
+        description={"Quand une centrale bannit un chauffeur pour fraude ou faux document, elle peut le signaler ici\u00a0: vous décidez alors d'un bannissement sur toute la plateforme."}
+      />
+    );
   }
 
   const sorted = [...reports].sort(
@@ -138,11 +146,11 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
           const eligible = isPlatformBanCategory(r.category);
           return (
             <li key={r.id} className={cn("px-5 py-4", r.status === "open" && "bg-amber/[0.03]")}>
-              {i === firstClosed && firstClosed > 0 && <p className="-mt-1 mb-3 text-[11.5px] font-medium uppercase tracking-[0.08em] text-fg-subtle">Traités</p>}
+              {i === firstClosed && firstClosed > 0 && <p className="-mt-1 mb-3 text-[12px] font-medium uppercase tracking-[0.08em] text-fg-subtle">Traités</p>}
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={meta.tone} pulse={r.status === "open"}>{meta.label}</Badge>
+                    <Badge tone={meta.tone}>{meta.label}</Badge>
                     <p className="text-[14px] font-semibold">{r.driver_label}</p>
                     <Badge tone="neutral" dot={false}>{BAN_CATEGORY_META[r.category]?.label ?? r.category}</Badge>
                   </div>
@@ -187,17 +195,17 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
                         </Button>
                       ) : (
                         <p className="max-w-[240px] text-[12px] text-fg-muted">
-                          Ni fraude ni faux document&nbsp;: pas d&apos;interdiction sur toute la plateforme, classez le signalement.
+                          Ni fraude ni faux document&nbsp;: pas de bannissement sur toute la plateforme, classez le signalement sans suite.
                         </p>
                       )}
                       <Button variant="outline" size="sm" onClick={() => open(r, "dismiss")}>
-                        <Archive /> Classer
+                        <Archive /> Classer sans suite
                       </Button>
                     </>
                   )}
                   {r.status === "platform_banned" && (
                     <Button variant="outline" size="sm" onClick={() => open(r, "lift")}>
-                      <Undo2 /> Lever
+                      <Undo2 /> Lever le bannissement
                     </Button>
                   )}
                   {(r.status === "dismissed" || r.status === "lifted") && eligible && (
@@ -217,10 +225,10 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
           <DialogContent
             title={
               pending.kind === "ban"
-                ? `Bannir ${pending.report.driver_label} de toute la plateforme ?`
+                ? `Bannir ${pending.report.driver_label} de toute la plateforme\u00a0?`
                 : pending.kind === "dismiss"
-                  ? "Classer ce signalement ?"
-                  : "Lever le bannissement plateforme ?"
+                  ? "Classer ce signalement sans suite\u00a0?"
+                  : "Lever le bannissement plateforme\u00a0?"
             }
             description={
               pending.kind === "ban"
@@ -234,7 +242,7 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
               <ul className="mb-4 space-y-1.5 text-[12.5px] text-fg-muted">
                 <li className="flex gap-2"><span className="text-red">•</span> Identités refusées partout : <IdentityCount report={pending.report} /></li>
                 <li className="flex gap-2"><span className="text-red">•</span> Fiches de sa centrale qui les partagent : suspendues, retirées des offres et déconnectées ; fiches d&apos;autres centrales : seulement celles que vous cochez.</li>
-                <li className="flex gap-2"><span className="text-red">•</span> Connexion bloquée au niveau du compte (Auth), sauf pour un compte qui gère aussi une centrale ; réversible avec « Lever ».</li>
+                <li className="flex gap-2"><span className="text-red">•</span> Connexion bloquée (identifiants du chauffeur), sauf pour un compte qui gère aussi une centrale&nbsp;; réversible avec «&nbsp;Lever le bannissement&nbsp;».</li>
               </ul>
             )}
             {pending.kind === "ban" && (
@@ -281,22 +289,22 @@ export function FraudReportsList({ reports }: { reports: AdminFraudReport[] }) {
                 Je confirme le bannissement définitif de ce chauffeur sur toute la plateforme.
               </label>
             )}
-            <div className="mt-6 flex justify-end gap-2">
-              <Button variant="ghost" disabled={busy} onClick={() => setPending(null)}>Annuler</Button>
+            {/* « Retour » ferme sans rien faire (inactif pendant l'envoi) ; l'action nomme ce qu'elle fait */}
+            <DialogFooter backDisabled={busy}>
               {pending.kind === "ban" ? (
                 <Button variant="danger" loading={busy} disabled={!confirmed || previewLoading || text.trim().length < BAN_NOTE_MIN} onClick={run}>
-                  <ShieldBan /> Bannir partout
+                  <ShieldBan /> Bannir de toute la plateforme
                 </Button>
               ) : pending.kind === "dismiss" ? (
                 <Button variant="primary" loading={busy} onClick={run}>
-                  <Archive /> Classer
+                  <Archive /> Classer sans suite
                 </Button>
               ) : (
                 <Button variant="primary" loading={busy} onClick={run}>
                   <Undo2 /> Lever le bannissement
                 </Button>
               )}
-            </div>
+            </DialogFooter>
           </DialogContent>
         )}
       </Dialog>

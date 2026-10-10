@@ -1,13 +1,15 @@
 "use client";
-// Super admin : coordonnées de paiement de Rydar, affichées aux centrales avec le montant et la référence à indiquer.
+// Super admin (Réglages de la plateforme) : coordonnées de paiement de Rydar, affichées aux clients qui doivent des frais
+// Rydar (centrales et flottes) avec le montant et la référence à indiquer.
 import { formatIban, settlementPaymentLink, type AdminPlatformOverview } from "@rydar/shared";
-import { AlertTriangle, Check, Copy, Landmark, Pencil } from "lucide-react";
+import { Check, Copy, Landmark, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { updatePlatformBilling } from "@/app/admin/frais/actions";
 import { Button } from "@/components/ui/button";
+import { Callout } from "@/components/ui/callout";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { submitWith } from "@/lib/utils";
 import { ago } from "./admin-platform-format";
@@ -57,7 +59,7 @@ export function BillingCard({ billing }: { billing: Billing }) {
       <CardHeader
         title="Coordonnées de paiement de Rydar"
         icon={<Landmark />}
-        description="Affichées aux centrales avec le montant dû et leur référence de virement."
+        description="Affichées à vos clients qui doivent des frais Rydar, avec le montant dû et leur référence de virement."
         action={
           <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
             <Pencil /> Modifier
@@ -66,10 +68,9 @@ export function BillingCard({ billing }: { billing: Billing }) {
       />
       <CardBody className="pt-3">
         {!configured && (
-          <p className="mb-3 flex items-start gap-2 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12.5px] text-fg-muted">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber" />
-            Les centrales ne voient aucune coordonnée&nbsp;: renseignez au moins un IBAN ou un lien de paiement.
-          </p>
+          <Callout tone="warning" className="mb-3">
+            Vos clients ne voient aucune coordonnée de paiement&nbsp;: renseignez au moins un IBAN ou un lien de paiement.
+          </Callout>
         )}
         <dl className="divide-y divide-line">
           <Row label="Bénéficiaire" value={billing.payee_name} />
@@ -83,7 +84,7 @@ export function BillingCard({ billing }: { billing: Billing }) {
             Exemple pour 365&nbsp;€&nbsp;: <span className="mono text-fg-muted">{example}</span>
           </p>
         )}
-        <p className="mt-3 text-[11.5px] text-fg-subtle" suppressHydrationWarning>
+        <p className="mt-3 text-[12px] text-fg-subtle" suppressHydrationWarning>
           Modifié {ago(billing.updated_at)}
         </p>
       </CardBody>
@@ -108,7 +109,7 @@ function BillingDialog({ open, onOpenChange, billing }: { open: boolean; onOpenC
       <DialogContent
         size="md"
         title="Coordonnées de paiement"
-        description="Les organisations les voient dans « Encaissements » (centrale) ou « Frais Rydar » (flotte), avec le montant à régler et leur référence."
+        description={"Vos clients les voient dans «\u00a0Encaissements\u00a0» (centrale) ou «\u00a0Frais Rydar\u00a0» (flotte), avec le montant à régler et leur référence."}
       >
         <form
           noValidate
@@ -207,14 +208,11 @@ function BillingDialog({ open, onOpenChange, billing }: { open: boolean; onOpenC
               aria-invalid={!!errors.instructions || undefined}
             />
           </Field>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Annuler
-            </Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="primary" loading={pending}>
               <Check /> Enregistrer
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

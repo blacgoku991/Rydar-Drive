@@ -570,6 +570,7 @@ export async function platformBanReport(
     },
   });
   revalidatePath("/admin/centrales");
+  revalidatePath("/admin/signalements");
   return {
     ok: true, drivers: res.drivers ?? 0, identities: res.identities ?? 0, identitiesSkipped: res.identities_skipped ?? 0,
     extended: res.extended ?? 0, emails: res.emails ?? 0, message: res.message ?? "Banni de toute la plateforme.",
@@ -598,6 +599,7 @@ export async function dismissFraudReport(reportId: string, reviewNote?: string):
     metadata: { driver: report?.driver_label, note: note(reviewNote) },
   });
   revalidatePath("/admin/centrales");
+  revalidatePath("/admin/signalements");
   return { ok: true, message: res.message ?? "Signalement classé." };
 }
 
@@ -625,6 +627,7 @@ export async function liftPlatformBan(reportId: string, reason?: string): Promis
     metadata: { driver: report?.driver_label, identities: res.identities ?? 0, auth_unbanned: authLifted, user_ids: userIds, reason: note(reason) },
   });
   revalidatePath("/admin/centrales");
+  revalidatePath("/admin/signalements");
   return { ok: true, identities: res.identities ?? 0, accounts: userIds.length, message: res.message ?? "Bannissement plateforme levé." };
 }
 

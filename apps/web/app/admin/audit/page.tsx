@@ -1,6 +1,7 @@
 import { formatRelative } from "@rydar/shared";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SupervisionTabs } from "@/components/admin/supervision-tabs";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -19,7 +20,9 @@ export default async function AdminAuditPage({ searchParams }: { searchParams: P
   const name = new Map((orgs ?? []).map((o) => [o.id, o.name]));
   return (
     <>
-      <PageHeader eyebrow="Supervision" title="Sécurité & audit" description="Toute action sensible est tracée : création, suspension, clés API, tentatives d'accès inter-tenant." />
+      <PageHeader eyebrow="Supervision" title="Sécurité & audit" description="Toute action sensible est tracée : création, suspension, clés API, tentatives d'accès inter-tenant.">
+        <SupervisionTabs current="audit" />
+      </PageHeader>
       <PageBody className="space-y-4">
         <div className="flex gap-1 rounded-xl border border-line bg-ink-850 p-1 sm:w-fit">
           {[["all", "Tout"], ["security", "Alertes de sécurité"]].map(([k, l]) => (

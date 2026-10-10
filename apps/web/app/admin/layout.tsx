@@ -3,10 +3,11 @@ import { requireSuperAdmin } from "@/lib/auth";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await requireSuperAdmin();
-  // Pastilles (lecture super admin via RLS) : signalements de fraude à examiner ; frais plateforme à confirmer ;
-  // suppressions de compte en échec ou en retard (compteurs de admin_account_deletions, une seule ligne lue) ;
-  // nouvelles demandes du formulaire de contact ; réseau partagé : organisations à valider (demande ou validation
-  // perdue, un sens toujours demandé)
+  // Pastilles du menu (lecture super admin via RLS ; libellés : adminNav de components/shell/admin-shell.tsx) :
+  // signalements de fraude à examiner ; frais Rydar à confirmer (paiements déclarés, baisses de frais) ; suppressions
+  // de compte en échec ou en retard (compteurs de admin_account_deletions, une seule ligne lue) ; nouvelles demandes
+  // du formulaire de contact ; réseau partagé : organisations à valider (demande ou validation perdue, un sens
+  // toujours demandé)
   const [reports, payments, reductions, deletions, contacts, network] = await Promise.all([
     session.supabase.from("fraud_reports").select("id", { count: "exact", head: true }).eq("status", "open"),
     session.supabase.from("platform_payments").select("id", { count: "exact", head: true }).eq("status", "declared"),

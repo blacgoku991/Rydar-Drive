@@ -1,5 +1,6 @@
 import { formatRelative, formatRideDate, shortAddress } from "@rydar/shared";
 import type { Metadata } from "next";
+import { SupervisionTabs } from "@/components/admin/supervision-tabs";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { Card, CardHeader } from "@/components/ui/card";
 import { requireSuperAdmin } from "@/lib/auth";
@@ -18,7 +19,9 @@ export default async function AdminDispatchPage() {
   const name = new Map((orgs ?? []).map((o) => [o.id, o.name]));
   return (
     <>
-      <PageHeader eyebrow="Supervision" title="Dispatch & erreurs" description="Tous tenants confondus — 7 derniers jours." />
+      <PageHeader eyebrow="Supervision" title="Dispatch & erreurs" description="Tous tenants confondus — 7 derniers jours.">
+        <SupervisionTabs current="dispatch" />
+      </PageHeader>
       <PageBody className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
         <Card className="overflow-hidden">
           <CardHeader title="Avertissements & erreurs" description={`${events?.length ?? 0} événements`} />

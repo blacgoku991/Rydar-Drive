@@ -12,7 +12,7 @@ import { requireSuperAdmin } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = { title: "Rattacheurs" };
+export const metadata: Metadata = { title: "Clients" };
 export const dynamic = "force-dynamic";
 
 /** Filtres de la liste (?type=) : tous, ou les clients Flotte Privée seulement. */
@@ -43,7 +43,7 @@ export default async function OrganizationsPage({ searchParams }: { searchParams
     <>
       <PageHeader
         eyebrow="Plateforme"
-        title="Rattacheurs"
+        title="Clients"
         description="Chaque rattacheur est un tenant isolé (RLS) : données, chauffeurs, courses, API et mini-site."
         actions={
           <div className="flex flex-wrap gap-2">

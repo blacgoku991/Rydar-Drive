@@ -26,6 +26,8 @@ const emailSchema = z.string().trim().toLowerCase().max(254, "254 caractères au
 function refresh(id?: string) {
   revalidatePath("/admin/contacts");
   if (id) revalidatePath(`/admin/contacts/${id}`);
+  // Supervision › E-mails : file d'envoi (réponses, nouveaux essais, relances, tests, e-mails effacés avec leur demande)
+  revalidatePath("/admin/emails");
   // Pastille « Demandes de contact » de la barre latérale
   revalidatePath("/admin", "layout");
 }
