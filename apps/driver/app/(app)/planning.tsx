@@ -22,8 +22,8 @@ import { BigButton, hapticResult, Screen, ScreenHeader, Segmented, useFlash } fr
 import { alertDriverBlocked, alertTakeAfterCurrent, useDriver } from "@/hooks/driver-context";
 import { useNow } from "@/hooks/use-now";
 import {
-  agendaTitle, agendaViewOptions, calendarEntries, daySummaryText, defaultAgendaView, entriesByDay, entryTarget, entryView, listSections,
-  monthCells, periodLabel, periodNavLabels, shiftDay, takenText, todayIn, todoCards, todoCardView, weekRows,
+  agendaTitle, agendaViewOptions, calendarEntries, daySummaryText, declineBookingPrompt, defaultAgendaView, entriesByDay, entryTarget, entryView,
+  listSections, monthCells, periodLabel, periodNavLabels, shiftDay, takenText, todayIn, todoCards, todoCardView, weekRows,
   type AgendaEntry, type EntryTarget, type TodoCard,
 } from "@/lib/agenda-view";
 import { api, ApiError, refusalText, type AcceptResult, type AgendaRead } from "@/lib/api";
@@ -167,7 +167,11 @@ export default function Planning() {
     [loaded, privateFleet],
   );
   const byDay = useMemo(() => entriesByDay(entries, tz), [entries, tz]);
-  const week = useMemo(() => (view === "week" && loaded ? weekRows(day, byDay, { today, now, tz }) : null), [view, loaded, day, byDay, today, now, tz]);
+  // Montants : sa part (course de centrale ou partenaire) ou le prix, comme la vue Liste ; fiche du gérant : le prix
+  const week = useMemo(
+    () => (view === "week" && loaded ? weekRows(day, byDay, { today, now, tz, ownerDriver }) : null),
+    [view, loaded, day, byDay, today, now, tz, ownerDriver],
+  );
   const available = offers.filter((o) => o.mode === "fleet");
   // Flotte Privée : réservations à traiter (agenda + offres en attente) ; chevauchements avec ses courses confirmées
   const todo = useMemo(() => (privateFleet ? todoCards(unassigned, offers) : null), [privateFleet, unassigned, offers]);
@@ -246,14 +250,15 @@ export default function Planning() {
     after();
   }
 
-  /** Refuser (confirmation) : la réservation passe « Refusée », le site en est informé. */
+  /** Refuser (confirmation, comme l'écran d'offre) : la réservation passe « Refusée », le site en est informé. */
   function decline(c: TodoCard) {
     const offerId = c.offerId;
     if (!offerId || busyId) return;
-    Alert.alert(frTypo(`Refuser la réservation ${c.number} ?`), frTypo("Elle passera « Refusée » et votre site en sera informé."), [
+    const prompt = declineBookingPrompt(c.number);
+    Alert.alert(prompt.title, prompt.message, [
       { text: "Annuler", style: "cancel" },
       {
-        text: "Refuser",
+        text: prompt.confirm,
         style: "destructive",
         onPress: async () => {
           setBusyId(c.rideId);
@@ -456,8 +461,8 @@ export default function Planning() {
                   <Text style={styles.empty}>Aucune course ce jour-là.</Text>
                 ) : (
                   <>
-                    <Text style={styles.summary}>{daySummaryText(dayItems, now)}</Text>
-                    <DayTimeline day={day} items={dayItems} tz={tz} now={now} isToday={day === today} onOpen={openEntry} />
+                    <Text style={styles.summary}>{daySummaryText(dayItems, { now, ownerDriver })}</Text>
+                    <DayTimeline day={day} items={dayItems} tz={tz} now={now} isToday={day === today} ownerDriver={ownerDriver} onOpen={openEntry} />
                   </>
                 ))}
               {view === "week" &&
@@ -484,12 +489,12 @@ export default function Planning() {
                     <View style={styles.block}>
                       <View style={styles.dayHead}>
                         <Text style={styles.dayHeading} accessibilityRole="header">{periodLabel("day", day)}</Text>
-                        <Text style={styles.summary}>{daySummaryText(dayItems, now)}</Text>
+                        <Text style={styles.summary}>{daySummaryText(dayItems, { now, ownerDriver })}</Text>
                       </View>
                       {dayItems.length === 0 ? (
                         <Text style={styles.empty}>Aucune course ce jour-là.</Text>
                       ) : (
-                        dayItems.map((e) => <EntryRow key={e.id} v={entryView(e, { tz, now })} onPress={() => openEntry(entryTarget(e))} />)
+                        dayItems.map((e) => <EntryRow key={e.id} v={entryView(e, { tz, now, ownerDriver })} onPress={() => openEntry(entryTarget(e))} />)
                       )}
                     </View>
                   )}

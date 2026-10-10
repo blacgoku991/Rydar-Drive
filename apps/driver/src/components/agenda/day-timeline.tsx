@@ -1,7 +1,8 @@
 // Agenda, vue Jour : frise 0-24 h (64 px par heure) dans un défilement placé sur maintenant (aujourd'hui) ou 1 h avant
 // la 1re course ; blocs placés à l'heure de prise en charge, hauteur selon la durée estimée (30 min et 48 px au moins),
 // côte à côte quand ils se chevauchent (mention « Chevauchement »). Trait « maintenant » statique, recalculé par
-// l'horloge de l'écran (aucune animation). lib/agenda-view.ts : timelineBlocks, entryView.
+// l'horloge de l'écran (aucune animation). lib/agenda-view.ts : timelineBlocks, entryView (montant du lecteur d'écran :
+// sa part ou le prix, comme la vue Liste).
 import { useEffect, useMemo, useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import {
@@ -14,13 +15,15 @@ const GUTTER = 52;
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
 export function DayTimeline({
-  day, items, tz, now, isToday, onOpen,
+  day, items, tz, now, isToday, ownerDriver, onOpen,
 }: {
   day: string;
   items: readonly AgendaEntry[];
   tz: string;
   now: number;
   isToday: boolean;
+  /** Fiche du gérant : le prix de ses courses, jamais « sa part » (useDriver().ownerDriver) */
+  ownerDriver: boolean;
   onOpen: (target: EntryTarget) => void;
 }) {
   const blocks = useMemo(() => timelineBlocks(items, tz), [items, tz]);
@@ -55,7 +58,7 @@ export function DayTimeline({
       ))}
       <View style={styles.lane} pointerEvents="box-none">
         {blocks.map((b) => {
-          const v = entryView(b.item, { tz, now }, b.overlap);
+          const v = entryView(b.item, { tz, now, ownerDriver }, b.overlap);
           const roomy = b.height >= 64;
           return (
             <Pressable

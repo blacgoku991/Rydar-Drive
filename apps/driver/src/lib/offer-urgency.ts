@@ -1,6 +1,6 @@
-// Urgence d'une offre de course (ouverture plein écran, sonnerie, compte à rebours) et échéance de réponse d'une
-// réservation Flotte Privée (docs/FLOTTE-PRIVEE.md § 10.6). Module pur, sans dépendance native (offer-urgency.test.ts) :
-// il n'importe que @rydar/shared et des chemins relatifs.
+// Urgence d'une offre de course (ouverture plein écran, sonnerie, compte à rebours, écran sans « Plus tard ») et
+// échéance de réponse d'une réservation Flotte Privée (docs/FLOTTE-PRIVEE.md § 10.6). Module pur, sans dépendance
+// native (offer-urgency.test.ts) : il n'importe que @rydar/shared et des chemins relatifs.
 import { PRIVATE_FLEET_RING_WINDOW_S, type DriverOfferV2 } from "@rydar/shared";
 import { formatWhen, NBSP } from "./settlement-text";
 
@@ -44,6 +44,37 @@ export function isUrgentOffer(o: OfferTiming, ctx: UrgencyContext = {}): boolean
 export function shouldOpenOffer(o: OfferTiming, ctx: UrgencyContext & { onRide?: boolean } = {}): boolean {
   if (o.mode === "geo") return true;
   return !ctx.onRide && isUrgentOffer(o, ctx);
+}
+
+/** Comportement de l'écran d'offre (app/(app)/offer/[id].tsx). */
+export type OfferScreenMode = {
+  /** Réservation de son site (Flotte Privée) : « Nouvelle réservation » ; refus confirmé (elle passe « Refusée ») */
+  booking: boolean;
+  /** Sonnerie en boucle et compte à rebours (sinon un carillon et l'échéance de réponse) */
+  urgent: boolean;
+  /**
+   * Ni « Plus tard » ni retour Android : accepter, refuser ou laisser expirer. Offre GPS ou fenêtre de 2 min au plus
+   * (règle d'avant la Flotte Privée) ; une réservation urgente à plus longue fenêtre (15 min au plus) sonne et s'ouvre
+   * en plein écran, mais peut être différée : elle reste à traiter dans le bloc « À traiter » de l'agenda.
+   */
+  blocking: boolean;
+};
+
+/**
+ * Écran d'offre pour sa fenêtre de réponse `windowS` (anneau : de l'envoi, ou de la dernière prolongation du serveur,
+ * à l'échéance).
+ */
+export function offerScreenMode(
+  o: Pick<DriverOfferV2, "mode" | "expires_at" | "network">,
+  windowS: number,
+  ctx: UrgencyContext = {},
+): OfferScreenMode {
+  const timed = o.expires_at != null;
+  return {
+    booking: ctx.privateFleet === true && !o.network,
+    urgent: o.mode === "geo" || (timed && isUrgentWindow(windowS, ctx)),
+    blocking: o.mode === "geo" || (timed && isUrgentWindow(windowS)),
+  };
 }
 
 /** Valeur affichée au centre de l'anneau du compte à rebours. */

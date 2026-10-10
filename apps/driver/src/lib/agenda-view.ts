@@ -3,15 +3,17 @@
 // libellés (typographie française) et textes du lecteur d'écran. Comme network.ts, aucune dépendance native ni alias
 // « @/ » (agenda-view.test.ts sous Node) : @rydar/shared et chemins relatifs seulement. Jours civils et heures locales
 // par la logique commune de @rydar/shared (agenda.ts) : ni formatToParts, ni zonedTimeToUtc (Hermes), formateurs
-// mémorisés (dateTimeFormat), jamais « new Intl » au rendu.
+// mémorisés (dateTimeFormat), jamais « new Intl » au rendu. Montants : ceux de la vue Liste (sa part pour une course
+// de centrale ou partenaire, le prix sinon : entryAmountCents), jusque dans les totaux du jour et de la semaine.
 import {
   AGENDA_KIND_META, AGENDA_VIEWS, AGENDA_VIEW_LABELS, PRIVATE_FLEET_BOOKING_STATE_META, VEHICLE_CATEGORY_META,
   addDays, agendaKind, dateTimeFormat, dayHeading, dayLayout, daySummary, dayTitle, formatPrice, formatRideDate, formatTime,
   groupByDay, isCategoryCompatible, localIsoDay, minutesOfDay, monthGrid, monthTitle, overlaps, privateFleetTakeable,
   shortAddress, weekStart, weekTitle,
-  type AgendaBooking, type AgendaKind, type AgendaView, type DriverOfferV2, type PrivateFleetBookingState, type RideStatus,
-  type RideType, type Tone, type VehicleCategory,
+  type AgendaBooking, type AgendaKind, type AgendaView, type DriverOfferV2, type DriverRide, type DriverRideMoney,
+  type PrivateFleetBookingState, type RideStatus, type RideType, type Tone, type VehicleCategory,
 } from "@rydar/shared";
+import { rideMoneyView } from "./network";
 import { frTypo, NBSP } from "./settlement-text";
 
 // =============================================================================
@@ -31,11 +33,36 @@ export type AgendaEntry = {
   pickup_address: string;
   dropoff_address: string;
   estimated_duration_s?: number | null;
+  /** Prix de la course (brut) */
   price_cents: number | null;
   currency?: string | null;
+  /** Argent vu par le chauffeur (driver_ride_json) : sa part pour une course de centrale ou partenaire */
+  money?: DriverRideMoney | null;
+  /** Course partenaire (réseau partagé) ; null : course de sa propre organisation */
+  network?: DriverRide["network"];
   state?: PrivateFleetBookingState | null;
   offer_id?: string | null;
 };
+
+/** Montants de qui : fiche du gérant (Flotte Privée passée en centrale) ou non (useDriver().ownerDriver). */
+export type MoneyContext = { ownerDriver: boolean };
+
+/**
+ * Montant affiché d'un élément (ligne, frise, totaux du jour et de la semaine), comme dans la vue Liste (MyRideCard) :
+ * sa part pour une course de centrale ou partenaire (rideMoneyView sur driver_ride.money), le prix sinon ; fiche du
+ * gérant : le prix de ses propres courses (aucune commission, 20260924007700). Réservation encore sans chauffeur
+ * (`state`, Flotte Privée) : son prix.
+ */
+export function entryAmountCents(e: AgendaEntry, o: MoneyContext): number | null {
+  if (e.state || !e.money) return e.price_cents;
+  const v = rideMoneyView({ money: e.money, network: e.network ?? null, currency: e.currency || "EUR" }, o);
+  return v.kind === "plain" ? e.price_cents : v.gainCents;
+}
+
+/** Résumé d'un jour (daySummary de @rydar/shared) sur les montants affichés, jamais sur le prix brut d'une part. */
+function shownSummary(items: readonly AgendaEntry[], o: MoneyContext & { now: number }) {
+  return daySummary(items.map((i) => ({ ...i, price_cents: entryAmountCents(i, o) })), o.now);
+}
 
 /** Courses en cours ou à venir du chauffeur (confirmées) : chevauchements d'une réservation à confirmer. */
 const ACTIVE: readonly RideStatus[] = ["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "PASSENGER_ONBOARD", "IN_PROGRESS"];
@@ -122,9 +149,9 @@ export function periodNavLabels(view: AgendaView): { prev: string; next: string 
 // Résumés d'un jour
 // =============================================================================
 
-/** « 3 courses · 245 € » ; sans prix connu : « 2 courses » ; rien : « Aucune course ». */
-export function daySummaryText(items: readonly AgendaEntry[], now = Date.now()): string {
-  const s = daySummary(items, now);
+/** « 3 courses · 245 € » (montants affichés : sa part ou le prix) ; sans prix connu : « 2 courses » ; rien : « Aucune course ». */
+export function daySummaryText(items: readonly AgendaEntry[], o: MoneyContext & { now: number }): string {
+  const s = shownSummary(items, o);
   if (s.count === 0) return "Aucune course";
   const currency = items.find((i) => i.currency)?.currency ?? "EUR";
   return s.totalCents > 0 ? `${plural(s.count, "course", "courses")} · ${formatPrice(s.totalCents, currency)}` : plural(s.count, "course", "courses");
@@ -153,6 +180,18 @@ export function dayA11y(day: string, items: readonly AgendaEntry[], o: { today: 
 export const WEEKDAY_INITIALS = ["L", "M", "M", "J", "V", "S", "D"] as const;
 /** Points de couleur d'une case, puis « +n ». */
 export const MONTH_MAX_DOTS = 3;
+/** Hauteur d'une case (px). */
+export const MONTH_CELL_H = 52;
+/**
+ * Débord de la grille sur la marge latérale de l'écran (px, de chaque côté) : sans lui, une case ne fait que 46,9 px
+ * de large sur un écran Android de 360 px (marge de 16 px) ; cibles de 48 px au moins.
+ */
+export const MONTH_GRID_BLEED = 8;
+
+/** Largeur d'une case (px) : écran moins ce qui reste de la marge latérale `gutter` après le débord, divisé par 7. */
+export function monthCellWidth(screenW: number, gutter: number): number {
+  return (screenW - 2 * Math.max(0, gutter - MONTH_GRID_BLEED)) / 7;
+}
 
 export type MonthCell = {
   day: string;
@@ -204,7 +243,7 @@ export type WeekRow = {
   title: string;
   today: boolean;
   count: number;
-  /** Total du jour (null : aucune course ou aucun prix) */
+  /** Total du jour, montants affichés (null : aucune course ou aucun prix) */
   total: string | null;
   lines: CompactLine[];
   more: number;
@@ -218,13 +257,13 @@ export const compactText = (e: Pick<AgendaEntry, "pickup_at" | "pickup_address" 
 export function weekRows(
   anchor: string,
   byDay: Readonly<Record<string, readonly AgendaEntry[]>>,
-  o: { today: string; now: number; tz: string },
+  o: MoneyContext & { today: string; now: number; tz: string },
 ): WeekRow[] {
   const start = weekStart(anchor);
   return Array.from({ length: 7 }, (_, i) => {
     const day = addDays(start, i);
     const items = byDay[day] ?? [];
-    const s = daySummary(items, o.now);
+    const s = shownSummary(items, o);
     const currency = items.find((x) => x.currency)?.currency ?? "EUR";
     const lines = items.slice(0, WEEK_MAX_LINES).map((e) => {
       const kind = entryKind(e, o.now);
@@ -335,16 +374,18 @@ export type EntryView = {
   kindLabel: string;
   tone: Tone;
   muted: boolean;
+  /** Montant affiché : sa part (course de centrale ou partenaire) ou le prix (entryAmountCents) */
   price: string;
   target: EntryTarget;
   a11y: string;
 };
 
-export function entryView(e: AgendaEntry, o: { tz: string; now: number }, overlap = false): EntryView {
+export function entryView(e: AgendaEntry, o: MoneyContext & { tz: string; now: number }, overlap = false): EntryView {
   const kind = entryKind(e, o.now);
   const meta = AGENDA_KIND_META[kind];
   const time = formatTime(e.pickup_at, o.tz);
-  const price = formatPrice(e.price_cents, e.currency ?? "EUR");
+  const amount = entryAmountCents(e, o);
+  const price = formatPrice(amount, e.currency ?? "EUR");
   // Réservation encore sans chauffeur (Flotte Privée) : « Réservation 1042 », comme sa carte du bloc « À traiter »
   const noun = e.state ? "Réservation" : "Course";
   const title = `${noun}${NBSP}${e.number}`;
@@ -361,7 +402,7 @@ export function entryView(e: AgendaEntry, o: { tz: string; now: number }, overla
     target: entryTarget(e),
     a11y: [
       time, `${noun.toLowerCase()} ${e.number}`, `${shortAddress(e.pickup_address)} vers ${shortAddress(e.dropoff_address)}`, meta.label.toLowerCase(),
-      ...(e.price_cents != null ? [price] : []), ...(overlap ? ["chevauchement"] : []),
+      ...(amount != null ? [price] : []), ...(overlap ? ["chevauchement"] : []),
     ].join(", "),
   };
 }
@@ -594,6 +635,18 @@ export function cancelReasonError(reason: string): string | null {
   if (n < CANCEL_REASON_MIN) return `Indiquez le motif (${CANCEL_REASON_MIN}${NBSP}caractères au moins).`;
   if (n > CANCEL_REASON_MAX) return `${CANCEL_REASON_MAX}${NBSP}caractères au plus.`;
   return null;
+}
+
+/**
+ * Refus d'une réservation (bloc « À traiter » de l'agenda, écran d'offre) : confirmation demandée, la réservation passe
+ * « Refusée » tout de suite et le site en est informé (webhook ride.no_driver_found).
+ */
+export function declineBookingPrompt(number: number): { title: string; message: string; confirm: string } {
+  return {
+    title: frTypo(`Refuser la réservation ${number} ?`),
+    message: frTypo("Elle passera « Refusée » et votre site en sera informé."),
+    confirm: "Refuser",
+  };
 }
 
 /** Réservation prise (driver_take_ride, acceptation) : titre et message de la confirmation. */

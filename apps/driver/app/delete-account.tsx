@@ -8,6 +8,7 @@ import { AuthField, FormScroll, Notice } from "@/components/auth";
 import { frTypo } from "@/components/centrale";
 import { BigButton, Screen, ScreenHeader } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
+import { deletionCopy } from "@/lib/account-deletion";
 import {
   ApiError, deleteAccount, deletionDebt, LAST_EMAIL_KEY, legalUrl, previewAccountDeletion, type DeleteAccountResult,
 } from "@/lib/api";
@@ -17,21 +18,6 @@ import { stopTracking } from "@/lib/location";
 import { unregisterPush } from "@/lib/notifications";
 import { signOutThisDevice } from "@/lib/supabase";
 import { colors, control, radius, space, type, weight } from "@/theme";
-
-const DELETED = [
-  "Votre compte de connexion, votre nom, téléphone, e-mail et photo",
-  "Vos documents (carte VTC, permis…) et tous leurs fichiers",
-  "Vos positions, appareils et notifications",
-  "Vos messages avec la centrale, vos signalements et vos votes",
-];
-
-/**
- * Flotte Privée (docs/FLOTTE-PRIVEE.md § 10.4) : seule la fiche chauffeur est supprimée, le compte de gestion reste
- * (DRIVER_PROFILE_DELETED) ; les réservations du site ne sont plus proposées tant que l'équipe Rydar n'a pas recréé la
- * fiche.
- */
-const PRIVATE_FLEET_NOTICE =
-  "Votre fiche chauffeur sera supprimée : les réservations de votre site ne vous seront plus proposées tant que l'équipe Rydar ne l'a pas recréée. Votre espace web et vos réservations restent.";
 
 /** Réponses qui demandent le mot de passe : session révoquée (compte suspendu, banni…) ou absente. */
 const NEEDS_PASSWORD = new Set(["UNAUTHORIZED", "SESSION"]);
@@ -58,10 +44,12 @@ function within<T>(read: Promise<T>, ms: number, fallback: T): Promise<T> {
  * sans identité, double confirmation. Accessible depuis le profil et depuis l'écran des comptes en attente, refusés,
  * suspendus ou bannis. Session refusée par le serveur : confirmation par mot de passe. Commissions encore dues
  * rappelées dans tous les cas, avant la confirmation. « Supprimé » n'est affiché qu'une fois tout effacé ; sinon
- * « suppression en cours » (terminée par le serveur).
+ * « suppression en cours » (terminée par le serveur). Flotte Privée : fiche chauffeur seule, compte de connexion et
+ * espace web conservés (lib/account-deletion.ts).
  */
 export default function DeleteAccount() {
   const { session, privateFleet } = useDriver();
+  const copy = deletionCopy(privateFleet);
   const params = useLocalSearchParams<{ email?: string }>();
   const sessionEmail = session?.user.email ?? "";
   const [phase, setPhase] = useState<Phase>(session ? "confirm" : "password");
@@ -137,6 +125,9 @@ export default function DeleteAccount() {
     } else if (err.code === "INVALID_CREDENTIALS") {
       setPasswordError(frTypo(err.message));
       passwordRef.current?.focus();
+    } else if (err.code === "RIDES_ASSIGNED" && copy.ridesAssigned) {
+      // Flotte Privée : aucune centrale à qui faire réattribuer la course
+      setFailure(copy.ridesAssigned);
     } else {
       // Course attribuée (message du serveur), trop de tentatives, serveur d'authentification injoignable
       // (UNAVAILABLE : rien n'a été vérifié, le mot de passe saisi reste), réseau, e-mail manquant…
@@ -209,10 +200,8 @@ export default function DeleteAccount() {
     if (confirmedCents.current != null && (cents === 0 || cents === confirmedCents.current)) return void run();
     const notice = shown ? openDebtNotice(shown) : null;
     Alert.alert(
-      frTypo("Supprimer définitivement ?"),
-      frTypo(
-        `Votre compte et vos données personnelles seront supprimés. Cette action est irréversible. Seules sont gardées, sans votre nom, les informations que la loi ou la défense des droits de la centrale imposent (courses et règlements, preuve d'acceptation des conditions, empreintes en cas de fraude ou de commissions dues) : détails sur la page « Supprimer son compte » du site.${notice ? ` ${notice.confirm}` : ""}`,
-      ),
+      copy.confirmTitle,
+      frTypo(`${copy.confirm}${notice ? ` ${notice.confirm}` : ""}`),
       [
         { text: "Annuler", style: "cancel" },
         {
@@ -235,13 +224,9 @@ export default function DeleteAccount() {
         <ScreenHeader title="Supprimer mon compte" onBack={leave} />
         <FormScroll>
           <View style={styles.content}>
-            <Text style={styles.lead}>
-              {frTypo(
-                "La suppression est définitive. Si une course vous est attribuée, terminez-la ou demandez à votre centrale de la réattribuer avant de supprimer votre compte.",
-              )}
-            </Text>
+            <Text style={styles.lead}>{copy.lead}</Text>
 
-            {privateFleet && <Notice tone="info" message={frTypo(PRIVATE_FLEET_NOTICE)} />}
+            {copy.notice && <Notice tone="info" message={copy.notice} />}
 
             {debtNotice && (
               <Notice tone="warning" icon="wallet-outline" title={frTypo(debtNotice.title)} message={frTypo(debtNotice.message)} />
@@ -251,7 +236,7 @@ export default function DeleteAccount() {
               Supprimé
             </Text>
             <View style={styles.group}>
-              {DELETED.map((item) => (
+              {copy.deleted.map((item) => (
                 <View key={item} style={styles.row}>
                   <Ionicons name="trash-outline" size={20} color={colors.muted} />
                   <Text style={styles.rowText}>{item}</Text>
@@ -260,13 +245,19 @@ export default function DeleteAccount() {
             </View>
 
             <Text style={styles.section} accessibilityRole="header">
-              Conservé sans votre nom ni vos coordonnées
+              {copy.keptTitle}
             </Text>
-            <Text style={styles.body}>
-              {frTypo(
-                "Les courses réalisées, gains, commissions et règlements restent enregistrés 10 ans pour les obligations comptables de la centrale, rattachés à une fiche anonyme « Chauffeur supprimé ».",
-              )}
-            </Text>
+            {copy.keptItems.length > 0 && (
+              <View style={styles.group}>
+                {copy.keptItems.map((item) => (
+                  <View key={item} style={styles.row}>
+                    <Ionicons name="checkmark-outline" size={20} color={colors.muted} />
+                    <Text style={styles.rowText}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {copy.keptText && <Text style={styles.body}>{copy.keptText}</Text>}
 
             {policy && (
               <Pressable onPress={() => void Linking.openURL(policy)} accessibilityRole="link" hitSlop={8} style={styles.link}>
@@ -325,7 +316,7 @@ export default function DeleteAccount() {
 
             <View style={styles.footer}>
               <BigButton
-                title="Supprimer définitivement"
+                title={copy.button}
                 variant="danger"
                 icon="trash-outline"
                 height={control.md}

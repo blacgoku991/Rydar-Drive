@@ -1,6 +1,6 @@
 // Détection de la Flotte Privée et de la fiche du gérant (docs/FLOTTE-PRIVEE.md § 10.2) : clé absente = standard.
 import { describe, expect, it } from "vitest";
-import { driverMode, moneyModel, unconfirmedBookingId } from "./driver-mode";
+import { driverMode, earningsMoney, moneyModel, unconfirmedBookingId } from "./driver-mode";
 import { rideMoneyView, type AppRide } from "./network";
 
 const home = (privateFleet?: boolean, ownerDriver?: boolean) => ({
@@ -36,6 +36,23 @@ describe("moneyModel", () => {
     expect(moneyModel("centrale", false)).toBe("centrale");
     expect(moneyModel("fleet", false)).toBe("fleet");
     expect(moneyModel(undefined, false)).toBeUndefined();
+  });
+});
+
+describe("earningsMoney (Mes gains)", () => {
+  // driver_earnings d'une Flotte Privée dont le taux de commission chauffeur est resté à 20 % : commission_percent 20,
+  // net de 80 € pour une course de 100 € de la fiche du gérant
+  it("fiche du gérant : ni « Net estimé — Après commission de X % », ni « net … » par course, ni part — même en centrale", () => {
+    const priceOnly = { centrale: false, commissionPercent: null, rideNet: false };
+    expect(earningsMoney({ model: "fleet", commission_percent: 20 }, true)).toEqual(priceOnly);
+    expect(earningsMoney({ model: "centrale", commission_percent: 20 }, true)).toEqual(priceOnly);
+  });
+
+  it("autres chauffeurs : taux de commission de la flotte et net par course ; centrale : sa part", () => {
+    expect(earningsMoney({ model: "fleet", commission_percent: 20 }, false)).toEqual({ centrale: false, commissionPercent: 20, rideNet: true });
+    expect(earningsMoney({ model: "centrale", commission_percent: 25 }, false)).toEqual({ centrale: true, commissionPercent: 25, rideNet: true });
+    expect(earningsMoney({ model: "fleet", commission_percent: null }, false)).toEqual({ centrale: false, commissionPercent: null, rideNet: true });
+    expect(earningsMoney(null, false)).toEqual({ centrale: false, commissionPercent: null, rideNet: true });
   });
 });
 

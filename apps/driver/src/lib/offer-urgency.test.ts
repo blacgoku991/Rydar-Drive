@@ -1,10 +1,10 @@
 // Urgence d'une offre (docs/FLOTTE-PRIVEE.md § 10.6) : règle standard inchangée ; Flotte Privée : réservation dont la
-// réponse est attendue dans 15 min au plus, ouverte en plein écran, jamais pendant une course ; compte à rebours en
-// minutes pour une longue fenêtre ; échéance de réponse.
-import { PRIVATE_FLEET_RING_WINDOW_S } from "@rydar/shared";
+// réponse est attendue dans 15 min au plus, ouverte en plein écran, jamais pendant une course, mais toujours
+// différable (« Plus tard », retour Android) ; compte à rebours en minutes pour une longue fenêtre ; échéance de réponse.
+import { PRIVATE_FLEET_RING_WINDOW_S, type DriverOfferV2 } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
-  URGENT_OFFER_S, answerBeforeText, countdownView, isUrgentOffer, isUrgentWindow, offerWindowSeconds, shouldOpenOffer,
+  URGENT_OFFER_S, answerBeforeText, countdownView, isUrgentOffer, isUrgentWindow, offerScreenMode, offerWindowSeconds, shouldOpenOffer,
 } from "./offer-urgency";
 
 const NBSP = " ";
@@ -61,6 +61,36 @@ describe("shouldOpenOffer (plein écran à la lecture des offres)", () => {
   it("offre GPS (dernier appel compris) : toujours ouverte", () => {
     expect(shouldOpenOffer(offer("geo", 30), { onRide: true })).toBe(true);
     expect(shouldOpenOffer(offer("geo", 30), { privateFleet: true })).toBe(true);
+  });
+});
+
+describe("offerScreenMode (écran d'offre : sonnerie, « Plus tard », retour Android, refus)", () => {
+  const screen = (mode: "geo" | "fleet", windowS: number | null, privateFleet = false, network: DriverOfferV2["network"] = null) =>
+    offerScreenMode({ ...offer(mode, windowS), network }, windowS ?? 30, { privateFleet });
+
+  it("organisation standard : bloquante comme urgente (GPS, ou fenêtre de 2 min au plus)", () => {
+    expect(screen("fleet", 300)).toEqual({ booking: false, urgent: false, blocking: false });
+    expect(screen("fleet", 90)).toEqual({ booking: false, urgent: true, blocking: true });
+    expect(screen("geo", 30)).toEqual({ booking: false, urgent: true, blocking: true });
+    expect(screen("fleet", null)).toEqual({ booking: false, urgent: false, blocking: false });
+  });
+
+  it("Flotte Privée : réservation urgente (5 à 15 min) qui sonne mais reste différable, jamais bloquante", () => {
+    expect(screen("fleet", 300, true)).toEqual({ booking: true, urgent: true, blocking: false });
+    expect(screen("fleet", 600, true)).toEqual({ booking: true, urgent: true, blocking: false });
+    expect(screen("fleet", 900, true)).toEqual({ booking: true, urgent: true, blocking: false });
+    expect(screen("fleet", 3 * 3600, true)).toEqual({ booking: true, urgent: false, blocking: false });
+  });
+
+  it("Flotte Privée : blocage réservé au dernier appel GPS et aux fenêtres de 2 min au plus", () => {
+    expect(screen("geo", 300, true)).toEqual({ booking: true, urgent: true, blocking: true });
+    expect(screen("fleet", URGENT_OFFER_S, true)).toEqual({ booking: true, urgent: true, blocking: true });
+    expect(screen("fleet", URGENT_OFFER_S + 1, true).blocking).toBe(false);
+  });
+
+  it("course partenaire (réseau partagé) : jamais une réservation de son site", () => {
+    const network = { giver: { name: "Taxi Alpha" } } as unknown as DriverOfferV2["network"];
+    expect(screen("fleet", 300, true, network).booking).toBe(false);
   });
 });
 

@@ -1,12 +1,15 @@
 // Agenda de l'app (docs/FLOTTE-PRIVEE.md § 10.5) : vues par défaut, périodes, cases du mois, semaine, frise du jour,
-// bloc « À traiter » (Flotte Privée), couleurs (tons), libellés en typographie française et textes du lecteur d'écran.
-import type { AgendaBooking, DriverOfferV2 } from "@rydar/shared";
+// bloc « À traiter » (Flotte Privée), couleurs (tons), libellés en typographie française, textes du lecteur d'écran et
+// montants (sa part ou le prix, comme la vue Liste).
+import type { AgendaBooking, DriverOfferV2, DriverRideMoney } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
+import { space } from "../theme";
 import {
-  DAY_PX, HOUR_PX, MIN_BLOCK_PX, agendaBadge, agendaTitle, agendaViewOptions, calendarEntries, cancelReasonError, dayA11y,
-  daySummaryText, defaultAgendaView, entriesByDay, entryTarget, entryView, homeTodoLine, listSections, monthCells, nowLineTop,
-  overlapWarning, periodLabel, periodNavLabels, relativePickup, shiftDay, takenText, timelineBlocks,
-  timelineHeight, timelineScrollY, todayIn, todoCards, todoCardView, vehicleWarnings, weekRows, type AgendaEntry,
+  DAY_PX, HOUR_PX, MIN_BLOCK_PX, MONTH_CELL_H, agendaBadge, agendaTitle, agendaViewOptions, calendarEntries, cancelReasonError, dayA11y,
+  daySummaryText, declineBookingPrompt, defaultAgendaView, entriesByDay, entryAmountCents, entryTarget, entryView, homeTodoLine,
+  listSections, monthCellWidth, monthCells, nowLineTop, overlapWarning, periodLabel, periodNavLabels, relativePickup, shiftDay,
+  takenText, timelineBlocks, timelineHeight, timelineScrollY, todayIn, todoCards, todoCardView, vehicleWarnings, weekRows,
+  type AgendaEntry,
 } from "./agenda-view";
 
 const NBSP = " ";
@@ -121,9 +124,10 @@ describe("résumés d'un jour", () => {
   ];
 
   it("« 3 courses · 245 € » (annulées et refusées exclues) ; sans prix ; aucune", () => {
-    expect(daySummaryText(day, NOW)).toBe(`3${NBSP}courses · 245${NBSP}€`);
-    expect(daySummaryText([entry("r5", "ACCEPTED", TODAY, "15:00", { price_cents: null })], NOW)).toBe(`1${NBSP}course`);
-    expect(daySummaryText([day[3]!], NOW)).toBe("Aucune course");
+    const o = { now: NOW, ownerDriver: false };
+    expect(daySummaryText(day, o)).toBe(`3${NBSP}courses · 245${NBSP}€`);
+    expect(daySummaryText([entry("r5", "ACCEPTED", TODAY, "15:00", { price_cents: null })], o)).toBe(`1${NBSP}course`);
+    expect(daySummaryText([day[3]!], o)).toBe("Aucune course");
   });
 
   it("lecteur d'écran : « mardi 13 octobre, 3 courses dont 1 à confirmer »", () => {
@@ -163,6 +167,13 @@ describe("mois", () => {
     expect(cells[3]!.dots).toEqual(["green"]);
     expect(cells[1]).toMatchObject({ dots: [], more: 0, a11y: "mardi 29 septembre, aucune course" });
   });
+
+  it("cases de 48 × 52 px au moins dès un écran Android de 360 px (marge de l'agenda : space.lg)", () => {
+    // Sans débord sur la marge : (360 − 2 × 16) / 7 ≈ 46,9 px
+    expect(monthCellWidth(360, space.lg)).toBeGreaterThanOrEqual(48);
+    expect(monthCellWidth(375, space.lg)).toBeGreaterThanOrEqual(48);
+    expect(MONTH_CELL_H).toBeGreaterThanOrEqual(52);
+  });
 });
 
 describe("semaine", () => {
@@ -172,7 +183,7 @@ describe("semaine", () => {
     entry("r3", "ACCEPTED", "2026-10-12", "12:00", { price_cents: null }),
     entry("r4", "CANCELLED", "2026-10-12", "15:00", { price_cents: 3000 }),
   ];
-  const rows = weekRows("2026-10-14", entriesByDay(items, TZ), { today: TODAY, now: NOW, tz: TZ });
+  const rows = weekRows("2026-10-14", entriesByDay(items, TZ), { today: TODAY, now: NOW, tz: TZ, ownerDriver: false });
 
   it("7 lignes, lundi en premier", () => {
     expect(rows.map((r) => r.day)).toEqual([
@@ -228,7 +239,7 @@ describe("frise du jour", () => {
 
 describe("éléments affichés", () => {
   it("course : couleur, libellé, lecteur d'écran, destination", () => {
-    const v = entryView(entry("r1042", "ACCEPTED", TODAY, "14:30"), { tz: TZ, now: NOW }, true);
+    const v = entryView(entry("r1042", "ACCEPTED", TODAY, "14:30"), { tz: TZ, now: NOW, ownerDriver: false }, true);
     expect(v).toMatchObject({
       time: "14:30", title: `Course${NBSP}1042`, route: "Aéroport d'Orly → Paris 8e", kind: "confirmed", kindLabel: "Confirmée",
       tone: "violet", muted: false, price: `85${NBSP}€`, target: { kind: "ride", id: "r1042" },
@@ -237,9 +248,10 @@ describe("éléments affichés", () => {
   });
 
   it("heure dépassée (ambre), annulée (en retrait), réservation : offre ou bloc « À traiter »", () => {
-    expect(entryView(entry("r1", "ACCEPTED", TODAY, "08:00"), { tz: TZ, now: NOW })).toMatchObject({ kind: "overdue", tone: "amber" });
-    expect(entryView(entry("r2", "CANCELLED", TODAY, "10:00"), { tz: TZ, now: NOW })).toMatchObject({ kind: "cancelled", muted: true });
-    const booked = entryView(entry("b1043", "OFFERED", TODAY, "16:00", { state: "to_confirm", offer_id: "o1" }), { tz: TZ, now: NOW });
+    const o = { tz: TZ, now: NOW, ownerDriver: false };
+    expect(entryView(entry("r1", "ACCEPTED", TODAY, "08:00"), o)).toMatchObject({ kind: "overdue", tone: "amber" });
+    expect(entryView(entry("r2", "CANCELLED", TODAY, "10:00"), o)).toMatchObject({ kind: "cancelled", muted: true });
+    const booked = entryView(entry("b1043", "OFFERED", TODAY, "16:00", { state: "to_confirm", offer_id: "o1" }), o);
     expect(booked).toMatchObject({ title: `Réservation${NBSP}1043`, kind: "to_confirm", kindLabel: "À confirmer", tone: "amber", target: { kind: "offer", id: "o1" } });
     expect(booked.a11y).toBe(`16:00, réservation 1043, Aéroport d'Orly vers Paris 8e, à confirmer, 85${NBSP}€`);
     expect(entryTarget({ id: "b1", state: "to_confirm", offer_id: "o1" })).toEqual({ kind: "offer", id: "o1" });
@@ -253,6 +265,15 @@ describe("éléments affichés", () => {
     expect(calendarEntries([ride], null)).toEqual([ride]);
   });
 
+  it("courses et réservations sans doublon : l'argent lu de la course est gardé", () => {
+    const money: DriverRideMoney = {
+      price_cents: 5900, currency: "EUR", payment_method: "cash", collects: true, driver_part_cents: 4000, giver_part_cents: 1900,
+      direction: "driver_owes", amount_cents: 1900, counterparty: null, creditor_name: "Taxi Martin",
+    };
+    const [ride] = calendarEntries([entry("r1", "ACCEPTED", TODAY, "10:00", { money })], null);
+    expect(entryAmountCents(ride!, { ownerDriver: false })).toBe(4000);
+  });
+
   it("liste : regroupée par jour local (« Aujourd'hui », « Demain », « Jeudi 15 octobre »)", () => {
     const rides = [
       entry("r3", "ACCEPTED", "2026-10-15", "08:00"),
@@ -262,6 +283,62 @@ describe("éléments affichés", () => {
     expect(listSections(rides, TZ, TODAY).map((s) => [s.title, s.items.map((r) => r.id)])).toEqual([
       ["Aujourd'hui", ["r1"]], ["Demain", ["r2"]], ["Jeudi 15 octobre", ["r3"]],
     ]);
+  });
+});
+
+describe("montants : sa part ou le prix, comme la vue Liste", () => {
+  // Course de centrale de 59 € dont la part du chauffeur est de 40 € (la vue Liste affiche 40 €)
+  const centraleMoney: DriverRideMoney = {
+    price_cents: 5900, currency: "EUR", payment_method: "cash", collects: true, driver_part_cents: 4000, giver_part_cents: 1900,
+    direction: "driver_owes", amount_cents: 1900, counterparty: null, creditor_name: "Taxi Martin",
+  };
+  // Flotte : ni part ni sens (S20)
+  const fleetMoney: DriverRideMoney = {
+    price_cents: 8500, currency: "EUR", payment_method: "card", collects: true, driver_part_cents: null, giver_part_cents: null,
+    direction: null, amount_cents: null, counterparty: null, creditor_name: null,
+  };
+  const partnerNetwork = {
+    execution_id: "e1",
+    giver: { name: "Taxi Alpha", legal_name: null, vtc_registration: null, phone: null, phone_until: null },
+  } as AgendaEntry["network"];
+  const centrale = entry("r1", "ACCEPTED", TODAY, "10:00", { price_cents: 5900, money: centraleMoney, network: null });
+  const fleet = entry("r2", "ACCEPTED", TODAY, "11:00", { price_cents: 8500, money: fleetMoney, network: null });
+  const partner = entry("r3", "ACCEPTED", TODAY, "12:00", {
+    price_cents: 6000, money: { ...centraleMoney, price_cents: 6000, driver_part_cents: 4500, giver_part_cents: 1500 }, network: partnerNetwork,
+  });
+  // Réservation encore sans chauffeur (Flotte Privée) : son prix
+  const booking = entry("b4", "OFFERED", TODAY, "13:00", { price_cents: 7000, state: "to_confirm", offer_id: "o4", money: fleetMoney, network: null });
+  const me = { ownerDriver: false };
+  const owner = { ownerDriver: true };
+
+  it("course de centrale ou partenaire : sa part ; course de flotte, argent non lu, réservation sans chauffeur : le prix", () => {
+    expect(entryAmountCents(centrale, me)).toBe(4000);
+    expect(entryAmountCents(partner, me)).toBe(4500);
+    expect(entryAmountCents(fleet, me)).toBe(8500);
+    expect(entryAmountCents(entry("r5", "ACCEPTED", TODAY, "14:00"), me)).toBe(8500);
+    expect(entryAmountCents(booking, me)).toBe(7000);
+  });
+
+  it("fiche du gérant (Flotte Privée passée en centrale) : le prix de ses courses, sa part d'une course partenaire", () => {
+    expect(entryAmountCents(centrale, owner)).toBe(5900);
+    expect(entryAmountCents(partner, owner)).toBe(4500);
+  });
+
+  it("ligne du jour et bloc de la frise : le montant affiché, lecteur d'écran compris", () => {
+    const v = entryView(centrale, { tz: TZ, now: NOW, ...me });
+    expect(v.price).toBe(`40${NBSP}€`);
+    expect(v.a11y).toBe(`10:00, course 1, Aéroport d'Orly vers Paris 8e, confirmée, 40${NBSP}€`);
+    expect(entryView(centrale, { tz: TZ, now: NOW, ...owner }).price).toBe(`59${NBSP}€`);
+  });
+
+  it("totaux du jour (vues Jour et Mois) et de la semaine : sur les montants affichés, jamais sur le prix brut d'une part", () => {
+    const items = [centrale, fleet, partner, booking];
+    // 40 + 85 + 45 + 70 = 240 € (et non 59 + 85 + 60 + 70 = 274 €) ; fiche du gérant : 59 + 85 + 45 + 70 = 259 €
+    expect(daySummaryText(items, { now: NOW, ...me })).toBe(`4${NBSP}courses · 240${NBSP}€`);
+    expect(daySummaryText(items, { now: NOW, ...owner })).toBe(`4${NBSP}courses · 259${NBSP}€`);
+    const row = weekRows(TODAY, entriesByDay(items, TZ), { today: TODAY, now: NOW, tz: TZ, ...me }).find((r) => r.day === TODAY)!;
+    expect(row.total).toBe(`240${NBSP}€`);
+    expect(row.a11y).toBe(`mardi 13 octobre, aujourd'hui, 4${NBSP}courses dont 1 à confirmer, 240${NBSP}€`);
   });
 });
 
@@ -355,6 +432,14 @@ describe("« À traiter » (Flotte Privée)", () => {
     expect(todoCardView(instant!, ctx)).toMatchObject({ when: "Réservation immédiate", relative: null, stateTone: "red", takeable: true });
     const [old] = todoCards([booking("b5", "not_confirmed", "2026-10-13", "02:30")], []).unconfirmed;
     expect(todoCardView(old!, ctx).takeable).toBe(false);
+  });
+
+  it("refus : confirmation, la même dans l'agenda et l'écran d'offre (elle passe « Refusée », le site en est informé)", () => {
+    expect(declineBookingPrompt(1042)).toEqual({
+      title: `Refuser la réservation 1042${NBSP}?`,
+      message: `Elle passera «${NBSP}Refusée${NBSP}» et votre site en sera informé.`,
+      confirm: "Refuser",
+    });
   });
 
   it("motif d'annulation : 3 à 280 caractères", () => {

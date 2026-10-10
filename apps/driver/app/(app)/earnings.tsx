@@ -17,7 +17,7 @@ import { PartnerBadge } from "@/components/network";
 import { BigButton, Card, Label, Pill, Screen, ScreenHeader, Segmented } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { api } from "@/lib/api";
-import { moneyModel } from "@/lib/driver-mode";
+import { earningsMoney, moneyModel } from "@/lib/driver-mode";
 import { useAppEvent } from "@/lib/events";
 import { earningsPartner, earningsPartnerPeriod, earningsPartnerText, PARTNER_SETTLEMENTS_TITLE, partnerAccess, settleHref } from "@/lib/network";
 import { alpha, colors, control, mono, radius, space, toneColor, type, weight } from "@/theme";
@@ -72,10 +72,11 @@ export default function Earnings() {
   const currency = data?.currency ?? "EUR";
   // Réseau partagé : part des organisations partenaires de la période (jamais comptée comme une commission)
   const partnerPart = p ? earningsPartnerPeriod(p, currency) : null;
-  const commission = data?.commission_percent ?? null;
-  // Mode centrale : la part chauffeur (driver_payout_cents) est le montant qui compte ; fiche du gérant (Flotte Privée
-  // passée en centrale) : aucune commission sur ses courses, le prix (comme en flotte)
-  const centrale = moneyModel(data?.model, ownerDriver) === "centrale";
+  // Mode centrale : la part chauffeur (driver_payout_cents) est le montant qui compte ; fiche du gérant (Flotte Privée,
+  // même passée en centrale ou avec un taux de commission posé) : ni part, ni commission, ni net — le prix
+  const money = earningsMoney(data, ownerDriver);
+  const commission = money.commissionPercent;
+  const centrale = money.centrale;
   const dayValue = useCallback((d: { revenue_cents: number; net_cents: number | null }) => (centrale ? d.net_cents ?? 0 : d.revenue_cents), [centrale]);
   const series = data?.series ?? [];
   const max = useMemo(() => Math.max(1, ...series.map(dayValue)), [series, dayValue]);
@@ -332,12 +333,14 @@ export default function Earnings() {
                   {data.recent.map((r, i) => {
                     const when = formatRideDate(r.completed_at, data.timezone);
                     const pay = PAYMENT_METHOD_LABELS[r.payment_method] ?? "";
-                    // Course partenaire : sa part (termes figés) comme en centrale, quel que soit le modèle
+                    // Course partenaire : sa part (termes figés) comme en centrale, quel que soit le modèle ; course propre :
+                    // le prix, et le net seulement s'il y a une commission (jamais pour la fiche du gérant)
                     const partner = earningsPartner(r);
                     const share = centrale || partner != null;
+                    const net = money.rideNet ? r.net_cents : null;
                     const amount = share
                       ? `votre part ${formatPrice(r.net_cents, r.currency)} sur ${formatPrice(r.price_cents, r.currency)}`
-                      : `${formatPrice(r.price_cents, r.currency)}${r.net_cents != null ? `, net ${formatPrice(r.net_cents, r.currency)}` : ""}`;
+                      : `${formatPrice(r.price_cents, r.currency)}${net != null ? `, net ${formatPrice(net, r.currency)}` : ""}`;
                     return (
                       <View
                         key={r.id}
@@ -361,7 +364,7 @@ export default function Earnings() {
                         ) : (
                           <View style={{ alignItems: "flex-end" }}>
                             <Text style={styles.ridePrice}>{formatPrice(r.price_cents, r.currency)}</Text>
-                            {r.net_cents != null && <Text style={styles.rideNet}>net {formatPrice(r.net_cents, r.currency)}</Text>}
+                            {net != null && <Text style={styles.rideNet}>net {formatPrice(net, r.currency)}</Text>}
                           </View>
                         )}
                       </View>

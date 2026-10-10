@@ -1,15 +1,16 @@
-// Agenda, vue Mois : grille 7 × 6 commençant le lundi (lib/agenda-view.ts : monthCells). Cases de 48 × 52 px au moins
-// (≈ 49 px de large sur un écran de 375 px), quantième en chiffres tabulaires, jusqu'à 3 points de 6 px (couleur =
-// information) puis « +n » ; aujourd'hui : contour lime ; jour choisi : fond plus clair ; hors du mois : estompé.
+// Agenda, vue Mois : grille 7 × 6 commençant le lundi (lib/agenda-view.ts : monthCells). Cases de 48 × 52 px au moins :
+// la grille déborde de 8 px sur la marge de l'écran (MONTH_GRID_BLEED, monthCellWidth : ≈ 49 px de large sur un écran
+// Android de 360 px), quantième en chiffres tabulaires, jusqu'à 3 points de 6 px (couleur = information) puis « +n » ;
+// aujourd'hui : contour lime ; jour choisi : fond plus clair ; hors du mois : estompé.
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { WEEKDAY_INITIALS, type MonthCell } from "@/lib/agenda-view";
+import { MONTH_CELL_H, MONTH_GRID_BLEED, WEEKDAY_INITIALS, type MonthCell } from "@/lib/agenda-view";
 import { colors, mono, radius, toneColor, type, weight } from "@/theme";
 
 const CELL_W = `${100 / 7}%` as const;
 
 export function MonthGrid({ cells, onSelect }: { cells: MonthCell[]; onSelect: (day: string) => void }) {
   return (
-    <View>
+    <View style={styles.root}>
       <View style={styles.head} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         {WEEKDAY_INITIALS.map((d, i) => (
           <Text key={i} style={styles.headText}>{d}</Text>
@@ -43,10 +44,12 @@ export function MonthGrid({ cells, onSelect }: { cells: MonthCell[]; onSelect: (
 }
 
 const styles = StyleSheet.create({
+  // Débord sur la marge de l'écran : cases de 48 px de large au moins dès 360 px
+  root: { marginHorizontal: -MONTH_GRID_BLEED },
   head: { flexDirection: "row", marginBottom: 2 },
   headText: { width: CELL_W, textAlign: "center", color: colors.muted, fontSize: type.caption, fontWeight: weight.semibold, paddingVertical: 4 },
   grid: { flexDirection: "row", flexWrap: "wrap" },
-  cell: { width: CELL_W, height: 52, padding: 1, borderRadius: radius.sm },
+  cell: { width: CELL_W, height: MONTH_CELL_H, padding: 1, borderRadius: radius.sm },
   selected: { backgroundColor: colors.surface2 },
   pressed: { backgroundColor: colors.surface3 },
   inner: { flex: 1, alignItems: "center", paddingTop: 6, gap: 6, borderRadius: radius.sm, borderWidth: 1.5, borderColor: "transparent" },

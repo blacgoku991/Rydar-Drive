@@ -7,7 +7,7 @@ import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import * as Haptics from "expo-haptics";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, Vibration, View } from "react-native";
+import { ActivityIndicator, Alert, BackHandler, Platform, Pressable, StyleSheet, Text, Vibration, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CollectNote, deductionCents, frTypo } from "@/components/centrale";
 import { RydarMap } from "@/components/map/rydar-map";
@@ -16,11 +16,11 @@ import { CountdownRing } from "@/components/radar";
 import { BigButton, Chip, RouteLine, Screen, Sheet } from "@/components/ui";
 import { useDriver } from "@/hooks/driver-context";
 import { useMyPosition } from "@/hooks/use-my-position";
-import { takenText, vehicleWarnings } from "@/lib/agenda-view";
+import { declineBookingPrompt, takenText, vehicleWarnings } from "@/lib/agenda-view";
 import { api, ApiError, refusalText } from "@/lib/api";
 import { offerBlockView, partnerOfferView, settleHref } from "@/lib/network";
 import { offerSession } from "@/lib/offer-session";
-import { answerBeforeText, countdownView, isUrgentWindow } from "@/lib/offer-urgency";
+import { answerBeforeText, countdownView, offerScreenMode, type OfferScreenMode } from "@/lib/offer-urgency";
 import { approachSeconds, colors, control, mono, overlay, radius, space, toneColor, type, weight } from "@/theme";
 
 const RING_PATTERN = [0, 600, 300, 600, 300, 1000];
@@ -47,6 +47,9 @@ const passengersText = (n: number) => `${n}${NBSP}passager${n > 1 ? "s" : ""}`;
 const luggageText = (n: number) => (n > 0 ? `${n}${NBSP}bagage${n > 1 ? "s" : ""}` : "Sans bagage");
 
 type OfferState = "open" | "accepting" | "taken" | "expired" | "declined";
+
+/** Offre pas encore lue (ouverture depuis une notification) : ni sonnerie, ni blocage. */
+const NO_OFFER: OfferScreenMode = { booking: false, urgent: false, blocking: false };
 
 /**
  * Compte à rebours de l'offre (anneau + secondes ; réservation Flotte Privée à longue fenêtre : minutes). Son propre
@@ -75,6 +78,9 @@ export default function OfferScreen() {
   // Horloge de la logique d'expiration / prolongation (1 s) ; l'anneau a son propre minuteur (OfferCountdown)
   const [now, setNow] = useState(Date.now());
   const [state, setState] = useState<OfferState>("open");
+  // État au moment de répondre à une confirmation (l'offre a pu expirer ou être attribuée pendant ce temps)
+  const stateRef = useRef<OfferState>(state);
+  stateRef.current = state;
   const [message, setMessage] = useState<string | null>(null);
   // Ouverture directe (notification) : la liste des offres n'est peut-être pas encore chargée
   const [checked, setChecked] = useState(live != null);
@@ -115,8 +121,10 @@ export default function OfferScreen() {
   }, [offer?.expires_at, offer?.sent_at]);
   const remaining = offer?.expires_at ? (new Date(offer.expires_at).getTime() - now) / 1000 : total;
   // Urgente : dispatch GPS ou fenêtre courte (Flotte Privée : réponse attendue dans 15 min au plus) → compte à rebours +
-  // sonnerie en boucle ; sinon un carillon
-  const urgent = offer != null && (offer.mode === "geo" || (offer.expires_at != null && isUrgentWindow(total, { privateFleet })));
+  // sonnerie en boucle ; sinon un carillon. Bloquante (ni « Plus tard » ni retour Android) : offre GPS ou fenêtre de
+  // 2 min au plus — une réservation Flotte Privée urgente peut être différée (bloc « À traiter » de l'agenda).
+  // Réservation (Flotte Privée) : refus confirmé, elle passe « Refusée » et son site en est informé.
+  const { urgent, blocking, booking } = offer ? offerScreenMode(offer, total, { privateFleet }) : NO_OFFER;
   const route = useMemo(() => (offer?.route_polyline ? decodePolyline(offer.route_polyline) : null), [offer?.route_polyline]);
   // Points de la carte : mêmes objets tant que les coordonnées ne changent pas (carte mémorisée, pas de rendu natif inutile)
   const pickupLat = offer?.pickup_lat;
@@ -243,17 +251,17 @@ export default function OfferScreen() {
     }
   }, [state, live?.expires_at, remaining]);
 
-  // Android : le retour système ne ferme pas une offre ouverte (comme l'iPhone, sans geste de retour) — « Refuser »,
-  // ou « Plus tard » pour une offre planifiée (le retour vaut alors « Plus tard »)
+  // Android : le retour système ne ferme pas une offre bloquante (comme l'iPhone, sans geste de retour) — « Refuser » ;
+  // offre que l'on peut différer (planifiée, réservation Flotte Privée) : le retour vaut « Plus tard »
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== "android" || (state !== "open" && state !== "accepting")) return undefined;
       const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-        if (state === "open" && !urgent) close();
+        if (state === "open" && !blocking) close();
         return true;
       });
       return () => sub.remove();
-    }, [state, urgent]),
+    }, [state, blocking]),
   );
 
   // Fermeture automatique, uniquement si l'écran est au premier plan (sinon back() fermerait l'écran du dessus)
@@ -379,10 +387,42 @@ export default function OfferScreen() {
   }
 
   async function decline() {
-    if (offer) await api.decline(offer.offer_id).catch(() => null);
+    if (!offer) return;
+    const res = await api
+      .decline(offer.offer_id)
+      .catch((e: unknown) => ({ ok: false as const, code: e instanceof ApiError ? e.code ?? "NETWORK" : "NETWORK", message: (e as Error).message }));
+    if (booking && !res.ok) {
+      // Réservation : refus non enregistré, elle reste à confirmer — réseau (nouvel essai depuis le même bouton) ou
+      // offre déjà fermée (délai dépassé, confirmée ailleurs : motif affiché)
+      if (Platform.OS !== "web") void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      if (res.code === "NETWORK") return void setMessage(res.message || "Refus non envoyé. Réessayez.");
+      closedExpiry.current = offer.expires_at;
+      setMessage(refusalText(res));
+      setState("taken");
+      void refresh();
+      return;
+    }
     setMessage(null);
     setState("declined");
     void refresh();
+  }
+
+  /** « Refuser » : une réservation (Flotte Privée) passe « Refusée » tout de suite → même confirmation que l'agenda. */
+  function askDecline() {
+    if (!offer) return;
+    if (!booking) return void decline();
+    const prompt = declineBookingPrompt(offer.number);
+    Alert.alert(prompt.title, prompt.message, [
+      { text: "Annuler", style: "cancel" },
+      {
+        text: prompt.confirm,
+        style: "destructive",
+        // Offre expirée ou attribuée pendant la confirmation : plus rien à refuser
+        onPress: () => {
+          if (stateRef.current === "open") void decline();
+        },
+      },
+    ]);
   }
 
   if (!offer) {
@@ -416,8 +456,7 @@ export default function OfferScreen() {
   const collects = offer.driver_collects ?? driverCollects(offer.payment_method);
   // Motif renvoyé par le serveur (centrale, réseau partagé), même pour une course sans répartition (prix absent)
   const blocked = block != null && !closed;
-  // Flotte Privée : réservation de son site (« Nouvelle réservation »), échéance de réponse, véhicule à vérifier
-  const booking = privateFleet && !partner;
+  // Flotte Privée (booking) : réservation de son site (« Nouvelle réservation »), échéance de réponse, véhicule à vérifier
   const kicker = partner ? partner.title : booking ? "Nouvelle réservation" : offer.ride_type === "instant" ? "Nouvelle offre" : "Offre planifiée";
   const answerBefore = booking && !urgent ? answerBeforeText(offer.expires_at, home?.organization.timezone) : null;
   const warnings = booking ? vehicleWarnings({ category: offer.vehicle_category, passengers: offer.passengers }, home?.vehicle) : [];
@@ -428,25 +467,26 @@ export default function OfferScreen() {
 
   const secondary = (
     <View style={styles.secondary}>
-      {!urgent && (
+      {/* Offre bloquante (GPS, fenêtre de 2 min au plus) : ni « Plus tard » ni retour ; réservation urgente : différable */}
+      {!blocking && (
         <Pressable
           onPress={close}
           disabled={busy}
           style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
           accessibilityRole="button"
           accessibilityLabel="Plus tard"
-          accessibilityHint="Ferme l'offre sans la refuser"
+          accessibilityHint={booking ? frTypo("Ferme l'écran : la réservation reste à confirmer dans l'agenda") : "Ferme l'offre sans la refuser"}
           accessibilityState={{ disabled: busy }}
         >
           <Text style={styles.laterText}>Plus tard</Text>
         </Pressable>
       )}
       <Pressable
-        onPress={decline}
+        onPress={askDecline}
         disabled={busy}
         style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
         accessibilityRole="button"
-        accessibilityLabel="Refuser l'offre"
+        accessibilityLabel={booking ? "Refuser la réservation" : "Refuser l'offre"}
         accessibilityState={{ disabled: busy }}
       >
         <Text style={styles.declineText}>Refuser</Text>
@@ -563,7 +603,13 @@ export default function OfferScreen() {
               <View style={styles.closedBox} accessibilityRole="alert" accessibilityLiveRegion="polite">
                 <Ionicons name={success ? "checkmark-circle-outline" : "close-circle-outline"} size={24} color={success ? colors.green : colors.amber} />
                 <Text style={styles.closedText}>
-                  {state === "expired" ? "Offre expirée." : message ? frTypo(message) : state === "declined" ? "Offre refusée." : "Offre retirée."}
+                  {state === "expired"
+                    ? "Offre expirée."
+                    : message
+                      ? frTypo(message)
+                      : state === "declined"
+                        ? booking ? "Réservation refusée." : "Offre refusée."
+                        : "Offre retirée."}
                 </Text>
               </View>
             ) : chain ? (

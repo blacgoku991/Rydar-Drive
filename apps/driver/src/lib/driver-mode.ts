@@ -34,6 +34,33 @@ export function moneyModel(model: DispatchModel | null | undefined, ownerDriver:
   return ownerDriver ? "fleet" : model;
 }
 
+/** Argent de l'écran « Mes gains » (driver_earnings). */
+export type EarningsMoney = {
+  /** Mode centrale : « votre part », commission de la centrale et statut des règlements */
+  centrale: boolean;
+  /** « Net estimé — Après commission de X % » (flotte avec un taux de commission chauffeur) ; null : rien */
+  commissionPercent: number | null;
+  /** « net … » sous chacune de ses courses (net_cents renvoyé par le serveur) */
+  rideNet: boolean;
+};
+
+/**
+ * driver_earnings renvoie le taux de commission chauffeur de l'organisation et un net par course dès que ce taux est
+ * posé ou que l'organisation est une centrale. La fiche du gérant n'en doit aucun (aucun règlement, 20260924007700),
+ * même si un taux reste posé ou après une bascule en centrale : ni « votre part », ni commission, ni net — le prix. Ses
+ * courses partenaires (réseau partagé) gardent leur part, affichée à part (earningsPartner).
+ */
+export function earningsMoney(
+  e: { model?: DispatchModel | null; commission_percent?: number | null } | null | undefined,
+  ownerDriver: boolean,
+): EarningsMoney {
+  return {
+    centrale: moneyModel(e?.model, ownerDriver) === "centrale",
+    commissionPercent: ownerDriver ? null : e?.commission_percent ?? null,
+    rideNet: !ownerDriver,
+  };
+}
+
 /**
  * Notification « ride_unconfirmed » (réservation non confirmée, ou à vérifier : véhicule incompatible) : réservation à
  * mettre en avant dans le bloc « À traiter » de l'agenda. Jamais de ride_id dans ces données (l'app 1.1.0 ouvrirait
