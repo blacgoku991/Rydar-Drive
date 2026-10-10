@@ -1,8 +1,11 @@
 // Flotte Privée (migrations 20260924007600 et 20260924007700, docs/FLOTTE-PRIVEE.md § 13.1) : schéma et droits,
 // création atomique par le super admin, limites imposées malgré l'offre et la surcharge, gardes (une fiche, celle du
 // propriétaire ; lien fermé ; ni réseau, ni centrale ; un seul accès), suppression puis recréation de la fiche,
-// bascule sur place sans perte (vers flotte, vers centrale, retour), exemption de règlement du gérant en centrale.
+// bascule sur place sans perte (vers flotte, vers centrale, retour ; aucune offre fermée avant son échéance),
+// écritures concurrentes d'une entrée en cours (gardes sous le verrou de l'organisation), exemption de règlement du
+// gérant en centrale.
 import { randomUUID } from "node:crypto";
+import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   PRIVATE_FLEET_BLOCKERS, PRIVATE_FLEET_DISPATCH_PROFILE, PRIVATE_FLEET_LIMITS, STANDARD_DISPATCH_PROFILE,
@@ -10,6 +13,7 @@ import {
 import {
   as, asFresh, createApiRide, createAuthUser, createDriver, createMember, createOrg, createPrivateFleet, enableNetwork,
   expectPgError, inMinutes, networkTermsVersion, pool, setSharedNetwork, sql, superAdmin, unlimitedPlan, type Org,
+  type PgError,
 } from "./helpers";
 
 type Row = Record<string, any>;
@@ -109,6 +113,17 @@ async function candidate(org: Org) {
 
 const pendingOffer = async (rideId: string, driverId: string) =>
   (await sql(`select id from public.ride_offers where ride_id = $1 and driver_id = $2 and status = 'pending'`, [rideId, driverId]))[0]?.id as string;
+const rideRow = async (rideId: string) => (await sql("select * from public.rides where id = $1", [rideId]))[0] as Row;
+const offerRow = async (offerId: string) => (await sql("select * from public.ride_offers where id = $1", [offerId]))[0] as Row;
+const tick = () => sql("select private.dispatch_tick()");
+/** Prochain passage du dispatch atteint (fin de la vague ou de l'offre en cours), puis passage. */
+async function passNow(rideId: string) {
+  await sql("update public.rides set next_dispatch_at = now() - interval '1 second' where id = $1", [rideId]);
+  await tick();
+}
+/** Rappels « à confirmer » en file d'une organisation. */
+const queuedReminders = (orgId: string) =>
+  sql("select id from public.notifications where organization_id = $1 and status = 'queued' and data ->> 'kind' = 'private_reminder'", [orgId]);
 
 /** Course acceptée puis menée jusqu'au bout par le chauffeur (compte userId). */
 async function acceptAndComplete(userId: string, rideId: string, driverId: string) {
@@ -445,9 +460,10 @@ describe("bascule (svc_platform_set_private_fleet)", () => {
       `insert into public.api_keys (organization_id, name, prefix, last4, scopes) values ($1, 'Site du client', $2, 'abcd', '{rides:create}')`,
       [pf.id, `rdk_${uid()}`],
     );
-    await createApiRide(pf.id, { pickup_at: inMinutes(2 * 24 * 60) });
+    const ride = await createApiRide(pf.id, { pickup_at: inMinutes(2 * 24 * 60) });
     const before = await counts(pf.id);
     expect(before).toMatchObject({ rides: 1, drivers: 1, keys: 1 });
+    const nextBefore = (await rideRow(ride.id)).next_dispatch_at.getTime();
     await sql("delete from realtime.messages where topic = any($1)", [[`org:${pf.id}`, `driver:${pf.driverId}`]]);
 
     expect(await setPrivate(pf.id, pf.actor, false, null)).toMatchObject({ ok: false, code: "CONSENT_REQUIRED", field: "consentNote" });
@@ -462,8 +478,9 @@ describe("bascule (svc_platform_set_private_fleet)", () => {
     expect(await limits(pf.id)).not.toHaveProperty("max_drivers");
     expect((await sql("select owner_driver from public.drivers where id = $1", [pf.driverId]))[0].owner_driver).toBe(true);
     expect(await counts(pf.id)).toEqual(before);
-    // La course en recherche repart au prochain passage (échéances recalculées avec le nouveau profil)
-    expect((await sql("select next_dispatch_at <= now() as due from public.rides where organization_id = $1", [pf.id]))[0].due).toBe(true);
+    // Aucune offre fermée : la réservation garde son offre et son prochain passage (échéances recalculées alors)
+    expect((await rideRow(ride.id)).next_dispatch_at.getTime()).toBe(nextBefore);
+    expect(await pendingOffer(ride.id, pf.driverId)).toBeTruthy();
 
     const org: Org = { id: pf.id, slug: pf.slug, ownerId: pf.ownerId };
     await createDriver(org, { firstName: "Deuxième" });
@@ -564,6 +581,196 @@ describe("bascule (svc_platform_set_private_fleet)", () => {
     const shareTerms = await expectPgError(as({ sub: org.ownerId }, async (q) =>
       q("select public.set_network_settings($1, true, null, $2, null, null)", [org.id, await networkTermsVersion()])));
     expect(shareTerms.message).toMatch(/^PRIVATE_FLEET_RESTRICTED/);
+  });
+
+  it("sortie pendant l'attente d'une réponse : aucune offre fermée avant son échéance, rappels « à confirmer » annulés", async () => {
+    const pf = await createPrivateFleet("Sortie Attente");
+    await asFresh(pf.ownerId, (q) =>
+      q("update public.organization_settings set scheduled_dispatch_lead_minutes = 120 where organization_id = $1", [pf.id]));
+    const now = await createApiRide(pf.id);
+    const later = await createApiRide(pf.id, { pickup_at: inMinutes(2 * 24 * 60) });
+    expect(await queuedReminders(pf.id)).toHaveLength(3);
+    const offer = await pendingOffer(now.id, pf.driverId);
+    const deadline = (await offerRow(offer)).expires_at.getTime();
+    expect((await rideRow(now.id)).next_dispatch_at.getTime()).toBe(deadline);
+
+    expect(await setPrivate(pf.id, pf.actor, false, NOTE)).toMatchObject({ ok: true, code: "PRIVATE_FLEET_DISABLED", open_rides: 2 });
+    expect(await queuedReminders(pf.id)).toHaveLength(0);
+    // Passage inchangé (à l'échéance de l'offre de 5 min) : un passage du dispatch ne ferme rien
+    expect((await rideRow(now.id)).next_dispatch_at.getTime()).toBe(deadline);
+    await tick();
+    expect(await offerRow(offer)).toMatchObject({ status: "pending" });
+    expect(await rideRow(now.id)).toMatchObject({ status: "OFFERED", dispatch_mode: "fleet" });
+    // Planifiée : l'échéance suit le profil standard au passage suivant (délai 60 min), sans rappel « à confirmer »
+    await passNow(later.id);
+    const laterRide = await rideRow(later.id);
+    expect((await offerRow(await pendingOffer(later.id, pf.driverId))).expires_at.getTime())
+      .toBe(laterRide.pickup_at.getTime() - STANDARD_DISPATCH_PROFILE.scheduled_dispatch_lead_minutes * 60_000);
+    expect(await queuedReminders(pf.id)).toHaveLength(0);
+
+    // À l'échéance de l'offre : chemin standard (vagues GPS dès 4 km)
+    await sql("update public.ride_offers set expires_at = now() - interval '1 second' where id = $1", [offer]);
+    await passNow(now.id);
+    expect(await offerRow(offer)).toMatchObject({ status: "expired", closed_reason: "fleet_window_elapsed" });
+    expect(await rideRow(now.id)).toMatchObject({ dispatch_mode: "geo", dispatch_radius_m: STANDARD_DISPATCH_PROFILE.dispatch_radii_m[0] });
+  });
+
+  it("entrée pendant une recherche GPS : l'offre en attente vit jusqu'à son échéance, puis le dernier appel (100 km) est lancé", async () => {
+    const actor = await superAdmin();
+    const org = await createOrg("PF Entrée Vague");
+    const driverId = await ownerFiche(org);
+    await sql("update public.drivers set presence = 'available' where id = $1", [driverId]);
+    await sql(
+      `insert into public.driver_locations (driver_id, organization_id, lat, lng, recorded_at, updated_at)
+       values ($1, $2, 48.7262, 2.3652, now(), now())`,
+      [driverId, org.id],
+    );
+    const ride = await createApiRide(org.id);
+    expect(await rideRow(ride.id)).toMatchObject({ dispatch_mode: "geo", dispatch_wave: 1, dispatch_radius_m: 4000 });
+    const offer = await pendingOffer(ride.id, driverId);
+    expect(await offerRow(offer)).toMatchObject({ mode: "geo", status: "pending" });
+    const nextBefore = (await rideRow(ride.id)).next_dispatch_at.getTime();
+
+    expect(await setPrivate(org.id, actor, true, NOTE)).toMatchObject({ ok: true, code: "PRIVATE_FLEET_ENABLED", open_rides: 1 });
+    expect(await rideRow(ride.id)).toMatchObject({ dispatch_mode: "geo", dispatch_wave: 0 });
+    expect((await rideRow(ride.id)).next_dispatch_at.getTime()).toBe(nextBefore);
+    await tick();
+    expect(await offerRow(offer)).toMatchObject({ status: "pending" });
+
+    // Échéance de l'offre : dernier appel de 100 km (l'offre en cours est prolongée), pas « Non confirmée »
+    await passNow(ride.id);
+    expect(await rideRow(ride.id)).toMatchObject({ status: "OFFERED", dispatch_wave: 1, dispatch_radius_m: 100_000 });
+    expect(await offerRow(offer)).toMatchObject({ status: "pending" });
+    expect(await sql("select 1 from public.notifications where ride_id = $1 and type = 'ride_unconfirmed'", [ride.id])).toHaveLength(0);
+    // Fin du dernier appel : « Non confirmée »
+    await passNow(ride.id);
+    expect(await rideRow(ride.id)).toMatchObject({ status: "NO_DRIVER_FOUND" });
+    expect(await sql("select 1 from public.notifications where ride_id = $1 and type = 'ride_unconfirmed'", [ride.id])).toHaveLength(1);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("entrée en Flotte Privée tenue ouverte : écritures concurrentes (deux connexions)", () => {
+  /** Organisation standard éligible : le propriétaire, seul membre, a la seule fiche (même compte). */
+  async function eligibleOrg(name: string) {
+    const org = await createOrg(name);
+    await ownerFiche(org);
+    return org;
+  }
+
+  /**
+   * Entrée en Flotte Privée dans une transaction A non validée, puis écriture d'une autre connexion B : B doit attendre
+   * un verrou de A (ligne de l'organisation, ou verrou consultatif pour le réseau), puis relire le drapeau validé.
+   * Renvoie l'erreur de B.
+   */
+  async function writeDuringEntry(orgId: string, write: (b: pg.PoolClient) => Promise<unknown>) {
+    const actor = await superAdmin();
+    const a = await pool.connect();
+    const b = await pool.connect();
+    try {
+      await a.query("begin");
+      await a.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ role: "service_role" })]);
+      await a.query("set local role service_role");
+      const { rows } = await a.query("select public.svc_platform_set_private_fleet($1, $2, true, $3) as r", [orgId, actor, NOTE]);
+      expect(rows[0].r).toMatchObject({ ok: true, code: "PRIVATE_FLEET_ENABLED" });
+      await b.query("set statement_timeout = '10s'");
+      const [{ pid }] = (await b.query("select pg_backend_pid() as pid")).rows;
+      const result = write(b).then(() => null, (e: PgError) => e);
+      // B bloquée sur un verrou de A (et non terminée avant la validation de A)
+      let waiting = false;
+      for (let i = 0; i < 100 && !waiting; i++) {
+        const [row] = await sql("select wait_event_type from pg_stat_activity where pid = $1", [pid]);
+        waiting = row?.wait_event_type === "Lock";
+        if (!waiting) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(waiting).toBe(true);
+      await a.query("commit");
+      return await result;
+    } finally {
+      await a.query("rollback").catch(() => undefined);
+      await b.query("reset statement_timeout").catch(() => undefined);
+      a.release();
+      b.release();
+    }
+  }
+
+  const state = async (orgId: string) =>
+    (await sql(
+      `select o.private_fleet, private.private_fleet_blockers(o.id) as blockers,
+              (select count(*)::int from public.organization_users u where u.organization_id = o.id and u.status <> 'disabled') as members,
+              (select count(*)::int from public.drivers d where d.organization_id = o.id and d.deleted_at is null) as drivers
+         from public.organizations o where o.id = $1`,
+      [orgId],
+    ))[0];
+
+  it("adhésion invitée : attend la bascule puis refusée (PRIVATE_FLEET_RESTRICTED)", async () => {
+    const org = await eligibleOrg("PF Course Adhésion");
+    const invitee = await createAuthUser(`pf-invite-${uid()}@test.dev`, "Invité");
+    const err = await writeDuringEntry(org.id, (b) =>
+      b.query("insert into public.organization_users (organization_id, user_id, role, status) values ($1, $2, 'admin', 'invited')", [org.id, invitee]));
+    expect(err?.message).toMatch(/^PRIVATE_FLEET_RESTRICTED/);
+    expect(await state(org.id)).toEqual({ private_fleet: true, blockers: [], members: 1, drivers: 1 });
+  });
+
+  it("accès désactivé réactivé : attend la bascule puis refusé", async () => {
+    const org = await eligibleOrg("PF Course Réactivation");
+    const member = await createMember(org, "admin");
+    await sql("update public.organization_users set status = 'disabled' where organization_id = $1 and user_id = $2", [org.id, member]);
+    const err = await writeDuringEntry(org.id, (b) =>
+      b.query("update public.organization_users set status = 'active' where organization_id = $1 and user_id = $2", [org.id, member]));
+    expect(err?.message).toMatch(/^PRIVATE_FLEET_RESTRICTED/);
+    expect(await state(org.id)).toEqual({ private_fleet: true, blockers: [], members: 1, drivers: 1 });
+  });
+
+  it("candidature : attend la bascule puis refusée (PRIVATE_FLEET_SINGLE_DRIVER)", async () => {
+    const org = await eligibleOrg("PF Course Candidature");
+    const user = await createAuthUser(`pf-cand-${uid()}@test.dev`, "Candidat");
+    const err = await writeDuringEntry(org.id, (b) =>
+      b.query(
+        `insert into public.drivers (organization_id, user_id, first_name, last_name, phone, status, application_status, applied_at, joined_via, trust_level)
+         values ($1, $2, 'Samir', 'Candidat', $3, 'inactive', 'pending', now(), 'join_link', 'new')`,
+        [org.id, user, uniquePhone()],
+      ));
+    expect(err?.message).toMatch(/^PRIVATE_FLEET_SINGLE_DRIVER/);
+    expect(await state(org.id)).toEqual({ private_fleet: true, blockers: [], members: 1, drivers: 1 });
+  });
+
+  it("partage réseau demandé : attend la bascule puis refusé (PRIVATE_FLEET_RESTRICTED)", async () => {
+    const org = await eligibleOrg("PF Course Réseau");
+    const version = await networkTermsVersion();
+    const err = await writeDuringEntry(org.id, (b) =>
+      b.query(
+        `insert into public.network_memberships (organization_id, share_out, terms_version, terms_accepted_at, terms_accepted_by, requested_at)
+         values ($1, true, $2, now(), $3, now())`,
+        [org.id, version, org.ownerId],
+      ));
+    expect(err?.message).toMatch(/^PRIVATE_FLEET_RESTRICTED/);
+    expect(await sql("select 1 from public.network_memberships where organization_id = $1", [org.id])).toHaveLength(0);
+  });
+
+  it("2e adhésion glissée hors des déclencheurs : l'invitation ne s'active pas (dernier rempart)", async () => {
+    const pf = await createPrivateFleet("Accès Unique");
+    const invitee = await createAuthUser(`pf-invite-${uid()}@test.dev`, "Invité");
+    const client = await pool.connect();
+    try {
+      // État que les écritures normales refusent : inséré déclencheurs désactivés
+      await client.query("begin");
+      await client.query("set local session_replication_role = replica");
+      await client.query("insert into public.organization_users (organization_id, user_id, role, status) values ($1, $2, 'admin', 'invited')", [pf.id, invitee]);
+      await client.query("commit");
+      // L'invité ouvre le lien reçu par e-mail (preuve « invite »)
+      await client.query("begin");
+      await client.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: invitee, role: "authenticated", iat: Math.floor(Date.now() / 1000) + 2, amr: [{ method: "invite" }] }),
+      ]);
+      await client.query("set local role authenticated");
+      const err = await expectPgError(client.query("select public.accept_member_invitations()"));
+      expect(err.message).toMatch(/^PRIVATE_FLEET_RESTRICTED/);
+    } finally {
+      await client.query("rollback").catch(() => undefined);
+      client.release();
+    }
+    expect((await sql("select status from public.organization_users where organization_id = $1 and user_id = $2", [pf.id, invitee]))[0].status).toBe("invited");
   });
 });
 

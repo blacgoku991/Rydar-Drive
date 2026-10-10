@@ -3,6 +3,8 @@
 // si la réponse est attendue dans 15 min), rappels « à confirmer », refus = « Refusée », dernier appel GPS (100 km), puis
 // « Non confirmée » ; véhicule incompatible = « À vérifier » ; « La prendre » ; réservation saisie par le chauffeur
 // attribuée d'office ; vol retardé ; suspension et bannissement (D13) ; app 1.1.0 ; vagues standard inchangées.
+// Revue : échéance annoncée tenue (délai de confirmation augmenté, délai de réponse de 10 min), offre recréée par le
+// moteur notifiée « NOUVELLE RÉSERVATION », rappels replanifiés quand les réglages changent ou annulés hors Flotte Privée.
 import { afterAll, describe, expect, it } from "vitest";
 import { PRIVATE_FLEET_REMINDER_RULES, PRIVATE_FLEET_RING_WINDOW_S, PRIVATE_FLEET_TITLES } from "../../packages/shared/src/private-fleet";
 import {
@@ -37,10 +39,21 @@ const notifications = (rideId: string) =>
 /** Rappels « à confirmer » de la réservation, par heure d'envoi. */
 const privateReminders = (rideId: string, status = "queued") =>
   sql(
-    `select type, title, body, data, offer_id, status, scheduled_for from public.notifications
+    `select id, type, title, body, data, offer_id, status, scheduled_for from public.notifications
       where ride_id = $1 and data ->> 'kind' = 'private_reminder' and status = $2 order by scheduled_for`,
     [rideId, status],
   );
+
+/** Minutes avant la prise en charge de chaque rappel. */
+const minutesBefore = (pickup: number, rows: Row[]) => rows.map((n) => (pickup - n.scheduled_for.getTime()) / MIN);
+
+/** Réglage de l'onglet « Réservations » enregistré par le propriétaire (colonnes ouvertes en écriture). */
+const setBookingSettings = (pf: { id: string; ownerId: string }, set: string) =>
+  asFresh(pf.ownerId, (q) => q(`update public.organization_settings set ${set} where organization_id = $1`, [pf.id]));
+
+/** Webhooks « ride.no_driver_found » en file pour la réservation (site du client prévenu). */
+const noDriverWebhooks = (rideId: string) =>
+  sql("select 1 from public.webhook_deliveries where ride_id = $1 and event_type = 'ride.no_driver_found'", [rideId]);
 
 const pendingOffer = async (rideId: string) =>
   (await sql("select * from public.ride_offers where ride_id = $1 and status = 'pending' order by sent_at", [rideId]))[0];
@@ -415,6 +428,166 @@ describe("cas particuliers", () => {
     const offer = await pendingOffer(ride.id);
     const list = (await rpc(pf.ownerId, "driver_offers_v2")) as unknown as Row[];
     expect(list.find((o) => o.offer_id === offer.id)).toMatchObject({ ride_id: ride.id, mode: "fleet", status: "pending" });
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("échéance annoncée tenue (H5, H6)", () => {
+  it("délai de confirmation porté à 24 h pendant l'attente : la réservation garde son échéance, ni « Non confirmée » ni webhook avant ; à l'échéance, chemin normal", async () => {
+    const pf = await createPrivateFleet("Disp Délai Augmenté");
+    await sql("insert into public.webhook_endpoints (organization_id, url) values ($1, 'https://site.example/hook')", [pf.id]);
+    const ride = await createApiRide(pf.id, { pickup_at: inMinutes(10 * 60) });
+    const offer = await pendingOffer(ride.id);
+    const pickup = (await rideState(ride.id)).ride.pickup_at.getTime();
+    const deadline = offer.expires_at.getTime();
+    expect(deadline).toBe(pickup - 60 * MIN);
+    const reminders = await privateReminders(ride.id);
+    expect(minutesBefore(pickup, reminders)).toEqual([180, 90]);
+
+    // « Confirmer au plus tard 24 h avant » : la fenêtre « flotte » serait déjà close (prise en charge dans 10 h)
+    await setBookingSettings(pf, "scheduled_dispatch_lead_minutes = 1440");
+    expect((await rideState(ride.id)).ride.next_dispatch_at.getTime()).toBe(deadline);
+    await sql("select private.dispatch_tick()");
+    let state = await rideState(ride.id);
+    expect(state.ride).toMatchObject({ status: "OFFERED", dispatch_mode: "fleet" });
+    expect(state.offers.map((o) => [o.id, o.status, o.expires_at.getTime()])).toEqual([[offer.id, "pending", deadline]]);
+    expect((await privateReminders(ride.id)).map((n) => n.id)).toEqual(reminders.map((n) => n.id));
+    expect((await notifications(ride.id)).filter((x) => x.type === "ride_unconfirmed")).toHaveLength(0);
+    expect(await noDriverWebhooks(ride.id)).toHaveLength(0);
+
+    // À l'échéance annoncée : dernier appel (hors ligne : personne), puis « Non confirmée »
+    await elapse(ride.id);
+    state = await rideState(ride.id);
+    expect(state.ride).toMatchObject({ status: "SEARCHING_DRIVER", dispatch_mode: "geo", dispatch_radius_m: 100_000 });
+    expect(state.offers.map((o) => [o.status, o.closed_reason])).toEqual([["expired", "fleet_window_elapsed"]]);
+    await nextWave(ride.id);
+    expect((await rideState(ride.id)).ride.status).toBe("NO_DRIVER_FOUND");
+    expect(await noDriverWebhooks(ride.id)).toHaveLength(1);
+
+    // Réservation reçue après le changement : le nouveau délai s'applique (réponse attendue tout de suite, sonnerie)
+    const next = await createApiRide(pf.id, { pickup_at: inMinutes(10 * 60) });
+    const nextOffer = await pendingOffer(next.id);
+    expect(nextOffer.expires_at.getTime() - Date.now()).toBeLessThanOrEqual(300_000);
+    expect((await notifications(next.id)).find((x) => x.offer_id === nextOffer.id)?.type).toBe("ride_offer");
+  });
+
+  it("délai porté à 6 h (fenêtre encore ouverte mais close avant l'échéance) : échéance gardée ; délai réduit : échéance reportée, rappels replanifiés", async () => {
+    const pf = await createPrivateFleet("Disp Délai Six Heures");
+    const ride = await createApiRide(pf.id, { pickup_at: inMinutes(10 * 60) });
+    const offer = await pendingOffer(ride.id);
+    const pickup = (await rideState(ride.id)).ride.pickup_at.getTime();
+    await setBookingSettings(pf, "scheduled_dispatch_lead_minutes = 360");
+    expect((await rideState(ride.id)).ride.next_dispatch_at.getTime()).toBe(offer.expires_at.getTime());
+    await sql("select private.dispatch_tick()");
+    expect((await pendingOffer(ride.id)).expires_at.getTime()).toBe(pickup - 60 * MIN);
+
+    // Délai réduit à 30 min : au passage suivant, l'échéance est reportée (plus de temps), rappels replanifiés
+    await setBookingSettings(pf, "scheduled_dispatch_lead_minutes = 30");
+    await nextWave(ride.id);
+    const later = await pendingOffer(ride.id);
+    expect(later).toMatchObject({ id: offer.id });
+    expect(later.expires_at.getTime()).toBe(pickup - 30 * MIN);
+    expect(minutesBefore(pickup, await privateReminders(ride.id))).toEqual([180, 60]);
+  });
+
+  it("délai de réponse de 10 min : la réservation immédiate garde ses 10 min (passage à l'échéance, pas au bout de 5 min)", async () => {
+    const pf = await createPrivateFleet("Disp Dix Minutes");
+    await setBookingSettings(pf, "offer_timeout_seconds = 600");
+    const ride = await createApiRide(pf.id);
+    const offer = await pendingOffer(ride.id);
+    const ttl = (offer.expires_at.getTime() - Date.now()) / 1000;
+    expect(ttl).toBeGreaterThan(580);
+    expect(ttl).toBeLessThanOrEqual(601);
+    expect((await rideState(ride.id)).ride.next_dispatch_at.getTime()).toBe(offer.expires_at.getTime());
+    await elapse(ride.id);
+    expect((await rideState(ride.id)).offers.map((o) => [o.status, o.closed_reason])).toEqual([["expired", "fleet_window_elapsed"]]);
+  });
+
+  it("organisation standard : délai augmenté sans effet sur le prochain passage (non-régression)", async () => {
+    const org = await createOrg("Disp Standard Délai");
+    await createDriver(org, { presence: "offline" });
+    const ride = await createRideAsOwner(org, { pickup_at: inMinutes(10 * 60) });
+    const before = (await rideState(ride.id)).ride.next_dispatch_at.getTime();
+    expect(before - Date.now()).toBeLessThanOrEqual(5 * MIN);
+    await as({ sub: org.ownerId }, (q) =>
+      q("update public.organization_settings set scheduled_dispatch_lead_minutes = 1440 where organization_id = $1", [org.id]));
+    const [lead] = await sql("select scheduled_dispatch_lead_minutes as m from public.organization_settings where organization_id = $1", [org.id]);
+    expect(lead.m).toBe(1440);
+    expect((await rideState(ride.id)).ride.next_dispatch_at.getTime()).toBe(before);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("« NOUVELLE RÉSERVATION » pour toute offre faite (H4)", () => {
+  it("véhicule corrigé après « À VÉRIFIER » : offre faite au passage suivant, notification qui sonne (fenêtre de 10 min)", async () => {
+    const pf = await createPrivateFleet("Disp Van Corrigé");
+    const ride = await createApiRide(pf.id, { vehicle_category: "van", pickup_at: inMinutes(70) });
+    expect((await rideState(ride.id)).offers).toHaveLength(0);
+    await sql("update public.vehicles set category = 'van', seats = 7 where id = $1", [pf.vehicleId]);
+    await nextWave(ride.id);
+    const offer = await pendingOffer(ride.id);
+    expect(offer).toMatchObject({ driver_id: pf.driverId, mode: "fleet" });
+    expect(offer.expires_at.getTime() - Date.now()).toBeLessThanOrEqual(PRIVATE_FLEET_RING_WINDOW_S * 1000);
+    const n = (await notifications(ride.id)).filter((x) => x.offer_id === offer.id);
+    expect(n.map((x) => [x.type, x.title, x.status])).toEqual([["ride_offer", PRIVATE_FLEET_TITLES.newBooking, "queued"]]);
+    expect(n[0].data).toMatchObject({ type: "ride_offer", kind: "private_new", offer_id: offer.id, ride_id: ride.id });
+  });
+
+  it("vol retardé d'une réservation « maintenant » : requalifiée et reproposée, notifiée « NOUVELLE RÉSERVATION » qui sonne", async () => {
+    const pf = await createPrivateFleet("Disp Vol Immédiate");
+    const ride = await createApiRide(pf.id, { flight_number: "AF1234" });
+    const first = await pendingOffer(ride.id);
+    const [res] = await sql(
+      "select private.apply_flight_status($1, 'delayed', now() - interval '1 minute', now() + interval '60 minutes') as r",
+      [ride.id],
+    );
+    expect(res.r).toMatchObject({ ok: true, requalified: "fleet" });
+    const { ride: r, offers } = await rideState(ride.id);
+    expect(r).toMatchObject({ type: "scheduled", status: "OFFERED", dispatch_mode: "fleet" });
+    expect(offers.find((o) => o.id === first.id)).toMatchObject({ status: "closed", closed_reason: "flight_rescheduled" });
+    const again = offers.find((o) => o.status === "pending")!;
+    expect(again).toMatchObject({ driver_id: pf.driverId, mode: "fleet" });
+    const n = (await notifications(ride.id)).filter((x) => x.offer_id === again.id);
+    expect(n.map((x) => [x.type, x.title])).toEqual([["ride_offer", PRIVATE_FLEET_TITLES.newBooking]]);
+    expect(n[0].data).toMatchObject({ type: "ride_offer", kind: "private_new", offer_id: again.id });
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe("rappels « à confirmer » : réglages changés, organisation sortie (H1, H6)", () => {
+  it("rappels changés dans les réglages : replanifiés (encore prévus et déjà dus gardés) ; réglages réenregistrés à l'identique : rien ne bouge", async () => {
+    const pf = await createPrivateFleet("Disp Rappels Réglés");
+    const ride = await createApiRide(pf.id, { pickup_at: inMinutes(3 * 24 * 60) });
+    const pickup = (await rideState(ride.id)).ride.pickup_at.getTime();
+    const [day, three, last] = await privateReminders(ride.id);
+    expect(minutesBefore(pickup, [day!, three!, last!])).toEqual([1440, 180, 90]);
+    // Rappel de la veille déjà dû, pas encore envoyé : il part tel quel
+    await sql("update public.notifications set scheduled_for = now() - interval '1 minute' where id = $1", [day!.id]);
+
+    await setBookingSettings(pf, "reminder_offsets_minutes = '{720,120}'");
+    const queued = await privateReminders(ride.id);
+    expect(queued.map((n) => n.id)).toEqual([day!.id, expect.any(String), expect.any(String), last!.id]);
+    expect(minutesBefore(pickup, queued.slice(1))).toEqual([720, 120, 90]);
+    expect(queued[1]!.body).toMatch(/^Prise en charge dans 12 h · /);
+    expect((await privateReminders(ride.id, "cancelled")).map((n) => n.id)).toEqual([three!.id]);
+
+    // Onglet enregistré sans changement (toutes les colonnes réécrites) : aucun rappel remplacé
+    await setBookingSettings(pf, "scheduled_dispatch_lead_minutes = 60, offer_timeout_seconds = 300, reminder_offsets_minutes = '{720,120}'");
+    expect((await privateReminders(ride.id)).map((n) => n.id)).toEqual(queued.map((n) => n.id));
+  });
+
+  it("organisation qui n'est plus une Flotte Privée : un changement d'échéance annule les rappels restants", async () => {
+    const pf = await createPrivateFleet("Disp Rappels Drapeau");
+    const ride = await createApiRide(pf.id, { pickup_at: inMinutes(2 * 24 * 60) });
+    expect(await privateReminders(ride.id)).toHaveLength(3);
+    // Drapeau retiré seul (marqueur des RPC, sans la bascule) : seuls les déclencheurs de l'offre jouent
+    await as({ role: "service_role" }, async (q) => {
+      await q("select set_config('rydar.private_fleet_change', $1, true)", [pf.id]);
+      await q("update public.organizations set private_fleet = false where id = $1", [pf.id]);
+    });
+    await sql("update public.ride_offers set expires_at = expires_at - interval '30 minutes' where ride_id = $1 and status = 'pending'", [ride.id]);
+    expect(await privateReminders(ride.id)).toHaveLength(0);
+    expect(await privateReminders(ride.id, "cancelled")).toHaveLength(3);
   });
 });
 

@@ -71,7 +71,7 @@ export function PrivateBookingSettingsForm({ settings, readOnly }: { settings: P
               label="Confirmer au plus tard"
               hint={
                 lead === settings.scheduled_dispatch_lead_minutes
-                  ? "Avant la prise en charge. Ensuite : un dernier appel sur votre téléphone s'il est en ligne, puis « Non confirmée »."
+                  ? "Avant la prise en charge. Ensuite : un dernier appel sur votre téléphone s'il est en ligne, puis « Non confirmée ». Un délai plus long ne vaut que pour les nouvelles réservations."
                   : `Réglage actuel : ${minutesLabel(settings.scheduled_dispatch_lead_minutes)} (non proposé) — choisissez un délai.`
               }
               error={errors.scheduledDispatchLeadMinutes}

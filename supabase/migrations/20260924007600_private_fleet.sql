@@ -8,16 +8,22 @@
 --
 --  A. Schéma : organizations.private_fleet (+ contrainte : modèle flotte, lien d'inscription fermé ; lecture par
 --     colonne), drivers.owner_driver (fiche du gérant, gardée après une bascule), index de l'agenda.
---  B. Aides privées : is_private_fleet, private_fleet_driver, private_fleet_blockers, profils de dispatch.
+--  B. Aides privées : is_private_fleet, private_fleet_driver, private_fleet_blockers, profils de dispatch, échéance
+--     annoncée tenue (private_fleet_hold).
 --  C. Garde des organisations : drapeau écrit par les seules RPC du super admin (marqueur rydar.private_fleet_change),
 --     modèle flotte et lien fermé imposés, passage refusé tant qu'une raison de private_fleet_blockers existe.
---  D. Garde des fiches chauffeur : une seule fiche, celle du propriétaire (adhésion owner active).
---  E. Garde du réseau partagé : aucune adhésion, aucun partage, aucune demande.
+--  D. Gardes des fiches chauffeur et des accès : une seule fiche, celle du propriétaire (adhésion owner active) ; un
+--     seul accès au tableau de bord. Drapeau lu sous le verrou de la ligne de l'organisation : une entrée en Flotte
+--     Privée en cours (même verrou) est attendue puis relue.
+--  E. Garde du réseau partagé : aucune adhésion, aucun partage, aucune demande (entrée en cours attendue : verrou
+--     consultatif de l'organisation).
 --  F. Limites (private.org_limits) : 1 chauffeur et 1 accès imposés APRÈS l'offre et la surcharge.
 --  G. Démarrage d'une course (private.start_dispatch) : branche Flotte Privée → réservation « à confirmer » proposée au
 --     seul chauffeur (private.offer_to_fleet, sans condition de présence, de position ni de distance), ou attribuée
 --     d'office quand il la saisit lui-même au tableau de bord.
---  H. Déclencheurs : rappels « à confirmer » (H1), refus = « Refusée » (H2), « Non confirmée » (H3).
+--  H. Déclencheurs : rappels « à confirmer » (H1), refus = « Refusée » (H2), « Non confirmée » (H3), « NOUVELLE
+--     RÉSERVATION » pour toute offre faite, même recréée par le moteur (H4), échéance annoncée tenue (H5), réglages
+--     « Réservations » changés pendant l'attente d'une réponse (H6).
 --  I. RPC du super admin : création atomique, recréation de la fiche, bascule vers / depuis la Flotte Privée.
 --  J. RPC du chauffeur : « La prendre » (driver_take_ride), agenda (driver_agenda).
 --  K. Lectures de l'application : driver_home, driver_account_state (clés ajoutées seulement).
@@ -283,6 +289,45 @@ as $$
    limit greatest(coalesce(p_limit, 100), 1);
 $$;
 
+-- Échéance annoncée tenue (H5, H6, bascule I3). private.dispatch_tick ferme la fenêtre « flotte » d'une réservation à
+-- la prise en charge − délai de confirmation, au passage fixé par private.offer_to_fleet (dans 5 min au plus), sans
+-- lire l'échéance de l'offre en attente. Quand cette fenêtre se ferme AVANT l'échéance annoncée au chauffeur
+-- (notification, rappels) — délai de réponse de plus de 5 min, délai de confirmation augmenté, bascule —, le prochain
+-- passage est repoussé à l'échéance : il ferme alors l'offre et suit le chemin normal (dernier appel, puis « Non
+-- confirmée »). Jamais avancé. Courses de p_org (p_ride : cette seule course) ; renvoie le nombre de passages repoussés.
+create or replace function private.private_fleet_hold(p_org uuid, p_ride uuid default null)
+returns integer
+language sql
+set search_path = ''
+as $$
+  with x as (
+    select y.id as ride_id, max(o.expires_at) as deadline
+      from public.rides y
+      join public.ride_offers o on o.ride_id = y.id
+     where y.organization_id = p_org
+       and (p_ride is null or y.id = p_ride)
+       and y.status in ('SEARCHING_DRIVER', 'OFFERED')
+       and y.dispatch_mode = 'fleet'
+       and y.driver_id is null
+       and o.status = 'pending' and o.mode = 'fleet' and not o.is_network
+     group by y.id
+  ),
+  held as (
+    update public.rides r
+       set next_dispatch_at = x.deadline
+      from x, public.organization_settings s
+     where r.id = x.ride_id
+       and s.organization_id = r.organization_id
+       and r.status in ('SEARCHING_DRIVER', 'OFFERED')
+       and r.dispatch_mode = 'fleet'
+       and r.driver_id is null
+       and r.pickup_at - make_interval(mins => coalesce(s.scheduled_dispatch_lead_minutes, 60)) < x.deadline
+       and (r.next_dispatch_at is null or r.next_dispatch_at < x.deadline)
+    returning 1
+  )
+  select count(*)::integer from held;
+$$;
+
 -- =============================================================================
 -- C. Garde des organisations
 -- =============================================================================
@@ -329,24 +374,35 @@ create trigger organizations_private_fleet_guard
   for each row execute function private.organizations_private_fleet_guard();
 
 -- =============================================================================
--- D. Garde des fiches chauffeur
+-- D. Gardes des fiches chauffeur et des accès
 -- =============================================================================
 -- Préfixe « aa_ » : premier des déclencheurs BEFORE de drivers (ordre alphabétique), avant drivers_plan_limit et
--- drivers_identity_bans, pour un message clair. Flotte Privée : insertions sérialisées par organisation (verrou
--- consultatif) ; toute nouvelle fiche alors qu'une autre n'est pas supprimée (candidatures comprises) →
--- PRIVATE_FLEET_SINGLE_DRIVER ; fiche détachée de son compte (user_id NULL : suppression de compte, clé étrangère)
--- toujours permise ; sinon le compte doit être celui d'une adhésion owner ACTIVE → PRIVATE_FLEET_DRIVER_OWNER.
--- Couvre createDriver (service role), svc_driver_apply (lien fermé de toute façon) et toute insertion directe.
+-- drivers_identity_bans, pour un message clair. Fiche détachée de son compte (user_id NULL : suppression de compte, clé
+-- étrangère) : toujours permise, sans verrou. Sinon le drapeau est lu sous le verrou de la ligne de l'organisation
+-- (FOR NO KEY UPDATE, celui que drivers_assign_number prend de toute façon ; jamais FOR SHARE : la montée vers ce verrou
+-- interbloquerait deux insertions) : une bascule en cours (svc_platform_set_private_fleet, même verrou) est attendue
+-- puis relue, deux insertions d'une même organisation sont sérialisées. Flotte Privée : toute nouvelle fiche alors
+-- qu'une autre n'est pas supprimée (candidatures comprises) → PRIVATE_FLEET_SINGLE_DRIVER ; compte autre que celui
+-- d'une adhésion owner ACTIVE → PRIVATE_FLEET_DRIVER_OWNER. Couvre createDriver (service role), svc_driver_apply (lien
+-- fermé de toute façon) et toute insertion directe (aucune insertion ni user_id ouverts au client).
 create or replace function private.drivers_private_fleet_guard()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
+declare
+  v_private boolean;
 begin
-  if not private.is_private_fleet(new.organization_id) then
+  if tg_op = 'UPDATE' and new.user_id is null then
     return new;
   end if;
-  perform pg_advisory_xact_lock(hashtextextended('rydar.private_fleet:' || new.organization_id::text, 0));
+  select o.private_fleet into v_private
+    from public.organizations o
+   where o.id = new.organization_id
+     for no key update;
+  if not coalesce(v_private, false) then
+    return new;
+  end if;
   if tg_op = 'INSERT' and exists (select 1 from public.drivers x
                                    where x.organization_id = new.organization_id and x.deleted_at is null
                                      and x.id <> new.id) then
@@ -369,6 +425,45 @@ create trigger drivers_aa_private_fleet_guard
   before insert or update of user_id on public.drivers
   for each row execute function private.drivers_private_fleet_guard();
 
+-- Un seul accès au tableau de bord (G2) : en Flotte Privée, une adhésion non désactivée alors qu'une autre existe →
+-- PRIVATE_FLEET_RESTRICTED. Dernier rempart en plus de org_limits (max_admins 1), qu'enforce_plan_limits n'applique
+-- qu'à l'insertion et au départ de « disabled », sans verrou. Nouvel accès (insertion, réactivation) : drapeau lu sous le
+-- verrou de la ligne de l'organisation (une bascule en cours est attendue puis relue) ; invitation acceptée (invited →
+-- active : aucun accès de plus) : simple lecture. Nommé après organization_users_plan_limit : PLAN_LIMIT_ADMINS reste
+-- le message d'une Flotte Privée déjà en place.
+create or replace function private.organization_users_private_fleet_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_private boolean;
+begin
+  if new.status = 'disabled' or (tg_op = 'UPDATE' and new.status is not distinct from old.status) then
+    return new;
+  end if;
+  if tg_op = 'INSERT' or old.status = 'disabled' then
+    select o.private_fleet into v_private
+      from public.organizations o
+     where o.id = new.organization_id
+       for no key update;
+  else
+    v_private := private.is_private_fleet(new.organization_id);
+  end if;
+  if coalesce(v_private, false)
+     and exists (select 1 from public.organization_users u
+                  where u.organization_id = new.organization_id and u.id <> new.id and u.status <> 'disabled') then
+    raise exception 'PRIVATE_FLEET_RESTRICTED: un seul accès au tableau de bord en Flotte Privée, celui du propriétaire'
+      using errcode = '55000';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger organization_users_private_fleet_guard
+  before insert or update of status on public.organization_users
+  for each row execute function private.organization_users_private_fleet_guard();
+
 -- =============================================================================
 -- E. Garde du réseau partagé
 -- =============================================================================
@@ -376,22 +471,29 @@ create trigger drivers_aa_private_fleet_guard
 -- jamais au partage, à une demande, à une validation ni à une convention acceptée. Seuls écrivains :
 -- set_network_settings, svc_network_approve (refusés) ; svc_network_suspend sur une adhésion existante (permis). Les
 -- trois commencent par « insert … on conflict (organization_id) do nothing », qui déclenche ce garde AVANT le conflit :
--- l'insertion n'est laissée passer que si l'adhésion existe déjà (aucune ligne créée, le conflit l'écarte).
+-- l'insertion n'est laissée passer que si l'adhésion existe déjà (aucune ligne créée, le conflit l'écarte). Écriture
+-- refusable seulement : une entrée en Flotte Privée en cours est attendue (verrou consultatif de l'organisation,
+-- exclusif dans svc_platform_set_private_fleet, partagé ici : les écritures du réseau ne s'attendent pas entre elles,
+-- et aucun verrou de ligne de l'organisation n'est pris après celui de l'adhésion), puis le drapeau est relu.
 create or replace function private.network_memberships_private_fleet_guard()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
+declare
+  v_private boolean;
 begin
-  if not private.is_private_fleet(new.organization_id) then
+  if not ((tg_op = 'INSERT'
+           and not exists (select 1 from public.network_memberships m where m.organization_id = new.organization_id))
+          or new.share_out or new.share_in
+          or (new.requested_at is not null and new.requested_at is distinct from old.requested_at)
+          or (new.approved_at is not null and new.approved_at is distinct from old.approved_at)
+          or (new.terms_version is not null and new.terms_version is distinct from old.terms_version)) then
     return new;
   end if;
-  if (tg_op = 'INSERT'
-      and not exists (select 1 from public.network_memberships m where m.organization_id = new.organization_id))
-     or new.share_out or new.share_in
-     or (new.requested_at is not null and new.requested_at is distinct from old.requested_at)
-     or (new.approved_at is not null and new.approved_at is distinct from old.approved_at)
-     or (new.terms_version is not null and new.terms_version is distinct from old.terms_version) then
+  perform pg_advisory_xact_lock_shared(hashtextextended('rydar.private_fleet:' || new.organization_id::text, 0));
+  select o.private_fleet into v_private from public.organizations o where o.id = new.organization_id;
+  if coalesce(v_private, false) then
     raise exception 'PRIVATE_FLEET_RESTRICTED: réseau partagé non inclus dans la Flotte Privée' using errcode = '55000';
   end if;
   return new;
@@ -438,8 +540,8 @@ $$;
 --     la notification « attribuée » qui lui serait adressée est annulée) ;
 --  4-5. sinon offre « à confirmer » au chauffeur (private.offer_to_fleet : ni présence, ni position, ni distance),
 --     échéance = prise en charge − délai de confirmation, au moins maintenant + délai de réponse ; sa notification
---     devient « NOUVELLE RÉSERVATION » (kind private_new), qui sonne (ride_offer) si la réponse est attendue dans
---     15 min au plus (PRIVATE_FLEET_RING_WINDOW_S) ;
+--     devient « NOUVELLE RÉSERVATION » (H4 : kind private_new, sonnerie si la réponse est attendue dans 15 min au plus)
+--     et l'échéance annoncée est tenue (H5) ;
 --  6. véhicule incompatible (catégorie, places) : aucune offre, notification « RÉSERVATION À VÉRIFIER » (sans
 --     ride_id dans les données : l'app 1.1.0 ouvrirait une course qui n'est pas la sienne) ; la course reste en
 --     recherche jusqu'à l'échéance puis suit le chemin normal.
@@ -450,7 +552,6 @@ language plpgsql
 set search_path = ''
 as $$
 declare
-  c_ring_window constant interval := interval '900 seconds';
   r public.rides;
   d public.drivers;
   o public.ride_offers;
@@ -512,17 +613,13 @@ begin
   v_count := private.offer_to_fleet(r.id);
 
   if v_count > 0 then
-    -- 5. notification initiale (sans « kind ») : « NOUVELLE RÉSERVATION », sonnerie si la réponse est attendue bientôt
+    -- 5. offre faite : sa notification initiale est déjà « NOUVELLE RÉSERVATION » (H4), qui sonne ou non
     select * into o from public.ride_offers x
      where x.ride_id = r.id and x.driver_id = d.id and x.status = 'pending' and x.mode = 'fleet'
      order by x.sent_at desc, x.id
      limit 1;
-    v_ring := o.expires_at <= now() + c_ring_window;
-    update public.notifications n
-       set title = 'NOUVELLE RÉSERVATION',
-           type = case when v_ring then 'ride_offer' else n.type end,
-           data = n.data || jsonb_build_object('kind', 'private_new', 'type', case when v_ring then 'ride_offer' else n.type end)
-     where n.offer_id = o.id and n.status = 'queued' and not (n.data ? 'kind');
+    v_ring := exists (select 1 from public.notifications n
+                       where n.ride_id = r.id and n.offer_id = o.id and n.type = 'ride_offer');
     perform private.log_event(r.organization_id, r.id, 'dispatch.private_offer',
       format('Proposée — réponse attendue avant %s', private.fmt_local_time(o.expires_at, v_tz, now())),
       'timeline', 'info',
@@ -621,14 +718,15 @@ $$;
 -- H. Déclencheurs de dispatch (aucune fonction du moteur recopiée)
 -- =============================================================================
 
--- H1. Rappels « à confirmer » (PRIVATE_FLEET_REMINDER_RULES de @rydar/shared) : à chaque offre « flotte » en attente
--- créée ou dont l'échéance change (réglages, vol retardé : private.apply_flight_status), les rappels en file de l'offre
--- sont remplacés. Heures candidates : prise en charge − chaque délai des rappels de course de l'organisation, plus
--- l'échéance − 30 min (« dernier rappel ») ; gardées de maintenant + 20 min à l'échéance − 5 min, triées ; une heure à
--- moins de 15 min de la précédente retenue écartée ; 4 au plus. Nettoyage sans code : private.claim_notifications
--- annule les notifications d'une offre qui n'est plus en attente, public.accept_ride_offer celles de la course.
-create or replace function private.ride_offers_private_fleet_reminders()
-returns trigger
+-- Rappels « à confirmer » d'une offre (PRIVATE_FLEET_REMINDER_RULES de @rydar/shared), calcul commun à H1 et H6.
+-- Heures candidates : prise en charge − chaque délai des rappels de course de l'organisation, plus l'échéance − 30 min
+-- (« dernier rappel ») ; gardées de maintenant + 20 min à l'échéance − 5 min, triées ; une heure à moins de 15 min de
+-- la précédente retenue écartée ; 4 au plus. Les rappels en file de l'offre sont remplacés ; p_keep (rappels changés
+-- dans les réglages, échéance inchangée) : un rappel en file encore prévu reste tel quel, même à moins de 20 min, et un
+-- rappel déjà dû n'est pas touché. Offre qui n'est plus « à confirmer » (organisation sortie de la Flotte Privée, offre
+-- close) : ses rappels en file sont annulés. Renvoie le nombre de rappels mis en file.
+create or replace function private.private_fleet_plan_reminders(p_offer uuid, p_keep boolean)
+returns integer
 language plpgsql
 set search_path = ''
 as $$
@@ -638,67 +736,104 @@ declare
   c_end_margin constant interval := interval '5 minutes';
   c_min_gap constant interval := interval '15 minutes';
   c_max constant integer := 4;
+  f public.ride_offers;
   r public.rides;
+  v_active boolean;
   v_offsets integer[];
+  v_queued timestamptz[];
+  v_plan timestamptz[] := '{}';
   v_tz text;
   v_at timestamptz;
-  v_kept timestamptz;
-  v_count integer := 0;
   v_last_call timestamptz;
   v_when text;
   v_route text;
   v_data jsonb;
+  v_count integer := 0;
 begin
-  if tg_op = 'UPDATE' and old.expires_at is not distinct from new.expires_at then
-    return null;
+  select * into f from public.ride_offers x where x.id = p_offer;
+  if not found then
+    return 0;
   end if;
-  if not private.is_private_fleet(new.organization_id) then
-    return null;
-  end if;
-  update public.notifications n
-     set status = 'cancelled'
-   where n.offer_id = new.id and n.status = 'queued' and n.data ->> 'kind' = 'private_reminder';
-  if new.expires_at is null then
-    return null;
+  select coalesce(array_agg(n.scheduled_for), '{}') into v_queued
+    from public.notifications n
+   where n.ride_id = f.ride_id and n.offer_id = f.id and n.status = 'queued' and n.data ->> 'kind' = 'private_reminder';
+  v_active := f.status = 'pending' and f.mode = 'fleet' and not f.is_network and f.expires_at is not null
+              and private.is_private_fleet(f.organization_id);
+
+  if v_active then
+    select * into r from public.rides x where x.id = f.ride_id;
+    select s.reminder_offsets_minutes into v_offsets from public.organization_settings s where s.organization_id = f.organization_id;
+    v_last_call := f.expires_at - c_last_call;
+    for v_at in
+      select distinct c.reminder_at
+        from (select r.pickup_at - make_interval(mins => x) as reminder_at
+                from unnest(coalesce(v_offsets, '{}'::integer[])) as x
+              union all
+              select v_last_call) c
+       where c.reminder_at <= f.expires_at - c_end_margin
+         and (c.reminder_at >= now() + c_min_ahead
+              or (p_keep and c.reminder_at > now() and c.reminder_at = any (v_queued)))
+       order by c.reminder_at
+    loop
+      continue when cardinality(v_plan) > 0 and v_at < v_plan[cardinality(v_plan)] + c_min_gap;
+      exit when cardinality(v_plan) >= c_max;
+      v_plan := v_plan || v_at;
+    end loop;
   end if;
 
-  select * into r from public.rides x where x.id = new.ride_id;
-  select s.reminder_offsets_minutes into v_offsets from public.organization_settings s where s.organization_id = new.organization_id;
-  select o.timezone into v_tz from public.organizations o where o.id = new.organization_id;
+  update public.notifications n
+     set status = 'cancelled'
+   where n.ride_id = f.ride_id and n.offer_id = f.id and n.status = 'queued' and n.data ->> 'kind' = 'private_reminder'
+     and not (v_active and p_keep and (n.scheduled_for = any (v_plan) or n.scheduled_for <= now()));
+  if cardinality(v_plan) = 0 then
+    return 0;
+  end if;
+
+  select o.timezone into v_tz from public.organizations o where o.id = f.organization_id;
   v_tz := coalesce(v_tz, 'Europe/Paris');
-  v_last_call := new.expires_at - c_last_call;
   v_when := to_char(r.pickup_at at time zone v_tz, 'DD/MM HH24:MI');
   v_route := coalesce(private.short_address(r.pickup_address), r.pickup_address) || ' → '
     || coalesce(private.short_address(r.dropoff_address), r.dropoff_address);
-  v_data := jsonb_build_object('type', 'ride_offer_scheduled', 'kind', 'private_reminder', 'offer_id', new.id,
+  v_data := jsonb_build_object('type', 'ride_offer_scheduled', 'kind', 'private_reminder', 'offer_id', f.id,
     'ride_id', r.id, 'ride_type', r.type, 'pickup', r.pickup_address, 'dropoff', r.dropoff_address,
-    'pickup_at', r.pickup_at, 'price_cents', r.price_cents, 'passengers', r.passengers, 'expires_at', new.expires_at);
-
-  for v_at in
-    select distinct c.reminder_at
-      from (select r.pickup_at - make_interval(mins => x) as reminder_at
-              from unnest(coalesce(v_offsets, '{}'::integer[])) as x
-            union all
-            select v_last_call) c
-     where c.reminder_at >= now() + c_min_ahead
-       and c.reminder_at <= new.expires_at - c_end_margin
-     order by c.reminder_at
-  loop
-    continue when v_kept is not null and v_at < v_kept + c_min_gap;
-    exit when v_count >= c_max;
-    perform private.queue_notification(new.organization_id, new.driver_id, r.id, new.id, 'ride_offer_scheduled',
+    'pickup_at', r.pickup_at, 'price_cents', r.price_cents, 'passengers', r.passengers, 'expires_at', f.expires_at);
+  foreach v_at in array v_plan loop
+    continue when p_keep and v_at = any (v_queued);
+    perform private.queue_notification(f.organization_id, f.driver_id, r.id, f.id, 'ride_offer_scheduled',
       'RÉSERVATION À CONFIRMER',
       case when v_at = v_last_call
-           then private.fr_typo('Dernier rappel : répondez avant ') || private.fmt_local_time(new.expires_at, v_tz, v_at)
+           then private.fr_typo('Dernier rappel : répondez avant ') || private.fmt_local_time(f.expires_at, v_tz, v_at)
                 || format(' · %s · %s', v_when, v_route)
            else format('Prise en charge dans %s · %s · %s · %s',
                   private.fmt_minutes(round(extract(epoch from (r.pickup_at - v_at)) / 60)::integer), v_when, v_route,
                   private.fmt_eur(r.price_cents))
       end,
       v_data, 'high', v_at);
-    v_kept := v_at;
     v_count := v_count + 1;
   end loop;
+  return v_count;
+end;
+$$;
+
+-- H1. Rappels « à confirmer » : à chaque offre « flotte » en attente créée ou dont l'échéance change (réglages, vol
+-- retardé : private.apply_flight_status), les rappels en file de l'offre sont remplacés (calcul ci-dessus) — annulés
+-- d'abord, même quand l'organisation n'est plus une Flotte Privée (sortie : aucun rappel à l'ancienne échéance).
+-- Nettoyage sans code : private.claim_notifications annule les notifications d'une offre qui n'est plus en attente,
+-- public.accept_ride_offer celles de la course.
+create or replace function private.ride_offers_private_fleet_reminders()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'UPDATE' and old.expires_at is not distinct from new.expires_at then
+    return null;
+  end if;
+  -- Offre créée hors Flotte Privée : aucun rappel à poser ni à annuler
+  if tg_op = 'INSERT' and not private.is_private_fleet(new.organization_id) then
+    return null;
+  end if;
+  perform private.private_fleet_plan_reminders(new.id, false);
   return null;
 end;
 $$;
@@ -792,6 +927,111 @@ create trigger rides_private_fleet_unconfirmed
   for each row
   when (new.status = 'NO_DRIVER_FOUND' and old.status is distinct from 'NO_DRIVER_FOUND')
   execute function private.rides_private_fleet_unconfirmed();
+
+-- H4. Notification initiale de toute offre « à confirmer » — réservation reçue, ou offre recréée par le moteur
+-- (véhicule corrigé, vol retardé, relance) : la notification standard de private.offer_to_fleet (« NOUVELLE COURSE
+-- PLANIFIÉE », insérée par la même instruction, déjà visible ici) devient « NOUVELLE RÉSERVATION » (kind private_new)
+-- et sonne (ride_offer : canal des offres, plein écran possible) si la réponse est attendue dans 15 min au plus
+-- (PRIVATE_FLEET_RING_WINDOW_S). pg_notify n'est livré qu'au commit : le worker lit la ligne finale.
+create or replace function private.ride_offers_private_fleet_new()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  c_ring_window constant interval := interval '900 seconds';
+  v_ring boolean;
+begin
+  if not private.is_private_fleet(new.organization_id) then
+    return null;
+  end if;
+  v_ring := coalesce(new.expires_at <= now() + c_ring_window, false);
+  update public.notifications n
+     set title = 'NOUVELLE RÉSERVATION',
+         type = case when v_ring then 'ride_offer' else n.type end,
+         data = n.data || jsonb_build_object('kind', 'private_new', 'type', case when v_ring then 'ride_offer' else n.type end)
+   where n.ride_id = new.ride_id and n.offer_id = new.id and n.status = 'queued' and not (n.data ? 'kind');
+  return null;
+end;
+$$;
+
+create trigger ride_offers_private_fleet_new
+  after insert on public.ride_offers
+  for each row
+  when (new.status = 'pending' and new.mode = 'fleet' and not new.is_network)
+  execute function private.ride_offers_private_fleet_new();
+
+-- H5. Échéance annoncée tenue (private.private_fleet_hold) pour toute offre « à confirmer » créée ou dont l'échéance
+-- change. Déclencheur DIFFÉRÉ (fin de transaction) : il passe après l'écriture de rides.next_dispatch_at qui suit
+-- l'offre dans private.offer_to_fleet et private.apply_flight_status. Definer : un déclencheur différé s'exécute avec le
+-- rôle actif au commit (authenticated pour une réservation saisie au tableau de bord), sans droit d'écriture sur rides.
+create or replace function private.ride_offers_private_fleet_hold()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if private.is_private_fleet(new.organization_id) then
+    perform private.private_fleet_hold(new.organization_id, new.ride_id);
+  end if;
+  return null;
+end;
+$$;
+
+create constraint trigger ride_offers_private_fleet_hold
+  after insert or update of expires_at on public.ride_offers
+  deferrable initially deferred
+  for each row
+  when (new.status = 'pending' and new.mode = 'fleet' and not new.is_network)
+  execute function private.ride_offers_private_fleet_hold();
+
+-- H6. Réglages « Réservations » changés pendant que des réservations attendent une réponse (Flotte Privée) :
+--  * délai de confirmation : échéances annoncées tenues (private.private_fleet_hold) — une confirmation demandée plus
+--    tôt ne vaut que pour les réservations suivantes ; plus tard, private.offer_to_fleet reporte l'échéance au passage
+--    suivant (rappels replanifiés par H1) ;
+--  * rappels : rappels « à confirmer » des offres en attente replanifiés (ceux encore prévus gardés).
+-- Definer : écriture depuis le tableau de bord (owner / admin : colonnes ouvertes en écriture) ; rides.next_dispatch_at
+-- et les notifications sont réservées au serveur.
+create or replace function private.organization_settings_private_fleet()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  x record;
+begin
+  if not private.is_private_fleet(new.organization_id) then
+    return null;
+  end if;
+  if new.scheduled_dispatch_lead_minutes is distinct from old.scheduled_dispatch_lead_minutes then
+    perform private.private_fleet_hold(new.organization_id);
+  end if;
+  if new.reminder_offsets_minutes is distinct from old.reminder_offsets_minutes then
+    for x in
+      select o.id
+        from public.rides y
+        join public.ride_offers o on o.ride_id = y.id
+       where y.organization_id = new.organization_id
+         and y.status in ('SEARCHING_DRIVER', 'OFFERED')
+         and y.driver_id is null
+         and o.status = 'pending' and o.mode = 'fleet' and not o.is_network
+       order by o.expires_at, o.id
+    loop
+      perform private.private_fleet_plan_reminders(x.id, true);
+    end loop;
+  end if;
+  return null;
+end;
+$$;
+
+create trigger organization_settings_private_fleet
+  after update of scheduled_dispatch_lead_minutes, reminder_offsets_minutes on public.organization_settings
+  for each row
+  when (new.scheduled_dispatch_lead_minutes is distinct from old.scheduled_dispatch_lead_minutes
+        or new.reminder_offsets_minutes is distinct from old.reminder_offsets_minutes)
+  execute function private.organization_settings_private_fleet();
 
 -- =============================================================================
 -- I. RPC du super admin (service role seul, auteur revérifié : private.assert_platform_actor)
@@ -984,9 +1224,12 @@ $$;
 -- posé) ou sortie (profil standard ; puis, si un modèle ou des taux sont fournis, public.svc_platform_set_fees dans le
 -- MÊME sous-bloc : son refus annule tout et sa réponse est renvoyée telle quelle ; le drapeau d'abord, la contrainte
 -- refusant « centrale » tant qu'il est vrai). Note obligatoire : demande ou accord écrit du client (CGV art. 3).
--- Courses en recherche relancées au tick suivant (échéances recalculées avec le nouveau profil). Audit
--- organization.private_fleet_enabled / _disabled ; diffusion « platform.updated » (model) et « driver.updated » de
--- chaque fiche (l'application relit driver_home).
+-- Courses en recherche : aucune offre fermée — une offre en attente vit jusqu'à son échéance annoncée (passage
+-- inchangé, au besoin repoussé : private.private_fleet_hold) ; sans offre en attente, relancées au passage suivant
+-- (échéances recalculées avec le nouveau profil) ; entrée : course déjà en vagues GPS reprise à la première vague du
+-- nouveau plan (le dernier appel de 100 km est vraiment lancé) ; sortie : rappels « à confirmer » en file annulés.
+-- Audit organization.private_fleet_enabled / _disabled ; diffusion « platform.updated » (model) et « driver.updated »
+-- de chaque fiche (l'application relit driver_home).
 create or replace function public.svc_platform_set_private_fleet(
   p_org uuid,
   p_actor uuid,
@@ -1024,6 +1267,11 @@ begin
   if v_note is null or char_length(v_note) < 3 then
     return jsonb_build_object('ok', false, 'code', 'CONSENT_REQUIRED', 'field', 'consentNote',
       'message', private.fr_typo('Changement d''offre de service : précisez la demande ou l''accord écrit du client (date et forme : e-mail, courrier…), CGV article 3.'));
+  end if;
+  -- Entrée : écritures concurrentes attendues puis relues par les gardes (D : verrou de la ligne de l'organisation,
+  -- pris ci-dessous ; E : verrou consultatif exclusif ici, partagé dans la garde)
+  if p_enabled then
+    perform pg_advisory_xact_lock(hashtextextended('rydar.private_fleet:' || p_org::text, 0));
   end if;
   select * into o from public.organizations y where y.id = p_org for no key update;
   if not found then
@@ -1063,11 +1311,19 @@ begin
        where d.organization_id = p_org and d.deleted_at is null and not d.owner_driver
          and exists (select 1 from public.organization_users m
                       where m.organization_id = p_org and m.user_id = d.user_id and m.role = 'owner' and m.status = 'active');
+      -- Course déjà en vagues GPS : plan de rayons changé sous elle ; reprise à la première vague (dernier appel)
+      update public.rides k
+         set dispatch_wave = 0
+       where k.organization_id = p_org and k.status in ('SEARCHING_DRIVER', 'OFFERED') and k.dispatch_mode = 'geo';
     else
       perform set_config('rydar.private_fleet_change', p_org::text, true);
       update public.organizations set private_fleet = false where id = p_org;
       perform set_config('rydar.private_fleet_change', '', true);
       perform private.apply_dispatch_profile(p_org, false);
+      -- Rappels « à confirmer » : propres à la Flotte Privée (échéances recalculées avec le profil standard)
+      update public.notifications n
+         set status = 'cancelled'
+       where n.organization_id = p_org and n.status = 'queued' and n.data ->> 'kind' = 'private_reminder';
       if v_model is not null or v_rates then
         v_fees := public.svc_platform_set_fees(p_org, p_actor, p_percent, p_fixed_cents, v_model, p_fee_mode,
           p_effective_on, v_note, p_org_legal_version, p_org_legal_effective_on, p_app_url);
@@ -1076,10 +1332,16 @@ begin
         end if;
       end if;
     end if;
-    update public.rides
+    -- Aucune offre fermée : une offre en attente vit jusqu'à son échéance annoncée ; les autres courses en recherche
+    -- repartent au passage suivant, avec le nouveau profil
+    update public.rides k
        set next_dispatch_at = now()
-     where organization_id = p_org and status in ('SEARCHING_DRIVER', 'OFFERED');
-    get diagnostics v_open = row_count;
+     where k.organization_id = p_org and k.status in ('SEARCHING_DRIVER', 'OFFERED')
+       and not exists (select 1 from public.ride_offers f where f.ride_id = k.id and f.status = 'pending');
+    perform private.private_fleet_hold(p_org);
+    select count(*)::integer into v_open
+      from public.rides k
+     where k.organization_id = p_org and k.status in ('SEARCHING_DRIVER', 'OFFERED');
   exception when sqlstate 'RYD01' then
     return v_fees;
   end;
@@ -1410,13 +1672,19 @@ revoke all on function
   private.private_fleet_driver_input_error(jsonb, jsonb),
   private.private_fleet_insert_driver(uuid, uuid, uuid, jsonb, jsonb),
   private.private_fleet_unassigned(uuid, uuid, integer),
+  private.private_fleet_hold(uuid, uuid),
   private.organizations_private_fleet_guard(),
   private.drivers_private_fleet_guard(),
+  private.organization_users_private_fleet_guard(),
   private.network_memberships_private_fleet_guard(),
   private.private_fleet_dispatch(uuid),
+  private.private_fleet_plan_reminders(uuid, boolean),
   private.ride_offers_private_fleet_reminders(),
   private.ride_offers_private_fleet_declined(),
-  private.rides_private_fleet_unconfirmed()
+  private.rides_private_fleet_unconfirmed(),
+  private.ride_offers_private_fleet_new(),
+  private.ride_offers_private_fleet_hold(),
+  private.organization_settings_private_fleet()
 from public, anon, authenticated;
 grant execute on function
   private.is_private_fleet(uuid),
@@ -1427,13 +1695,19 @@ grant execute on function
   private.private_fleet_driver_input_error(jsonb, jsonb),
   private.private_fleet_insert_driver(uuid, uuid, uuid, jsonb, jsonb),
   private.private_fleet_unassigned(uuid, uuid, integer),
+  private.private_fleet_hold(uuid, uuid),
   private.organizations_private_fleet_guard(),
   private.drivers_private_fleet_guard(),
+  private.organization_users_private_fleet_guard(),
   private.network_memberships_private_fleet_guard(),
   private.private_fleet_dispatch(uuid),
+  private.private_fleet_plan_reminders(uuid, boolean),
   private.ride_offers_private_fleet_reminders(),
   private.ride_offers_private_fleet_declined(),
-  private.rides_private_fleet_unconfirmed()
+  private.rides_private_fleet_unconfirmed(),
+  private.ride_offers_private_fleet_new(),
+  private.ride_offers_private_fleet_hold(),
+  private.organization_settings_private_fleet()
 to service_role;
 
 revoke all on function

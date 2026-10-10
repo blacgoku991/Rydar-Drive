@@ -3,7 +3,8 @@
 // sonnerie, délais (« La prendre », agenda), états des réservations à traiter, raisons d'un passage refusé. Garde-fou
 // pour toute redéfinition future : la DERNIÈRE définition de private.start_dispatch appelle la branche Flotte Privée
 // avant le test auto_dispatch, celle de private.org_limits impose les limites après l'offre et la surcharge, celle de
-// private.sync_ride_settlement exempte la fiche du gérant.
+// private.sync_ride_settlement exempte la fiche du gérant ; toute offre insérée reçoit la notification de la Flotte
+// Privée, l'échéance annoncée est tenue après le moteur (déclencheur différé), les gardes lisent le drapeau sous verrou.
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -29,6 +30,18 @@ function lastSqlDefinition(name: string): string {
   }
   if (!body) throw new Error(`${name} introuvable`);
   return body;
+}
+
+/** Texte de la DERNIÈRE création d'un déclencheur (« create [constraint] trigger x … ; »). */
+function lastTriggerDefinition(name: string): string {
+  let text: string | null = null;
+  const head = new RegExp(`create (?:constraint )?trigger ${name}\\b`, "g");
+  for (const f of files) {
+    const sql = readFileSync(`${MIGRATIONS}${f}`, "utf8");
+    for (const m of sql.matchAll(head)) text = sql.slice(m.index, sql.indexOf(";", m.index));
+  }
+  if (!text) throw new Error(`déclencheur ${name} introuvable`);
+  return text.replace(/\s+/g, " ");
 }
 
 /** Littéraux JSON « '{…}'::jsonb » d'un corps SQL, dans l'ordre. */
@@ -75,16 +88,18 @@ describe("Flotte Privée : SQL = @rydar/shared", () => {
 
   it("titres, genres et motifs des notifications", () => {
     const dispatch = lastSqlDefinition("private.private_fleet_dispatch");
-    const reminders = lastSqlDefinition("private.ride_offers_private_fleet_reminders");
+    const newOffer = lastSqlDefinition("private.ride_offers_private_fleet_new");
+    const reminders = lastSqlDefinition("private.private_fleet_plan_reminders");
     const unconfirmed = lastSqlDefinition("private.rides_private_fleet_unconfirmed");
-    expect(dispatch).toContain(`title = '${PRIVATE_FLEET_TITLES.newBooking}'`);
+    expect(newOffer).toContain(`title = '${PRIVATE_FLEET_TITLES.newBooking}'`);
     expect(dispatch).toContain(`'ride_unconfirmed', '${PRIVATE_FLEET_TITLES.toCheck}'`);
     expect(reminders).toContain(`'${PRIVATE_FLEET_TITLES.reminder}'`);
     expect(unconfirmed).toContain(`'ride_unconfirmed', '${PRIVATE_FLEET_TITLES.unconfirmed}'`);
     const [newKind, reminderKind] = PRIVATE_FLEET_NOTIFICATION_KINDS;
-    expect(dispatch).toContain(`'kind', '${newKind}'`);
+    expect(newOffer).toContain(`'kind', '${newKind}'`);
     expect(reminders).toContain(`'kind', '${reminderKind}'`);
     expect(reminders).toContain(`n.data ->> 'kind' = '${reminderKind}'`);
+    expect(lastSqlDefinition("public.svc_platform_set_private_fleet")).toContain(`n.data ->> 'kind' = '${reminderKind}'`);
     const [notConfirmed, toCheck] = PRIVATE_FLEET_UNCONFIRMED_REASONS;
     expect(unconfirmed).toContain(`'reason', '${notConfirmed}'`);
     expect(dispatch).toContain(`'reason', '${toCheck}'`);
@@ -96,16 +111,47 @@ describe("Flotte Privée : SQL = @rydar/shared", () => {
   });
 
   it("fenêtre de sonnerie et règles des rappels", () => {
-    expect(lastSqlDefinition("private.private_fleet_dispatch")).toContain(
+    expect(lastSqlDefinition("private.ride_offers_private_fleet_new")).toContain(
       `c_ring_window constant interval := interval '${PRIVATE_FLEET_RING_WINDOW_S} seconds';`,
     );
-    const reminders = lastSqlDefinition("private.ride_offers_private_fleet_reminders");
+    const reminders = lastSqlDefinition("private.private_fleet_plan_reminders");
     const r = PRIVATE_FLEET_REMINDER_RULES;
     expect(reminders).toContain(`c_min_ahead constant interval := interval '${r.minAheadMinutes} minutes';`);
     expect(reminders).toContain(`c_last_call constant interval := interval '${r.lastCallMinutes} minutes';`);
     expect(reminders).toContain(`c_end_margin constant interval := interval '${r.endMarginMinutes} minutes';`);
     expect(reminders).toContain(`c_min_gap constant interval := interval '${r.minGapMinutes} minutes';`);
     expect(reminders).toContain(`c_max constant integer := ${r.max};`);
+  });
+
+  it("toute offre « à confirmer » : notification adaptée à l'insertion (même recréée par le moteur), échéance tenue après le moteur", () => {
+    // H4 : à chaque offre « flotte » insérée (private.offer_to_fleet), pas seulement à la création de la réservation
+    expect(lastTriggerDefinition("ride_offers_private_fleet_new")).toContain(
+      "after insert on public.ride_offers for each row when (new.status = 'pending' and new.mode = 'fleet' and not new.is_network)",
+    );
+    expect(lastSqlDefinition("private.private_fleet_dispatch")).not.toContain(`'${PRIVATE_FLEET_TITLES.newBooking}'`);
+    // H5 : différé (après l'écriture de rides.next_dispatch_at qui suit l'offre) et definer (rôle actif au commit)
+    expect(lastTriggerDefinition("ride_offers_private_fleet_hold")).toContain(
+      "after insert or update of expires_at on public.ride_offers deferrable initially deferred",
+    );
+    expect(lastSqlDefinition("private.ride_offers_private_fleet_hold")).toMatch(/security definer/);
+    // Rappels : un seul calcul (H1 à l'échéance changée, H6 aux réglages changés)
+    expect(lastSqlDefinition("private.ride_offers_private_fleet_reminders")).toContain("private.private_fleet_plan_reminders(new.id, false)");
+    expect(lastSqlDefinition("private.organization_settings_private_fleet")).toContain("private.private_fleet_plan_reminders(x.id, true)");
+  });
+
+  it("gardes des fiches, des accès et du réseau : une entrée en Flotte Privée en cours est attendue avant de lire le drapeau", () => {
+    for (const guard of ["private.drivers_private_fleet_guard", "private.organization_users_private_fleet_guard"]) {
+      expect(lastSqlDefinition(guard).replace(/\s+/g, " "), guard).toMatch(
+        /select o\.private_fleet into v_private from public\.organizations o where o\.id = new\.organization_id for no key update;/,
+      );
+    }
+    const key = "hashtextextended('rydar.private_fleet:' ||";
+    const network = lastSqlDefinition("private.network_memberships_private_fleet_guard");
+    expect(network).toContain(`pg_advisory_xact_lock_shared(${key} new.organization_id::text, 0))`);
+    expect(network.indexOf("pg_advisory_xact_lock_shared(")).toBeLessThan(network.indexOf("select o.private_fleet into v_private"));
+    const entry = lastSqlDefinition("public.svc_platform_set_private_fleet");
+    expect(entry).toContain(`pg_advisory_xact_lock(${key} p_org::text, 0))`);
+    expect(entry.indexOf("pg_advisory_xact_lock(")).toBeLessThan(entry.indexOf("private.private_fleet_blockers(p_org)"));
   });
 
   it("délais : « La prendre » (6 h après l'heure prévue), période de l'agenda (62 jours)", () => {
