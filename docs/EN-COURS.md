@@ -1,12 +1,57 @@
 # Travail en cours (11/10/2026)
 
-## Visite guidée de première connexion : lots T1 à T3 et corrections des revues UX et RS faits (11/10/2026)
+## Visite guidée de première connexion : lots T1 à T3, revues UX et RS et contrôle final faits (11/10/2026)
 
 Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; T2 = moteur de visite
 et coquille ; T3 = parcours sur les écrans réels (ancres `data-tour`, conditions de réussite, textes contrôlés à
-l'écran) et recette complète ; revue UX = corrections UX-01 à UX-09 ; revue RS = corrections RS-01 à RS-03. Rien dans
-`apps/driver`, `apps/worker`, ni le seed. Reste : décisions du propriétaire (`TUTORIEL.md` § 13.1) ; migration 007800
-pas encore poussée.
+l'écran) et recette complète ; revue UX = corrections UX-01 à UX-09 ; revue RS = corrections RS-01 à RS-03 ; contrôle
+final = tous les contrôles sur l'arbre final, recette de non-régression, parcours rejoués et planches de captures. Rien
+dans `apps/driver`, `apps/worker`, ni le seed. Reste : décisions du propriétaire (`TUTORIEL.md` § 13.1) ; migration
+007800 pas encore poussée.
+
+### Contrôle final
+
+- **Livré** : aucune ligne de la visite à corriger ; `CLAUDE.md` (§ Métier) : ligne « Visite guidée web » (celle du
+  § 13.1, point 3, complétée) ; `TUTORIEL.md` (statut, § 12.1, § 13.1, § 13.3). **Correction à part** (commit séparé,
+  signalée en T3 « à corriger à part ») : erreur d'hydratation React #418 de Statistiques et d'En direct quand un montant
+  compact arrondi finit par « ,0 » — Node 22 (serveur) écrivait « 34,0 k € », Chromium « 34 k € » ; `formatCompactPrice`
+  (`packages/shared/src/format.ts`) passe `minimumFractionDigits: 0`, même texte des deux côtés (affichage du navigateur
+  inchangé) ; cas ajouté à `format-cache.test.ts` (échoue sans la correction).
+- **Contrôles** (arbre final) : `pnpm typecheck` OK ; `pnpm test` 170 fichiers, 1 940 tests (+1) ;
+  `TEST_DATABASE_NAME=rydar_test_tuto pnpm test:db` 52 fichiers, 883 tests ; `pnpm build` OK (paquet partagé, worker
+  avec `dist/mailer.js`, web) ; build web sur `.next` effacé avec les variables factices de la CI : OK ;
+  `pnpm --filter @rydar/driver export:check` OK ; base neuve comme la CI (`scripts/db-local.sh --reset --seed`, base
+  `rydar_demo_tuto` supprimée ensuite) : 80 migrations puis le seed, 29 chauffeurs, 3 organisations, 1 signalement
+  ouvert, commissions dues, `user_tours` vide (le rattrapage de 007800 passe avant le seed).
+- **Recette de non-régression** (`l7/e2e/run-all.sh` : `tour-off.sql` après la réinitialisation et après `s1-create`,
+  puis `s10-smoke-standard` ; build de production :3210 joint par :3000) : **112 contrôles OK, 0 échec**, avant et
+  après la correction #418 ; mêmes contrôles, résultats et erreurs navigateur connues qu'en T3 (seuls changent les
+  identifiants tirés au hasard et, une fois, un délai de dispatch mesuré : 120 s au lieu de 123 s) ; aucune visite
+  ouverte pendant la recette (`tour-off` : 170 puis 175 lignes, 0 hors pause).
+- **Parcours rejoués** (scénarios TR-01 à TR-10 du lot T3, `scratchpad/tutoriel/e2e/`, clients de recette neufs) :
+  passe « f » 473 OK et 5 échecs, tous dans les scripts de recette, aucun dans l'application — TR-06 (4) : contrôle
+  écrit avant la revue UX ; au téléphone, sur En direct, la fenêtre passe au-dessus du panneau des courses (UX-02) et
+  la cible est visible dessous ; contrôle adapté (cible dégagée de la fenêtre, au-dessus, ou dessous pour les deux
+  ancres d'En direct seulement) ; TR-04 (1) : « C'est fait. » en 6,26 s, compté depuis la demande de clic de
+  Playwright, qui attend d'abord que « Créer la course » soit cliquable (≈ 1 s, davantage pendant le démarrage du
+  worker) ; compté maintenant depuis l'envoi réel du formulaire. Passe « g » : **478 contrôles OK, 0 échec**
+  (17 actions réelles, « C'est fait. » 0,2 à 2,7 s après l'enregistrement). Mesure à part
+  (`final/debug/ride-timing.mjs`) : course enregistrée 1,1 à 1,7 s après l'envoi, « C'est fait. » 0,1 à 0,15 s plus tard
+  (relecture de 1,5 s ou temps réel).
+- **Captures** (hors dépôt, `scratchpad/tutoriel/final/`) : `captures/<parcours>/` (accueil ; chaque étape à 1440×900
+  sur l'écran réel ; « C'est fait. » après l'action réelle ; chaque étape à 390×844) ; une planche par parcours
+  (`planches/1-super_admin.png` à `5-private_fleet.png`, outil `outils/planches.py`) ; 5 captures choisies pour le
+  propriétaire, une par profil (`selection/`).
+- **Vu, sans correction** : l'alerte du dispatch « Aucun chauffeur pour #… » passe au-dessus de la fenêtre de visite
+  quand elles se croisent en haut d'En direct (calque prioritaire voulu, § 6.8 : l'urgence d'abord ; la fenêtre redevient
+  lisible dès l'alerte fermée ou traitée). Base de recette : une fois, l'écran des CGV de « Lambert » lu absent juste
+  après sa création (`refonte/photo/fp-setup.mjs`, puis `fp-rides.mjs` en échec) ; écran présent au rechargement,
+  relancé, script rendu patient (8 s) ; rien côté application.
+- **Base locale « rydar »** : après la dernière recette, base de la refonte refaite (`T3/base.sh` : Flotte Privée
+  « Lambert », conditions du dispatcher de démonstration, identifiants des listes de pages) ; visites dans l'état
+  d'après la migration : 35 lignes en pause, jamais ouvertes ; 5 clients, 37 comptes, aucun e-mail en file ; les
+  clients de recette ont disparu avec la réinitialisation.
+  Serveur, relais, app chauffeur et worker arrêtés par PID ; `apps/driver/tsconfig.json` (réécrit par Expo) remis.
 
 ### Revue RS — corrections RS-01 à RS-03 : fenêtre sortie des calques de Radix
 

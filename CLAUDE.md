@@ -129,6 +129,10 @@ la centrale doit les frais plateforme à Rydar.
 - Bannissement plateforme : les fiches d'AUTRES centrales partageant une identité ne sont bannies que si le super admin les coche
   (`admin_fraud_report_matches`) ; justificatif « Visite médicale » plus déposable (aucune donnée de santé collectée).
 - Flotte Privée (007600-007700, `docs/FLOTTE-PRIVEE.md` ; texte soumis au propriétaire) : flotte d'un seul chauffeur, le propriétaire (même compte, `owner_driver`) ; `private_fleet` écrit par les seules RPC `svc_platform_*_private_fleet` ; gardes en base + `org_limits` (1 fiche, 1 accès) ; réservation « à confirmer » (branches de `start_dispatch` et `org_limits` à garder : `private-fleet-sql.test.ts`), « La prendre » = `driver_take_ride` ; web : page `privateFleetPage`, action `refuseInPrivateFleet` (`private-fleet-guards.test.ts`).
+- Visite guidée web (007800, `docs/TUTORIEL.md`) : 5 parcours (super admin, flotte, centrale, dispatcher, Flotte Privée), 5 étapes
+  au plus, d'office à la 1re connexion APRÈS CGU / CGV (jamais par-dessus ; différée si urgence ou fenêtre ouverte), reprise par le
+  menu du compte ; progression `user_tours` écrite par `save_user_tour` seulement ; ancres `data-tour` (`tour-content.test.ts`) ;
+  vrais liens, jamais d'action à la place de l'utilisateur ; aucune clé de stockage ni outil tiers ; recettes : `tour-off.sql` (annexe A).
 
 ## Design
 Sombre « radar », accent lime. Jamais de hex en dur : jetons `apps/web/app/globals.css` (@theme `--color-ink-*`, `fg`, `fg-muted`,

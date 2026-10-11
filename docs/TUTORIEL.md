@@ -1,6 +1,6 @@
 # Visite guidée de première connexion (tutoriel web)
 
-> **Statut : livré, lots T1 à T3 faits** (§ 12.1, § 13.3). Rédigée le 11/10/2026 sur `claude/confident-clarke-rpfwmo`
+> **Statut : livré, lots T1 à T3, revues UX et RS et contrôle final faits** (§ 12.1, § 13.3). Rédigée le 11/10/2026 sur `claude/confident-clarke-rpfwmo`
 > (HEAD `a104a75`, refonte des panneaux livrée), à partir du § 10 de `docs/REFONTE-PANELS.md` (cahier des charges), des
 > choix du propriétaire (§ 1.1) et d'une relecture du code : coquille (`apps/web/components/shell`), menu du compte
 > (`sidebar.tsx`), mises en page `app/dashboard/layout.tsx` et `app/admin/layout.tsx`, écrans d'acceptation
@@ -969,6 +969,7 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | T3 | Parcours sur les écrans réels (ancres, conditions, textes) et recette | T2 | fait : commit « Visite guidée (T3) : parcours sur les écrans réels, conditions de réussite et recette » (compte rendu : `docs/EN-COURS.md`) |
 | Revue UX | Corrections UX-01 à UX-09 de la revue UX et accessibilité de la visite | T3 | fait : commit « Visite guidée : corrections de la revue UX (UX-01 à UX-09) » (écarts : § 13.3 ; compte rendu : `docs/EN-COURS.md`) |
 | Revue RS | Corrections RS-01 à RS-03 : fenêtre sortie des calques de Radix, calques déjà ouverts, tests des gardes | Revue UX | fait : commit « Visite guidée : fenêtre sortie des calques de Radix, jamais par-dessus une fenêtre ouverte (RS-01 à RS-03) » (écarts : § 13.3 ; compte rendu : `docs/EN-COURS.md`) |
+| Contrôle final | Contrôles complets sur l'arbre final, recette de non-régression, parcours TR-01 à TR-10 rejoués, planches de captures, ligne de `CLAUDE.md` | Revue RS | fait : commit « Visite guidée : contrôle final (contrôles, recette, parcours rejoués, CLAUDE.md) » ; correction à part de l'erreur React #418 de Statistiques, commit séparé (écarts : § 13.3 ; compte rendu : `docs/EN-COURS.md`) |
 
 ### T1 — Base et paquet partagé
 
@@ -1121,9 +1122,8 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
    (`docs/RGPD-REGISTRE.md`). Ajouter « avancement de la visite guidée » à l'article 4 de `/confidentialite`
    (« Utilisateurs du tableau de bord ») n'est pas fait par les lots : texte juridique, à décider avec la prochaine
    version (`LEGAL_VERSION`, qui ferait ré-accepter chaque utilisateur).
-3. **`CLAUDE.md`** (non modifié par les lots) — ligne proposée pour « Métier » : « Visite guidée (007800,
-   `docs/TUTORIEL.md`) : progression `user_tours` écrite par `save_user_tour` seulement ; ancres `data-tour`
-   (`tour-content.test.ts`) ; jamais par-dessus CGU / CGV ; aucune clé de stockage ni outil tiers. »
+3. **`CLAUDE.md`** : ligne « Visite guidée web » ajoutée au § Métier par le contrôle final (celle proposée ici,
+   complétée : parcours, déclenchement, reprise par le menu du compte, vrais liens, recettes avec `tour-off.sql`).
 4. Ajouter plus tard une étape « Frais Rydar » ou « Encaissements » : possible en remplaçant une étape (5 au plus) ;
    changer l'ordre des étapes déplace la reprise des visites en cours (index borné, sans erreur).
 
@@ -1459,6 +1459,28 @@ isolée du dépôt sur :3253, aucune écriture en base) :
      tiroir a laissé une fois (sur ~35 essais) le focus sur « Menu » (le tiroir rend le focus à son bouton après le
      titre, malgré les deux images d'attente de T2) — non reproduit en 30 essais de plus (`305d1bd` et correction,
      processeur bridé ×4 compris).
+
+**Contrôle final** (après la revue RS ; recette hors dépôt : `scratchpad/tutoriel/final/`, build de production :3210
+joint par :3000) :
+
+1. **Aucune correction de la visite** : typecheck, tests unitaires (170 fichiers, 1 940 tests), tests de la base
+   (52 fichiers, 883 tests), `pnpm build`, build web avec les variables factices de la CI, `export:check` de l'app
+   chauffeur, base neuve comme la CI (migrations puis seed : nombres du seed tenus, `user_tours` vide) : verts.
+2. **Recette de non-régression** (`l7/e2e/run-all.sh` avec `tour-off.sql`, puis `s10-smoke-standard`) : 112 contrôles
+   OK, 0 échec, avant et après la correction #418 (point 5), comme en T3.
+3. **Scénarios TR-01 à TR-10 rejoués** (clients de recette neufs) : deux contrôles de recette avaient vieilli, corrigés
+   dans les scripts hors dépôt, sans affaiblir ce qu'ils vérifient — TR-06 (`t3-06-telephone.mjs`) : depuis UX-02, au
+   téléphone sur En direct, la fenêtre passe au-dessus du panneau et la cible est dessous ; le contrôle exige une cible
+   visible et dégagée de la fenêtre (au-dessus, ou dessous pour les ancres `live-new-ride` et `live-panel` seulement) ;
+   TR-04 (`newRide` de `t3-lib.mjs`) : délai de « C'est fait. » compté depuis l'envoi réel du formulaire (heure du
+   `submit` dans la page) et non depuis la demande de clic de Playwright, qui attend que le bouton soit cliquable
+   (≈ 1 s ; 6,26 s mesurées ainsi pendant le démarrage du worker). Passe finale : 478 contrôles OK, 0 échec ; captures de
+   chaque étape et une planche par parcours (`final/planches/`), 5 captures choisies (`final/selection/`).
+4. **Vu, voulu** : une alerte du dispatch (« Aucun chauffeur pour #… », calque au-dessus de la visite, § 6.8) peut
+   couvrir la fenêtre ancrée en haut d'En direct ; la fenêtre redevient lisible dès l'alerte fermée ou traitée.
+5. **Hors visite, corrigé à part** (commit séparé) : l'erreur React #418 de Statistiques signalée en T3 venait de
+   `formatCompactPrice` (Node 22 : « 34,0 k € », Chromium : « 34 k € ») ; `minimumFractionDigits: 0` explicite, même
+   texte des deux côtés, test ajouté (`format-cache.test.ts`).
 
 ---
 
