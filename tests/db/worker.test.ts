@@ -15,6 +15,8 @@ describe("File de notifications du worker", () => {
   it("réserve une offre due une seule fois, avec les seuls jetons push actifs du chauffeur", async () => {
     const org = await createOrg("Notif Claim");
     const d = await createDriver(org, { at: north(CHAMPS_ELYSEES, 600) });
+    // Session Auth du téléphone toujours ouverte (jeton servi seulement tant qu'elle existe, 20260924007900)
+    await sql(`insert into auth.sessions (user_id, created_at) values ($1, now() - interval '1 minute')`, [d.userId]);
     await sql(
       `insert into public.push_tokens (organization_id, driver_id, token, provider, platform, is_active)
        values ($1, $2, $3, 'expo', 'ios', true), ($1, $2, $4, 'fcm', 'android', false)`,
