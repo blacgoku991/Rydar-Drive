@@ -1,20 +1,23 @@
 "use client";
 // Visite guidée (docs/TUTORIEL.md § 6.3 à § 6.8) : la fenêtre, chargée à la demande (next/dynamic, ssr: false, par
-// tour-provider.tsx). Radix Popover NON modal, ouverture contrôlée, ancre virtuelle :
+// tour-provider.tsx). Fenêtre NON modale (role « dialog ») positionnée par le Popper de Radix seul, ancre virtuelle :
 //  - ancrée à côté de l'élément de l'étape (ancre « control » visible, écran ≥ 640 px) ;
 //  - sinon repli centré en bas de main#contenu, remonté au-dessus des barres [data-tour-avoid] (dockedRect) ;
 //  - réduite : pastille de 44 px en bas à gauche de main#contenu.
-// Elle ne se ferme jamais d'elle-même (clics, focus ailleurs : ignorés) ; Échap seulement focus dedans ; Tab en sort,
-// jamais vers une garde de focus invisible de Radix. Surlignage de l'élément (data-tour-highlight), défilement
-// seulement après un clic dans la fenêtre ou le menu, focus sur le titre après une action. En repli : place prise en
-// bas (--tour-dock, notifications au-dessus) ; hors vues pleine hauteur, réserve de défilement (--tour-reserve) et marge
-// de défilement du bas de <html> ; un focus au clavier entièrement caché dessous fait défiler la page, sinon réduit la
-// fenêtre (WCAG 2.2, 2.4.11) ; l'élément focalisé par « Y aller » finit entièrement au-dessus d'elle, ou elle est
-// réduite (2.4.12 visé). Aucune animation.
+// Ce n'est PAS un calque de Radix (ni DismissableLayer, ni FocusScope, ni gardes de focus) : les fenêtres, alertes et
+// menus de la page gardent Échap et leur piège à focus, et Échap ailleurs dans la page garde son action (champ de
+// recherche vidé). Jamais affichée par-dessus un de ces calques déjà ouvert : elle attend sa fermeture. Elle ne se
+// ferme jamais d'elle-même ; Échap seulement focus dedans ; Tab en sort. Surlignage de l'élément (data-tour-highlight),
+// défilement seulement après un clic dans la fenêtre ou le menu, focus sur le titre après une action. En repli : place
+// prise en bas (--tour-dock, notifications au-dessus) ; hors vues pleine hauteur, réserve de défilement (--tour-reserve)
+// et marge de défilement du bas de <html> ; un focus au clavier entièrement caché dessous fait défiler la page, sinon
+// réduit la fenêtre (WCAG 2.2, 2.4.11) ; l'élément focalisé par « Y aller » finit entièrement au-dessus d'elle, ou elle
+// est réduite (2.4.12 visé). Aucune animation.
 import { Compass } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Popover as P } from "radix-ui";
+import { Popper } from "radix-ui/internal";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { stepDone, type TourChecks } from "./tour-checks";
 import type { TourDef } from "./tour-content";
 import {
@@ -29,6 +32,7 @@ import {
   focusTarget,
   fullHeightView,
   isVisible,
+  layerOpen,
   mainElement,
   reserveTopNow,
   revealAboveCard,
@@ -36,6 +40,7 @@ import {
   setTourReserve,
   tabbables,
   viewportSize,
+  whenNoLayer,
 } from "./tour-dom";
 import {
   TOUR_INTENT_MS,
@@ -45,7 +50,7 @@ import {
   dockScrollPadding,
   dockSpace,
   dockedTop,
-  guardTarget,
+  tourEscape,
   tourFooter,
   type CoverRule,
   type FooterButton,
@@ -138,7 +143,15 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
   const idBase = `visite-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const ids = tourPanelIds(idBase);
   const total = def.steps.length;
-  const expanded = state.view !== "closed" && !state.minimized;
+  // Premier affichage : jamais par-dessus une fenêtre, une alerte ou un menu déjà ouverts (fenêtre ouverte pendant le
+  // chargement de ce morceau, menu du compte qui se ferme) — attendu jusqu'à leur fermeture, focus demandé gardé pour
+  // ce moment ; une fenêtre ouverte ensuite passe devant la visite (z-50), qui reste dessous
+  const [clear, setClear] = useState(() => !layerOpen());
+  useEffect(() => {
+    if (clear) return;
+    return whenNoLayer(() => setClear(true));
+  }, [clear]);
+  const expanded = clear && state.view !== "closed" && !state.minimized;
   const stepDef = state.view === "step" ? def.steps[state.step] : undefined;
   const anchorId = stepDef?.anchor.id ?? null;
   const wide = useWide();
@@ -187,7 +200,7 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     anchoredRef.current = anchored;
   }, [anchored]);
   const fullHeight = layout.startsWith("plein");
-  /** Fenêtre (Popover.Content) : hauteur lue par le repli, focus, sortie au clavier */
+  /** Fenêtre (Popper.Content) : hauteur lue par le repli, focus, sortie au clavier */
   const contentRef = useRef<HTMLDivElement | null>(null);
   const virtualRef = useMemo(() => {
     const target = anchored ? anchor : null;
@@ -389,26 +402,6 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     };
   }, [expanded, state.step]);
 
-  // Gardes de focus de Radix (span[data-radix-focus-guard], tabindex 0, invisibles : début et fin de <body>, posées
-  // par le Popover même non modal, tant que la fenêtre est dépliée) : jamais d'arrêt invisible. Garde du début atteinte
-  // en entrant dans la page (premier Tab) → premier élément de la page ; depuis la page (Maj+Tab), ou garde de fin →
-  // dernier élément de la fenêtre (guardTarget)
-  useEffect(() => {
-    if (!expanded) return;
-    const onGuard = (event: FocusEvent) => {
-      const guard = event.target;
-      const card = contentRef.current;
-      if (!(guard instanceof HTMLElement) || !guard.hasAttribute("data-radix-focus-guard") || !card?.isConnected) return;
-      const start = (guard.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-      const from = event.relatedTarget;
-      const fromPage = from instanceof Element && from.isConnected;
-      const next = guardTarget({ start, fromPage }) === "page" ? firstPageTabbable(card) : (tabbables(card).at(-1) ?? null);
-      next?.focus();
-    };
-    document.addEventListener("focusin", onGuard, true);
-    return () => document.removeEventListener("focusin", onGuard, true);
-  }, [expanded]);
-
   // --------------------------------------------------------------------------------------------- boutons (§ 6.5)
   const done = stepDef ? stepDone(stepDef.check, checks) : undefined;
   const steps = useMemo(() => def.steps.map((s) => ({ href: s.href, linkLabel: s.linkLabel, title: s.title, hasCheck: !!s.check })), [def]);
@@ -476,22 +469,26 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     }
   };
 
-  // Tab sur le dernier élément : sortie vers la page (Radix bouclerait dans la fenêtre) ; Maj+Tab sur le premier : retour
-  // à l'élément précédent de la page (ordre du document)
-  const onKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+  // Clavier, frappes venues de la fenêtre seulement (gestionnaire posé sur elle ; Échap ailleurs dans la page n'est
+  // jamais touché) :
+  //  - Échap : « Plus tard » sur l'accueil, pause sur une étape — sauf frappe déjà prise par un calque au-dessus
+  //    (tourEscape) ;
+  //  - Tab sur le dernier élément : premier élément de la page (la fenêtre est en fin de document : sinon les contrôles
+  //    du navigateur) ; Maj+Tab : ordre du document.
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const close = tourEscape({ key: event.key, handled: event.nativeEvent.defaultPrevented, view: state.view });
+    if (close) {
+      event.preventDefault();
+      closeWith(close);
+      return;
+    }
+    if (event.key !== "Tab" || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
     const list = tabbables(event.currentTarget);
-    const active = document.activeElement;
-    if (!list.length || !(active instanceof HTMLElement)) return;
-    if (!event.shiftKey && active === list[list.length - 1]) {
-      const next = firstPageTabbable(event.currentTarget);
-      event.stopPropagation();
-      if (next) {
-        event.preventDefault();
-        next.focus();
-      }
-    } else if (event.shiftKey && active === list[0]) {
-      event.stopPropagation();
+    if (!list.length || document.activeElement !== list[list.length - 1]) return;
+    const next = firstPageTabbable(event.currentTarget);
+    if (next) {
+      event.preventDefault();
+      next.focus();
     }
   };
 
@@ -500,7 +497,7 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     setContentEl(el);
   }, []);
 
-  const pill = usePillPosition(state.minimized);
+  const pill = usePillPosition(clear && state.minimized);
   const n = state.step + 1;
   const isIntro = state.view === "intro";
   const side = anchored ? (stepDef?.anchor.side ?? "bottom") : "top";
@@ -508,60 +505,53 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
 
   return (
     <>
-      <P.Root
-        open={expanded}
-        onOpenChange={(open) => {
-          // Seule fermeture laissée à Radix : Échap, focus dans la fenêtre (le reste est empêché ci-dessous)
-          if (!open) closeWith(isIntro ? "later" : "close");
-        }}
-      >
-        <P.Anchor virtualRef={virtualRef} />
-        <P.Portal>
-          <P.Content
-            ref={setContentRefs}
-            data-tour-card=""
-            aria-labelledby={`${ids.counter} ${ids.title}`}
-            aria-describedby={ids.text}
-            side={side}
-            align={align}
-            sideOffset={anchored ? 12 : 0}
-            collisionPadding={16}
-            avoidCollisions={anchored}
-            onOpenAutoFocus={(e) => e.preventDefault()}
-            onCloseAutoFocus={(e) => e.preventDefault()}
-            onInteractOutside={(e) => e.preventDefault()}
-            onPointerDownOutside={(e) => e.preventDefault()}
-            onFocusOutside={(e) => e.preventDefault()}
-            onEscapeKeyDown={(e) => {
-              // Échap reste à la page (désélection, champ) quand le focus n'est pas dans la fenêtre
-              if (!contentRef.current?.contains(document.activeElement)) e.preventDefault();
-            }}
-            onKeyDownCapture={onKeyDownCapture}
-            // Hauteur : 32rem au plus, 70 % de l'écran, et la place disponible du côté choisi (Radix) : jamais coupée en haut
-            className="z-40 max-h-[min(32rem,70dvh,var(--radix-popover-content-available-height,70dvh))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain rounded-2xl border border-line-strong bg-ink-700 p-4 shadow-float outline-none"
-          >
-            <TourPanel
-              view={isIntro ? "intro" : "step"}
-              idBase={idBase}
-              counter={isIntro ? TOUR_UI.name : TOUR_UI.counter(n, total)}
-              title={isIntro ? def.intro.title : (stepDef?.title ?? "")}
-              text={isIntro ? def.intro.text : (stepDef?.text ?? "")}
-              stepTitles={isIntro ? def.steps.map((s) => s.title) : undefined}
-              done={isIntro ? undefined : done}
-              buttons={buttons}
-              canMinimize={!isIntro}
-              titleRef={titleRef}
-              onAction={onAction}
-              onMinimize={() => {
-                pendingPill.current = true;
-                act({ type: "minimize" });
-              }}
-              onClose={() => closeWith(isIntro ? "later" : "close")}
-            />
-          </P.Content>
-        </P.Portal>
-      </P.Root>
-      {state.minimized && state.view !== "closed" && (
+      {expanded && (
+        // Positionnement seul (Popper de Radix) : aucun calque, aucun piège ni garde de focus ; jamais fermée par un clic
+        // ou un focus ailleurs ; en fin de <body> (portail), sous les fenêtres (z-50) et les menus (z-60)
+        <Popper.Root>
+          <Popper.Anchor virtualRef={virtualRef} />
+          {createPortal(
+            <Popper.Content
+              ref={setContentRefs}
+              role="dialog"
+              data-tour-card=""
+              aria-labelledby={`${ids.counter} ${ids.title}`}
+              aria-describedby={ids.text}
+              // Focalisable par un clic sur son fond (Échap la ferme alors), jamais au Tab
+              tabIndex={-1}
+              side={side}
+              align={align}
+              sideOffset={anchored ? 12 : 0}
+              collisionPadding={16}
+              avoidCollisions={anchored}
+              onKeyDown={onKeyDown}
+              // Hauteur : 32rem au plus, 70 % de l'écran, et la place disponible du côté choisi (Popper) : jamais coupée en haut
+              className="z-40 max-h-[min(32rem,70dvh,var(--radix-popper-available-height,70dvh))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain rounded-2xl border border-line-strong bg-ink-700 p-4 shadow-float outline-none"
+            >
+              <TourPanel
+                view={isIntro ? "intro" : "step"}
+                idBase={idBase}
+                counter={isIntro ? TOUR_UI.name : TOUR_UI.counter(n, total)}
+                title={isIntro ? def.intro.title : (stepDef?.title ?? "")}
+                text={isIntro ? def.intro.text : (stepDef?.text ?? "")}
+                stepTitles={isIntro ? def.steps.map((s) => s.title) : undefined}
+                done={isIntro ? undefined : done}
+                buttons={buttons}
+                canMinimize={!isIntro}
+                titleRef={titleRef}
+                onAction={onAction}
+                onMinimize={() => {
+                  pendingPill.current = true;
+                  act({ type: "minimize" });
+                }}
+                onClose={() => closeWith(isIntro ? "later" : "close")}
+              />
+            </Popper.Content>,
+            document.body,
+          )}
+        </Popper.Root>
+      )}
+      {clear && state.minimized && state.view !== "closed" && (
         <button
           ref={pillRef}
           type="button"

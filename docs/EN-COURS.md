@@ -1,11 +1,40 @@
 # Travail en cours (11/10/2026)
 
-## Visite guidée de première connexion : lots T1 à T3 et corrections de la revue UX faits (11/10/2026)
+## Visite guidée de première connexion : lots T1 à T3 et corrections des revues UX et RS faits (11/10/2026)
 
 Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; T2 = moteur de visite
 et coquille ; T3 = parcours sur les écrans réels (ancres `data-tour`, conditions de réussite, textes contrôlés à
-l'écran) et recette complète ; revue UX = corrections UX-01 à UX-09. Rien dans `apps/driver`, `apps/worker`, ni le
-seed. Reste : décisions du propriétaire (`TUTORIEL.md` § 13.1) ; migration 007800 pas encore poussée.
+l'écran) et recette complète ; revue UX = corrections UX-01 à UX-09 ; revue RS = corrections RS-01 à RS-03. Rien dans
+`apps/driver`, `apps/worker`, ni le seed. Reste : décisions du propriétaire (`TUTORIEL.md` § 13.1) ; migration 007800
+pas encore poussée.
+
+### Revue RS — corrections RS-01 à RS-03 : fenêtre sortie des calques de Radix
+
+- **Livré** (web seulement, `components/tour/` et un test de la coquille : aucune migration, aucune RPC, garde ou action
+  serveur modifiée ; détail et écarts : `TUTORIEL.md` § 6.3, § 6.6, § 6.8 et § 13.3, « Revue RS ») :
+  - RS-01 et RS-02, cause commune : le `Popover` non modal faisait de la visite un calque de Radix. Une visite affichée
+    après une fenêtre déjà ouverte (réseau lent) prenait son Échap et cassait son piège à focus ; visite dépliée, tout
+    Échap de la page arrivait annulé (champs de recherche jamais vidés). Maintenant : positionnement seul par le Popper
+    de Radix (`radix-ui/internal`, aucune dépendance ajoutée), dans un portail ; ni `DismissableLayer`, ni `FocusScope`,
+    ni gardes de focus (`guardTarget` retiré) ; Échap traité par la fenêtre elle-même, focus dedans (`tourEscape`).
+  - RS-01, en complément : ouverture d'office et premier affichage attendus tant qu'une fenêtre, une fenêtre d'alerte ou
+    un menu est ouvert (`whenNoLayer`, `tour-dom.ts`). Écart : Radix ne pose pas `aria-modal` ; tout `role="dialog"`
+    sauf la visite compte (fenêtres non modales d'En direct et de la cloche comprises).
+  - RS-03 : 3 cas de `dashboard-layout.test.ts` (mise à jour des CGV → bloquée ; convention du réseau partagé →
+    différée ; dispatcher : ni l'un ni l'autre) ; garde de rendu du fournisseur extraite en `tourVisible`, testée.
+- **Contrôles** : `pnpm typecheck` OK ; `pnpm test` 170 fichiers, 1 939 tests (+1 fichier `tour-dom.test.ts`, +13
+  tests ; `components/tour` : 130) ; `pnpm --filter @rydar/web build` OK ; 12 mutations (dont les 3 du constat),
+  toutes détectées ; pas de `test:db` (aucun SQL).
+- **Recette** (hors dépôt, `scratchpad/rs-fix/`, build de production d'une copie isolée :3253, compte « flotte » du
+  seed, document réécrit et actions serveur bloquées : aucune écriture) : fenêtre « Nouveau chauffeur » ouverte avant
+  l'ouverture d'office, morceau de la visite retardé de 2,5 s ou non (accueil et étape) → aucune visite par-dessus, Tab
+  et Échap restent à la fenêtre, puis la visite s'affiche (accueil : focus sur son titre) ; calque de test ouvert 3 s
+  dès l'hydratation → ouverture d'office attendue, rien d'écrit avant ; témoin « visite d'abord » :
+  gardée dessous ; Échap dans un champ de recherche (Journal, Chauffeurs, Courses) vidé, visite fermée, dépliée,
+  réduite ou redépliée ; aucune garde de focus, 120 Tab et 120 Maj+Tab sans arrêt invisible ; mode ancré, téléphone,
+  menu du compte et tiroir, « Y aller » (375×667 à 1440×900) inchangés ; aucun calque présent au repos sur les pages
+  des menus (flotte, super admin, Flotte Privée). Contre-épreuve : les scripts RS-01 et RS-02 échouent sur le build de
+  `305d1bd`.
 
 ### Revue UX — corrections UX-01 à UX-09
 

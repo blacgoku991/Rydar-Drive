@@ -15,6 +15,12 @@ const h = vi.hoisted(() => ({
   reads: [] as Read[],
   /** Conditions acceptées (CGV de l'organisation et CGU de la personne) ; faux : rien d'accepté (écran des CGV) */
   accepted: false,
+  /** À la place de `accepted` : versions des CGV acceptées au nom de l'organisation (antérieure : bandeau de mise à jour) */
+  orgVersions: null as string[] | null,
+  /** À la place de `accepted` : documents acceptés à titre personnel (CGU, politique de confidentialité) */
+  userDocuments: null as string[] | null,
+  /** Réseau partagé (networkAccess) : null = interrupteur coupé et jamais membre */
+  network: null as unknown,
   /** Courses sans chauffeur récentes (organisation standard) */
   noDriver: 2,
   /** Visite guidée : ligne de user_tours lue par la mise en page */
@@ -35,10 +41,13 @@ const QUEUE_ROWS = [
 
 function reply(read: Read) {
   if (read.table === "legal_acceptances") {
-    if (!h.accepted) return { data: [], count: null, error: null };
     // CGV au nom de l'organisation (« version ») ; CGU et politique de confidentialité à titre personnel (« document »)
-    const rows = read.columns === "version" ? [{ version: ORG_LEGAL_VERSION }] : [{ document: "cgu" }, { document: "privacy" }];
-    return { data: rows, count: null, error: null };
+    if (read.columns === "version") {
+      const versions = h.orgVersions ?? (h.accepted ? [ORG_LEGAL_VERSION] : []);
+      return { data: versions.map((version) => ({ version })), count: null, error: null };
+    }
+    const documents = h.userDocuments ?? (h.accepted ? ["cgu", "privacy"] : []);
+    return { data: documents.map((document) => ({ document })), count: null, error: null };
   }
   // Compte brut des courses sans chauffeur (organisation standard)
   if (read.table === "rides" && read.head) return { data: null, count: h.noDriver, error: null };
@@ -75,7 +84,7 @@ vi.mock("@/lib/private-fleet", async () => await import("../../lib/private-fleet
 vi.mock("@/lib/legal", () => ({ LEGAL_VERSION: "2026-10-02", ORG_LEGAL_EFFECTIVE_AT: "2026-11-05" }));
 vi.mock("@/lib/booking-sites", () => ({ bookingSitesEnabled: record("bookingSitesEnabled", false) }));
 vi.mock("@/lib/queries/pending-documents", () => ({ countPendingDocuments: record("countPendingDocuments", 0) }));
-vi.mock("@/lib/shared-network", () => ({ networkAccess: record("networkAccess", null) }));
+vi.mock("@/lib/shared-network", () => ({ networkAccess: async () => (h.calls.push("networkAccess"), h.network) }));
 vi.mock("@/app/dashboard/messages/queries", () => ({ loadChatCounts: record("loadChatCounts", { unread: 0, openReports: 0 }) }));
 vi.mock("@/components/settlements/counts", () => ({ fetchCentraleCounts: record("fetchCentraleCounts", null) }));
 vi.mock("@/components/private-fleet/queue", async () => ({
@@ -110,6 +119,9 @@ beforeEach(() => {
   h.calls.length = 0;
   h.reads.length = 0;
   h.accepted = false;
+  h.orgVersions = null;
+  h.userDocuments = null;
+  h.network = null;
   h.noDriver = 2;
   h.tour = { data: null, error: null };
 });
@@ -225,4 +237,78 @@ describe("mise en page du tableau de bord : visite guidée", () => {
     h.tour = { data: null, error: { code: "PGRST205", message: "user_tours introuvable" } };
     expect((await layout(ctxFor(false))).saved).toBeUndefined();
   });
+
+  it("mise à jour des CGV à accepter (version antérieure acceptée) : bandeau, sans écran d'acceptation ; visite bloquée", async () => {
+    h.accepted = true;
+    h.noDriver = 0;
+    h.orgVersions = ["2026-01-15"];
+    expect("2026-01-15" < ORG_LEGAL_VERSION).toBe(true);
+    h.ctx = ctxFor(false);
+    const el = (await DashboardLayout({ children: null })) as any;
+    // La page reste affichée (pas d'OrgTermsGate) avec le bandeau « mise à jour » des CGV
+    expect(el.props.children).toBeNull();
+    expect(el.props.topBanner.props).toMatchObject({ orgName: "Taxi Karim", updated: true });
+    expect(el.props.tour).toMatchObject({ key: "fleet", blocked: true, urgent: false });
+  });
+
+  it("nouvelle convention du réseau partagé à accepter (bandeau du gérant) : ouverture d'office différée, jamais bloquée", async () => {
+    h.accepted = true;
+    h.noDriver = 0;
+    h.network = networkOpen("2026-09-01");
+    h.ctx = ctxFor(false);
+    const el = (await DashboardLayout({ children: null })) as any;
+    expect(el.props.topBanner.props).toMatchObject({ version: "2026-10-09", expired: false });
+    expect(el.props.tour).toMatchObject({ key: "fleet", blocked: false, urgent: true });
+    // Convention en vigueur déjà acceptée : ni bandeau ni urgence
+    h.network = networkOpen("2026-10-09");
+    expect(await layout(ctxFor(false))).toMatchObject({ blocked: false, urgent: false });
+  });
+
+  it("dispatcher, CGU acceptées, CGV de l'organisation jamais acceptées et convention du réseau à accepter : ni bloquée ni différée", async () => {
+    h.userDocuments = ["cgu", "privacy"];
+    h.orgVersions = [];
+    h.noDriver = 0;
+    h.network = networkOpen("2026-09-01");
+    h.ctx = { ...ctxFor(false), role: "dispatcher" };
+    const el = (await DashboardLayout({ children: null })) as any;
+    // CGV et convention : affaires du gérant (owner / admin) — jamais lues ni affichées pour le dispatcher
+    expect(h.reads.filter((r) => r.table === "legal_acceptances").map((r) => r.columns)).toEqual(["document"]);
+    expect(el.props.children).toBeNull();
+    expect(el.props.topBanner).toBeNull();
+    expect(el.props.tour).toMatchObject({ key: "dispatcher", blocked: false, urgent: false });
+  });
 });
+
+/**
+ * Réseau partagé ouvert (networkAccess) : partage actif, nouvelle convention publiée le 9 octobre ; `accepted` : version
+ * acceptée par l'organisation (la précédente, encore valable pendant le délai de grâce, ou la nouvelle).
+ */
+function networkOpen(accepted: string) {
+  return {
+    mode: "open",
+    summary: {
+      currency: "EUR",
+      readiness: {
+        enabled: true,
+        share_out: { active: true, missing: [], warnings: [] },
+        share_in: { active: false, missing: ["not_receiving"], warnings: [] },
+        terms: { version: "2026-10-09", min_version: "2026-09-01", grace_until: "2099-01-01T00:00:00Z", accepted_version: accepted, accepted_at: null },
+        approval: { status: "approved", requested_at: null, approved_at: null, refused_reason: null },
+        suspended_reason: null,
+      },
+      given: {
+        searching: 0,
+        in_progress: 0,
+        to_collect_cents: 0,
+        to_confirm_count: 0,
+        to_pay_cents: 0,
+        to_check_count: 0,
+        overdue_cents: 0,
+        overdue_count: 0,
+        disputed_count: 0,
+      },
+      received: { in_progress: 0, month_rides: 0 },
+      badge: 0,
+    },
+  };
+}

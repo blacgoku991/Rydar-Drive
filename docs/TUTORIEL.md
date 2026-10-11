@@ -40,9 +40,11 @@
   bandeaux d'acceptation CGU / CGV (jamais par-dessus), et jamais quand une action urgente est affichée (courses sans
   chauffeur, réservations à traiter…). Elle se reprend à tout moment depuis le menu du compte : « Reprendre la visite »,
   ou « Revoir la visite » une fois terminée.
-- Une **fenêtre non modale** (Radix Popover, déjà dans le projet) ancrée sur l'élément marqué `data-tour="…"`, avec un
-  **repli centré en bas d'écran** quand l'élément est absent, sur téléphone ou pour une grande zone ; réductible en
-  pastille, fermable par « × » ou Échap ; focus, clavier et lecteur d'écran gérés ; utilisable à 390 px.
+- Une **fenêtre non modale** (positionnée par le Popper de Radix, déjà dans le projet ; pas un calque de Radix depuis
+  la revue RS, § 6.3) ancrée sur l'élément marqué `data-tour="…"`, avec un **repli centré en bas d'écran** quand
+  l'élément est absent, sur téléphone ou pour une grande zone ; réductible en pastille, fermable par « × » ou Échap ;
+  jamais affichée par-dessus une fenêtre ou un menu ouverts ; focus, clavier et lecteur d'écran gérés ; utilisable à
+  390 px.
 - **Progression en base**, par utilisateur et par parcours : table `public.user_tours` (RLS, lecture de ses seules
   lignes, aucune écriture directe), écrite par la RPC `public.save_user_tour` (security definer, `auth.uid()`). Les
   comptes qui existent au moment de la migration sont marqués « en pause » : leur première connexion est passée.
@@ -354,6 +356,7 @@ centrale, passage en ou hors Flotte Privée) ou de rôle mène à un autre parco
 | Flotte Privée : réservations à traiter (`queue.toTreat`) > 0 | **différée** |
 | Super admin : signalements de fraude à examiner ou suppressions de compte en échec (pastilles rouges, `adminNavCounts`) > 0 | **différée** |
 | Fenêtre modale ouverte (dialogue, tiroir, `OrgSwitchedDialog`) | la fenêtre de visite (z-40) reste dessous ; elle ne se ferme pas |
+| Fenêtre, tiroir, fenêtre d'alerte ou menu **déjà ouverts** quand la visite va s'ouvrir d'office ou s'afficher (revue RS, RS-01) | **attendue** : ouverture d'office, puis premier affichage, après leur fermeture (`whenNoLayer`, § 6.8) ; rien d'écrit avant |
 
 - **Bloquée** = `blocked: gate || termsBanner !== null` ; dès l'acceptation (`router.refresh()` de `AcceptBanner`), la
   mise en page se rend de nouveau, `blocked` devient faux et l'ouverture d'office est évaluée sans rechargement.
@@ -397,9 +400,9 @@ première demande. Décision réversible tant que la migration n'est pas poussé
 | `tour-content.ts` | Données des 5 parcours (§ 7) : accueil, étapes (titre, texte, écran, libellé du lien, ancre, condition). Textes passés par `fr()` (`components/marketing/typo.ts`). | T2 (recopie du § 7) ; T3 (contrôle et ajustements) |
 | `tour-checks.ts` (+ `tour-checks.test.ts` en T3) | `CheckKey`, `TourChecks`, `loadTourChecks(client, keys, scope)` (§ 8). En T2 : types et fonction qui renvoie `{}` (tout « inconnu ») ; lectures écrites en T3. | T2 (squelette) ; T3 |
 | `tour-provider.tsx` | « use client » : contexte, état (`useReducer`), écritures en série (§ 6.2), ouverture d'office, relecture des conditions (§ 6.9), `useTourMenu()` pour le menu du compte. | T2 |
-| `tour-card.tsx` | « use client » : fenêtre (Radix Popover), modes ancrée / repli centré / réduite, ancre et surlignage, focus, Échap, téléphone. Chargée à la demande (`next/dynamic`, `ssr: false`, `node_modules/next/dist/docs/01-app/02-guides/lazy-loading.md`) : rien à télécharger tant que la visite est fermée. | T2 |
+| `tour-card.tsx` | « use client » : fenêtre (Popper de Radix seul depuis la revue RS : ni calque, ni piège ou garde de focus), modes ancrée / repli centré / réduite, ancre et surlignage, focus, Échap, téléphone. Chargée à la demande (`next/dynamic`, `ssr: false`, `node_modules/next/dist/docs/01-app/02-guides/lazy-loading.md`) : rien à télécharger tant que la visite est fermée. | T2 ; revue RS |
 | `tour-panel.tsx` (+ `tour-panel.test.ts`) | Contenu de la fenêtre, sans logique (en-tête, titre, texte, « C'est fait. », boutons) : testable par `renderToStaticMarkup`. | T2 |
-| `tour-dom.ts` | Aides DOM : `findAnchor(id)`, `isVisible(el)`, `focusTarget(el)`, `avoidTop()` ; la part pure (`dockedRect`) est dans `tour-model.ts`. | T2 |
+| `tour-dom.ts` (+ `tour-dom.test.ts`, revue RS) | Aides DOM : `findAnchor(id)`, `isVisible(el)`, `focusTarget(el)`, `avoidTop()` ; la part pure (`dockedRect`) est dans `tour-model.ts`. Revue RS : `layerOpen`, `whenNoLayer` (calques déjà ouverts, § 6.8), aussi lus par le fournisseur. | T2 ; revue RS |
 | `tour-content.test.ts` | Contrôle statique des parcours (§ 11.1). | T3 |
 
 ### 6.2 États et événements (`tourReducer`, pur)
@@ -431,16 +434,25 @@ première étape affichée.
 - Le fournisseur est **clé** par `${userId}:${tour.key}` (changement d'organisation ou de rôle = nouvel état) ; il
   s'initialise une fois depuis `boot.saved` et lit `boot.blocked` / `boot.urgent` à chaque rendu : quand `blocked` ou
   `urgent` passe de vrai à faux sans que la visite ait déjà été ouverte d'office dans la session, l'ouverture d'office
-  est réévaluée (cas de l'acceptation des CGV, § 5.3).
+  est réévaluée (cas de l'acceptation des CGV, § 5.3). Sa garde de rendu est `tourVisible({ blocked, view })` (pure,
+  testée ; revue RS) : bloquée, la fenêtre n'est pas rendue, même ouverte avant (passage à une organisation du même
+  parcours qui n'a jamais accepté les CGV : état gardé, fenêtre rendue de nouveau après l'acceptation).
+- **Calques déjà ouverts** (revue RS, RS-01) : l'ouverture d'office attend, après ses ~400 ms, qu'aucune fenêtre,
+  fenêtre d'alerte ni aucun menu ne soit ouvert (`whenNoLayer`, § 6.8), puis encore ~400 ms ; rien n'est écrit avant.
 
 ### 6.3 Fenêtre : ancrée, repli centré, réduite
 
-Un seul composant, `TourCard` : `Popover.Root` de `radix-ui` (déjà utilisé : `components/command/command-center.tsx`,
-`components/alerts/dispatch-alerts.tsx`), `modal={false}`, `open` contrôlé (`view !== "closed" && !minimized`),
-`Popover.Anchor virtualRef={…}` (prise en charge vérifiée : `node_modules/@radix-ui/react-popper/dist/index.d.ts`,
-`virtualRef?: React.RefObject<Measurable | null>` ; avec `virtualRef`, l'ancre ne rend rien et est relue à chaque
-rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), contenu dans `Popover.Portal`. Laisser
-`updatePositionStrategy` à sa valeur par défaut (`optimized`) : jamais de recalcul à chaque image.
+Un seul composant, `TourCard`. Revue RS (RS-01, RS-02) : **positionnement seul**, par le Popper de Radix
+(`import { Popper } from "radix-ui/internal"`, aucune nouvelle dépendance ; le Popper sert déjà aux menus et aux
+fenêtres non modales du projet) — `Popper.Root`, `Popper.Anchor virtualRef={…}` (prise en charge vérifiée :
+`node_modules/@radix-ui/react-popper/dist/index.d.ts`, `virtualRef?: React.RefObject<Measurable | null>` ; avec
+`virtualRef`, l'ancre ne rend rien et est relue à chaque rendu : changer d'objet suffit pour passer d'une cible à
+l'autre ou au repli), `Popper.Content` rendu seulement fenêtre dépliée, dans un portail en fin de `<body>`
+(`createPortal`). Ce n'est **pas un calque de Radix** (ni `DismissableLayer`, ni `FocusScope`, ni gardes de focus,
+contrairement au `Popover` livré en T2, même non modal) : les fenêtres, fenêtres d'alerte et menus de la page gardent
+Échap et leur piège à focus quel que soit l'ordre d'ouverture, et Échap ailleurs dans la page garde son action par
+défaut (§ 6.6). Laisser `updatePositionStrategy` à sa valeur par défaut (`optimized`) : jamais de recalcul à chaque
+image.
 
 | Mode | Quand | Position |
 |---|---|---|
@@ -448,7 +460,8 @@ rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), 
 | **repli centré** | accueil ; ancre de type `zone` ; ancre absente ou cachée ; écran < 640 px | rectangle virtuel de largeur nulle, **centré horizontalement sur `main#contenu`** (à défaut la fenêtre), à 16 px (< 640 px) ou 24 px (≥ 640 px) du bas, **remonté au-dessus** de tout `[data-tour-avoid]` visible dont le haut est dans la moitié basse de l'écran et qui couperait la fenêtre là où elle est (`dockedRect`, pur et testé ; revue UX : une barre collante compte à sa place **collée au bas de l'écran**, même quand elle remonte avec la page en fin de formulaire — la fenêtre ne la suit plus) ; `contextElement` = `main#contenu` (la position suit défilement et redimensionnement) ; `side="top" align="center"` |
 | **réduite** | « Réduire » | pastille fixe en bas à gauche de `main#contenu` (16 px), même remontée ; les notifications (sonner) sont en bas à droite |
 
-- Taille : `w-[min(24rem,calc(100vw-2rem))]`, `max-h-[min(32rem,70dvh)] overflow-y-auto` ; `rounded-2xl border
+- Taille : `w-[min(24rem,calc(100vw-2rem))]`, `max-h-[min(32rem,70dvh,var(--radix-popper-available-height,70dvh))]
+  overflow-y-auto` ; `rounded-2xl border
   border-line-strong bg-ink-700 p-4 shadow-float` ; **`z-40`** : sous les fenêtres (`z-50`) et menus (`z-60`), au-dessus
   de la barre du haut sur téléphone (`z-30`). Aucune animation en boucle ; une seule apparition en fondu sous
   `motion-safe:` au plus.
@@ -477,8 +490,8 @@ rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), 
   jamais au point de faire sortir une notification par le haut (128 px gardés, `dockSpace`) ; le `Toaster` de
   `app/layout.tsx` place le bas de ses notifications à `calc(var(--tour-dock, 0px) + 16px)` sur téléphone
   (`mobileOffset`) et `+ 24px` au-delà (`offset`) : elles passent au-dessus de la fenêtre, jamais sur ses boutons.
-- La fenêtre ne se ferme jamais d'elle-même : `onInteractOutside`, `onPointerDownOutside` et `onFocusOutside` →
-  `preventDefault()`.
+- La fenêtre ne se ferme jamais d'elle-même : aucun calque de Radix, donc ni clic ni focus ailleurs ne la ferment ;
+  seuls « × », « Plus tard », « Terminer » et Échap (focus dedans) la ferment.
 
 ### 6.4 Ancre, surlignage, défilement
 
@@ -540,30 +553,38 @@ sous 640 px, le principal passe en haut, pleine largeur (comme `DialogFooter`).
 
 ### 6.6 Clavier, focus, lecteur d'écran
 
-- `Popover.Content` porte `role="dialog"` (non modal) ; `aria-labelledby` = compteur + titre, `aria-describedby` = texte ;
+- La fenêtre (`Popper.Content`) porte `role="dialog"` (non modale, sans `aria-modal`) ; `aria-labelledby` = compteur +
+  titre, `aria-describedby` = texte ; `tabIndex={-1}` (un clic sur son fond la focalise, jamais atteinte au Tab) ;
   `data-tour-card=""` (repère des scripts de recette).
 - **Focus** : vers le titre (`h2`, `tabIndex={-1}`) à l'ouverture d'office de l'accueil, après chaque action dans la
   fenêtre qui change d'étape, et après « Reprendre » ; **jamais** au simple changement de page (la fenêtre suit, sans
-  voler le focus). `onOpenAutoFocus` et `onCloseAutoFocus` → `preventDefault()` : le moteur gère le focus. À la
-  fermeture : retour à l'élément qui avait le focus avant la fenêtre s'il existe encore, sinon `main#contenu`.
-- **Échap** : ferme (pause) seulement si le focus est dans la fenêtre (`onEscapeKeyDown` → sinon `preventDefault()`) :
-  Échap reste à la page (désélection d'En direct, fermeture d'un menu ou d'une fenêtre, qui passent avant car au-dessus).
+  voler le focus). Aucun focus automatique de Radix (aucun `FocusScope`) : le moteur gère le focus. Premier affichage
+  attendu derrière une fenêtre ou un menu ouverts (§ 6.8) : le focus demandé est posé à ce moment. À la fermeture :
+  retour à l'élément qui avait le focus avant la fenêtre s'il existe encore, sinon `main#contenu`.
+- **Échap** (revue RS, RS-02) : traité par le gestionnaire `onKeyDown` de la fenêtre, donc seulement pour une frappe
+  venue d'elle (focus dedans) : « Plus tard » sur l'accueil, pause sur une étape (`tourEscape`, pur et testé) — sauf
+  frappe déjà prise par un calque au-dessus (`defaultPrevented` : un menu ou une fenêtre de Radix se ferme d'abord,
+  seul). Ailleurs dans la page, Échap n'est jamais touché : son action par défaut reste (champ de recherche vidé,
+  `type="search"`), et la désélection d'En direct, la fermeture d'un menu ou d'une fenêtre passent comme sans visite.
+  Avant la revue RS, le `Popover` faisait de la visite la couche du dessus de Radix : tout Échap de la page arrivait
+  avec `defaultPrevented` (champ de recherche jamais vidé), et une visite montée après une fenêtre prenait son Échap et
+  mettait en pause son piège à focus.
 - Les raccourcis d'En direct (touche N, Échap) ignorent une frappe dans un champ ou dans `[role=dialog]`
   (`components/command/command-center.tsx:253`), **sauf N depuis la fenêtre de visite** (revue UX, UX-06 : non
   modale, sans champ ; l'étape « Créer une course » propose la touche N au moment où le focus y est) ; Échap y reste
   ignoré par En direct (il met la visite en pause).
-- **Gardes de focus de Radix** (UX-07) : le Popover, même non modal, pose deux `span[data-radix-focus-guard]`
-  (tabindex 0, invisibles) au début et à la fin de `<body>` tant que la fenêtre est dépliée ; un écouteur `focusin` en
-  capture les renvoie (`guardTarget`, pur et testé) : garde du début atteinte en entrant dans la page (premier Tab) →
-  premier élément de la page (« Aller au contenu ») ; depuis la page (Maj+Tab) ou garde de fin → dernier élément de la
-  fenêtre. Aucun arrêt invisible.
+- **Aucune garde de focus** (revue RS) : la fenêtre ne pose plus de `span[data-radix-focus-guard]` (le `Popover` de T2
+  en posait deux, renvoyées par `guardTarget` depuis la revue UX, UX-07 : écouteur et fonction retirés). Aucun arrêt
+  invisible ; les gardes d'une fenêtre ou d'un menu ouverts restent à eux.
 - « C'est fait. » est dans un `<p aria-live="polite">` toujours présent (vide sinon) : annoncé quand l'action aboutit.
 - Boutons-icônes nommés : « Réduire la visite guidée », « Fermer la visite guidée » ; pastille : `aria-expanded="false"`,
   nom « Afficher la visite guidée, étape 2 sur 5 ».
 - Contraste (jetons, mesuré sur `ink-700` #16191f) : `fg` 15,4:1, `fg-muted` 7,1:1, `fg-subtle` 5,6:1, `brand` 13,4:1,
   `green` 9,4:1 ; aucune couleur en dur, aucune opacité sur un texte.
 - Ordre de tabulation : la fenêtre est en fin de document (portail) ; on l'atteint après le contenu, ou à tout moment par
-  « Reprendre la visite » qui y place le focus. Pas de piège : Tab en sort.
+  « Reprendre la visite » qui y place le focus. Pas de piège : Tab sur son dernier élément mène au premier élément de la
+  page (« Aller au contenu » ; sinon, en fin de document, les contrôles du navigateur) ; Maj+Tab suit l'ordre du
+  document.
 
 ### 6.7 Téléphone (< 640 px)
 
@@ -580,7 +601,17 @@ sous 640 px, le principal passe en haut, pleine largeur (comme `DialogFooter`).
   fenêtre sont de vrais `<a href>` → la fenêtre « Quitter sans enregistrer ? » s'ouvre au-dessus (z-50) ; « Retour »
   laisse l'étape inchangée (le clic n'a pas atteint le gestionnaire de la fenêtre) ; « Quitter sans enregistrer »
   reclique le même lien → l'étape avance et la page change.
-- **Fenêtres et tiroirs** (z-50) : la fenêtre de visite reste dessous, ne se ferme pas, et redevient visible après.
+- **Fenêtres et tiroirs** (z-50) : la fenêtre de visite reste dessous, ne se ferme pas, et redevient visible après ;
+  leur Échap et leur piège à focus restent entiers (la visite n'est pas un calque de Radix, § 6.3).
+- **Calque déjà ouvert** (revue RS, RS-01) : fenêtre ou tiroir (Radix Dialog : `role="dialog"`, sans `aria-modal` —
+  les fenêtres non modales d'En direct et de la cloche comptent aussi), fenêtre d'alerte (`role="alertdialog"`) ou menu
+  (`role="menu"`), jamais la fenêtre de visite elle-même (`layerOpen`) : l'ouverture d'office attend leur fermeture puis
+  ~400 ms (§ 6.2), et le premier affichage de la fenêtre (son morceau arrivé pendant qu'une fenêtre est ouverte, menu du
+  compte qui se ferme après « Reprendre la visite ») attend leur fermeture puis 150 ms (`whenNoLayer`,
+  `LAYER_SETTLE_MS` : le focus que le calque rend à son déclencheur passe avant celui de la visite). Une fenêtre qui se
+  ferme compte jusqu'à son retrait du DOM ; les autres changements de la page (En direct) ne repoussent pas l'attente.
+  Vérifié au repos sur les pages des menus de la flotte, du super admin et de la Flotte Privée (bureau et 390 px) :
+  aucun de ces calques n'y est présent en permanence.
 - **Barres collantes « Enregistrer »** et compositeur de Messages : marquées `data-tour-avoid` (§ 9.2), jamais
   recouvertes par le repli centré.
 - **Bandeaux** (CGU / CGV, réseau partagé, Frais Rydar) : en haut du contenu ; la fenêtre en repli est en bas ; une
@@ -853,12 +884,13 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | Test | Lot | Ce qu'il vérifie |
 |---|---|---|
 | `packages/shared/src/tour.test.ts` | T1 | `TOUR_KEYS`, `TOUR_STATUSES` et `TOUR_MAX_STEPS - 1` identiques aux contraintes `tour in (…)`, `status in (…)`, `step between 0 and N` lues dans `20260924007800_guided_tour.sql` ; `tourKeyFor` (5 cas du § 5.1) ; `tourProgressSchema` (accepte / refuse : clé inconnue, statut inconnu, étape −1, 5, 1,5) ; `tourSavedFrom` (erreur → `undefined`, aucune ligne → `null`, `shown_at` → `shown`). |
-| `apps/web/components/tour/tour-model.test.ts` | T2 | table du § 5.4 ligne par ligne ; chaque événement du § 6.2 (vue, état, écriture `tourPersist`, bornes, `resume` d'une visite jamais ouverte / terminée) ; `tourMenuItem` ; `samePage` (chemin, paramètres, ordre, paramètre en plus) ; `tourFooter` (cas du § 6.5, dont l'étape faite hors de son écran ; lien ou bouton selon l'écran, libellés, un seul principal) ; `dockedRect` (sans barre, avec barre dans la moitié basse, barre en haut ignorée, téléphone / bureau ; revue UX : hauteur de la fenêtre, barre collante à sa place collée, panneau d'En direct) ; revue UX : `dockReserve`, `dockScrollPadding`, `dockSpace`, `hiddenUnder`, `revealScroll`, `guardTarget`, `pickFocus` ; vérification de la revue UX (UX-01) : `focusCovered` (« hidden » identique à `hiddenUnder`, « overlap » : centre, bord, pixel près, sur les mesures de la vérification), `revealWithin` (défilement attendu, élément au-dessus de la fenêtre et sous la marge du haut, `null` s'il n'y tient pas). |
+| `apps/web/components/tour/tour-model.test.ts` | T2 | table du § 5.4 ligne par ligne ; chaque événement du § 6.2 (vue, état, écriture `tourPersist`, bornes, `resume` d'une visite jamais ouverte / terminée) ; `tourMenuItem` ; `samePage` (chemin, paramètres, ordre, paramètre en plus) ; `tourFooter` (cas du § 6.5, dont l'étape faite hors de son écran ; lien ou bouton selon l'écran, libellés, un seul principal) ; `dockedRect` (sans barre, avec barre dans la moitié basse, barre en haut ignorée, téléphone / bureau ; revue UX : hauteur de la fenêtre, barre collante à sa place collée, panneau d'En direct) ; revue UX : `dockReserve`, `dockScrollPadding`, `dockSpace`, `hiddenUnder`, `revealScroll`, `pickFocus` (`guardTarget` retiré par la revue RS avec les gardes de focus) ; vérification de la revue UX (UX-01) : `focusCovered` (« hidden » identique à `hiddenUnder`, « overlap » : centre, bord, pixel près, sur les mesures de la vérification), `revealWithin` (défilement attendu, élément au-dessus de la fenêtre et sous la marge du haut, `null` s'il n'y tient pas) ; revue RS : `tourVisible` (bloquée : rien, visite ouverte ou réduite comprise, et aucune entrée de menu ; acceptation faite : elle revient), `tourEscape` (accueil → « Plus tard », étape → pause, frappe déjà prise par un calque → rien, autre touche ou visite fermée → rien). |
+| `apps/web/components/tour/tour-dom.test.ts` | revue RS | `layerOpen` (sélecteur : fenêtres sauf la visite, fenêtres d'alerte, menus) et `whenNoLayer` sur un DOM simulé (`document`, `MutationObserver`, minuteries) : tout de suite sans calque ; une fois, `LAYER_SETTLE_MS` après la fermeture ; attente jamais repoussée par les autres changements du DOM ; calque rouvert (avec ou sans changement observé) → attente reprise ; annulée → jamais appelée, observateur détaché. |
 | `apps/web/components/tour/tour-panel.test.ts` | T2 | rendu `renderToStaticMarkup` : accueil (liste des étapes, « Plus tard », « Commencer »), étape (compteur, titre `h2`, `aria-live`, « C'est fait. »), liens `href` attendus, boutons-icônes nommés, aucune couleur en dur, aucune taille < 12 px, espaces insécables. |
 | `apps/web/components/tour/tour-actions.test.ts` | T2 | `saveTourProgress` (simulations de `@/lib/auth`, `@/lib/errors`) : entrée invalide refusée sans appel ; appel `rpc("save_user_tour", { p_tour, p_status, p_step })` ; erreur → `ok: false`. |
 | `apps/web/components/tour/tour-checks.test.ts` | T3 | `settlementReady` (défaut lien + espèces sans lien → faux ; lien renseigné ; virement + IBAN ; autre + consignes ; espèces seules → vrai) ; `billingConfigured` ; `stepDone` ; `loadTourChecks` avec un client simulé : bonnes tables, colonnes, filtres, `head: true`, erreur → clé absente, rien lu hors des clés demandées ; revue UX : attributions lues dans `ride_events` (existence `limit(1)` sur 30 jours, acteur = utilisateur). |
 | `apps/web/components/tour/tour-content.test.ts` | T3 | règles du § 7.1 pour les 5 parcours ; **chaque ancre présente une fois** sous forme `data-tour="<id>"` (ou `data-tour={… "<id>"}`) dans `apps/web/app` et `apps/web/components` ; chaque adresse → `app/<chemin>/page.tsx` existant ; `tab` ∈ onglets de `app/dashboard/settings/page.tsx`, `filter` ∈ `RIDE_FILTERS` ; Flotte Privée ⊆ menu Flotte Privée (`dashboardNav`) ∪ `/dashboard/settings` ; dispatcher ⊆ menu du dispatcher ; aucune adresse de page refusée en Flotte Privée ; revue UX : attributs du § 9.2 (fichiers et nombres), touche N d'En direct depuis la fenêtre, décalage des notifications (`--tour-dock`). |
-| Existants adaptés | T2 | `dashboard-layout.test.ts` : nouvelles lectures et propriété `tour` (clé, `blocked` avec l'écran d'acceptation, `urgent` avec les réservations à traiter, filtres `user_id` et `tour`) sans cas retiré ; `admin-pages.test.ts` et `cookie-notice.test.ts` : simulations des nouveaux modules `@/…` seulement. |
+| Existants adaptés | T2 ; revue RS | `dashboard-layout.test.ts` : nouvelles lectures et propriété `tour` (clé, `blocked` avec l'écran d'acceptation, `urgent` avec les réservations à traiter, filtres `user_id` et `tour`) sans cas retiré ; revue RS (RS-03) : mise à jour des CGV à accepter (version antérieure : bandeau, pas d'écran, `blocked`), nouvelle convention du réseau partagé (bandeau du gérant, `urgent`, jamais `blocked` ; convention acceptée : rien), dispatcher avec CGU acceptées, CGV jamais acceptées et convention due (ni lues ni affichées pour lui : ni bloquée ni différée) — simulations : versions des CGV et documents des CGU séparés, `networkAccess` réglable ; `admin-pages.test.ts` et `cookie-notice.test.ts` : simulations des nouveaux modules `@/…` seulement. |
 | Existants inchangés et verts | T1–T3 | `migrations.test.ts`, `error-messages.test.ts`, `dashboard-links.test.ts` (préchargement, nouvel onglet : couvre `components/tour`), `aria-roles.test.ts`, `dashboard-nav.test.ts`, `private-fleet-guards.test.ts`, `primitives.test.ts`, `first-steps.test.ts`. |
 
 ### 11.2 Base (`TEST_DATABASE_NAME=rydar_test_<rôle> pnpm test:db`, T1 : `tests/db/user-tours.test.ts`)
@@ -893,6 +925,19 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
   pour un gérant du seed, l'ouverture d'office est **différée** (c'est le cas « urgent » à vérifier) ; pour l'ouverture
   d'office, utiliser un client neuf (`s1-create`, Flotte Privée) ou passer ces courses en « Annulée » par SQL.
 - Scénarios du moteur (T2, `TE-…`) et des parcours (T3, `TR-…`) : § 12.
+- Scénarios de la revue RS (`scratchpad/rs-fix/`, `recette.sh` ; reprise des scripts de la vérification
+  `scratchpad/verif-rs/` : compte « flotte » du seed, document réécrit pour forcer la progression et l'urgence,
+  actions serveur bloquées, **aucune écriture**) : `rs01.mjs` — fenêtre « Nouveau chauffeur » ouverte **avant**
+  l'ouverture d'office, morceau de la visite retardé (`CHUNK_DELAY=2500`) ou non : `race` (clic dès l'hydratation),
+  `late` (clic après l'ouverture d'office, morceau en route), `before` et `none` (témoins), progression `null` ou
+  `active` : aucune visite par-dessus la fenêtre, Tab reste dans la fenêtre, Échap dans « Prénom » la ferme, puis la
+  visite s'affiche (accueil : focus sur son titre) ; `rs01-calque.mjs` — calque de test (`dialog`, `alertdialog`,
+  `menu`) posé juste après l'hydratation, retiré 3 s plus tard : ouverture d'office attendue, rien d'écrit avant ;
+  `rs02.mjs` — visite dépliée (menu du compte ou étape), réduite,
+  redépliée, refermée : Échap dans un champ `type="search"` de la page le vide (`defaultPrevented` faux) et laisse la
+  visite telle quelle ; Échap focus dans la visite la ferme ; `rs-extra.mjs` (mode ancré, Tab sans garde, menu du
+  compte ouvert par-dessus, téléphone), `rs-goto.mjs` (« Y aller », UX-01), `rs-scan.mjs` (aucun calque présent au repos
+  sur les pages des menus).
 
 ---
 
@@ -923,6 +968,7 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | T2 | Moteur de visite et intégration dans la coquille | T1 | fait : commit « Visite guidée (T2) : moteur de visite et intégration dans la coquille » (compte rendu : `docs/EN-COURS.md`) |
 | T3 | Parcours sur les écrans réels (ancres, conditions, textes) et recette | T2 | fait : commit « Visite guidée (T3) : parcours sur les écrans réels, conditions de réussite et recette » (compte rendu : `docs/EN-COURS.md`) |
 | Revue UX | Corrections UX-01 à UX-09 de la revue UX et accessibilité de la visite | T3 | fait : commit « Visite guidée : corrections de la revue UX (UX-01 à UX-09) » (écarts : § 13.3 ; compte rendu : `docs/EN-COURS.md`) |
+| Revue RS | Corrections RS-01 à RS-03 : fenêtre sortie des calques de Radix, calques déjà ouverts, tests des gardes | Revue UX | fait : commit « Visite guidée : fenêtre sortie des calques de Radix, jamais par-dessus une fenêtre ouverte (RS-01 à RS-03) » (écarts : § 13.3 ; compte rendu : `docs/EN-COURS.md`) |
 
 ### T1 — Base et paquet partagé
 
@@ -1342,6 +1388,77 @@ d'autre de modifié) :
   accueil Flotte Privée, `/admin/legal`, En direct ; 360×640 à 1440×900) : 0 élément caché, fenêtre jamais réduite.
   Reste, hors « Y aller » et inchangé : En direct à 390×844, la carte et ses boutons de zoom ont le centre sous la
   fenêtre au Tab (5 px des boutons visibles : 2.4.11 tenu, pas 2.4.12).
+
+**Revue RS** (corrections RS-01 à RS-03, constats confirmés sur `bd285c3` ; web seulement : aucune migration, aucune
+RPC, garde ou action serveur modifiée ; recette hors dépôt : `scratchpad/rs-fix/`, build de production d'une copie
+isolée du dépôt sur :3253, aucune écriture en base) :
+
+1. **Cause commune de RS-01 et RS-02** : le `Popover` non modal de T2 faisait de la fenêtre de visite un calque de Radix
+   (`DismissableLayer`, `FocusScope`, gardes de focus). Radix donne Échap à la dernière couche montée et met en pause le
+   `FocusScope` précédent : (RS-01) une visite affichée après une fenêtre déjà ouverte (morceau de la visite en retard,
+   réseau lent) prenait l'Échap de cette fenêtre et cassait son piège à focus (Tab vers « Fermer la visite guidée ») ;
+   (RS-02) tant que la visite était dépliée, tout Échap de la page arrivait avec `defaultPrevented` (écouteur de Radix
+   en capture sur `document`) : les champs `type="search"` (`ui/search-field.tsx`, En direct, panneau Flotte, Journal,
+   recherche d'« Attribuer ») n'étaient plus vidés, contrairement au § 6.6.
+2. **Correction de fond** (§ 6.3, § 6.6) : positionnement seul par le Popper de Radix (`radix-ui/internal`, aucune
+   nouvelle dépendance), `Popper.Content` dans un portail (`createPortal`) : ni `DismissableLayer`, ni `FocusScope`, ni
+   gardes de focus. `role="dialog"` et `tabIndex={-1}` posés par le moteur ; Échap traité par le `onKeyDown` de la
+   fenêtre (`tourEscape`, pur et testé ; frappe déjà prise par un calque au-dessus → rien) ; Tab sur le dernier élément
+   → premier élément de la page, comme avant ; hauteur bornée par `--radix-popper-available-height`. Retirés, sans objet :
+   `onOpenAutoFocus`, `onCloseAutoFocus`, `onInteractOutside`, `onPointerDownOutside`, `onFocusOutside`,
+   `onEscapeKeyDown`, l'écouteur des gardes de focus et `guardTarget` (UX-07 : la visite ne pose plus de garde ; son
+   test est remplacé par ceux de `tourEscape` et `tourVisible`). Inchangés : modes ancré / repli / pastille, réserve,
+   marges, filet du focus, « Y aller », surlignage, notifications. Remplace les points 5 et 6 de T2 et UX-07 pour ce qui
+   touche au `Popover`.
+3. **En complément (RS-01)** : `whenNoLayer` (`tour-dom.ts`, testé sur un DOM simulé). L'ouverture d'office
+   (fournisseur) attend qu'aucune fenêtre, fenêtre d'alerte ni aucun menu ne soit ouvert, puis ~400 ms, et n'écrit rien
+   avant ; le premier affichage de la fenêtre (son morceau arrivé pendant qu'une fenêtre est ouverte, menu du compte qui
+   se ferme après « Reprendre la visite ») attend leur fermeture puis 150 ms (le focus que la fenêtre rend à son
+   déclencheur passe d'abord) ; la pastille aussi. **Écart** : le constat proposait `[role=dialog][aria-modal=true]`,
+   mais Radix Dialog ne pose pas `aria-modal` (vérifié dans `@radix-ui/react-dialog` 1.1.23, qui masque le reste par
+   `hideOthers`) : le sélecteur retenu compte tout `[role="dialog"]` sauf la visite (les fenêtres non modales d'En
+   direct et de la cloche comprises : la visite n'apparaît pas pendant qu'on s'en sert), `[role="alertdialog"]` et
+   `[role="menu"]`. Les autres changements du DOM ne repoussent pas l'attente (En direct).
+4. **RS-03, tests** : `dashboard-layout.test.ts` (+3 cas : mise à jour des CGV, convention du réseau partagé,
+   dispatcher) ; garde de rendu du fournisseur extraite en `tourVisible` (`tour-model.ts`, testée). Mutations sur la
+   copie isolée (`rs-fix/mutants.py`) : **12/12 détectées** — les trois du constat (bandeau « mise à jour » ignoré,
+   convention ignorée, garde de rendu sans blocage), Échap déjà pris par un calque ignoré, Échap de l'accueil en pause,
+   attente repoussée par chaque changement du DOM, pas de vérification à l'échéance, fenêtre de visite comptée comme
+   calque, menus ignorés, aucun calque mais jamais prêt, annulation sans détacher l'observateur, témoin
+   `blocked: false`. Non couvert par les tests unitaires (aucun rendu DOM dans le dépôt) : l'appel de `tourVisible` et
+   de `whenNoLayer` par les composants — couvert par la recette.
+5. **Recette** (build de production de la copie isolée, :3253 ; défauts reproduits par la vérification sur `bd285c3`) :
+   - `rs01.mjs`, morceau retardé de 2,5 s, `race` et `late`, accueil et étape : aucune visite par-dessus la fenêtre
+     « Nouveau chauffeur » ouverte ; Tab depuis « Créer le chauffeur » → « Fermer » (dans la fenêtre) ; Échap dans
+     « Prénom » la ferme ; puis la visite s'affiche — 160 à 190 ms après la fermeture quand son morceau attendait
+     (`late`), ~0,4 s plus le chargement du morceau quand l'ouverture d'office attendait (`race`) ; accueil : focus sur
+     son titre ; étape : focus laissé à « Ajouter un chauffeur » ; Échap focus dans la visite : fermée, focus rendu à la
+     page. Témoins : `before` (visite ouverte d'abord, gardée dessous, mêmes résultats) et `none`. Sans retard, 3 passes
+     de `race`, `late` et `race active` : en général la visite s'ouvre avant le clic (comportement du témoin `before`) ;
+     une vraie course observée (morceau à 1 021 ms, fenêtre à 1 243 ms) : visite affichée après la fermeture.
+   - `rs01-calque.mjs` (calque de test posé juste après l'hydratation, retiré 3 s plus tard ; `dialog`,
+     `alertdialog`, `menu`) : pendant 3 s, ni visite, ni écriture tentée, ni morceau demandé ; calque retiré →
+     ouverture d'office ~400 ms après (écriture tentée, bloquée par la recette), accueil affiché, focus sur son titre.
+   - Contre-épreuve : `rs01.mjs late null` et `rs02.mjs` (étape) échouent sur le build de `305d1bd` (visite par-dessus
+     la fenêtre, Tab vers « Fermer la visite guidée », Échap gardé par la visite ; champ non vidé, `defaultPrevented`
+     vrai, 2 gardes de focus).
+   - `rs02.mjs` (Journal, Chauffeurs, Courses ; visite ouverte par le menu du compte ou d'office sur une étape) : champ
+     vidé et `defaultPrevented` faux dans les 5 états (fermée, dépliée, réduite, redépliée, refermée), visite inchangée ;
+     aucune garde de focus, `role="dialog"` sans `aria-modal`, nom « Visite guidée · … » ; « Reprendre la visite » :
+     fenêtre affichée après la fermeture du menu, focus sur son titre.
+   - `rs-extra.mjs` : ancrée sous « Ajouter un chauffeur » (12 px, alignée à droite), surlignage, z-40 ; Tab sur son
+     dernier bouton → « Aller au contenu » ; 120 Tab et 120 Maj+Tab sans arrêt invisible, fenêtre atteinte dans les
+     deux sens ; clic sur son fond puis Échap → fermée ; menu du compte ouvert par-dessus : Échap le ferme seul (visite
+     gardée, focus au bouton du compte) ; 390×844 : repli à 16 px de chaque côté, réserve et `--tour-dock` posés, aucun
+     défilement horizontal, « Reprendre la visite » depuis le tiroir → focus sur le titre.
+   - `rs-goto.mjs` (« Y aller », Tarifs ; 375×667, 360×640, 390×844, 1440×900) : élément focalisé au-dessus de la
+     fenêtre (12 px), 12 Tab sans élément caché dessous. `rs-scan.mjs` : aucun calque présent au repos sur les 17 pages
+     de la flotte, les 13 du super admin et les 7 de la Flotte Privée (bureau et 390 px).
+   - Vu pendant la recette, sans lien avec la revue RS (même code et mêmes résultats sur `305d1bd`) : fenêtre ancrée,
+     un Tab sur une tuile entièrement sous elle la réduit en pastille (filet, UX-01) ; « Reprendre la visite » depuis le
+     tiroir a laissé une fois (sur ~35 essais) le focus sur « Menu » (le tiroir rend le focus à son bouton après le
+     titre, malgré les deux images d'attente de T2) — non reproduit en 30 essais de plus (`305d1bd` et correction,
+     processeur bridé ×4 compris).
 
 ---
 

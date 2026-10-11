@@ -162,6 +162,51 @@ export const setTourDock = (px: number | null): void => setRootPx("--tour-dock",
 const ABOVE_CARD = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-sonner-toaster]';
 
 /**
+ * Calques ouverts qui passent avant la visite (§ 6.8) : fenêtres et tiroirs (Radix Dialog : role « dialog », sans
+ * aria-modal — les fenêtres non modales d'En direct et de la cloche comprises), fenêtres d'alerte, menus ; jamais la
+ * fenêtre de visite elle-même. Une fenêtre qui se ferme compte jusqu'à son retrait du DOM (elle rend alors le focus à
+ * son déclencheur).
+ */
+const OPEN_LAYER = '[role="dialog"]:not([data-tour-card]), [role="alertdialog"], [role="menu"]';
+
+/** Un calque est ouvert : la visite ne s'ouvre pas d'office et ne s'affiche pas par-dessus (§ 5.3, § 6.8). */
+export const layerOpen = (): boolean => document.querySelector(OPEN_LAYER) !== null;
+
+/** Attente après la fermeture du dernier calque : le focus qu'il rend à son déclencheur passe avant la visite. */
+export const LAYER_SETTLE_MS = 150;
+
+/**
+ * `ready` appelé une fois quand aucun calque n'est ouvert : tout de suite s'il n'y en a aucun, sinon `settleMs` après
+ * la fermeture du dernier (un calque rouvert entre-temps fait attendre de nouveau ; les autres changements de la page,
+ * En direct compris, ne repoussent pas l'attente). Renvoie l'annulation.
+ */
+export function whenNoLayer(ready: () => void, settleMs: number = LAYER_SETTLE_MS): () => void {
+  if (!layerOpen()) {
+    ready();
+    return () => undefined;
+  }
+  let timer = 0;
+  const observer = new MutationObserver(() => {
+    if (layerOpen()) {
+      window.clearTimeout(timer);
+      timer = 0;
+    } else if (!timer) {
+      timer = window.setTimeout(() => {
+        timer = 0;
+        if (layerOpen()) return;
+        observer.disconnect();
+        ready();
+      }, settleMs);
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    window.clearTimeout(timer);
+    observer.disconnect();
+  };
+}
+
+/**
  * Élément focalisé couvert par la fenêtre selon la règle (focusCovered : « hidden », entièrement caché dessous, focus
  * au clavier ; « overlap », touché même en partie, « Y aller ») : `card` = cardBoxNow ; jamais dans un calque qui
  * passe au-dessus d'elle.

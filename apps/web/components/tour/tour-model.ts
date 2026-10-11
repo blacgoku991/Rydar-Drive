@@ -1,7 +1,7 @@
 // Visite guidée de première connexion (docs/TUTORIEL.md § 5.4, § 6) : modèle PUR du moteur, ni « use client » ni
-// « server-only » (testé : tour-model.test.ts). États et événements, démarrage, écritures, entrée du menu du compte,
-// boutons de la fenêtre, repli centré en bas d'écran (marges et focus caché dessous), gardes de focus, élément visé par
-// « Y aller », textes du moteur. Rien ici ne lit le DOM ni la base.
+// « server-only » (testé : tour-model.test.ts). États et événements, démarrage, fenêtre rendue, écritures, entrée du
+// menu du compte, boutons de la fenêtre, repli centré en bas d'écran (marges et focus caché dessous), touche Échap,
+// élément visé par « Y aller », textes du moteur. Rien ici ne lit le DOM ni la base.
 import { type TourKey, type TourSaved, type TourStatus } from "@rydar/shared";
 import { fr } from "../marketing/typo";
 
@@ -153,6 +153,26 @@ export function tourReducer(state: TourState, event: TourEvent, total: number): 
       if (state.status === "completed") return { ...state, view: "step", status: "active", step: 0, minimized: false };
       return { ...state, view: "step", status: "active", minimized: false };
   }
+}
+
+/**
+ * Fenêtre de la visite rendue par le fournisseur (§ 5.3) : jamais pendant une acceptation (`blocked`), même ouverte
+ * avant — passage à une organisation du même parcours qui n'a pas accepté les CGV : la visite déjà ouverte est cachée,
+ * son état gardé, rendue de nouveau après l'acceptation ; fermée : rien.
+ */
+export function tourVisible(i: { blocked: boolean; view: TourView }): boolean {
+  return !i.blocked && i.view !== "closed";
+}
+
+/**
+ * Échap dans la fenêtre de visite (§ 6.6, gestionnaire posé sur elle : la frappe vient d'elle) : « Plus tard » sur
+ * l'accueil, pause sur une étape — sauf frappe déjà prise par un calque au-dessus (`handled` : defaultPrevented, un menu
+ * ou une fenêtre de Radix se ferme d'abord, seul). La fenêtre n'est pas un calque de Radix : Échap ailleurs dans la page
+ * n'est jamais touché (champ de recherche vidé, désélection d'En direct, fermeture d'une fenêtre).
+ */
+export function tourEscape(i: { key: string; handled: boolean; view: TourView }): "later" | "close" | null {
+  if (i.key !== "Escape" || i.handled || i.view === "closed") return null;
+  return i.view === "intro" ? "later" : "close";
 }
 
 /** Écriture à faire après un changement d'état (save_user_tour), ou null si l'état enregistré n'a pas changé. */
@@ -376,16 +396,6 @@ export function focusCovered(el: TourBox, card: TourBox, rule: CoverRule): boole
 export function revealWithin(el: Pick<TourBox, "top" | "bottom">, cardTop: number, top: number): number | null {
   const scroll = revealScroll(el, cardTop);
   return el.top - scroll >= top - 1 ? scroll : null;
-}
-
-/**
- * Garde de focus de Radix atteinte au clavier (span invisible, tabindex 0, au début et à la fin de <body> tant que la
- * fenêtre est dépliée) : jamais un arrêt invisible. Garde du début atteinte en entrant dans la page (premier Tab,
- * retour depuis le navigateur) → premier élément de la page ; garde du début atteinte depuis la page (Maj+Tab sur le
- * premier élément), ou garde de fin → dernier élément de la fenêtre (en fin de document).
- */
-export function guardTarget(i: { start: boolean; fromPage: boolean }): "page" | "card" {
-  return i.start && !i.fromPage ? "page" : "card";
 }
 
 /**

@@ -15,7 +15,6 @@ import {
   dockedRect,
   dockedTop,
   focusCovered,
-  guardTarget,
   hiddenUnder,
   initialTourState,
   pickFocus,
@@ -24,18 +23,21 @@ import {
   samePage,
   savedTourState,
   tourFooter,
+  tourEscape,
   tourMenuItem,
   tourPersist,
   tourReducer,
+  tourVisible,
   type FocusCandidate,
   type FooterStep,
   type TourEvent,
   type TourState,
 } from "./tour-model";
 
-// Visite guidée (docs/TUTORIEL.md) : modèle pur du moteur — table de démarrage (§ 5.4), événements et écritures (§ 6.2),
-// menu du compte (§ 10), même écran et boutons de la fenêtre (§ 6.5), repli centré, sa marge du bas et le focus caché
-// dessous (§ 6.3), gardes de focus et élément visé par « Y aller » (§ 6.4, § 6.6), textes (§ 6.10).
+// Visite guidée (docs/TUTORIEL.md) : modèle pur du moteur — table de démarrage (§ 5.4), fenêtre rendue pendant une
+// acceptation (§ 5.3), événements et écritures (§ 6.2), menu du compte (§ 10), même écran et boutons de la fenêtre
+// (§ 6.5), repli centré, sa marge du bas et le focus caché dessous (§ 6.3), Échap et élément visé par « Y aller »
+// (§ 6.4, § 6.6), textes (§ 6.10).
 
 // tour-checks.ts reprend la règle « Éditeur » de « À traiter » (components/admin/admin-todo.ts, qui importe
 // « @/lib/wording ») : module résolu à la main (lot T3)
@@ -137,6 +139,24 @@ describe("démarrage (table du § 5.4)", () => {
     // Compte rattrapé par la migration (en pause, jamais ouverte) : jamais d'office
     expect(autostartView(savedTourState(saved("paused", 0, false), TOTAL), ok)).toBeNull();
     expect(autostartView(savedTourState(saved("completed", 4), TOTAL), ok)).toBeNull();
+  });
+});
+
+// Fournisseur (TourEngine) : sa garde de rendu est tourVisible — passage à une organisation du même parcours (même clé,
+// état gardé) qui n'a jamais accepté les CGV : la mise en page passe `blocked`, seule cette règle cache la visite ouverte
+describe("fenêtre rendue pendant une acceptation (tourVisible, § 5.3)", () => {
+  it("bloquée (écran ou bandeau d'acceptation) : rien, même visite ouverte ou réduite ; et aucune entrée de menu", () => {
+    for (const state of [open(2), { ...open(2), minimized: true }, reduce(savedTourState(null, TOTAL), "autostart")]) {
+      expect(tourVisible({ blocked: true, view: state.view })).toBe(false);
+      expect(tourMenuItem(state, true)).toBeNull();
+    }
+  });
+
+  it("acceptation faite : la visite ouverte avant revient, à son étape ; fermée : rien", () => {
+    expect(tourVisible({ blocked: false, view: "step" })).toBe(true);
+    expect(tourVisible({ blocked: false, view: "intro" })).toBe(true);
+    expect(tourVisible({ blocked: false, view: "closed" })).toBe(false);
+    expect(tourVisible({ blocked: true, view: "closed" })).toBe(false);
   });
 });
 
@@ -662,12 +682,22 @@ describe("repli : marge du bas, place prise et focus caché dessous (WCAG 2.2, 2
   });
 });
 
-describe("gardes de focus de Radix (guardTarget)", () => {
-  it("garde du début en entrant dans la page → premier élément de la page ; depuis la page ou garde de fin → fenêtre", () => {
-    expect(guardTarget({ start: true, fromPage: false })).toBe("page");
-    expect(guardTarget({ start: true, fromPage: true })).toBe("card");
-    expect(guardTarget({ start: false, fromPage: false })).toBe("card");
-    expect(guardTarget({ start: false, fromPage: true })).toBe("card");
+describe("Échap dans la fenêtre de visite (tourEscape, § 6.6)", () => {
+  const esc = (view: TourState["view"], handled = false, key = "Escape") => tourEscape({ key, handled, view });
+
+  it("accueil → « Plus tard » ; étape → pause (« × »)", () => {
+    expect(esc("intro")).toBe("later");
+    expect(esc("step")).toBe("close");
+  });
+
+  it("frappe déjà prise par un calque au-dessus (menu, fenêtre de Radix qui se ferme d'abord) : la visite reste ouverte", () => {
+    expect(esc("intro", true)).toBeNull();
+    expect(esc("step", true)).toBeNull();
+  });
+
+  it("autre touche, ou visite fermée : rien", () => {
+    for (const key of ["Tab", "Enter", " ", "n", "Esc"]) expect(esc("step", false, key)).toBeNull();
+    expect(esc("closed")).toBeNull();
   });
 });
 

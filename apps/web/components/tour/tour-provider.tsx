@@ -5,6 +5,7 @@
 //    la clé) ;
 //  - ouverture d'office après le montage (~400 ms), jamais pendant une acceptation, une lecture en échec ou une
 //    urgence ; réévaluée quand l'acceptation ou l'urgence se lève (CGV acceptées : router.refresh de la mise en page) ;
+//    jamais par-dessus une fenêtre, une alerte ou un menu ouverts : attendue jusqu'à leur fermeture (whenNoLayer) ;
 //  - écritures en série (save_user_tour par l'action serveur, une à la fois, la dernière gagne), toasts pause / fin,
 //    un seul toast d'échec par session (la visite continue : l'état de la page fait foi) ;
 //  - relecture des conditions de réussite, seulement fenêtre dépliée sur une étape ;
@@ -23,6 +24,7 @@ import { runAction } from "@/lib/run-action";
 import { getBrowserClient } from "@/lib/supabase/client";
 import { loadTourChecks, type CheckKey, type TourChecks } from "./tour-checks";
 import { TOURS, tourCheckKeys } from "./tour-content";
+import { whenNoLayer } from "./tour-dom";
 import {
   TOUR_UI,
   autostartView,
@@ -30,6 +32,7 @@ import {
   tourMenuItem,
   tourPersist,
   tourReducer,
+  tourVisible,
   type TourBoot,
   type TourEvent,
   type TourIntent,
@@ -91,12 +94,21 @@ function TourEngine({ boot, onMenu }: { boot: TourBoot; onMenu: (menu: TourMenu)
   const autoDone = useRef(false);
   useEffect(() => {
     if (autoDone.current || boot.blocked || boot.urgent || !readable) return;
+    let stopWaiting = () => {};
     const timer = window.setTimeout(() => {
-      autoDone.current = true;
-      const view = autostartView(stateRef.current, { readable, blocked: false, urgent: false });
-      if (view) act({ type: "autostart" }, view === "intro" ? { focus: true } : undefined);
+      // Fenêtre, alerte ou menu ouverts (une fenêtre ouverte pendant le chargement, par exemple) : la visite attend leur
+      // fermeture, puis le même délai de stabilisation — jamais par-dessus (leur Échap, leur piège à focus) ; rien n'est
+      // écrit avant qu'elle s'ouvre
+      stopWaiting = whenNoLayer(() => {
+        autoDone.current = true;
+        const view = autostartView(stateRef.current, { readable, blocked: false, urgent: false });
+        if (view) act({ type: "autostart" }, view === "intro" ? { focus: true } : undefined);
+      }, AUTOSTART_DELAY_MS);
     }, AUTOSTART_DELAY_MS);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      stopWaiting();
+    };
   }, [boot.blocked, boot.urgent, readable, act]);
 
   // ------------------------------------------------------------------------------ écritures en série et toasts (§ 6.2)
@@ -150,8 +162,8 @@ function TourEngine({ boot, onMenu }: { boot: TourBoot; onMenu: (menu: TourMenu)
   const keys = useMemo(() => tourCheckKeys(def), [def]);
   const onStep = state.view === "step" && !state.minimized && !boot.blocked;
 
-  // Acceptation en cours (bloquée) : ni fenêtre ni entrée de menu, même ouverte avant
-  if (boot.blocked || state.view === "closed") return null;
+  // Acceptation en cours (bloquée) : ni fenêtre ni entrée de menu, même ouverte avant (tourVisible)
+  if (!tourVisible({ blocked: boot.blocked, view: state.view })) return null;
   return (
     <>
       {onStep && keys.length > 0 && (
