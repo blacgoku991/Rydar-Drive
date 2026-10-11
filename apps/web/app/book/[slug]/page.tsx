@@ -38,9 +38,26 @@ async function load(slug: string) {
   return { org: org as any, site, partnerNetwork };
 }
 
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
-  const data = await load((await params).slug);
-  if (!data?.site) return { title: "Réservation" };
+/**
+ * Mini-site affichable : publié, ou aperçu demandé par un membre de la centrale. MÊME règle pour la page et pour ses
+ * métadonnées : un mini-site non publié (ligne créée pour toute organisation) ne livre ni le nom ni l'accroche de la
+ * centrale dans le titre de la page 404 (audit p5, admin-public-3).
+ */
+async function loadVisible(slug: string, preview: string | undefined) {
+  const data = await load(slug);
+  if (!data?.site) return null;
+  if (!data.site.enabled) {
+    const session = preview ? await getSession() : null;
+    if (!session?.memberships.some((m) => m.org.id === data.org.id)) return null;
+  }
+  return data;
+}
+
+type PageArgs = { params: Promise<{ slug: string }>; searchParams: Promise<{ preview?: string }> };
+
+export async function generateMetadata({ params, searchParams }: PageArgs): Promise<Metadata> {
+  const data = await loadVisible((await params).slug, (await searchParams).preview);
+  if (!data) return { title: "Réservation" };
   return { title: { absolute: `${data.site.title ?? data.org.name} — Réservation de chauffeur privé` }, description: data.site.tagline ?? undefined };
 }
 
@@ -62,16 +79,12 @@ function readableOn(hex: string) {
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b! > 0.35 ? "#0b0d04" : "#ffffff";
 }
 
-export default async function BookingPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ preview?: string }> }) {
+export default async function BookingPage({ params, searchParams }: PageArgs) {
   const { slug } = await params;
   const { preview } = await searchParams;
-  const data = await load(slug);
-  if (!data?.site) notFound();
+  const data = await loadVisible(slug, preview);
+  if (!data) notFound();
   const { org, site } = data;
-  if (!site.enabled) {
-    const session = preview ? await getSession() : null;
-    if (!session?.memberships.some((m) => m.org.id === org.id)) notFound();
-  }
   const brand = site.primary_color ?? "#c8f03c";
   const categoryLabels = ((site.vehicle_categories ?? ["standard"]) as VehicleCategory[]).map((c) => VEHICLE_CATEGORY_META[c]?.label ?? c).join(", ");
   const style = { "--color-brand": brand, "--color-brand-strong": brand, "--color-brand-fg": readableOn(brand) } as React.CSSProperties;
