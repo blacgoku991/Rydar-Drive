@@ -12,6 +12,7 @@ import {
   extractErrorCode,
   fieldErrors,
   humanizeError,
+  mailboxKey,
   type EligibilityInput,
   type EligibilityVerdict,
 } from "@rydar/shared";
@@ -44,7 +45,7 @@ export async function submitEligibility(input: EligibilityFormInput): Promise<El
   const ip = await clientIp();
   const limit = await rateLimitAll([
     { key: `eligibility:ip:${ipBucket(ip)}`, limit: 5, windowSec: 3600 },
-    { key: `eligibility:email:${v.email}`, limit: 3, windowSec: 86_400 },
+    { key: `eligibility:email:${mailboxKey(v.email)}`, limit: 3, windowSec: 86_400 },
     { key: "eligibility:all", limit: 200, windowSec: 3600 },
   ]);
   if (!limit.ok) return { ok: false, error: TOO_MANY };

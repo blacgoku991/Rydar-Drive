@@ -10,6 +10,7 @@ import {
   extractErrorCode,
   fieldErrors,
   humanizeError,
+  mailboxKey,
   type ContactRequestInput,
 } from "@rydar/shared";
 import { env, serverEnv } from "@/lib/env";
@@ -112,7 +113,7 @@ export async function submitContactRequest(input: ContactInput): Promise<Contact
   const ip = await clientIp();
   const limit = await rateLimitAll([
     { key: `contact:ip:${ipBucket(ip)}`, limit: 5, windowSec: 3600 },
-    { key: `contact:email:${v.email}`, limit: 3, windowSec: 86_400 },
+    { key: `contact:email:${mailboxKey(v.email)}`, limit: 3, windowSec: 86_400 },
     { key: "contact:all", limit: 200, windowSec: 3600 },
   ]);
   if (!limit.ok) return { ok: false, error: TOO_MANY };

@@ -259,6 +259,27 @@ export function sanitizeHeaderText(value: string | null | undefined, max: number
   return `${chars.slice(0, max - 1).join("").trimEnd()}…`;
 }
 
+/**
+ * Clé de BOÎTE d'une adresse e-mail, pour compter et dédoublonner (jamais pour envoyer) : minuscules, espaces retirés,
+ * sous-adresse « +étiquette » retirée, points de la partie locale retirés et googlemail.com ramené à gmail.com pour
+ * Gmail. « victime+1@gmail.com » et « v.ictime@gmail.com » arrivent dans la même boîte : une seule clé. Miroir de
+ * private.mailbox_key (20260924007900).
+ */
+export function mailboxKey(email: string): string {
+  const value = String(email ?? "").trim().toLowerCase();
+  const at = value.lastIndexOf("@");
+  if (at < 0) return value;
+  let local = value.slice(0, at);
+  let domain = value.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus > 0) local = local.slice(0, plus);
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    local = local.split(".").join("");
+    domain = "gmail.com";
+  }
+  return `${local}@${domain}`;
+}
+
 /** Adresse du site sans barre finale (« https://app.rydar.app/ » → « https://app.rydar.app »). */
 const siteUrl = (appUrl: string) => appUrl.trim().replace(/\/+$/, "");
 

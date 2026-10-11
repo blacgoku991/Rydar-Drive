@@ -5,7 +5,7 @@ import {
   CONTACT_LIMITS, CONTACT_REPLY_SUBJECT, CONTACT_STATUS_META, CONTACT_STATUSES, CONTACT_TOPIC_META, CONTACT_TOPIC_PARAM,
   CONTACT_TOPICS, contactAckEmail, contactHref, contactNotifyEmail, contactReplyEmail, contactReplySchema,
   contactRequestSchema, contactTopicFromParam, EMAIL_KIND_META, EMAIL_KINDS, EMAIL_STATUS_META, EMAIL_STATUSES,
-  ERROR_MESSAGES, FLEET_SIZE_META, FLEET_SIZES, fieldErrors, humanizeError, sanitizeHeaderText, testEmail,
+  ERROR_MESSAGES, FLEET_SIZE_META, FLEET_SIZES, fieldErrors, humanizeError, mailboxKey, sanitizeHeaderText, testEmail,
 } from "./index";
 
 const NBSP = "\u{a0}";
@@ -176,6 +176,17 @@ describe("contactRequestSchema", () => {
     expect(contactReplySchema.parse({ message: " Bonjour Jean,\r\nVoici notre offre. " })).toEqual({ message: "Bonjour Jean,\nVoici notre offre." });
     expect(fieldErrors(contactReplySchema.safeParse({ message: "   " }).error!)).toEqual({ message: "Écrivez votre réponse" });
     expect(contactReplySchema.safeParse({ message: "r".repeat(CONTACT_LIMITS.reply + 1) }).success).toBe(false);
+  });
+});
+
+describe("mailboxKey (miroir de private.mailbox_key, 20260924007900)", () => {
+  it("variantes d'une même boîte : une seule clé ; adresses distinctes : clés distinctes", () => {
+    expect(mailboxKey(" V.Ictime+tag@GoogleMail.com ")).toBe("victime@gmail.com");
+    expect(mailboxKey("victime+1@gmail.com")).toBe(mailboxKey("v.i.c.t.i.m.e@gmail.com"));
+    expect(mailboxKey("jean.dupont+promo@exemple.fr")).toBe("jean.dupont@exemple.fr");
+    expect(mailboxKey("jean.dupont@exemple.fr")).not.toBe(mailboxKey("jeandupont@exemple.fr"));
+    expect(mailboxKey("+x@exemple.fr")).toBe("+x@exemple.fr");
+    expect(mailboxKey("sans-arobase")).toBe("sans-arobase");
   });
 });
 

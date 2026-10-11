@@ -181,6 +181,17 @@ describe("submitContactRequest", () => {
     expect((await submitContactRequest(VALID)).ok).toBe(false);
   });
 
+  it("même boîte sous d'autres adresses (« +étiquette », points Gmail) : même compteur de 3 par jour", async () => {
+    const variants = ["victime+1@gmail.com", "v.ictime@gmail.com", "Victime+2@googlemail.com", "vic.time+3@gmail.com"];
+    const results = [];
+    for (const [i, email] of variants.entries()) {
+      h.ip = `198.51.100.${i + 10}`;
+      results.push((await submitContactRequest({ ...VALID, email })).ok);
+    }
+    expect(results).toEqual([true, true, true, false]);
+    expect(h.counts.get("contact:email:victime@gmail.com")).toBe(4);
+  });
+
   it("plafond horaire des accusés (réputation de l'IP du VPS) : demande enregistrée et notifiée, sans accusé", async () => {
     h.counts.set("contact:ack", 30);
     const res = await submitContactRequest(VALID);
