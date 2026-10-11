@@ -13,6 +13,7 @@ import { env } from "@/lib/env";
 import { actionError } from "@/lib/errors";
 import { findUserIdByEmail, sendMemberInvitationEmail } from "@/lib/member-invite";
 import { getOrgContext } from "@/lib/org-context";
+import { rateLimitAll } from "@/lib/rate-limit";
 // Chemin relatif : chargé tel quel par les tests unitaires des actions (alias « @/ » simulés un à un)
 import { isPrivateFleet, refuseInPrivateFleet } from "../../../lib/private-fleet";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -46,6 +47,20 @@ const INVITE_LABELS: Record<string, string> = { fullName: "Nom", email: "E-mail"
 async function adminCtx() {
   const ctx = await getOrgContext();
   return ctx && isAdminRole(ctx.role) ? ctx : null;
+}
+
+/**
+ * Ajouts de membres et renvois d'invitation : chacun envoie un e-mail à une adresse saisie et l'issue (compte existant
+ * ou non) se lit dans la liste Équipe → plafonnés par administrateur et par centrale (audit p5, onglets-3 : sondage en
+ * série de l'existence de comptes sur la plateforme, e-mails envoyés à des inconnus).
+ */
+const INVITE_LIMIT_MESSAGE = "Trop d'invitations envoyées en peu de temps : réessayez dans une heure.";
+async function inviteQuotaOk(ctx: { org: { id: string }; user: { id: string } }) {
+  const limit = await rateLimitAll([
+    { key: `invite:user:${ctx.user.id}`, limit: 10, windowSec: 3600 },
+    { key: `invite:org:${ctx.org.id}`, limit: 20, windowSec: 3600 },
+  ]);
+  return limit.ok;
 }
 
 export async function updateOrganization(input: z.input<typeof organizationUpdateSchema>): Promise<Result> {
@@ -215,6 +230,7 @@ export async function inviteMember(
   const parsed = inviteSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: describeError(parsed.error, INVITE_LABELS), fieldErrors: fieldErrors(parsed.error) };
   const v = parsed.data;
+  if (!(await inviteQuotaOk(ctx))) return { ok: false, error: INVITE_LIMIT_MESSAGE };
   const admin = createAdminClient();
 
   const existingId = await findUserIdByEmail(v.email);
@@ -312,6 +328,7 @@ export async function resendMemberInvitation(memberId: string): Promise<Result> 
   const inv = await pendingInvitation(memberId);
   if (!inv.ctx) return { ok: false, error: inv.error };
   if (!inv.email) return { ok: false, error: "Adresse du compte introuvable." };
+  if (!(await inviteQuotaOk(inv.ctx))) return { ok: false, error: INVITE_LIMIT_MESSAGE };
   const sent = await sendMemberInvitationEmail(inv.email);
   if (!sent) return { ok: false, error: "Envoi impossible pour le moment : réessayez dans une minute." };
   await audit({

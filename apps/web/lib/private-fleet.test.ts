@@ -85,6 +85,7 @@ vi.mock("@/lib/member-invite", () => ({
   findUserIdByEmail: async (email: string) => (h.lookups.push(email), null),
   sendMemberInvitationEmail: async () => true,
 }));
+vi.mock("@/lib/rate-limit", () => ({ rateLimitAll: async () => ({ ok: true, remaining: 1, resetAt: 0, limit: 1 }) }));
 vi.mock("@/lib/whatsapp", () => ({ saveWhatsApp: async () => ({ ok: true }), removeWhatsApp: async () => ({ ok: true }), testWhatsApp: async () => ({ ok: true }) }));
 vi.mock("@/components/settlements/settings-schema", async () => await import("../components/settlements/settings-schema"));
 vi.mock("@/lib/geocode", () => ({ geocodeOne: async () => null }));

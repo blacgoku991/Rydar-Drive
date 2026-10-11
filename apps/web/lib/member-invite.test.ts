@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
   createUserError: null as unknown,
   /** banned_until du compte Auth lu par auth.admin.getUserById (null = connexion possible) */
   bannedUntil: null as string | null,
+  /** Compteurs de rateLimitAll (clé → nombre d'appels), remis à zéro à chaque test */
+  limits: new Map<string, number>(),
 }));
 
 function fakeDb(name: string) {
@@ -73,6 +75,16 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => admin }));
 vi.mock("@/lib/errors", async () => await import("./errors"));
 vi.mock("@/lib/suspension", async () => await import("./suspension"));
 vi.mock("@/lib/member-invite", async () => await import("./member-invite"));
+vi.mock("@/lib/rate-limit", () => ({
+  rateLimitAll: async (checks: { key: string; limit: number }[]) => {
+    for (const c of checks) {
+      const n = (h.limits.get(c.key) ?? 0) + 1;
+      h.limits.set(c.key, n);
+      if (n > c.limit) return { ok: false, remaining: 0, resetAt: 0, limit: c.limit };
+    }
+    return { ok: true, remaining: 1, resetAt: 0, limit: 1 };
+  },
+}));
 vi.mock("@/lib/whatsapp", () => ({ removeWhatsApp: vi.fn(), saveWhatsApp: vi.fn(), testWhatsApp: vi.fn() }));
 vi.mock("@/components/settlements/settings-schema", () => ({ centraleIssues: () => ({}) }));
 vi.mock("@supabase/supabase-js", async (importOriginal) => ({
@@ -111,6 +123,7 @@ beforeEach(() => {
   h.handle = () => undefined;
   h.createUserError = null;
   h.bannedUntil = null;
+  h.limits.clear();
   h.ctx = { org: { id: ORG, timezone: "Europe/Paris", name: "Centrale A" }, role: "owner", user: { id: OWNER }, supabase: rls };
   h.session = { user: { id: OWNER } };
 });
@@ -140,6 +153,27 @@ describe("Équipe : ajout d'un membre", () => {
     h.handle = () => undefined;
     expect(await settings.inviteMember({ fullName: "Nouveau Membre", email: "nouveau@exemple.fr", role: "dispatcher", password: "" })).toMatchObject({ ok: true });
     expect(writes("organization_users").at(-1)?.values).toMatchObject({ user_id: NEW_USER, status: "active" });
+  });
+
+  it("ajouts et renvois plafonnés par administrateur (10 / h) : aucun sondage en série des comptes de la plateforme", async () => {
+    // Audit p5 (onglets-3) : chaque ajout dit, par la liste Équipe, si l'adresse a un compte, et envoie un e-mail
+    h.handle = (op) => (op.table === "users" && op.action === "select" ? { data: { id: EXISTING } } : undefined);
+    for (let i = 0; i < 10; i++) {
+      expect(await settings.inviteMember({ fullName: "Jean Dupont", email: `jean${i}@exemple.fr`, role: "dispatcher" })).toMatchObject({ ok: true });
+    }
+    h.ops.length = 0;
+    h.emails.length = 0;
+    const res = await settings.inviteMember({ fullName: "Jean Dupont", email: "jean10@exemple.fr", role: "dispatcher" });
+    expect(res).toEqual({ ok: false, error: "Trop d'invitations envoyées en peu de temps : réessayez dans une heure." });
+    expect(h.ops).toEqual([]); // ni recherche du compte, ni adhésion
+    expect(h.emails).toEqual([]);
+    // Le renvoi d'invitation compte dans le même plafond
+    h.handle = (op) =>
+      op.table === "organization_users" && op.action === "select"
+        ? { data: { id: MEMBER_ROW, user_id: EXISTING, role: "dispatcher", status: "invited", user: { email: "jean@exemple.fr" } } }
+        : undefined;
+    expect(await settings.resendMemberInvitation(MEMBER_ROW)).toMatchObject({ ok: false });
+    expect(h.emails).toEqual([]);
   });
 
   it("updateMember : seuls rôle admin/dispatcher et statut active/disabled, jamais une invitation en attente", async () => {
