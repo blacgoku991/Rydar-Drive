@@ -4,14 +4,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // que le tableau de bord affiche (même choix que requireOrg / getOrgContext : cookie → dernière utilisée → première
 // ACTIVE), jamais une autre centrale du compte (contre-audit web_comptes#0).
 
-const h = vi.hoisted(() => ({ cookie: null as string | null, session: null as unknown }));
+const h = vi.hoisted(() => ({ cookie: null as string | null, view: null as string | null, session: null as unknown }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({
-  cookies: async () => ({ get: (name: string) => (name === "rd_org" && h.cookie ? { value: h.cookie } : undefined) }),
+  cookies: async () => ({
+    get: (name: string) => {
+      const v = name === "rd_org" ? h.cookie : name === "rd_view" ? h.view : null;
+      return v ? { value: v } : undefined;
+    },
+  }),
 }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
 vi.mock("@/lib/supabase/jwt", async () => await import("../../lib/supabase/jwt"));
+vi.mock("@/lib/org-view", async () => await import("../../lib/org-view"));
 vi.mock("@/lib/auth", async () => ({ ...(await import("../../lib/auth")), getSession: async () => h.session }));
 
 const { getPayerContext } = await import("./org-payer-context");
@@ -31,6 +37,7 @@ const session = (lastActive: string | null, memberships: { role: string; org: Re
 
 beforeEach(() => {
   h.cookie = null;
+  h.view = null;
   h.session = null;
 });
 
@@ -63,5 +70,20 @@ describe("getPayerContext : centrale visée par les frais plateforme", () => {
     expect(await getPayerContext()).toBeNull();
     h.session = null;
     expect(await getPayerContext()).toBeNull();
+  });
+
+  it("action (« J'ai payé ») : refusée si la centrale résolue n'est pas celle affichée (accès retiré page ouverte)", async () => {
+    // Centrale A affichée (rd_org = rd_view = A), puis accès à A retiré : la session ne la contient plus, pickMembership
+    // se rabat sur B. La page peut l'afficher, mais une écriture ne part jamais au nom de B (audit p5, onglets-2).
+    h.session = session(A, [{ role: "admin", org: org(B, "active", "Bravo") }]);
+    h.cookie = A;
+    h.view = A;
+    expect(await getPayerContext({ action: true })).toBeNull();
+    expect(await getPayerContext()).toMatchObject({ org: { id: B } });
+    // Centrale affichée = centrale résolue : accepté ; cookie absent (scripts, ancien onglet) : comportement antérieur
+    h.view = B;
+    expect(await getPayerContext({ action: true })).toMatchObject({ org: { id: B }, canPay: true });
+    h.view = null;
+    expect(await getPayerContext({ action: true })).toMatchObject({ org: { id: B } });
   });
 });

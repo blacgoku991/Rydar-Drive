@@ -6,14 +6,25 @@ import "server-only";
 import { dateTimeFormat } from "@rydar/shared";
 import { cookies } from "next/headers";
 import { ORG_COOKIE, getSession, isAdminRole, pickMembership } from "@/lib/auth";
+import { ORG_VIEW_COOKIE } from "@/lib/org-view";
 
-export async function getPayerContext() {
+/**
+ * `action` : écriture (« J'ai payé », retrait, décision réseau) → refusée si la centrale résolue diffère de la centrale
+ * AFFICHÉE (cookie rd_view, comme getOrgContext) : accès retiré ou centrale archivée page ouverte, pickMembership se
+ * rabattrait sinon sur une AUTRE centrale du compte et la déclaration partirait chez elle (audit p5, onglets-2).
+ * Les pages (/suspended) gardent la centrale résolue : elles posent ensuite rd_view (RememberViewedOrg).
+ */
+export async function getPayerContext(opts: { action?: boolean } = {}) {
   const session = await getSession();
   if (!session || !session.memberships.length) return null;
   const jar = await cookies();
   const wanted = jar.get(ORG_COOKIE)?.value ?? session.profile.last_active_org_id;
   const current = pickMembership(session.memberships, wanted);
   if (current.org.status !== "active" && current.org.status !== "suspended") return null;
+  if (opts.action) {
+    const viewed = jar.get(ORG_VIEW_COOKIE)?.value;
+    if (viewed && viewed !== current.org.id) return null;
+  }
   return { ...session, org: current.org, role: current.role, canPay: isAdminRole(current.role) };
 }
 

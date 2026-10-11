@@ -44,7 +44,7 @@ type PgError = { code?: string; message?: string } | null;
  * statut, assert_network_creditor).
  */
 async function context(admin: boolean, opts: { creditor?: boolean } = {}): Promise<Ctx | Fail> {
-  const ctx = opts.creditor ? await getPayerContext() : await getOrgContext();
+  const ctx = opts.creditor ? await getPayerContext({ action: true }) : await getOrgContext();
   if (!ctx) return { ok: false, error: "Session expirée ou organisation indisponible : rechargez la page." };
   // Flotte Privée : jamais de réseau partagé (garde E en base) — toutes les actions de ce fichier passent par ici
   const refused = refuseInPrivateFleet(ctx);

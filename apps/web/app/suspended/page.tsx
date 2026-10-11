@@ -7,6 +7,7 @@ import { NETWORK_SUSPENDED_PATH } from "@/components/network-share/paths";
 import { hasOpenNetworkSettlements, openNetworkSummaryText } from "@/components/network-share/suspended";
 import { getPayerContext } from "@/components/platform-fees/org-payer-context";
 import { OrgSuspendedDues } from "@/components/platform-fees/org-suspended-dues";
+import { RememberViewedOrg } from "@/components/shell/remember-viewed-org";
 import { Button } from "@/components/ui/button";
 import { networkSummary } from "@/lib/shared-network";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -43,6 +44,8 @@ export default async function SuspendedPage() {
   return (
     <StatusScreen icon={<PauseCircle />} title="Compte suspendu" actions={<form action={signOut}><Button variant="secondary" type="submit">Se déconnecter</Button></form>}>
       L&apos;accès de votre centrale à Rydar Drive est temporairement suspendu. Contactez l&apos;équipe Rydar pour le réactiver.
+      {/* Centrale affichée (rd_view) : « J'ai payé » et les décisions réseau sont refusés si une autre centrale est résolue */}
+      {ctx && <RememberViewedOrg orgId={ctx.org.id} />}
       {motive && <p className="mt-3 text-[13.5px] text-fg-muted [overflow-wrap:anywhere]">Motif&nbsp;: {motive}</p>}
       {platform && <OrgSuspendedDues data={platform} serverNow={Date.now()} />}
       {network && (

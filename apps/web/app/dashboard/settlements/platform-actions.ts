@@ -42,7 +42,7 @@ export async function declarePlatformPayment(input: {
   note?: string | null;
   paidOn?: string | null;
 }): Promise<PlatformActionResult> {
-  const ctx = await getPayerContext();
+  const ctx = await getPayerContext({ action: true });
   if (!ctx) return { ok: false, code: "FORBIDDEN", error: "Accès refusé." };
   if (!ctx.canPay) return { ok: false, code: "FORBIDDEN", error: "Réservé au propriétaire ou à un administrateur de la centrale." };
   const parsed = declarePlatformPaymentSchema.safeParse(input);
@@ -73,7 +73,7 @@ export async function declarePlatformPayment(input: {
 /** Centrale : retire sa déclaration tant que Rydar ne l'a pas traitée (erreur de saisie). */
 export async function cancelPlatformPayment(id: string): Promise<PlatformActionResult> {
   if (!UUID.test(id)) return { ok: false, code: "NOT_FOUND", error: "Paiement introuvable." };
-  const ctx = await getPayerContext();
+  const ctx = await getPayerContext({ action: true });
   if (!ctx) return { ok: false, code: "FORBIDDEN", error: "Accès refusé." };
   if (!ctx.canPay) return { ok: false, code: "FORBIDDEN", error: "Réservé au propriétaire ou à un administrateur de la centrale." };
   const { data, error } = await ctx.supabase.rpc("cancel_platform_payment", { p_id: id });

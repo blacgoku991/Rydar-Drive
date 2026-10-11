@@ -10,6 +10,7 @@ import { NETWORK_LIST_MAX, parseNetworkShareParams, recentMonths, type NetworkSh
 import { NETWORK_CLOSED_NOTICE } from "@/components/network-share/access";
 import { hasOpenNetworkSettlements } from "@/components/network-share/suspended";
 import { getPayerContext } from "@/components/platform-fees/org-payer-context";
+import { RememberViewedOrg } from "@/components/shell/remember-viewed-org";
 import { networkSummary, sharedNetworkEnabled } from "@/lib/shared-network";
 
 export const metadata: Metadata = { title: "Réseau partagé — règlements en cours" };
@@ -51,6 +52,7 @@ export default async function SuspendedNetworkPage({ searchParams }: { searchPar
     // écrans (sans tabIndex, il retombait sur <body>)
     <main id="contenu" tabIndex={-1} className="min-h-dvh px-5 py-8 outline-none sm:px-8">
       <div className="mx-auto w-full max-w-[1200px]">
+        <RememberViewedOrg orgId={orgId} />
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <Logo size={24} />
           <Link href="/suspended" prefetch={false} className="inline-flex items-center gap-1.5 text-[12.5px] text-fg-subtle hover:text-fg">
