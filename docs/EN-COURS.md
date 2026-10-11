@@ -1,5 +1,41 @@
 # Travail en cours (11/10/2026)
 
+## Visite guidée de première connexion : lot T1 fait (11/10/2026)
+
+Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; restent T2 (moteur
+et coquille) puis T3 (parcours sur les écrans réels, recette), dans cet ordre. Rien sous `apps/`, ni dans le seed.
+
+- **Livré** : migration `20260924007800_guided_tour.sql` (**pas encore poussée**, modifiable jusqu'au push ; identique
+  au § 3) : table `public.user_tours` (utilisateur, parcours, état, étape 0 à 4, première ouverture, première fin ; clé
+  `(user_id, tour)`, effacée avec le compte), RLS et politique `user_tours_select_own`, aucun droit pour anon ni le
+  service role, SELECT seul pour authenticated ; RPC `public.save_user_tour(p_tour, p_status, p_step)` (security
+  definer, `search_path` vide, `FORBIDDEN` sans utilisateur, EXECUTE pour authenticated seulement) ; rattrapage : comptes
+  super admin ou membres existants mis en pause sur les 5 parcours, jamais ouverts. `@rydar/shared` : `tour.ts`
+  (`TOUR_KEYS`, `TOUR_STATUSES`, `TOUR_MAX_STEPS`, `tourProgressSchema`, `tourKeyFor`, `tourSavedFrom`, types),
+  exporté par `index.ts`. Registre RGPD : progression de la visite guidée (données, durée du compte).
+- **Contrôles** : `pnpm typecheck` OK ; `pnpm test` 164 fichiers, 1 794 tests (+1 fichier, +18 tests : `tour.test.ts`,
+  dont listes et borne comparées au fichier de migration) ; `TEST_DATABASE_NAME=rydar_test_t1 pnpm test:db` 52 fichiers,
+  883 tests (+1 fichier, +14 tests : `user-tours.test.ts`, les 10 points du § 11.2 et plus) ; tests éprouvés par
+  mutation de la migration (8 altérations pour la base, 3 pour le paquet : chacune fait échouer au moins un test ;
+  fichier remis à l'identique, empreinte vérifiée).
+- **Base locale « rydar »** : migration appliquée à la main (`psql -v ON_ERROR_STOP=1 -f …`, sans erreur) : 35 lignes
+  (7 comptes super admin ou membres × 5 parcours), `shown_at` nul partout ; droits relus (anon : aucun ; authenticated :
+  SELECT ; service role : aucun ; RPC : authenticated oui, anon non ; `prosecdef`, `search_path=""`). Cache de schéma
+  de PostgREST rechargé à la main (`notify pgrst, 'reload schema'` : la pile locale n'a pas de déclencheur pour cela,
+  `TUTORIEL.md` § 13.3, point 4 ; à refaire après chaque migration appliquée à la main).
+- **Passerelle** (hors dépôt, `scratchpad/tutoriel/T1/gateway-check.mjs`, résultat `gateway-check.json`) : 25 contrôles
+  OK par GoTrue et PostgREST avec les 5 profils de recette : chacun lit ses 5 lignes, et la ligne seule comme la lira la
+  mise en page ; aucune ligne d'un autre compte ; RPC (création, fin, « revoir » : `shown_at` et `completed_at` gardés ;
+  étape 5 et parcours inconnu → 23514 ; paramètre d'utilisateur refusé) ; insertion, modification et suppression
+  directes → 42501 ; anon → 42501 ; table remise ensuite dans l'état d'après la migration (identique à l'instantané).
+- **Captures** : sans objet pour T1 (aucun écran touché ; le web ne lit la table qu'à partir de T2).
+- **À savoir pour T2 et T3** : sur une base neuve (`l7/e2e/reset.sh`, CI), le rattrapage ne voit aucun compte : chaque
+  compte du seed verra la visite d'office (annexe A : `tour-off.sql`, écrit en T2) ; sur « rydar », les 7 comptes
+  actuels sont en pause. La migration du copilote (`007500` sur sa branche) prendra `20260924007900` ou plus.
+- **Reste** : T2 puis T3 (§ 12) ; décisions du propriétaire (§ 13.1 : comptes existants en pause — retirer le bloc de
+  rattrapage avant le push pour qu'ils voient la visite d'office ; mention dans `/confidentialite` avec la prochaine
+  version ; ligne de `CLAUDE.md`).
+
 ## Refonte des panneaux : lots R1 à R11, revue et contrôle final faits (11/10/2026)
 
 Plan, commits des lots et écarts : `docs/REFONTE-PANELS.md` (§ 8.1, § 8.2). Interface web seulement : aucune
@@ -109,7 +145,7 @@ hors `apps/web`, quatre tables de libellés lues par le web seul (`packages/shar
 Spécification, statuts des lots (commits) et écarts livrés : `docs/FLOTTE-PRIVEE.md` (§ 15 et § 15.1). Migrations
 `20260924007600_private_fleet` et `20260924007700_private_fleet_owner_settlements` **pas encore poussées** (modifiables
 jusqu'au push) ; la migration du copilote (`007500` sur sa branche, en collision avec `007500_eligibility`) prendra
-`20260924007800` ou plus à sa fusion.
+`20260924007900` ou plus à sa fusion (`007800` : visite guidée).
 
 - **Livré** : organisation flotte marquée `organizations.private_fleet`, dont le propriétaire est l'unique chauffeur
   (même compte, fiche `owner_driver`) ; ni équipe, ni lien d'inscription, ni réseau, ni centrale (gardes en base +

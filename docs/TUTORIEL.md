@@ -869,7 +869,7 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 
 | Lot | Titre | Dépend de | Statut |
 |---|---|---|---|
-| T1 | Base et paquet partagé | — | à faire |
+| T1 | Base et paquet partagé | — | fait : commit « Visite guidée (T1) : progression en base (user_tours, save_user_tour) et paquet partagé » (compte rendu : `docs/EN-COURS.md`) |
 | T2 | Moteur de visite et intégration dans la coquille | T1 | à faire |
 | T3 | Parcours sur les écrans réels (ancres, conditions, textes) et recette | T2 | à faire |
 
@@ -1045,7 +1045,28 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 
 ### 13.3 Écarts entre ce plan et le code livré
 
-Aucun pour l'instant (rempli par chaque lot ; le code fait foi).
+Rempli par chaque lot ; le code fait foi.
+
+**T1** (base et paquet partagé) : migration identique au bloc du § 3 (extraite de ce document, commentaires et
+marqueurs compris), module conforme au § 4.4. Précisions et ajouts :
+
+1. `tourSavedFrom` : un état inconnu de la base rend `undefined` (ligne illisible = lecture impossible : jamais
+   d'ouverture d'office) ; l'étape lue est ramenée de 0 à `TOUR_MAX_STEPS - 1` (0 si elle n'est pas entière). Le retour
+   au nombre réel d'étapes d'un parcours (§ 3, « ramenée dans les bornes à la lecture ») reste à `initialTourState` (T2).
+2. Ajout : type `TourProgress` (sortie de `tourProgressSchema`) pour l'action serveur de T2 ; le schéma retire toute
+   clé en plus (un identifiant d'utilisateur, par exemple), testé.
+3. Tests au-delà du § 11.2 : service role refusé en lecture et en écriture directes ; cascade sans aucun droit sur la
+   table (service role, dans une transaction annulée) ; rattrapage : adhésion « invitée » comprise (5 lignes), compte
+   chauffeur sans adhésion exclu, bloc rejouable sans effet ; étape hors `smallint` → 22003 ; première écriture
+   « terminée » : `shown_at` et `completed_at` posés ensemble. `tour.test.ts` compare aussi la liste du rattrapage et la
+   signature de la RPC au fichier de migration.
+4. **Pile locale** (pour T2 et T3) : son PostgREST n'a pas de déclencheur d'événement qui recharge son cache de schéma ;
+   après une migration appliquée à la main sur « rydar », lancer `notify pgrst, 'reload schema'` (psql, base « rydar »),
+   sinon la RPC répond `PGRST202` (introuvable) et une insertion directe 404 au lieu de `42501`. Fait pour 007800 le
+   11/10/2026. En production (Supabase auto-hébergé, image `supabase/postgres`), aucune migration du dépôt ne le
+   demande : rien d'ajouté à la migration.
+5. `docs/RGPD-REGISTRE.md` : la mention couvre les utilisateurs du tableau de bord et du super admin (dispatchers
+   compris), avec sa durée (celle du compte).
 
 ---
 
