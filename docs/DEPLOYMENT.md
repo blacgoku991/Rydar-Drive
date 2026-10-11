@@ -285,14 +285,23 @@ Hors kit VPS : `docker run -e DATABASE_SSLMODE=verify-full -e DATABASE_CA_FILE=/
 Durcissements reportés par l'audit. Seul le premier est dans le kit ; les deux autres touchent des fichiers du VPS hors
 dépôt (`/opt/supabase`, `Caddyfile.local`). Contrôles en lecture seule d'abord.
 
-**1. Taille des requêtes (Caddy, dans le kit).** `deploy/Caddyfile` plafonne à 1 Mo le corps de `/api/v1/*` (l'application
-en lit 32 Ko au plus) et du webhook Stripe : au-delà, Caddy répond 413 dès que la route lit le corps, sans occuper le
-serveur Node. Si `Caddyfile.local` remplace en production le Caddyfile du dépôt au lieu de l'importer (fichier monté sur
-`/etc/caddy/Caddyfile` : `sudo docker inspect` du conteneur `caddy`), y reporter les deux blocs `request_body`.
-Contrôle de la configuration ACTIVE (un envoi de 2 Mo sur `/api/v1/rides` sans clé répond `401`, plafond présent ou non :
-la clé est refusée avant toute lecture du corps) :
-`cd /opt/rydar/deploy && sudo docker compose exec -T caddy caddy adapt --config /etc/caddy/Caddyfile 2>/dev/null | grep -o '"max_size"' | wc -l`
-affiche `4` (webhook Stripe et API v1, pour le domaine et pour les mini-sites ; `0` : plafonds absents).
+**1. Taille et lenteur des requêtes (Caddy, dans le kit).** `deploy/Caddyfile` plafonne à 2 Mo TOUT corps de requête
+vers le site (domaine et mini-sites ; aucune route n'en reçoit plus : actions serveur 1 Mo, fichiers déposés directement
+dans Supabase Storage) et à 1 Mo celui de `/api/v1/*` (l'application en lit 32 Ko au plus) et du webhook Stripe : au-delà,
+Caddy répond 413. Sans plafond général, un anonyme faisait garder ~7 Mo par connexion au serveur Node (audit p5,
+`worker-infra-2`). Options globales : en-têtes lus en 10 s au plus (`servers { timeouts { read_header 10s } }`) ; aucun
+délai sur le corps (`read_body` couperait les envois de documents vers `api.DOMAINE` sur un réseau mobile lent).
+`/api/tls/allowed` (appelé par Caddy en interne sur `http://web:3000`) répond 404 depuis Internet.
+Si `Caddyfile.local` remplace en production le Caddyfile du dépôt au lieu de l'importer (fichier monté sur
+`/etc/caddy/Caddyfile` : `sudo docker inspect` du conteneur `caddy`), y reporter le bloc `servers` des options globales
+et, dans les blocs `{$DOMAIN}` et `https://`, le `request_body` sans filtre, `@tls_ask` / `respond @tls_ask 404` et les
+deux `request_body` filtrés.
+Contrôle de la configuration ACTIVE :
+`cd /opt/rydar/deploy && sudo docker compose exec -T caddy caddy adapt --config /etc/caddy/Caddyfile 2>/dev/null | grep -o '"max_size":[0-9]*' | sort | uniq -c`
+affiche `4 "max_size":1000000` et `2 "max_size":2000000` (plus si le bloc `api.DOMAIN` en a) ; depuis une autre
+machine, `curl -s -o /dev/null -w '%{http_code}\n' https://DOMAINE/api/tls/allowed?domain=DOMAINE` affiche `404` et
+`head -c 3000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST --data-binary @- https://DOMAINE/api/auth/driver-login`
+affiche `413`.
 
 **2. Supabase Auth auto-hébergé (`api.DOMAINE`) : limites par adresse IP, inscriptions coupées.** Sans
 `GOTRUE_RATE_LIMIT_HEADER`, Supabase Auth n'applique **aucune** limite par adresse IP (code de supabase/auth : sans
@@ -332,10 +341,45 @@ Limites par défaut, par adresse et par 5 minutes : `/token` 150, `/verify` 30, 
   s'insérer : ne rien forcer) ; connexions du tableau de bord et de l'app, « Mot de passe oublié » par code : OK ;
   `sudo docker logs --since 15m supabase-auth 2>&1 | grep -c 'rate limiting is not applied'` affiche `0`. Retour
   arrière : recopier les deux fichiers `.avant-limites`, puis la même commande `up -d --no-deps auth`.
-- **Facultatif** (bloc `api.DOMAINE` de `Caddyfile.local`) : fermer les routes d'Auth que Rydar n'appelle jamais et qui
-  envoient des e-mails (quota d'envoi commun à toute la plateforme) :
-  `@auth_inutile path /auth/v1/signup* /auth/v1/otp* /auth/v1/magiclink* /auth/v1/resend*` puis
-  `respond @auth_inutile 404`, avant `reverse_proxy` (`/recover`, `/verify` et `/token` restent nécessaires).
+- **Obligatoire** (bloc `api.DOMAINE` de `Caddyfile.local`, audit p5 `admin-public-1` et `admin-public-2`) : Supabase
+  Auth répond `user_banned` AVANT de vérifier le mot de passe (`/token?grant_type=password` avec n'importe quel mot de
+  passe : « cette adresse a été bannie quelque part sur Rydar »), `/otp` répond différemment selon qu'un compte existe,
+  et `/recover` répond 429 au second envoi seulement pour un compte existant. Rydar n'appelle ces routes que depuis le
+  serveur web (connexion du tableau de bord et de l'app chauffeur, « Mot de passe oublié » du tableau de bord et de
+  l'app, invitations de l'équipe, confirmation de suppression de compte, `/auth/callback`) ; le navigateur et l'app
+  n'utilisent que le grant `refresh_token`, `/verify` (liens des e-mails) et `/user`. À placer dans le bloc
+  `api.DOMAINE`, avant `reverse_proxy` :
+
+  ```caddyfile
+  # Routes d'Auth jamais appelées par Rydar (envoient des e-mails, révèlent l'existence d'un compte)
+  @auth_inutile path /auth/v1/signup* /auth/v1/otp* /auth/v1/magiclink* /auth/v1/resend*
+  respond @auth_inutile 404
+  # Réservées au serveur web (réseau Docker / hôte) : réinitialisation, et tout grant de /token sauf refresh_token
+  @auth_recover {
+  	path /auth/v1/recover*
+  	not remote_ip private_ranges
+  }
+  respond @auth_recover 404
+  @auth_token {
+  	path /auth/v1/token*
+  	not expression `{http.request.uri.query.grant_type} == "refresh_token"`
+  	not remote_ip private_ranges
+  }
+  respond @auth_token 404
+  ```
+
+  Vérifié avec Caddy 2.10 (chemins `/token/`, `//token`, `/TOKEN`, `%74oken`, `grant_type` en double : tous refusés
+  depuis l'extérieur ; `refresh_token`, `/verify`, `/user`, `/rest/v1` transmis). **Condition** : aucun accès IPv6
+  (point 3) — un client IPv6 arrive avec l'adresse de la passerelle Docker, donc « privée ». Le serveur web joint
+  `api.DOMAINE` par l'adresse publique du VPS et arrive dans Caddy avec une adresse du réseau Docker (privée).
+  **Contrôles** : `getent ahostsv6 api.DOMAINE` sans adresse hors `::ffff:…` AVANT d'appliquer ; puis, depuis une autre
+  machine (`ANON` = clé publique) :
+  `curl -s -o /dev/null -w '%{http_code}\n' -X POST 'https://api.DOMAINE/auth/v1/token?grant_type=password' -H "apikey: ANON" -H 'Content-Type: application/json' -d '{"email":"x@example.com","password":"x"}'`
+  affiche `404` (de même `/auth/v1/recover` et `/auth/v1/otp`) ; connexion du tableau de bord, connexion de l'app,
+  « Mot de passe oublié » (tableau de bord et app) et invitation d'un membre : OK. Si la connexion échoue après
+  application (adresse vue par Caddy non privée : `sudo docker compose logs caddy` avec `log` activé dans le bloc),
+  retirer les deux blocs `@auth_recover` / `@auth_token` et redémarrer Caddy (`sudo docker compose restart caddy`).
+  Réglage conseillé en plus : `GOTRUE_RATE_LIMIT_EMAIL_SENT` (e-mails d'Auth par heure, toute la plateforme).
 
 **3. IPv6 derrière Docker (documenté seulement : changement à risque de coupure).** Les réseaux Docker du kit et de
 Supabase sont en IPv4 : une connexion IPv6 aux ports 80 / 443 est reprise par `docker-proxy`, et Caddy voit l'adresse

@@ -6,11 +6,27 @@
 	on_demand_tls {
 		ask http://web:3000/api/tls/allowed
 	}
+	# En-têtes lus en 10 s au plus (connexions « lentes » qui occupent le serveur sans rien envoyer). Aucun délai sur le
+	# CORPS (read_body) : il s'appliquerait aussi aux envois de documents vers api.DOMAINE (Caddyfile.local, même
+	# serveur) sur un réseau mobile lent
+	servers {
+		timeouts {
+			read_header 10s
+		}
+	}
 }
 
 # Plateforme : dashboard, super admin, API v1, inscription des chauffeurs (/rejoindre/…)
 {$DOMAIN} {
 	encode zstd gzip
+	# Tout corps de requête plafonné à 2 Mo (aucune route n'en reçoit plus : actions serveur 1 Mo, fichiers déposés
+	# directement dans Supabase Storage) : sans plafond, Next garde jusqu'à 10 Mo par requête en mémoire (audit p5)
+	request_body {
+		max_size 2MB
+	}
+	# Réservé à Caddy (on_demand_tls, appel interne à web:3000) : jamais servi depuis Internet (lectures en base)
+	@tls_ask path /api/tls/allowed
+	respond @tls_ask 404
 	# Webhook Stripe (quelques Ko, signature vérifiée après lecture) : corps plafonné avant l'application
 	@stripe_webhook path /api/stripe/webhook
 	request_body @stripe_webhook {
@@ -39,6 +55,12 @@ https:// {
 		on_demand
 	}
 	encode zstd gzip
+	# Mêmes plafond général et fermeture que pour le domaine
+	request_body {
+		max_size 2MB
+	}
+	@tls_ask path /api/tls/allowed
+	respond @tls_ask 404
 	# Mêmes plafonds ici : le webhook et l'API v1 répondent aussi derrière un hôte de mini-site
 	@stripe_webhook path /api/stripe/webhook
 	request_body @stripe_webhook {
