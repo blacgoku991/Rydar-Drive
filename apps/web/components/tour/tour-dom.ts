@@ -1,6 +1,18 @@
 // Visite guidée (docs/TUTORIEL.md § 6.3, § 6.4) : aides DOM du moteur, navigateur seulement (appelées dans des effets
 // ou des gestionnaires, jamais au rendu serveur). La règle de placement est pure : dockedRect (tour-model.ts).
-import { dockedRect, dockedTop, hiddenUnder, pickFocus, type AvoidBox, type DockRect, type FocusCandidate, type TourBox } from "./tour-model";
+import {
+  dockedRect,
+  dockedTop,
+  focusCovered,
+  pickFocus,
+  revealScroll,
+  revealWithin,
+  type AvoidBox,
+  type CoverRule,
+  type DockRect,
+  type FocusCandidate,
+  type TourBox,
+} from "./tour-model";
 
 /** Éléments focalisables d'une cible (« Y aller », § 6.4). */
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -46,19 +58,20 @@ function zoneFocus(zone: HTMLElement): HTMLElement | null {
 /**
  * « Y aller » : focus sur la cible si elle est focalisable, sinon sur l'élément préféré de la zone (zoneFocus : jamais
  * un lien de navigation quand une commande existe), sinon sur la cible elle-même avec un tabIndex -1 temporaire
- * (retiré quand elle perd le focus). Sans défilement : la cible a déjà été amenée à l'écran.
+ * (retiré quand elle perd le focus). Sans défilement (le moteur fait défiler ensuite) ; renvoie l'élément focalisé.
  */
-export function focusTarget(el: HTMLElement): void {
+export function focusTarget(el: HTMLElement): HTMLElement {
   const inner = el.matches(FOCUSABLE) ? el : zoneFocus(el);
   if (inner) {
     inner.focus({ preventScroll: true });
-    return;
+    return inner;
   }
   if (!el.hasAttribute("tabindex")) {
     el.tabIndex = -1;
     el.addEventListener("blur", () => el.removeAttribute("tabindex"), { once: true });
   }
   el.focus({ preventScroll: true });
+  return el;
 }
 
 const box = (r: DOMRect): TourBox => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
@@ -149,11 +162,96 @@ export const setTourDock = (px: number | null): void => setRootPx("--tour-dock",
 const ABOVE_CARD = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-sonner-toaster]';
 
 /**
- * Élément entièrement caché par la fenêtre (focus au clavier, WCAG 2.2, 2.4.11) : son rectangle dans celui de la
- * fenêtre (`card` : cardBoxNow), hors des calques qui passent au-dessus d'elle.
+ * Élément focalisé couvert par la fenêtre selon la règle (focusCovered : « hidden », entièrement caché dessous, focus
+ * au clavier ; « overlap », touché même en partie, « Y aller ») : `card` = cardBoxNow ; jamais dans un calque qui
+ * passe au-dessus d'elle.
  */
-export function hiddenByCard(el: Element, card: TourBox): boolean {
-  return !el.closest(ABOVE_CARD) && hiddenUnder(box(el.getBoundingClientRect()), card);
+export function coveredByCard(el: Element, card: TourBox, rule: CoverRule): boolean {
+  return !el.closest(ABOVE_CARD) && focusCovered(box(el.getBoundingClientRect()), card, rule);
+}
+
+/**
+ * Défilement d'un seul coup : « auto » suit `scroll-behavior`, jamais « smooth » dans l'application (globals.css :
+ * valeur initiale, « auto » forcé sous « Réduire les animations ») ; « instant » lève une TypeError dans les
+ * navigateurs qui ne connaissent pas cette valeur.
+ */
+export const JUMP: ScrollBehavior = "auto";
+
+/** Haut utile de l'écran : marge de défilement du haut de <html> (barre du haut collante et son écart, globals.css). */
+export const topInsetNow = () => Number.parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+
+/**
+ * Fenêtre en repli : défilement d'un seul coup (JUMP) de la page qui amène l'élément focalisé au-dessus de la place
+ * prévue de la fenêtre (cardBoxNow : Radix ne la replace qu'à l'image suivante), 3 essais au plus (elle peut se
+ * replacer quand une barre collante passe la moitié de l'écran) ; règle « overlap » : seulement s'il y tient sous la
+ * barre du haut (revealWithin). Vrai si l'élément n'est plus couvert ; faux si rien ne défile (vue pleine hauteur,
+ * conteneur interne) ou s'il n'y tient pas.
+ */
+export function revealAboveCard(el: Element, card: HTMLElement, rule: CoverRule): boolean {
+  for (let tries = 0; tries < 3; tries++) {
+    const place = cardBoxNow(card, true);
+    if (!coveredByCard(el, place, rule)) return true;
+    const rect = el.getBoundingClientRect();
+    const scroll = rule === "overlap" ? revealWithin(rect, place.top, topInsetNow()) : revealScroll(rect, place.top);
+    if (scroll === null) return false;
+    const before = window.scrollY;
+    window.scrollBy({ top: scroll, behavior: JUMP });
+    if (window.scrollY === before) return false;
+  }
+  return !coveredByCard(el, cardBoxNow(card, true), rule);
+}
+
+/** Images de suite sans défilement : défilement terminé ou arrêté (rien à faire défiler compris). */
+const SCROLL_STILL_FRAMES = 12;
+/** Attente la plus longue. */
+const SCROLL_MAX_MS = 2000;
+/**
+ * La personne reprend la main (molette, toucher, clic) : plus rien à vérifier. Une touche n'annule rien : Tab déplace
+ * le focus (la vérification ne vise que l'élément encore focalisé, le filet prend le nouveau), une saisie est vérifiée
+ * à la fin du défilement.
+ */
+const TAKE_OVER = ["wheel", "touchstart", "pointerdown"] as const;
+
+/**
+ * Fin du défilement lancé par « Y aller », suivie image par image (jamais par les évènements de défilement : les sauts
+ * du calcul de la position finale émettent eux aussi scroll et scrollend) : position finale `to` atteinte (à 1 px
+ * près), sinon SCROLL_STILL_FRAMES images sans défilement, SCROLL_MAX_MS au plus ; `instant` : défilement déjà fait
+ * (animations réduites). `done` est appelé deux images plus tard (fenêtre replacée), une fois, et jamais si la personne
+ * reprend la main entre-temps. Renvoie l'annulation.
+ */
+export function afterScroll(done: () => void, o: { instant?: boolean; to?: { left: number; top: number } } = {}): () => void {
+  let frame = 0;
+  let still = 0;
+  let last = { left: window.scrollX, top: window.scrollY };
+  const deadline = Date.now() + SCROLL_MAX_MS;
+  const detach = () => {
+    for (const type of TAKE_OVER) window.removeEventListener(type, cancel, true);
+  };
+  function cancel() {
+    detach();
+    cancelAnimationFrame(frame);
+  }
+  const finish = () => {
+    detach();
+    frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(done);
+    });
+  };
+  const poll = () => {
+    const now = { left: window.scrollX, top: window.scrollY };
+    const arrived = !!o.to && Math.abs(now.left - o.to.left) <= 1 && Math.abs(now.top - o.to.top) <= 1;
+    still = now.left === last.left && now.top === last.top ? still + 1 : 0;
+    last = now;
+    if (arrived || still >= SCROLL_STILL_FRAMES || Date.now() >= deadline) finish();
+    else frame = requestAnimationFrame(poll);
+  };
+  if (o.instant) {
+    finish();
+    return cancel;
+  }
+  for (const type of TAKE_OVER) window.addEventListener(type, cancel, { capture: true, passive: true });
+  frame = requestAnimationFrame(poll);
+  return cancel;
 }
 
 /**

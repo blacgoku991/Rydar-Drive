@@ -40,6 +40,23 @@ seed. Reste : décisions du propriétaire (`TUTORIEL.md` § 13.1) ; migration 00
   « Sans chauffeur », « Je la prends », premier champ des formulaires ; non-régression TE-11 (Tarifs en saisie, 1440
   et 390) : la fenêtre ne coupe jamais la barre collée en bas, et en bas de page la barre est au-dessus d'elle.
 
+### Vérification de la revue UX — UX-01 (suite) : focus de « Y aller » sur téléphone court
+
+- **Livré** (web seulement, `components/tour/` ; détail : `TUTORIEL.md` § 6.3, § 6.4 et § 13.3, « Vérification de la
+  revue UX ») : sous ~750 px de haut, « Y aller » plaçait le focus sur un contrôle caché sous la fenêtre en repli
+  (« Je la prends » confirmable sans le voir). Maintenant : position finale calculée d'avance (élément focalisé
+  entièrement au-dessus de la fenêtre, sous la barre du haut), un seul défilement en douceur, puis vérification une
+  fois le défilement terminé par la fonction du filet, règle « overlap » (2.4.12 visé) : défilement, sinon pastille.
+  Règle pure `focusCovered` / `revealWithin` (`tour-model.ts`), aides `revealAboveCard` / `afterScroll`
+  (`tour-dom.ts`). Filet du Tab inchangé (2.4.11).
+- **Contrôles** : `pnpm typecheck` OK ; `pnpm test` 169 fichiers, 1 926 tests (+4 ; `components/tour` : 120) ;
+  `pnpm --filter @rydar/web build` OK ; 6 mutations de la règle, toutes détectées ; pas de `test:db` (aucun SQL).
+- **Recette** (`scratchpad/tutoriel/fix-ux01/`, build :3271) : défaut reproduit sur `bd285c3`, puis corrigé à 375×667,
+  360×640 et 360×740 (Organisation, Tarifs, Commission, lien d'inscription, réservation Flotte Privée : élément à
+  12 px au-dessus de la fenêtre, défilement sans saut) ; 390×844 et bureau inchangés (captures identiques au pixel
+  près, hors teinte de survol du bouton) ; 667×375 : au-dessus de la fenêtre ou fenêtre réduite ; mêmes positions
+  processeur bridé ×6 et animations réduites ; Tab : 0 élément caché, aucune pastille.
+
 ### T3 — Parcours sur les écrans réels, conditions de réussite et recette
 
 - **Livré** (web seulement : aucune migration, aucune RPC, garde ou action serveur modifiée) : les 21 attributs

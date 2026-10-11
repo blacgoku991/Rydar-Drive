@@ -14,11 +14,13 @@ import {
   dockSpace,
   dockedRect,
   dockedTop,
+  focusCovered,
   guardTarget,
   hiddenUnder,
   initialTourState,
   pickFocus,
   revealScroll,
+  revealWithin,
   samePage,
   savedTourState,
   tourFooter,
@@ -591,6 +593,72 @@ describe("repli : marge du bas, place prise et focus caché dessous (WCAG 2.2, 2
     expect(revealScroll(el, 596)).toBe(111);
     expect(el.bottom - revealScroll(el, 596)).toBe(596 - TOUR_DOCK_GAP);
     expect(revealScroll({ bottom: 695.2 }, 596)).toBe(112);
+  });
+
+  // Mesures de la vérification UX-01 (téléphones courts, focus de « Y aller » après le défilement de la zone) :
+  // [gauche, haut, droite, bas] de l'élément focalisé, puis de la fenêtre
+  const rect = ([left, top, right, bottom]: number[]) => ({ left: left!, top: top!, right: right!, bottom: bottom! });
+  const measured = {
+    organisation: { el: rect([37, 389, 338, 429]), card: rect([16, 367, 359, 651]) }, // 375×667, « Nom commercial »
+    tarifs: { el: rect([37, 319, 182, 359]), card: rect([16, 245, 359, 581]) }, // 375×667, « Prise en charge »
+    reservation: { el: rect([37, 378, 162, 422]), card: rect([16, 292, 359, 651]) }, // 375×667, « Je la prends »
+    commission: { el: rect([37, 231, 323, 271]), card: rect([16, 218, 344, 554]) }, // 360×640, « Pourcentage du prix »
+    inscription: { el: rect([37, 325, 259, 361]), card: rect([16, 288, 344, 624]) }, // 360×640, « Créer le lien… »
+  };
+
+  it("règle « hidden » (filet du focus au clavier) : celle de hiddenUnder, inchangée", () => {
+    const card = { top: 596, bottom: 814, left: 644, right: 1028 };
+    for (const el of [
+      { top: 655, bottom: 695, left: 700, right: 900 },
+      { top: 580, bottom: 620, left: 700, right: 900 },
+      { top: 655, bottom: 695, left: 600, right: 900 },
+      { top: 700, bottom: 700, left: 700, right: 900 },
+    ]) {
+      expect(focusCovered(el, card, "hidden")).toBe(hiddenUnder(el, card));
+    }
+    for (const { el, card: c } of Object.values(measured)) expect(focusCovered(el, c, "hidden")).toBe(true);
+  });
+
+  it("règle « overlap » (« Y aller ») : touché même en partie, centre ou bord ; à 1 px près ; rectangle vide : non", () => {
+    for (const { el, card } of Object.values(measured)) expect(focusCovered(el, card, "overlap")).toBe(true);
+    const card = { top: 345, bottom: 651, left: 16, right: 359 };
+    // Centre couvert, pas entièrement caché (2.4.11 tenu, 2.4.12 non) : couvert
+    expect(focusCovered({ top: 330, bottom: 370, left: 37, right: 323 }, card, "hidden")).toBe(false);
+    expect(focusCovered({ top: 330, bottom: 370, left: 37, right: 323 }, card, "overlap")).toBe(true);
+    // Bord seulement (centre libre) : couvert aussi
+    expect(focusCovered({ top: 300, bottom: 350, left: 37, right: 323 }, card, "overlap")).toBe(true);
+    // Au-dessus, sous elle, à côté, au pixel près : non
+    expect(focusCovered({ top: 293, bottom: 333, left: 37, right: 323 }, card, "overlap")).toBe(false);
+    expect(focusCovered({ top: 306, bottom: 346, left: 37, right: 323 }, card, "overlap")).toBe(false);
+    expect(focusCovered({ top: 306, bottom: 346.5, left: 37, right: 323 }, card, "overlap")).toBe(true);
+    expect(focusCovered({ top: 650, bottom: 690, left: 37, right: 323 }, card, "overlap")).toBe(false);
+    expect(focusCovered({ top: 400, bottom: 440, left: 360, right: 380 }, { ...card, right: 361 }, "overlap")).toBe(false);
+    expect(focusCovered({ top: 400, bottom: 400, left: 37, right: 323 }, card, "overlap")).toBe(false);
+    expect(focusCovered({ top: 400, bottom: 440, left: 37, right: 37 }, card, "overlap")).toBe(false);
+  });
+
+  it("« Y aller » : défilement qui amène l'élément entièrement au-dessus de la fenêtre, sous la barre du haut", () => {
+    const top = 80; // marge de défilement du haut de <html> (5rem)
+    const expected = { organisation: 74, tarifs: 126, reservation: 142, commission: 65, inscription: 85 };
+    for (const [name, { el, card }] of Object.entries(measured)) {
+      const scroll = revealWithin(el, card.top, top);
+      expect(scroll, name).toBe(expected[name as keyof typeof expected]);
+      const after = { ...el, top: el.top - scroll!, bottom: el.bottom - scroll! };
+      expect(focusCovered(after, card, "overlap"), name).toBe(false);
+      expect(after.bottom, name).toBe(card.top - TOUR_DOCK_GAP);
+      expect(after.top, name).toBeGreaterThanOrEqual(top);
+    }
+  });
+
+  it("« Y aller » : élément qui ne tient pas entre la barre du haut et la fenêtre → null (fenêtre réduite)", () => {
+    // Zone focalisée elle-même, plus haute que la place libre (300 px pour 288 − 12 − 80 = 196)
+    expect(revealWithin({ top: 120, bottom: 420 }, 288, 80)).toBeNull();
+    // Téléphone à l'horizontale (667×375, fenêtre de 262 px dès y 89) : plus aucune place au-dessus d'elle
+    expect(revealWithin({ top: 120, bottom: 160 }, 89, 80)).toBeNull();
+    // Tient tout juste (au pixel près)
+    expect(revealWithin({ top: 200, bottom: 396 }, 288, 80)).toBe(120);
+    expect(revealWithin({ top: 199, bottom: 396 }, 288, 80)).toBe(120);
+    expect(revealWithin({ top: 198, bottom: 396 }, 288, 80)).toBeNull();
   });
 });
 

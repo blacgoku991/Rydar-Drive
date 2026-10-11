@@ -353,6 +353,32 @@ export function hiddenUnder(el: TourBox, card: TourBox): boolean {
 export const revealScroll = (el: Pick<TourBox, "bottom">, cardTop: number): number => Math.ceil(el.bottom - cardTop + TOUR_DOCK_GAP);
 
 /**
+ * Règle du focus couvert par la fenêtre (WCAG 2.2) :
+ * - « hidden » : entièrement caché dessous (2.4.11) — filet du focus au clavier, que le navigateur amène déjà au-dessus
+ *   d'elle (marge de défilement du bas) ;
+ * - « overlap » : touché, même en partie, centre compris (2.4.12 visé) — élément focalisé par « Y aller », que la
+ *   personne a demandé à voir : entièrement au-dessus de la fenêtre, ou fenêtre réduite.
+ */
+export type CoverRule = "hidden" | "overlap";
+
+/** Élément focalisé (rectangle non vide) couvert par la fenêtre selon la règle, à 1 px près. */
+export function focusCovered(el: TourBox, card: TourBox, rule: CoverRule): boolean {
+  if (rule === "hidden") return hiddenUnder(el, card);
+  if (el.bottom <= el.top || el.right <= el.left) return false;
+  return el.top < card.bottom - 1 && el.bottom > card.top + 1 && el.left < card.right - 1 && el.right > card.left + 1;
+}
+
+/**
+ * Élément couvert par la fenêtre en repli, règle « overlap » : défilement (revealScroll) qui l'amène entièrement
+ * au-dessus d'elle, ou null s'il n'y tient pas — son haut passerait au-dessus de `top`, haut utile de l'écran (marge
+ * de défilement du haut de <html> : barre du haut collante) ; la fenêtre passe alors en pastille.
+ */
+export function revealWithin(el: Pick<TourBox, "top" | "bottom">, cardTop: number, top: number): number | null {
+  const scroll = revealScroll(el, cardTop);
+  return el.top - scroll >= top - 1 ? scroll : null;
+}
+
+/**
  * Garde de focus de Radix atteinte au clavier (span invisible, tabindex 0, au début et à la fin de <body> tant que la
  * fenêtre est dépliée) : jamais un arrêt invisible. Garde du début atteinte en entrant dans la page (premier Tab,
  * retour depuis le navigateur) → premier élément de la page ; garde du début atteinte depuis la page (Maj+Tab sur le

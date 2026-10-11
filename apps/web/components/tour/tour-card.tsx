@@ -9,7 +9,8 @@
 // seulement après un clic dans la fenêtre ou le menu, focus sur le titre après une action. En repli : place prise en
 // bas (--tour-dock, notifications au-dessus) ; hors vues pleine hauteur, réserve de défilement (--tour-reserve) et marge
 // de défilement du bas de <html> ; un focus au clavier entièrement caché dessous fait défiler la page, sinon réduit la
-// fenêtre (WCAG 2.2, 2.4.11). Aucune animation.
+// fenêtre (WCAG 2.2, 2.4.11) ; l'élément focalisé par « Y aller » finit entièrement au-dessus d'elle, ou elle est
+// réduite (2.4.12 visé). Aucune animation.
 import { Compass } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Popover as P } from "radix-ui";
@@ -17,17 +18,20 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { stepDone, type TourChecks } from "./tour-checks";
 import type { TourDef } from "./tour-content";
 import {
+  JUMP,
+  afterScroll,
   cardBoxNow,
+  coveredByCard,
   dockRectNow,
   dockSignature,
   findAnchor,
   firstPageTabbable,
   focusTarget,
   fullHeightView,
-  hiddenByCard,
   isVisible,
   mainElement,
   reserveTopNow,
+  revealAboveCard,
   setTourDock,
   setTourReserve,
   tabbables,
@@ -42,8 +46,8 @@ import {
   dockSpace,
   dockedTop,
   guardTarget,
-  revealScroll,
   tourFooter,
+  type CoverRule,
   type FooterButton,
   type TourEvent,
   type TourIntent,
@@ -177,6 +181,11 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
 
   // ------------------------------------------------------------------------------------------------ mode et position
   const anchored = !!anchor && inView && wide && stepDef?.anchor.kind === "control";
+  // Mode du moment, relu par les vérifications différées (filet du focus, fin du défilement de « Y aller »)
+  const anchoredRef = useRef(anchored);
+  useLayoutEffect(() => {
+    anchoredRef.current = anchored;
+  }, [anchored]);
   const fullHeight = layout.startsWith("plein");
   /** Fenêtre (Popover.Content) : hauteur lue par le repli, focus, sortie au clavier */
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -286,10 +295,11 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     if (request.scroll) pendingScroll.current = request.at;
     applyFocus();
   }, [request, applyFocus]);
-  // Défilement unique jusqu'à l'élément, dès qu'il est trouvé (après le changement de page s'il y en a un)
+  // Défilement unique jusqu'à l'élément, dès qu'il est trouvé (après le changement de page s'il y en a un) ; en douceur
+  // sauf animations réduites ; `behavior` : saut de « Y aller », qui calcule d'abord sa position finale
   const scrollTo = useCallback(
-    (el: HTMLElement) => {
-      el.scrollIntoView({ block: stepDef?.anchor.kind === "zone" ? "start" : "center", behavior: reducedMotion() ? "auto" : "smooth" });
+    (el: HTMLElement, behavior: ScrollBehavior = reducedMotion() ? "auto" : "smooth") => {
+      el.scrollIntoView({ block: stepDef?.anchor.kind === "zone" ? "start" : "center", behavior });
     },
     [stepDef?.anchor.kind],
   );
@@ -333,11 +343,24 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     [act],
   );
 
-  // Focus au clavier (ou rendu par un composant de la page) sur un élément entièrement caché sous la fenêtre (WCAG 2.2,
-  // 2.4.11), vérifié une image plus tard (le navigateur a déjà fait défiler, marge du bas comprise) : en repli, la
-  // page défile pour l'amener au-dessus (place prévue de la fenêtre : elle peut se replacer quand une barre collante
-  // passe la moitié de l'écran, d'où quelques essais) ; si rien ne défile (vue pleine hauteur, conteneur interne) ou si
-  // la fenêtre est ancrée (elle suit son élément), elle passe en pastille, focus inchangé. Hors focus de « Y aller ».
+  // Élément focalisé couvert par la fenêtre (règle `rule`, focusCovered) : en repli, la page défile pour l'amener
+  // au-dessus de sa place prévue (revealAboveCard : quelques essais, la fenêtre peut se replacer quand une barre
+  // collante passe la moitié de l'écran) ; si rien ne défile (vue pleine hauteur, conteneur interne), si l'élément n'y
+  // tient pas (« Y aller ») ou si la fenêtre est ancrée (elle suit son élément), elle passe en pastille, focus inchangé
+  const revealFocus = useCallback(
+    (el: HTMLElement, rule: CoverRule) => {
+      const card = contentRef.current;
+      const docked = !anchoredRef.current;
+      if (!card?.isConnected || document.activeElement !== el || !coveredByCard(el, cardBoxNow(card, docked), rule)) return;
+      if (docked && revealAboveCard(el, card, rule)) return;
+      act({ type: "minimize" });
+    },
+    [act],
+  );
+
+  // Filet : focus au clavier (ou rendu par un composant de la page) sur un élément entièrement caché sous la fenêtre
+  // (WCAG 2.2, 2.4.11), vérifié une image plus tard (le navigateur a déjà fait défiler, marge du bas comprise). Focus
+  // de « Y aller » (selfFocus) : vérifié une fois son défilement terminé (pendingReveal), règle « overlap »
   const selfFocus = useRef(false);
   useEffect(() => {
     if (!expanded) return;
@@ -347,27 +370,24 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
       if (selfFocus.current || !(el instanceof HTMLElement) || el === document.body || el.hasAttribute("data-radix-focus-guard")) return;
       if (contentRef.current?.contains(el) || pillEl.current?.contains(el)) return;
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const card = contentRef.current;
-        const docked = !anchored;
-        if (!card?.isConnected || document.activeElement !== el || !hiddenByCard(el, cardBoxNow(card, docked))) return;
-        if (docked) {
-          for (let tries = 0; tries < 3; tries++) {
-            const before = window.scrollY;
-            window.scrollBy({ top: revealScroll(el.getBoundingClientRect(), cardBoxNow(card, true).top), behavior: "instant" });
-            if (window.scrollY === before) break;
-            if (!hiddenByCard(el, cardBoxNow(card, true))) return;
-          }
-        }
-        act({ type: "minimize" });
-      });
+      frame = requestAnimationFrame(() => revealFocus(el, "hidden"));
     };
     document.addEventListener("focusin", onFocusIn, true);
     return () => {
       cancelAnimationFrame(frame);
       document.removeEventListener("focusin", onFocusIn, true);
     };
-  }, [expanded, anchored, act]);
+  }, [expanded, revealFocus]);
+  // Vérification en attente de « Y aller » (afterScroll) : annulée au changement d'étape, à la réduction, à la
+  // fermeture et au démontage
+  const pendingReveal = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!expanded) return;
+    return () => {
+      pendingReveal.current?.();
+      pendingReveal.current = null;
+    };
+  }, [expanded, state.step]);
 
   // Gardes de focus de Radix (span[data-radix-focus-guard], tabindex 0, invisibles : début et fin de <body>, posées
   // par le Popover même non modal, tant que la fenêtre est dépliée) : jamais d'arrêt invisible. Garde du début atteinte
@@ -418,17 +438,39 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
       case "open":
         act(null, intent);
         return;
-      // « Y aller » : défilement puis focus dans l'élément (déjà amené à l'écran : pas de contrôle « caché dessous »)
+      // « Y aller » : focus dans l'élément (focusTarget, sans défilement), puis défilement jusqu'à lui. En repli,
+      // position finale calculée d'avance (défilement d'un seul coup, élément focalisé amené entièrement au-dessus de
+      // la place prévue de la fenêtre, revealAboveCard « overlap ») puis atteinte en un seul défilement en douceur
+      // depuis la position de départ ; ancrée, défilement habituel. Vérifié une fois le défilement terminé
+      // (afterScroll : en plein défilement, le filet verrait l'élément à mi-course) : encore couvert → défilement,
+      // sinon pastille (revealFocus)
       case "goto": {
         const target = anchor ?? (anchorId ? findAnchor(anchorId) : null);
         if (!target) return;
-        scrollTo(target);
         selfFocus.current = true;
+        let focused: HTMLElement;
         try {
-          focusTarget(target);
+          focused = focusTarget(target);
         } finally {
           selfFocus.current = false;
         }
+        const instant = reducedMotion();
+        const card = contentRef.current;
+        let to: { left: number; top: number } | undefined;
+        if (!anchored && card) {
+          const from = { left: window.scrollX, top: window.scrollY };
+          scrollTo(target, JUMP);
+          revealAboveCard(focused, card, "overlap");
+          to = { left: window.scrollX, top: window.scrollY };
+          if (!instant && (to.top !== from.top || to.left !== from.left)) {
+            window.scrollTo({ ...from, behavior: JUMP });
+            window.scrollTo({ ...to, behavior: "smooth" });
+          }
+        } else {
+          scrollTo(target);
+        }
+        pendingReveal.current?.();
+        pendingReveal.current = afterScroll(() => revealFocus(focused, "overlap"), { instant, to });
         return;
       }
     }

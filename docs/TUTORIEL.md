@@ -464,10 +464,14 @@ rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), 
   hauteur, `scroll-padding-bottom` de `<html>` = du haut réel de la fenêtre (barre évitée comprise) au bas de l'écran
   + 12 px (`dockScrollPadding`, jamais moins que les 6rem de la page ; valeur d'origine rendue au retrait) : le
   navigateur amène au-dessus d'elle tout élément qui reçoit le focus. Filet : un écouteur `focusin` (hors fenêtre et
-  pastille, hors focus de « Y aller ») vérifie une image plus tard si l'élément est entièrement sous la fenêtre (place
-  prévue de la fenêtre, `cardBoxNow` ; calques au-dessus d'elle exclus) ; en repli, la page défile pour l'amener
-  au-dessus (3 essais au plus) ; si rien ne défile (vue pleine hauteur, conteneur interne) ou si la fenêtre est ancrée
-  (elle suit son élément), elle passe en **pastille**, focus inchangé.
+  pastille) vérifie une image plus tard si l'élément est entièrement sous la fenêtre (règle « hidden » de
+  `focusCovered` ; place prévue de la fenêtre, `cardBoxNow` ; calques au-dessus d'elle exclus) ; en repli, la page
+  défile pour l'amener au-dessus (`revealAboveCard`, 3 essais au plus) ; si rien ne défile (vue pleine hauteur,
+  conteneur interne) ou si la fenêtre est ancrée (elle suit son élément), elle passe en **pastille**, focus inchangé.
+  Focus de « Y aller » (vérification de la revue UX, UX-01) : vérifié par la même fonction (`revealFocus`), mais une
+  fois son défilement terminé (§ 6.4) et avec la règle « overlap » (2.4.12 visé) : l'élément ne touche pas la
+  fenêtre, centre et bords compris — sinon défilement, s'il tient sous la marge du haut de `<html>` (`revealWithin`),
+  ou pastille.
 - **Notifications** (UX-05) : `--tour-dock` = place prise en bas de l'écran par la fenêtre en repli dépliée (vues
   pleine hauteur comprises), posée seulement quand son bas est dans la bande des notifications (96 px du bas) et
   jamais au point de faire sortir une notification par le haut (128 px gardés, `dockSpace`) ; le `Toaster` de
@@ -493,15 +497,26 @@ rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), 
 - **Défilement** : seulement après un clic dans la fenêtre (Commencer, Ouvrir, Suivant, Passer, Précédent, Y aller,
   Reprendre) et une fois par clic, quand l'ancre est trouvée : `scrollIntoView({ block: zone ? "start" : "center",
   behavior: réduire les animations ? "auto" : "smooth" })`. Jamais pendant que l'utilisateur fait autre chose.
-- **« Y aller »** : défilement puis focus dans la cible (`focusTarget`) : la cible elle-même si elle est focalisable
-  (contrôle) ; sinon, parmi ses éléments focalisables visibles (`a[href]`, `button:not([disabled])`,
-  `input:not([type=hidden]):not([disabled])`, `select`, `textarea`, `[tabindex]:not([tabindex="-1"])`), atteignables
-  au Tab de préférence, dans cet ordre (revue UX, UX-09 ; `pickFocus`, pur et testé) : 1. `[data-tour-focus]` (lui ou
-  un parent dans la zone) ; 2. `[aria-current="page"]` (filtre ou onglet affiché : « Sans chauffeur ») ; 3. la première
-  commande (bouton, champ, liste, rôle de commande : « Je la prends ») ; 4. seulement ensuite le premier lien (un lien
-  de navigation de la zone faisait quitter l'écran à la touche Entrée) ; 5. le reste (zone défilante) ; à défaut, la
-  cible elle-même avec `tabIndex=-1` temporaire (retiré au `blur`). Les zones formulaires (Organisation, Tarifs,
-  Éditeur…) gardent leur premier champ.
+- **« Y aller »** : focus dans la cible (`focusTarget`, sans défilement, renvoie l'élément focalisé), puis défilement
+  (vérification de la revue UX, UX-01 : sur un téléphone de moins de ~750 px de haut, le premier contrôle d'une zone
+  amenée en haut de l'écran tombait sous la fenêtre en repli). **En repli**, position finale calculée d'avance dans le
+  même geste : défilement instantané jusqu'à la cible, puis l'élément focalisé amené entièrement au-dessus de la place
+  prévue de la fenêtre, à 12 px (`revealAboveCard`, règle « overlap »), s'il tient sous la marge du haut de `<html>`
+  (5rem : barre du haut ; `revealWithin`) ; retour à la position de départ et **un seul défilement en douceur**
+  jusqu'à la position finale (aucun saut ; animations réduites : instantané). **Ancrée** : défilement habituel. Puis
+  vérification une fois le défilement terminé (`afterScroll`, suivi image par image : position finale atteinte, sinon
+  12 images sans défilement, 2 s au plus, puis deux images — jamais d'après les évènements de défilement, que les
+  sauts du calcul émettent aussi ; abandonnée si la personne reprend la main : molette, toucher, clic — une touche
+  n'annule rien, Tab déplace le focus et le filet prend le relais ; annulée au changement d'étape, à la réduction et à
+  la fermeture) : élément encore touché par la fenêtre → défilement, sinon pastille, focus inchangé (`revealFocus`).
+  Élément visé : la cible elle-même si elle est focalisable (contrôle) ; sinon, parmi ses éléments focalisables
+  visibles (`a[href]`, `button:not([disabled])`, `input:not([type=hidden]):not([disabled])`, `select`, `textarea`,
+  `[tabindex]:not([tabindex="-1"])`), atteignables au Tab de préférence, dans cet ordre (revue UX, UX-09 ;
+  `pickFocus`, pur et testé) : 1. `[data-tour-focus]` (lui ou un parent dans la zone) ; 2. `[aria-current="page"]`
+  (filtre ou onglet affiché : « Sans chauffeur ») ; 3. la première commande (bouton, champ, liste, rôle de commande :
+  « Je la prends ») ; 4. seulement ensuite le premier lien (un lien de navigation de la zone faisait quitter l'écran à
+  la touche Entrée) ; 5. le reste (zone défilante) ; à défaut, la cible elle-même avec `tabIndex=-1` temporaire
+  (retiré au `blur`). Les zones formulaires (Organisation, Tarifs, Éditeur…) gardent leur premier champ.
 
 ### 6.5 Boutons de la fenêtre (`tourFooter`, pur, testé)
 
@@ -838,7 +853,7 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | Test | Lot | Ce qu'il vérifie |
 |---|---|---|
 | `packages/shared/src/tour.test.ts` | T1 | `TOUR_KEYS`, `TOUR_STATUSES` et `TOUR_MAX_STEPS - 1` identiques aux contraintes `tour in (…)`, `status in (…)`, `step between 0 and N` lues dans `20260924007800_guided_tour.sql` ; `tourKeyFor` (5 cas du § 5.1) ; `tourProgressSchema` (accepte / refuse : clé inconnue, statut inconnu, étape −1, 5, 1,5) ; `tourSavedFrom` (erreur → `undefined`, aucune ligne → `null`, `shown_at` → `shown`). |
-| `apps/web/components/tour/tour-model.test.ts` | T2 | table du § 5.4 ligne par ligne ; chaque événement du § 6.2 (vue, état, écriture `tourPersist`, bornes, `resume` d'une visite jamais ouverte / terminée) ; `tourMenuItem` ; `samePage` (chemin, paramètres, ordre, paramètre en plus) ; `tourFooter` (cas du § 6.5, dont l'étape faite hors de son écran ; lien ou bouton selon l'écran, libellés, un seul principal) ; `dockedRect` (sans barre, avec barre dans la moitié basse, barre en haut ignorée, téléphone / bureau ; revue UX : hauteur de la fenêtre, barre collante à sa place collée, panneau d'En direct) ; revue UX : `dockReserve`, `dockScrollPadding`, `dockSpace`, `hiddenUnder`, `revealScroll`, `guardTarget`, `pickFocus`. |
+| `apps/web/components/tour/tour-model.test.ts` | T2 | table du § 5.4 ligne par ligne ; chaque événement du § 6.2 (vue, état, écriture `tourPersist`, bornes, `resume` d'une visite jamais ouverte / terminée) ; `tourMenuItem` ; `samePage` (chemin, paramètres, ordre, paramètre en plus) ; `tourFooter` (cas du § 6.5, dont l'étape faite hors de son écran ; lien ou bouton selon l'écran, libellés, un seul principal) ; `dockedRect` (sans barre, avec barre dans la moitié basse, barre en haut ignorée, téléphone / bureau ; revue UX : hauteur de la fenêtre, barre collante à sa place collée, panneau d'En direct) ; revue UX : `dockReserve`, `dockScrollPadding`, `dockSpace`, `hiddenUnder`, `revealScroll`, `guardTarget`, `pickFocus` ; vérification de la revue UX (UX-01) : `focusCovered` (« hidden » identique à `hiddenUnder`, « overlap » : centre, bord, pixel près, sur les mesures de la vérification), `revealWithin` (défilement attendu, élément au-dessus de la fenêtre et sous la marge du haut, `null` s'il n'y tient pas). |
 | `apps/web/components/tour/tour-panel.test.ts` | T2 | rendu `renderToStaticMarkup` : accueil (liste des étapes, « Plus tard », « Commencer »), étape (compteur, titre `h2`, `aria-live`, « C'est fait. »), liens `href` attendus, boutons-icônes nommés, aucune couleur en dur, aucune taille < 12 px, espaces insécables. |
 | `apps/web/components/tour/tour-actions.test.ts` | T2 | `saveTourProgress` (simulations de `@/lib/auth`, `@/lib/errors`) : entrée invalide refusée sans appel ; appel `rpc("save_user_tour", { p_tour, p_status, p_step })` ; erreur → `ok: false`. |
 | `apps/web/components/tour/tour-checks.test.ts` | T3 | `settlementReady` (défaut lien + espèces sans lien → faux ; lien renseigné ; virement + IBAN ; autre + consignes ; espèces seules → vrai) ; `billingConfigured` ; `stepDone` ; `loadTourChecks` avec un client simulé : bonnes tables, colonnes, filtres, `head: true`, erreur → clé absente, rien lu hors des clés demandées ; revue UX : attributions lues dans `ride_events` (existence `limit(1)` sur 30 jours, acteur = utilisateur). |
@@ -1289,6 +1304,44 @@ revue, état des visites rendu ensuite) :
 10. **Tests** : `tour-model.test.ts` (pied de fenêtre hors écran, `dockedRect` avec hauteur et barre collante, réserve,
     marge du bas, place des notifications, élément caché, défilement, gardes, `pickFocus`) ; `tour-checks.test.ts`
     (lecture des attributions) ; `tour-content.test.ts` (attributs du § 9.2, touche N, décalage des notifications).
+
+**Vérification de la revue UX** (2e passage sur `bd285c3` ; constat restant UX-01, corrigé ; web seulement, rien
+d'autre de modifié) :
+
+- **Constat** : « Y aller » faisait défiler la zone (bloc en haut de l'écran) puis plaçait le focus sur son premier
+  contrôle, soustrait au filet (`selfFocus`) : sous ~750 px de haut, ce contrôle tombait sous la fenêtre en repli
+  (375×667 : « Nom commercial » [37,389,338,429] sous la fenêtre [16,367,359,651] ; « Prise en charge », « Je la
+  prends » ; 360×640 : « Pourcentage du prix », « Créer le lien d'inscription ») — Entrée sur « Je la prends »
+  confirmait une réservation sans la voir.
+- **Correction** (§ 6.3, § 6.4) : focus d'abord (`focusTarget` renvoie l'élément), position finale calculée d'avance
+  en repli (élément focalisé entièrement au-dessus de la place prévue de la fenêtre, à 12 px, s'il tient sous la marge
+  du haut de `<html>`) et atteinte en un seul défilement en douceur ; vérifiée une fois le défilement terminé
+  (`afterScroll`, suivi image par image) par la fonction du filet (`revealFocus`, `revealAboveCard`) avec la règle
+  « overlap » (`focusCovered`, 2.4.12 visé : centre et bords) : encore touché → défilement (3 essais), sinon pastille,
+  focus inchangé. Le filet du Tab garde la règle « hidden » (2.4.11) : le navigateur amène déjà le focus au-dessus de
+  la fenêtre (marge du bas) ; une règle plus stricte y réduirait la fenêtre au premier Tab dans la carte d'En direct.
+  Sauts d'un seul coup en `behavior: "auto"` (`JUMP`) : « instant » lève une TypeError dans les navigateurs qui ne
+  connaissent pas cette valeur. Deux pièges trouvés à la recette : les sauts du calcul émettent eux-mêmes `scroll` et
+  `scrollend` (une attente fondée sur ces évènements vérifiait parfois avant le défilement, images lentes) ; une
+  touche pendant le défilement ne doit pas l'interrompre (Chrome ajoute le défilement du focus à l'animation en cours,
+  quoi qu'on fasse).
+- **Recette** (hors dépôt, `scratchpad/tutoriel/fix-ux01/`, build de production :3271, comptes de la revue,
+  `user_tours` rendus ensuite) : défaut reproduit d'abord sur le build de `bd285c3` (mêmes rectangles). « Y aller »
+  sur Organisation, Tarifs, Commission, lien d'inscription et « Confirmer une réservation » à 375×667, 360×640 et
+  360×740 : élément focalisé entièrement au-dessus de la fenêtre, à 12 px, jamais sous la barre du haut, défilement
+  d'un seul tenant (échantillonné à chaque image : aucun saut ni retour) ; 390×844, 768×1024, 1280×720, 1366×768 et
+  1440×900 : position inchangée (même défilement et même rectangle qu'avec `bd285c3` sur Organisation ; captures
+  identiques au pixel près à celles de la vérification, hors teinte de survol du bouton) ; 667×375 : au-dessus de la
+  fenêtre (Organisation, lien d'inscription, réservation) ou fenêtre réduite (Tarifs et Commission : barre
+  « Enregistrer », aucune place) ; animations réduites : même position, en un saut ; processeur bridé ×6 (émulation de
+  Chrome) : mêmes positions ; Commission à 667×375, que l'attente fondée sur les évènements de défilement ne réduisait
+  pas toujours : réduite 6 essais sur 6. Interruptions pendant le défilement : Tab (élément suivant visible), saisie
+  (champ au-dessus de la fenêtre), molette, « Passer l'étape » : aucune erreur, fenêtre jamais réduite à tort. Aussi
+  conformes : « Sans chauffeur » (dispatcher), « Ajouter un chauffeur » (ancrée à 1440), « Nouvelle course » (En
+  direct). Tab après « Y aller » et depuis le haut de la page (Organisation, Tarifs, Commission, lien d'inscription,
+  accueil Flotte Privée, `/admin/legal`, En direct ; 360×640 à 1440×900) : 0 élément caché, fenêtre jamais réduite.
+  Reste, hors « Y aller » et inchangé : En direct à 390×844, la carte et ses boutons de zoom ont le centre sous la
+  fenêtre au Tab (5 px des boutons visibles : 2.4.11 tenu, pas 2.4.12).
 
 ---
 
