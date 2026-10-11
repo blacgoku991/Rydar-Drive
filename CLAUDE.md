@@ -83,7 +83,9 @@ la centrale doit les frais plateforme à Rydar.
 - Compte partagé (fiche chauffeur + gestion ou super admin, `svc_login_account_shared`) : la centrale du chauffeur ne touche jamais
   au compte Auth (mot de passe, ban, sessions) ; suspendre une centrale ne bannit personne au niveau Auth.
 - Web : action serveur dans `startTransition`/onClick → `runAction` (`lib/run-action.ts`) ; heure saisie = fuseau de la centrale
-  (`components/booking/zoned-time.ts`) ; `next` de redirection via `lib/safe-next.ts` ; Host du proxy validé (`lib/hostname.ts`).
+  (`components/booking/zoned-time.ts`) ; `next` de redirection via `lib/safe-next.ts` ; Host du proxy validé (`lib/hostname.ts`) ;
+  hôte de mini-site : son `/book`, pages légales et `/api/` seulement (jamais `/book/{autre}` ni `/rejoindre`) ; HSTS
+  `includeSubDomains` sur la plateforme seule (`security-headers.test.ts`).
 - Worker et scripts : base en `verify-full` (`deploy/supabase-ca.crt`), repli `DATABASE_SSLMODE=no-verify` ; `disable` =
   base LOCALE seulement (Supabase auto-hébergé du VPS : `isLocalDbHost` = `pg_local_host`) ; aucun secret en argv.
 - Audit p5 (007900) : chauffeur en course pour une autre org (`private.driver_on_foreign_ride`) → aucune position ni

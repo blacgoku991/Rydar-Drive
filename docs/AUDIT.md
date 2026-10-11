@@ -193,6 +193,17 @@ app : aucun journal sensible.
      `/token` (mot de passe), `/otp`, `/recover` en 404 ; depuis le serveur web : transmis ; `refresh_token` transmis.
      Sans le bloc (production actuelle) : `user_banned` toujours visible.
 
+### Revue des points d'entrée web (après le contrôle final)
+
+Quatre mineurs, tous reproduits sur le build de production puis rejoués après correction (aucun SQL) :
+
+| Constat | Statut |
+|---|---|
+| web-1 hôte de mini-site : `/book/{autre slug}`, `/rejoindre/…` et pages légales servis sans résolution (hôte coupé compris) | corrigé (`038c9af`) : hôte résolu d'abord ; son `/book` et pages légales seulement s'il sert un mini-site ; `/book/{autre}`, `/rejoindre/…` → 404 neutre |
+| web-2 `/api/tls/allowed` : 2 RPC service role par poignée de main TLS (SNI aléatoires) | corrigé (`d1c3304`) : décisions gardées (5 min / 60 s), interrupteur relu toutes les 30 s, 300 résolutions par minute au plus |
+| web-3 HSTS `includeSubDomains; preload` sur les domaines personnalisés des centrales | corrigé (`f269db7`) : plateforme seule ; ailleurs `max-age=31536000` |
+| web-4 CSP `'unsafe-inline'` annoncée « stricte », cookies de session lisibles par JS | en partie (`f269db7`) : `connect-src` sans joker `*.supabase.co`, SECURITY.md corrigé ; CSP à nonce reportée |
+
 ### Reporté ou à faire hors du code
 
 - **VPS (obligatoire)** : bloc `api.DOMAINE` dans `Caddyfile.local` après le contrôle IPv6 (DEPLOYMENT § 3, point 2) ;
@@ -202,4 +213,5 @@ app : aucun journal sensible.
   refus des positions simulées et compteur anti-fraude (fonctionnalité).
 - **Console Google** : clé Maps Android restreinte au package et à l'empreinte SHA-1.
 - **Plus tard** : réponse identique à « Inviter un membre » ; nodemailer 10 ; Next 16.4 ; plafond d'accusés par domaine
-  (facultatif).
+  (facultatif) ; CSP à nonce (`proxy.ts`, guide Next « content-security-policy » : pages statiques rendues dynamiques,
+  à mesurer) ; cookies de session non lisibles par JS (exige de retirer le client Supabase du navigateur).
