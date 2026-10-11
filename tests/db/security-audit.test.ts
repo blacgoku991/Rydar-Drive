@@ -10,8 +10,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  as, CHAMPS_ELYSEES, createAuthUser, createDriver, createMember, createOrg, createRideAsOwner, expectPgError, nextWave,
-  north, pool, setSharedNetwork, sql, type Driver, type Org,
+  as, CHAMPS_ELYSEES, createAuthUser, createDriver, createMember, createOrg, createRideAsOwner, expectPgError, insertRideBypass,
+  nextWave, north, pool, setBookingSitesEnabled, setSharedNetwork, sql, type Driver, type Org,
 } from "./helpers";
 import { moveTo, networkPair, partnerAccepts, siteMaker } from "./network-fixtures";
 
@@ -285,6 +285,22 @@ describe("Accusés de réception : alias d'une même boîte", () => {
     const res = [];
     for (const email of other) res.push((await svc("svc_contact_submit", [request(email), JSON.stringify(ackFor(email))])).ack_queued);
     expect(res).toEqual([true, false, true]);
+  });
+
+  it("mini-site : 3 accusés de réservation au plus par BOÎTE et par 24 h (alias compris)", async () => {
+    await setBookingSitesEnabled(true);
+    try {
+      const org = await createOrg("Accusés Mini-site");
+      const box = `client${randomUUID().slice(0, 6)}`;
+      const codes = [];
+      for (const email of [`${box}+1@gmail.com`, `${box}+2@gmail.com`, `${box.slice(0, 2)}.${box.slice(2)}@gmail.com`, `${box}@googlemail.com`]) {
+        const ride = await insertRideBypass(org, { status: "SEARCHING_DRIVER", source: "booking_site", customer_email: email });
+        codes.push((await svc("svc_booking_receipt", [ride])).code);
+      }
+      expect(codes).toEqual(["QUEUED", "QUEUED", "QUEUED", "RATE_LIMITED"]);
+    } finally {
+      await setBookingSitesEnabled(false);
+    }
   });
 
   it("clé de boîte : minuscules, « +étiquette » retirée, points Gmail retirés, googlemail.com = gmail.com", async () => {
