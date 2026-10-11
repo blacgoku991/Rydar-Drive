@@ -222,6 +222,10 @@ typographie française, contraste ≥ 4,5:1, `NewTabHint`).
 - Texte à lire ≥ 12 px ; les primitives (`components/ui`, `components/shell`) n'ont plus de taille sous 12 px. Pas de
   remplacement de masse des tailles dans les pages : chaque lot aligne les fichiers qu'il touche.
 - Boutons à bascule avec `aria-pressed` ; choix exclusifs en `radiogroup` (`aria-checked`) avec une légende.
+- Zone qui défile d'elle-même (`max-h-… overflow-y-auto`) : un `div` atteignable au clavier et nommé
+  (`tabIndex={0} role="region" aria-label="…"`) qui CONTIENT la liste (`<ul className="divide-y …">`), jamais
+  `<ul role="region">` (la liste disparaît, ses `li` deviennent orphelins : WCAG 1.3.1). Contrôlé par
+  `components/ui/aria-roles.test.ts` (rôles permis sur `ul`, `ol`, `li` ; zones défilantes ; régions nommées).
 - Nombres et dates par `formatNumber`, `formatPrice`, `dateTimeFormat` de `@rydar/shared` (« 21,3 s », jamais
   « 21.3 s ») ; espace insécable avant « : ; ! ? » et dans « 12 h », « 4 km », « 5 € ».
 - Aucune animation en boucle hors indicateur de chargement ; rien de nouveau avec « réduire les animations ».

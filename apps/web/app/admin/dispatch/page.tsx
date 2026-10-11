@@ -128,47 +128,50 @@ export default async function AdminDispatchPage({ searchParams }: { searchParams
               description="Rien à signaler sur les 7 derniers jours."
             />
           ) : (
-            // Zone défilante atteignable au clavier (flèches) et nommée (WCAG 2.1.1)
-            // Colonnes seulement quand la carte est assez large (requête de conteneur : la carte partage la page en deux sur un
-            // grand écran) ; sinon, lignes empilées
-            <ul className="@container max-h-[70vh] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Alertes du dispatch">
-              {groups.map(({ item: e, count: times }) => {
-                const level = dispatchLevel(e.level);
-                return (
-                  <li
-                    key={e.id}
-                    className="flex flex-wrap items-baseline gap-x-1.5 px-5 py-2.5 text-[12px] text-fg-muted @2xl:grid @2xl:grid-cols-[96px_minmax(0,150px)_88px_minmax(0,1fr)] @2xl:gap-x-3"
-                  >
-                    {/* Carte étroite : le message d'abord, puis « heure · client · niveau » ; carte large : en colonnes */}
-                    <p className="mb-0.5 w-full text-[13px] text-fg [overflow-wrap:anywhere] @2xl:order-4 @2xl:mb-0 @2xl:w-auto">
-                      {e.message}
-                      {times > 1 && (
-                        <span className="num ml-1.5 whitespace-nowrap text-fg-muted">
-                          <span aria-hidden>× {formatNumber(times)}</span>
-                          <span className={hidden}> ({formatNumber(times)} fois de suite)</span>
-                        </span>
-                      )}
-                    </p>
-                    <span className="whitespace-nowrap @2xl:order-1" title={dateTime(e.created_at)}>
-                      {formatRelative(e.created_at)}
-                    </span>
-                    <span aria-hidden className="@2xl:hidden">
-                      ·
-                    </span>
-                    <span className="min-w-0 @2xl:order-2 @2xl:truncate" title={clientName(e.organization_id)}>
-                      {clientName(e.organization_id)}
-                    </span>
-                    <span aria-hidden className="@2xl:hidden">
-                      ·
-                    </span>
-                    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap @2xl:order-3", toneText[level.tone])}>
-                      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", toneDot[level.tone])} />
-                      {level.label}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+            // Zone défilante atteignable au clavier (flèches) et nommée (WCAG 2.1.1) : la région est un div qui CONTIENT la
+            // liste (jamais <ul role="region"> : la liste disparaîtrait et ses <li> seraient orphelins, WCAG 1.3.1)
+            // Colonnes seulement quand la carte est assez large (requête de conteneur, posée sur la zone : la carte partage
+            // la page en deux sur un grand écran) ; sinon, lignes empilées
+            <div className="@container max-h-[70vh] overflow-y-auto" tabIndex={0} role="region" aria-label="Alertes du dispatch">
+              <ul className="divide-y divide-line">
+                {groups.map(({ item: e, count: times }) => {
+                  const level = dispatchLevel(e.level);
+                  return (
+                    <li
+                      key={e.id}
+                      className="flex flex-wrap items-baseline gap-x-1.5 px-5 py-2.5 text-[12px] text-fg-muted @2xl:grid @2xl:grid-cols-[96px_minmax(0,150px)_88px_minmax(0,1fr)] @2xl:gap-x-3"
+                    >
+                      {/* Carte étroite : le message d'abord, puis « heure · client · niveau » ; carte large : en colonnes */}
+                      <p className="mb-0.5 w-full text-[13px] text-fg [overflow-wrap:anywhere] @2xl:order-4 @2xl:mb-0 @2xl:w-auto">
+                        {e.message}
+                        {times > 1 && (
+                          <span className="num ml-1.5 whitespace-nowrap text-fg-muted">
+                            <span aria-hidden>× {formatNumber(times)}</span>
+                            <span className={hidden}> ({formatNumber(times)} fois de suite)</span>
+                          </span>
+                        )}
+                      </p>
+                      <span className="whitespace-nowrap @2xl:order-1" title={dateTime(e.created_at)}>
+                        {formatRelative(e.created_at)}
+                      </span>
+                      <span aria-hidden className="@2xl:hidden">
+                        ·
+                      </span>
+                      <span className="min-w-0 @2xl:order-2 @2xl:truncate" title={clientName(e.organization_id)}>
+                        {clientName(e.organization_id)}
+                      </span>
+                      <span aria-hidden className="@2xl:hidden">
+                        ·
+                      </span>
+                      <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap @2xl:order-3", toneText[level.tone])}>
+                        <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", toneDot[level.tone])} />
+                        {level.label}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
         </Card>
 
@@ -187,19 +190,21 @@ export default async function AdminDispatchPage({ searchParams }: { searchParams
           ) : noDriver.length === 0 ? (
             <EmptyState size="compact" title="Aucune course sans chauffeur." description="Toutes les courses des 7 derniers jours ont trouvé un chauffeur." />
           ) : (
-            <ul className="max-h-[70vh] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Courses sans chauffeur">
-              {noDriver.map((r) => (
-                <li key={r.id} className="px-5 py-2.5 text-[13px]">
-                  <p className="[overflow-wrap:anywhere]">
-                    <span className="num font-semibold">#{r.number}</span> · {shortAddress(r.pickup_address)} → {shortAddress(r.dropoff_address)}
-                  </p>
-                  <p className="mt-0.5 text-[12px] text-fg-muted">
-                    {clientName(r.organization_id)} · {formatRideDate(r.pickup_at)} ·{" "}
-                    {VEHICLE_CATEGORY_META[r.vehicle_category as VehicleCategory]?.label ?? "Catégorie inconnue"}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            <div className="max-h-[70vh] overflow-y-auto" tabIndex={0} role="region" aria-label="Courses sans chauffeur">
+              <ul className="divide-y divide-line">
+                {noDriver.map((r) => (
+                  <li key={r.id} className="px-5 py-2.5 text-[13px]">
+                    <p className="[overflow-wrap:anywhere]">
+                      <span className="num font-semibold">#{r.number}</span> · {shortAddress(r.pickup_address)} → {shortAddress(r.dropoff_address)}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-fg-muted">
+                      {clientName(r.organization_id)} · {formatRideDate(r.pickup_at)} ·{" "}
+                      {VEHICLE_CATEGORY_META[r.vehicle_category as VehicleCategory]?.label ?? "Catégorie inconnue"}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </Card>
       </PageBody>

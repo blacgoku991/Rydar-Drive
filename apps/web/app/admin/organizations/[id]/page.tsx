@@ -347,20 +347,23 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
             ) : online.length === 0 ? (
               <EmptyState size="compact" title="Aucun chauffeur en ligne." />
             ) : (
-              // Zone défilante atteignable au clavier (flèches) et nommée (WCAG 2.1.1)
-              <ul className="max-h-[420px] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Chauffeurs connectés">
-                {online.map((d: any) => {
-                  const presence = PRESENCE_META[d.presence as DriverPresence];
-                  return (
-                    <li key={d.id} className="flex items-center justify-between gap-3 px-5 py-2.5 text-[13px]">
-                      <span className="min-w-0 truncate">
-                        {d.first_name} {d.last_name} <span className="num text-fg-muted">#{d.number}</span>
-                      </span>
-                      <Badge tone={presence?.tone ?? "neutral"}>{presence?.label ?? "En ligne"}</Badge>
-                    </li>
-                  );
-                })}
-              </ul>
+              // Zones défilantes atteignables au clavier (flèches) et nommées (WCAG 2.1.1) : la région est un div qui CONTIENT
+              // la liste (jamais <ul role="region"> : la liste disparaîtrait et ses <li> seraient orphelins, WCAG 1.3.1)
+              <div className="max-h-[420px] overflow-y-auto" tabIndex={0} role="region" aria-label="Chauffeurs connectés">
+                <ul className="divide-y divide-line">
+                  {online.map((d: any) => {
+                    const presence = PRESENCE_META[d.presence as DriverPresence];
+                    return (
+                      <li key={d.id} className="flex items-center justify-between gap-3 px-5 py-2.5 text-[13px]">
+                        <span className="min-w-0 truncate">
+                          {d.first_name} {d.last_name} <span className="num text-fg-muted">#{d.number}</span>
+                        </span>
+                        <Badge tone={presence?.tone ?? "neutral"}>{presence?.label ?? "En ligne"}</Badge>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             )}
           </Card>
 
@@ -371,22 +374,24 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
             ) : alerts.length === 0 ? (
               <EmptyState size="compact" title="Aucune alerte." description="Rien à signaler sur les 7 derniers jours." />
             ) : (
-              <ul className="max-h-[320px] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Alertes du dispatch">
-                {alerts.map((e: any) => {
-                  const level = dispatchLevel(e.level);
-                  return (
-                    <li key={e.id} className="flex items-start gap-3 px-5 py-2.5">
-                      <span aria-hidden className={cn("mt-[7px] size-2 shrink-0 rounded-full", toneDot[level.tone])} />
-                      <div className="min-w-0">
-                        <p className="text-[13px] text-fg [overflow-wrap:anywhere]">{e.message}</p>
-                        <p className="mt-0.5 text-[12px] text-fg-muted">
-                          <span className={toneText[level.tone]}>{level.label}</span> · {formatRelative(e.created_at)}
-                        </p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+              <div className="max-h-[320px] overflow-y-auto" tabIndex={0} role="region" aria-label="Alertes du dispatch">
+                <ul className="divide-y divide-line">
+                  {alerts.map((e: any) => {
+                    const level = dispatchLevel(e.level);
+                    return (
+                      <li key={e.id} className="flex items-start gap-3 px-5 py-2.5">
+                        <span aria-hidden className={cn("mt-[7px] size-2 shrink-0 rounded-full", toneDot[level.tone])} />
+                        <div className="min-w-0">
+                          <p className="text-[13px] text-fg [overflow-wrap:anywhere]">{e.message}</p>
+                          <p className="mt-0.5 text-[12px] text-fg-muted">
+                            <span className={toneText[level.tone]}>{level.label}</span> · {formatRelative(e.created_at)}
+                          </p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             )}
           </Card>
 
@@ -398,23 +403,25 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
               <EmptyState size="compact" title="Aucune notification." />
             ) : (
               <>
-                <ul className="max-h-[360px] divide-y divide-line overflow-y-auto" tabIndex={0} role="region" aria-label="Dernières notifications">
-                  {notes.map((n: any) => {
-                    const line = notificationLine(n);
-                    return (
-                      <li key={n.id} className="flex items-start justify-between gap-3 px-5 py-2.5">
-                        <span className="min-w-0">
-                          <span className="block truncate text-[13px] text-fg">{n.title}</span>
-                          <span className="block text-[12px] text-fg-muted">
-                            {formatRelative(n.created_at)}
-                            {line.reason ? ` · ${line.reason}` : ""}
+                <div className="max-h-[360px] overflow-y-auto" tabIndex={0} role="region" aria-label="Dernières notifications">
+                  <ul className="divide-y divide-line">
+                    {notes.map((n: any) => {
+                      const line = notificationLine(n);
+                      return (
+                        <li key={n.id} className="flex items-start justify-between gap-3 px-5 py-2.5">
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] text-fg">{n.title}</span>
+                            <span className="block text-[12px] text-fg-muted">
+                              {formatRelative(n.created_at)}
+                              {line.reason ? ` · ${line.reason}` : ""}
+                            </span>
                           </span>
-                        </span>
-                        <Badge tone={line.status.tone}>{line.status.label}</Badge>
-                      </li>
-                    );
-                  })}
-                </ul>
+                          <Badge tone={line.status.tone}>{line.status.label}</Badge>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
                 <Disclosure
                   title="Codes techniques (pour le support)"
                   className="border-t border-line px-5"
