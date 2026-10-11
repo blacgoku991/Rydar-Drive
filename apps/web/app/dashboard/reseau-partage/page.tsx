@@ -226,7 +226,6 @@ export default async function NetworkSharePage({ searchParams }: { searchParams:
   return (
     <>
       <PageHeader
-        eyebrow="Opérations"
         title="Réseau partagé"
         description={
           closed ? undefined : "Vos chauffeurs d'abord. Si aucun n'accepte, la course est proposée aux chauffeurs des organisations partenaires."

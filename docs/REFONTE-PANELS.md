@@ -1,11 +1,13 @@
 # Refonte des panneaux — super admin et espaces clients
 
-> **Statut : plan arrêté, lots R1 à R11 à faire.** Rédigé le 10/10/2026 sur `claude/confident-clarke-rpfwmo` (HEAD
-> `6f5f0e6`) à partir de cinq audits (super admin ; cœur du tableau de bord ; argent et réseau ; réglages ; coquille et
-> système de design) et de 705 captures « avant » (5 profils : super admin, propriétaire de flotte, propriétaire de
-> centrale, dispatcher, Flotte Privée ; 1440×900 et 390×844 ; hors dépôt, `scratchpad/refonte/avant/`). Les références
-> de fichiers ont été revérifiées dans le dépôt. Ce document est la référence de la refonte : chaque lot met à jour sa
-> ligne « Statut » (§ 8.1) ; là où le code livré diverge du plan, le code fait foi et l'écart est noté dans cette ligne.
+> **Statut : livrée et recettée** — lots R1 à R11 faits les 10 et 11/10/2026 (commits au § 8.1, écarts au § 8.2) ;
+> contrôle final et recette sur la pile locale (R11) : compte rendu, mesures avant / après et captures dans
+> `docs/EN-COURS.md`. Plan rédigé le 10/10/2026 sur `claude/confident-clarke-rpfwmo` (HEAD `6f5f0e6`) à partir de cinq
+> audits (super admin ; cœur du tableau de bord ; argent et réseau ; réglages ; coquille et système de design) et de
+> 705 captures « avant » (5 profils : super admin, propriétaire de flotte, propriétaire de centrale, dispatcher, Flotte
+> Privée ; 1440×900 et 390×844 ; hors dépôt, `scratchpad/refonte/avant/`). Les références de fichiers ont été
+> revérifiées dans le dépôt. Ce document est la référence de la refonte : là où le code livré diverge du plan, le code
+> fait foi et l'écart est noté au § 8.2.
 >
 > Objectif du propriétaire : « amélioration complète de tout le panel super admin et des clients qui ont souscrit, que
 > tout soit bien épuré, facile d'utilisation, compréhensible ». Public : gérants de flottes et de centrales VTC,
@@ -483,17 +485,76 @@ dispatcher sans « API & site web » ni « Mini-site » (R1).
 
 | Lot | Titre | Dépend de | Statut |
 |---|---|---|---|
-| R1 | Coquille et composants communs | — | à faire |
-| R2 | Super admin : menu, pages regroupées et « Supervision » | R1 | à faire |
-| R3 | Super admin : accueil « À traiter » et liste des clients | R2 | à faire |
-| R4 | Super admin : fiche d'un client | R3 | à faire |
-| R5 | Super admin : argent (Frais Rydar, commissions des centrales, offres) | R4 | à faire |
-| R6 | Super admin : supervision et pages annexes | R5 | à faire |
-| R7 | Clients : En direct, courses et journal du dispatch | R6 | à faire |
-| R8 | Clients : chauffeurs, statistiques, agenda et espace Flotte Privée | R7 | à faire |
-| R9 | Clients : argent, inscriptions, réseau partagé et messages | R8 | à faire |
-| R10 | Clients : réglages, API & site web, mini-site | R9 | à faire |
-| R11 | Contrôle final, recette et documentation | R1 à R10 | à faire |
+| R1 | Coquille et composants communs | — | fait : `723e353` |
+| R2 | Super admin : menu, pages regroupées et « Supervision » | R1 | fait : `d465c6b` |
+| R3 | Super admin : accueil « À traiter » et liste des clients | R2 | fait : `cd67e05` |
+| R4 | Super admin : fiche d'un client | R3 | fait : `8033cba` |
+| R5 | Super admin : argent (Frais Rydar, commissions des centrales, offres) | R4 | fait : `b13a708` |
+| R6 | Super admin : supervision et pages annexes | R5 | fait : `0f738ab` |
+| R7 | Clients : En direct, courses et journal du dispatch | R6 | fait : `f45a139` |
+| R8 | Clients : chauffeurs, statistiques, agenda et espace Flotte Privée | R7 | fait : `d2a3e90` |
+| R9 | Clients : argent, inscriptions, réseau partagé et messages | R8 | fait : `8cfa19d` |
+| R10 | Clients : réglages, API & site web, mini-site | R9 | fait : `b6c8ac5` |
+| R11 | Contrôle final, recette et documentation | R1 à R10 | fait : commit « Refonte des panneaux (R11) : contrôle final, recette et documentation » (compte rendu : `docs/EN-COURS.md`) |
+
+Écarts entre le plan et le code livré : § 8.2. Aucun lot n'a touché `supabase/`, `apps/driver/` ni `apps/worker/` ;
+hors `apps/web`, seuls les libellés permis par le § 1.1 ont changé dans `packages/shared/src` (`RIDE_FILTERS`,
+`RIDE_SOURCE_LABELS`, `RIDE_TYPE_LABELS`, `API_SCOPE_LABELS`, format mis en cache de `platformDueSummary`), avec
+`docs/FLOTTE-PRIVEE.md` (§ 7.3, § 15.1).
+
+### 8.2 Écarts entre le plan et le code livré
+
+Relevés par chaque lot dans son compte rendu ; le code fait foi. Aucun ne retire une garde, une confirmation ou une
+action, ni ne touche le SQL ou l'app chauffeur.
+
+- **R1** : un libellé long du menu passe sur deux lignes au lieu d'être coupé (seul cas mesuré : « Suppressions de
+  comptes » avec sa pastille, 42 px) ; barre de progression du tiroir limitée à 10 s et ignorée pour un Ctrl / Cmd-clic ;
+  pendant la transition, un lien de retour passé à `eyebrow` (élément) restait affiché (propriété retirée en R11).
+- **R2** : pastille d'en-tête retirée de Signalements de fraude (redondante avec le menu) ; encadrés de renvoi sur Frais
+  Rydar (coordonnées de paiement absentes) et Offres & limites (mini-sites coupés) ; Commissions des centrales :
+  indicateur « Signalements » en lien, description remplacée (elle citait les signalements) ; bouton d'en-tête
+  « Commissions des centrales » sur Frais Rydar ; fenêtres touchées fermées par « Retour », boutons nommés par leur
+  action ; animation retirée de la pastille « À examiner » ; espaces insécables dans les textes touchés.
+- **R3** : lignes « À traiter » rangées par urgence, informations légales de l'éditeur en tête ; « Vérifier N
+  suppression(s) de compte en échec ou en retard » (même compte que la pastille) ; « N en cours ou à venir » au lieu de
+  « dont N en cours » (le compteur inclut les courses attribuées d'autres jours) ; sur téléphone, bouton « Carte en
+  direct » masqué (le chiffre « Chauffeurs en ligne » y mène) et statut d'un client affiché seulement s'il n'est pas
+  actif ; type modifiable dans le formulaire flotte / centrale par un choix à deux options (sans « Option 1 / 2 ») ;
+  « Tout voir » avec un nom complet pour les lecteurs d'écran ; fonctions pures de la liste et de la fusion dans
+  `platform-data.ts` (testées dans `admin-todo.test.ts`).
+- **R4** : « Passer en Flotte Privée » mis en contour par un sélecteur CSS de `private-fleet-card.tsx` (le bouton vient
+  de `PackConversionButtons`, dans `private-fleet.tsx`, hors des chemins du lot) ; `Disclosure` : chevron d'un repli
+  imbriqué selon son propre état (corrigé, testé) ; libellés `offer_closed` et `wake_expired` ajoutés au lexique ;
+  « Échu » → « À payer maintenant », « Erreurs de dispatch » → « Alertes du dispatch », « … de l'organisation » →
+  « … du client » ; « Enregistrer l'offre » inactif tant que rien n'a changé ; « À surveiller » compte aussi un compte
+  invité jamais connecté ; Suspendre et Archiver en rouge ; champs « Frais plateforme (%) » et « Frais fixes par
+  course » gardés (cités par les messages d'erreur de `app/admin/actions.ts`, visibles repli ouvert seulement).
+- **R5** : sur Frais Rydar, les 4 chiffres restent avant « À traiter » ; lecture seule de
+  `organizations.private_fleet` pour le badge Flotte Privée (§ 1.3, point 1) ; « Signalements » en carte-lien sur
+  Commissions des centrales (seul affichage du nombre d'identités bannies de la plateforme) ; colonne « Frais du mois »
+  retirée (doublon de Frais Rydar) ; `TermsForm` : seule l'aide du cycle passe de 11,5 à 12 px ; « Frais à facturer » :
+  explication longue repliée, « ligne » au lieu d'« écriture » ; relevé : « Détail », « Aucun frais ce mois-ci. » ;
+  fenêtre de relance : renvoi WhatsApp vers Réglages de la plateforme ; pied collé de la fenêtre d'offre corrigé à
+  l'appel (`className`), composant commun inchangé.
+- **R6** : Dispatch & erreurs décrit « Tous les clients, sur les 7 derniers jours. » (lexique « client ») ; Réseau
+  partagé : organisations en une seule liste (action et ancre `#org-` rendues une fois), fenêtres fermées par
+  « Retour » ; `wording.test.ts` vérifie que toute action d'audit écrite par le web ou les migrations a son libellé.
+- **R7** : chronologie : messages « par la centrale » rendus valables pour une flotte, type de course (immédiate ou
+  planifiée) à l'heure de l'organisation ; états vides des courses avec « Voir toutes les courses » ; raccourcis
+  d'adresses testés (`quick-places.test.ts`).
+- **R8** : `Disclosure` gagne `lazy` (carte de la flotte chargée à l'ouverture ; ajout rétrocompatible, testé) ;
+  « Ajouter » aussi sur une pièce refusée ; bouton « Nouvelle réservation (téléphone) » en Flotte Privée.
+- **R9** : état d'un chauffeur « Bloqué · paiement contesté » en plus de « Bloqué · commission en retard » ; Messages :
+  animation en boucle et textes sous 12 px retirés ; débordement du Réseau partagé à 390 px corrigé ; espaces
+  insécables dans les textes touchés.
+- **R10** : confirmation de sortie aussi sur Organisation ; rôle administrateur « Tout, sauf l'abonnement, les rôles et
+  le retrait d'un accès » (le serveur réserve aussi ces deux actions au propriétaire) ; « Annuler l'invitation »
+  confirmée ; `settings-forms.tsx` découpé en un fichier par formulaire ; moyens de paiement affichés dans l'ordre du
+  reste du web (ordre enregistré inchangé) ; case et choix de rôle de « Ajouter un membre » à nom court, explication en
+  description pour les lecteurs d'écran.
+- **R11** : `primitives.test.ts` adapté au retrait d'`eyebrow`, sans cas retiré (absence de sur-titre vérifiée sur le
+  composant et par un parcours des écrans qui l'utilisent ; lien de retour du relevé par `back`) ; adaptations des lots
+  reportées dans les scripts de recette de `scratchpad/l7/e2e` (s2, s3, s6b, s7b), hors dépôt.
 
 ---
 
@@ -1386,7 +1447,7 @@ définitifs, blocs « À traiter » (super admin, En direct, Flotte Privée), an
 ## Annexe A — Mesures avant et cibles
 
 Hauteurs en pixels CSS (`scrollHeight`), base de recette du § 9.1. « Avant » : captures de `refonte/avant/` (390 :
-hauteur d'image ÷ 2).
+hauteur d'image ÷ 2). Mesures « après » (R11, même base) : `docs/EN-COURS.md`, toutes les cibles atteintes.
 
 | Page | Profil | Largeur | Avant | Cible | Lot |
 |---|---|---|---|---|---|

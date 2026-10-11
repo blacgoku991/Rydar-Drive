@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -278,9 +278,12 @@ describe("états vides, en-têtes de carte, badges", () => {
 });
 
 describe("PageHeader, PageBody, StatCard", () => {
-  it("aucun sur-titre texte ; marges téléphone px-4 pt-5", () => {
-    const out = html(createElement(PageHeader, { title: "Courses", eyebrow: "Opérations", description: "Vos courses." }));
+  it("aucun sur-titre (propriété eyebrow retirée en R11) ; marges téléphone px-4 pt-5", () => {
+    // Un ancien appel qui passerait encore un sur-titre ne l'afficherait pas (et ne compile plus : propriété retirée)
+    const legacy = { eyebrow: "Opérations" } as object;
+    const out = html(createElement(PageHeader, { title: "Courses", description: "Vos courses.", ...legacy }));
     expect(out).not.toContain("Opérations");
+    expect(source("../layout/page-header.tsx")).not.toMatch(/eyebrow/);
     expect(out).toContain("px-4 pb-5 pt-5 sm:px-6 sm:pt-7 lg:px-10");
     expect(html(createElement(PageBody, null, "x"))).toContain("px-4 py-6 sm:px-6 sm:py-8 lg:px-10");
   });
@@ -301,9 +304,24 @@ describe("PageHeader, PageBody, StatCard", () => {
     expect(out).toContain("contact@exemple.fr · Paris");
   });
 
-  it("transition : un lien de retour passé en eyebrow (élément) reste affiché", () => {
-    const out = html(createElement(PageHeader, { title: "Relevé", eyebrow: createElement("a", { href: "/dashboard/settlements" }, "Encaissements") }));
+  it("fin de la transition (R11) : le retour du relevé passe par back ; aucun écran ne passe plus de sur-titre", () => {
+    const out = html(createElement(PageHeader, { title: "Relevé", back: { href: "/dashboard/settlements", label: "Encaissements" } }));
     expect(out).toContain('href="/dashboard/settlements"');
+    expect(out).toContain("Encaissements");
+    // Écrans des espaces connectés qui utilisent cet en-tête (la vitrine a son propre PageHeader, avec sur-titre)
+    const web = join(UI, "..", "..");
+    const tsx = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        const path = join(dir, name);
+        if (name === "node_modules" || name.startsWith(".")) return [];
+        if (statSync(path).isDirectory()) return tsx(path);
+        return /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) ? [path] : [];
+      });
+    const users = [join(web, "app"), join(web, "components")]
+      .flatMap(tsx)
+      .filter((file) => readFileSync(file, "utf8").includes("@/components/layout/page-header"));
+    expect(users.length).toBeGreaterThan(20);
+    for (const file of users) expect(readFileSync(file, "utf8"), file).not.toMatch(/\beyebrow\b/);
   });
 
   it("StatCard : lien vers sa liste (aria-current quand elle est affichée), sinon simple carte", () => {

@@ -1,8 +1,10 @@
 # Flotte Privée — spécification finale
 
 > **Statut : livré et recetté** — lots L1 à L7 faits le 10/10/2026 (commits au § 15) ; recette de bout en bout du
-> § 13.3 passée sur la pile locale complète (compte rendu, contrôles et captures : `docs/EN-COURS.md`). Les écarts entre
-> cette spécification et le code livré sont listés au § 15.1 : là où ils divergent, le code fait foi.
+> § 13.3 passée sur la pile locale complète (compte rendu, contrôles et captures : `docs/EN-COURS.md`). Espace web du
+> client remis en forme par la refonte des panneaux (`docs/REFONTE-PANELS.md`, lots R1 à R11 ; § 7.3 à jour), puis
+> recette du § 13.3 rejouée le 11/10/2026 sur base neuve : 110 contrôles OK, 0 échec. Les écarts entre cette
+> spécification et le code livré sont listés au § 15.1 : là où ils divergent, le code fait foi.
 > Rédigée le 10/10/2026 sur `claude/confident-clarke-rpfwmo` (HEAD `76847b8`, dernière migration
 > `20260924007500_eligibility.sql`).
 >

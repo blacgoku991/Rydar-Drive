@@ -1,6 +1,5 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import { isValidElement } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -12,7 +11,6 @@ export function PageHeader({
   title,
   description,
   actions,
-  eyebrow,
   back,
   badges,
   meta,
@@ -22,12 +20,6 @@ export function PageHeader({
   title: React.ReactNode;
   description?: React.ReactNode;
   actions?: React.ReactNode;
-  /**
-   * @deprecated Sur-titre plus affiché (il répétait la section du menu, parfois à tort) ; propriété retirée en R11.
-   * Un lien de retour passé ici (élément, pas un texte) reste affiché à la place de `back` jusqu'à ce que son écran
-   * passe à `back`.
-   */
-  eyebrow?: React.ReactNode;
   /** Lien de retour de la fiche (« ← Courses »), sans préchargement */
   back?: { href: string; label: string };
   /** Badges à côté du titre (statut, type) */
@@ -37,8 +29,6 @@ export function PageHeader({
   className?: string;
   children?: React.ReactNode;
 }) {
-  // Transition : seuls les liens de retour passés par `eyebrow` (éléments) restent visibles ; un texte ne l'est plus
-  const legacyBack = !back && isValidElement(eyebrow) ? eyebrow : null;
   return (
     <header className={cn("relative border-b border-line", className)}>
       <div className="relative mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-x-4 gap-y-3 px-4 pb-5 pt-5 sm:px-6 sm:pt-7 lg:px-10">
@@ -54,8 +44,6 @@ export function PageHeader({
               <ArrowLeft aria-hidden className="size-3.5 shrink-0" />
               {back.label}
             </Link>
-          ) : legacyBack ? (
-            <div className="mb-2 text-[13px] text-fg-muted">{legacyBack}</div>
           ) : null}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <h1 className="min-w-0 text-[22px] font-semibold tracking-tight text-fg [overflow-wrap:anywhere] sm:text-[24px]">{title}</h1>

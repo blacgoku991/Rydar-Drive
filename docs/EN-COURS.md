@@ -1,4 +1,92 @@
-# Travail en cours (10/10/2026)
+# Travail en cours (11/10/2026)
+
+## Refonte des panneaux : lots R1 à R11 faits, contrôle final et recette (11/10/2026)
+
+Plan, commits des lots et écarts : `docs/REFONTE-PANELS.md` (§ 8.1, § 8.2). Interface web seulement : aucune
+migration, aucune RPC, garde ou action serveur modifiée (seuls ajouts : `revalidatePath` vers les pages déplacées,
+`fieldErrors` dans des retours en échec, lectures seules pour des résumés), rien dans `apps/driver` ni `apps/worker` ;
+hors `apps/web`, quatre tables de libellés lues par le web seul (`packages/shared/src`).
+
+- **Livré** :
+  - coquille : menu entier visible sans défiler (une seule zone défilante, liens légaux compacts), sections « Au
+    quotidien » / « Gestion », badge « Super admin », composants communs (`Callout`, `Disclosure`, `FilterTabs`,
+    `ConfirmDialog`, `DialogFooter`, listes en cartes sous 768 px…), lexique `lib/wording.ts`, pages introuvables dans
+    les deux espaces ;
+  - super admin : menu Pilotage · Clients · Argent · Plateforme ; « À traiter » en tête de la vue d'ensemble (mêmes
+    lectures que les pastilles) ; Clients filtrables et cherchables, un seul « Nouveau client » ; fiche d'un client
+    résumée (« À surveiller », replis, « Zone sensible ») ; Frais Rydar et Commissions des centrales sans doublon ;
+    Signalements de fraude, E-mails et Réglages de la plateforme sur leur page ; Supervision (Dispatch & erreurs,
+    Notifications, E-mails, Sécurité & audit) lisible par un non-technicien ;
+  - clients : En direct (« À traiter », chiffres sous 1 400 px, chauffeurs sous xl) ; Courses en cartes sur téléphone,
+    fiche et chronologie dans les mots du métier, « Attribuer » groupé ; Chauffeurs (chiffres = filtres, déconnexion
+    et désactivation confirmées) ; Statistiques ; Agenda ; espace Flotte Privée ; Encaissements (un seul montant des
+    frais Rydar, « J'ai payé » en deux temps), Règlements par course ou par chauffeur, relevés ; Inscriptions, Réseau
+    partagé, Messages ; Réglages (onglets, saisie non enregistrée protégée, grille tarifaire en un formulaire), API &
+    site web (clés révoquées ou remplacées après confirmation), Mini-site.
+- **R11 (code)** : propriété `eyebrow` retirée de `PageHeader` (dernier usage : Réseau partagé, où elle n'était plus
+  affichée depuis R1) ; `primitives.test.ts` adapté sans cas retiré : absence de sur-titre vérifiée sur le composant et
+  par un parcours des écrans qui l'utilisent (contrôle vérifié en remettant volontairement un sur-titre), lien de
+  retour du relevé par `back`.
+- **Contrôles** : `pnpm typecheck` OK ; `pnpm test` 160 fichiers, 1 765 tests (148 et 1 568 avant la refonte ; 21
+  fichiers de test ajoutés ou complétés, aucun cas retiré, aucun `skip`) ;
+  `TEST_DATABASE_NAME=rydar_test_refonte pnpm test:db` 51 fichiers, 869 tests ; `pnpm build` OK ;
+  `pnpm --filter @rydar/driver export:check` OK ; `git log --name-only` des commits R1 à R10 : 205 fichiers, aucun dans
+  `supabase/`, `apps/driver/` ni `apps/worker/` ; aucune nouvelle clé de stockage local, aucune couleur en dur dans
+  les fichiers créés, pages publiques et légales inchangées (hors variante compacte de `legal-links.tsx`).
+- **Mesures** (build de production sur :3210, `mesure.mjs`, replis fermés, écritures bloquées ; base identique avant
+  et après, relevé à l'appui) : 201 pages × 2 largeurs (super admin 37, flotte 41, centrale 55, dispatcher 39, Flotte
+  Privée 29 : listes de la passe « avant », pages découvertes par la passe « après », plus `/dashboard/agenda`,
+  `/dashboard/rydar` et `/dashboard/reseau-partage`, en 404 tant que le réseau est fermé) : **aucun débordement à 390
+  ni à 1440**. Menus des 5 profils : toutes les entrées visibles sans défiler à 1440×900 (bandeau cookies ouvert) et
+  1366×768 (dernière entrée : super admin « Supervision » 622-654 px, centrale « Réglages » 524-556 px), une seule zone
+  défilante, 8 liens légaux, texte de 12 px au moins ; tiroir à 390 : entrées de 44 px au moins, toutes atteignables.
+- **Annexe A, avant → après (cible)** : `/admin` 390 : 3 645 → 2 180 (≤ 2 200), 1440 : 1 940 → 1 445 (≤ 1 700) ;
+  fiches Élite 4 474 → 2 017 (≤ 3 000), Express 4 952 → 2 573 (≤ 3 300), Lambert 4 544 → 2 516 (≤ 3 600) ;
+  `/admin/frais` 4 594 → 1 391 (≤ 3 000) ; compte Express 6 785 → 4 148 (≤ 4 500) ; `/admin/audit` 1440 : 7 394 →
+  1 121 (≤ 3 000) ; `/admin/reseau` fermé 2 319 → 1 075 (≤ 1 400) ; fiche chauffeur 4 782 → 3 469 (≤ 3 500) ;
+  Encaissements, haut de « Règlements » ≈ 3 350 → 932 (≤ 1 400) ; relevé d'octobre 8 066 → 3 277 (≤ 3 500) ;
+  Réglages › Dispatch 3 780 → 2 358 (≤ 2 600) ; largeur d'API & site web 434 → 390 et du Mini-site ≈ 1 180 → 390 ;
+  dernière entrée de la barre latérale visible pour tous. **Toutes les cibles sont atteintes.**
+- **Vocabulaire** : texte visible des 5 profils (402 relevés, replis fermés) sans aucun des 18 mots du critère
+  (rattacheur, tenant, RLS, trigger, outbox, worker, MRR, Option 1 / 2, Instantané, Timeline, Debug, DBG, WRN,
+  Dashboard, failed, queued, trialing) ; ni « Frais plateforme » chez le super admin, ni « ∞ », « push », statut
+  anglais ou code brut ; « centrale » chez une flotte seulement dans la description d'une offre (texte saisi dans
+  Offres & limites). Grep complémentaire du code lu : restes = identifiants, noms de tables (`email_outbox`), clés et
+  codes (`"failed"`, `"trialing"`, `level: "debug"`), composants Radix (`DropdownMenuTrigger`), chemins `/dashboard`,
+  faux positifs (« maintenant », `URLSearchParams`), messages en base traduits par `timeline-labels.ts`, tests et
+  commentaires ; « worker » visible seulement dans « Détails techniques » de Suppressions de comptes (replié).
+- **`new Intl.` restants** (aucun au rendu) : routes d'export CSV `app/admin/frais/[orgId]/export`,
+  `app/admin/frais/[orgId]/factures` (frais à facturer) et `app/dashboard/settlements/rydar/export` ; action serveur
+  `orgToday` (`app/dashboard/drivers/actions.ts`) ; `components/booking/zoned-time.ts` (heure saisie dans le fuseau de
+  l'organisation, appelé à l'initialisation d'un état et dans un effet, jamais au rendu : mini-site public et
+  « Nouvelle course ») ; plus un commentaire (`components/eligibility/format.ts`).
+- **Recette** : `scratchpad/l7/e2e/run-all.sh` (base recréée : migrations + seed ; worker ; app chauffeur en rendu web ;
+  serveur de production du lot joint par un relais 3000 → 3210) : **110 contrôles OK, 0 échec** (104 à la recette L7),
+  après report dans les scripts des adaptations des lots (s2, s3 : onglets « Coordonnées » / « Délais et rappels »,
+  grille « Business » à un seul « Enregistrer » ; s7b : « Fixer le prix » / « Modifier le prix » ; s6b : confirmation
+  « La prendre ») ; `s10-smoke-standard` (organisation standard) : 2 contrôles OK. L'erreur navigateur relevée par
+  s1 est `/favicon.ico` en 404 (le site ne déclare que `/icon.svg`, antérieur à la refonte). Ensuite : Flotte Privée de
+  démonstration « Lambert » recréée (`fp-setup.mjs`, `fp-rides.mjs`), conditions acceptées par le dispatcher de
+  démonstration, identifiants des listes de pages mis à jour (§ 9.1) ; base de recette : 5 clients, 37 comptes,
+  réseau fermé, aucun e-mail en file. Serveurs, worker, relais et app arrêtés par PID.
+- **Captures** (hors dépôt, `scratchpad/refonte/apres/R11/`) : 717 pages, onglets et fenêtres des 5 profils (super
+  admin 161, flotte 108, centrale 273, dispatcher 87, Flotte Privée 88) à 1440 et 390 ; `mesure/` (25, menus et
+  tiroirs) ; `lot-r11/` (20 : fiches à lien de retour, relevé, Réseau partagé ouvert le temps des captures) ;
+  `recette/` (40, recette de bout en bout). Scripts : `refonte/controle/` (`shoot-apres.mjs`, `mesure-r11.mjs`,
+  `pages-r11.mjs`, `mots-r11.mjs`, `observations-r11.mjs`, `annexe-a-r11.mjs`, `shots-r11*.mjs`) et `refonte/r11work/`.
+- **Observations** (hors critères, pour les lots propriétaires des fichiers) : espace ordinaire avant « : » ou « ; »
+  dans quelques textes visibles — information cookies (`components/legal/cookie-notice.tsx`, hors refonte), Journal
+  du dispatch et fiche course (R7 : « Recherche en cours : », « Vol au départ : », « Espèces : … »), Tarifs (R10 :
+  « Aucun tarif : aucun prix proposé. », « … sur le mini-site ; »), Commission & encaissement (« Qui reçoit les
+  courses : », « Courses plus chères : »), Délais et rappels (« Ensuite : ») — les explications du dispatch
+  (« Prénom N. (1,2 km) : … ») sont des messages écrits en base, hors périmètre ; fenêtre « Centrale changée dans un
+  autre onglet » (`components/shell/dashboard-shell.tsx`) : « centrale » aussi pour une flotte (compte à plusieurs
+  organisations) ; fenêtre « Relancer » des frais Rydar (`admin-account-actions.tsx`) :
+  `platformWhatsAppTarget(…).then` sans `catch`, antérieur à la refonte (réseau coupé : rejet non traité, l'option
+  WhatsApp reste masquée).
+- **Reste** : décisions du propriétaire (`REFONTE-PANELS.md` § 7 : Agenda des flottes et centrales, « Inscriptions »
+  pour les centrales, abonnement pendant l'essai, ligne « Design » de CLAUDE.md) ; puis le tutoriel de première
+  connexion (§ 10).
 
 ## Flotte Privée : pack livré et recetté, lots L1 à L7 faits (10/10/2026)
 
