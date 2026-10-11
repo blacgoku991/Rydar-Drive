@@ -77,8 +77,8 @@ async function hasSession(supabase: ReturnType<typeof createServerClient>): Prom
 
 const PROTECTED = ["/dashboard", "/admin"];
 /**
- * Pages légales de la plateforme : servies telles quelles sur les mini-sites (liens du mini-site et du bandeau cookies),
- * réseau partagé compris (convention et conditions des chauffeurs).
+ * Pages légales de la plateforme : servies telles quelles sur les mini-sites servis (liens du mini-site et du bandeau
+ * cookies), réseau partagé compris (convention et conditions des chauffeurs) ; hôte sans mini-site : 404 neutre.
  */
 const LEGAL_PATHS = new Set([
   "/mentions-legales", "/cgu", "/cgv", "/confidentialite", "/cookies", "/dpa", "/suppression-compte", "/abonnement-resiliation",
@@ -114,21 +114,24 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
-  // 1) Mini-sites de réservation sur sous-domaine / domaine personnalisé
-  //    (/rejoindre/{code} : inscription chauffeur publique, jamais réécrite vers le mini-site)
+  // 1) Mini-sites de réservation sur sous-domaine / domaine personnalisé : API servie telle quelle (devis, géocodage) ;
+  //    pages légales et /book/{son slug} seulement si l'hôte sert un mini-site ; /book/{autre slug} et /rejoindre/…
+  //    (mini-site ou inscription chauffeur d'une AUTRE organisation, liens toujours sur le domaine de la plateforme) :
+  //    jamais servis sous le domaine d'une centrale (audit p5 web-1)
   const isPlatformHost = host === APP_HOST || host === ROOT_DOMAIN || host === `www.${ROOT_DOMAIN}` || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host);
   // Host invalide (trop long, caractères interdits, IPv6…) : aucune résolution, ni appel à Supabase ni cache
   const bookingHost = isPlatformHost ? null : bookingHostKey(request.headers.get("host"));
-  if (
-    bookingHost && !pathname.startsWith("/api/") && !pathname.startsWith("/book/") && !pathname.startsWith("/rejoindre/") &&
-    !isLegalPath(pathname)
-  ) {
+  if (bookingHost && !pathname.startsWith("/api/")) {
     const slug = await resolveBookingSlug(bookingHost);
-    const url = request.nextUrl.clone();
-    url.pathname = slug ? `/book/${slug}${pathname === "/" ? "" : pathname}` : UNSERVED_HOST_PATH;
-    // Aucun mini-site servi : 404 neutre, sans session ni cookie posé sur ce domaine
-    if (!slug) url.search = "";
-    return NextResponse.rewrite(url);
+    const ownSite = !!slug && (pathname === `/book/${slug}` || pathname.startsWith(`/book/${slug}/`));
+    if (!slug || (!ownSite && !isLegalPath(pathname))) {
+      const reserved = /^\/(book|rejoindre)(\/|$)/.test(pathname);
+      const url = request.nextUrl.clone();
+      url.pathname = slug && !reserved ? `/book/${slug}${pathname === "/" ? "" : pathname}` : UNSERVED_HOST_PATH;
+      // Aucun mini-site servi : 404 neutre, sans session ni cookie posé sur ce domaine
+      if (url.pathname === UNSERVED_HOST_PATH) url.search = "";
+      return NextResponse.rewrite(url);
+    }
   }
 
   // 2) Session Supabase (rafraîchissement des cookies) + protection des espaces

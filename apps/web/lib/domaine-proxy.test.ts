@@ -150,27 +150,54 @@ describe("proxy.ts : hôte de mini-site sans mini-site servi", () => {
     expect(new URL(rewrittenTo(await visit("coupe.rydar.app", "/login"))!).pathname).toBe(UNSERVED);
   });
 
-  it("chemins jamais réécrits (API, /book, /rejoindre, pages légales) : inchangés", async () => {
+  it("API seule servie ; /book, /rejoindre et pages légales : 404 neutre (audit p5 web-1)", async () => {
+    expect(rewrittenTo(await visit("coupe.exemple-vtc.fr", "/api/book/elite/quote"))).toBeNull();
+    // Avant : le mini-site d'une centrale (/book/<slug>), l'inscription chauffeur et les pages légales restaient servis
+    // sous un domaine sans mini-site (mini-site coupé, centrale suspendue, domaine quelconque pointé vers le serveur)
+    for (const path of ["/book/elite", "/book/elite?preview=1", "/rejoindre/ABC123", "/cgu", "/mentions-legales", "/cgv/2026-09-27"]) {
+      const target = new URL(rewrittenTo(await visit("coupe.exemple-vtc.fr", path))!);
+      expect(target.pathname, path).toBe(UNSERVED);
+      expect(target.search, path).toBe("");
+    }
+  });
+});
+
+describe("proxy.ts : hôte d'un mini-site servi (audit p5 web-1)", () => {
+  beforeEach(() => {
+    rpc.set("elite-paris.exemple-vtc.fr", async () => Response.json("elite-paris"));
+  });
+
+  it("pages légales (textes précédents compris), API, mini-site de la centrale : servis tels quels", async () => {
     // /cgv/2026-09-27 et /dpa/2026-10-02 : textes précédents (pages figées), servis comme /cgv et /dpa ; pages
     // « Abonnement, résiliation et remboursement » et « Accessibilité » ; pages publiques du réseau partagé
     for (const path of [
-      "/api/book/elite/quote", "/book/elite", "/rejoindre/ABC123",
+      "/api/book/elite-paris/quote", "/book/elite-paris", "/book/elite-paris?preview=1",
       "/mentions-legales", "/cgu", "/cgv", "/cgv/2026-09-27", "/confidentialite", "/cookies", "/dpa", "/dpa/2026-10-02",
       "/suppression-compte", "/abonnement-resiliation", "/accessibilite",
       "/reseau-partage/conditions", "/reseau-partage/chauffeur",
     ]) {
-      expect(rewrittenTo(await visit("coupe.exemple-vtc.fr", path)), path).toBeNull();
+      expect(rewrittenTo(await visit("elite-paris.exemple-vtc.fr", path)), path).toBeNull();
     }
-    // Autre chemin sous /cgv, /dpa ou /reseau-partage : page du mini-site (404 neutre ici), jamais servi comme page légale
+    // Autre chemin sous /cgv, /dpa ou /reseau-partage : page du mini-site, jamais servi comme page légale
     for (const path of ["/cgv/autre", "/dpa/autre", "/dpa/2026-10-02/x", "/reseau-partage", "/reseau-partage/autre"]) {
-      expect(new URL(rewrittenTo(await visit("coupe.exemple-vtc.fr", path))!).pathname, path).toBe(UNSERVED);
+      expect(new URL(rewrittenTo(await visit("elite-paris.exemple-vtc.fr", path))!).pathname, path).toBe(`/book/elite-paris${path}`);
     }
   });
 
-  it("hôtes de la plateforme : jamais concernés (aucune résolution)", async () => {
+  it("mini-site d'une AUTRE centrale et inscription chauffeur : 404 neutre, jamais sous le domaine de celle-ci", async () => {
+    for (const path of ["/book/express", "/book/elite-paris-bis", "/book", "/rejoindre/express2026demo", "/rejoindre", "/rejoindre/x/y"]) {
+      const target = new URL(rewrittenTo(await visit("elite-paris.exemple-vtc.fr", path))!);
+      expect(target.pathname, path).toBe(UNSERVED);
+      expect(target.search, path).toBe("");
+    }
+  });
+});
+
+describe("proxy.ts : hôtes de la plateforme", () => {
+  it("jamais concernés (aucune résolution) : mini-sites (/book, iframe) et inscription (/rejoindre) servis", async () => {
     const before = calls.length;
     for (const host of ["app.rydar.app", "rydar.app", "www.rydar.app", "localhost:3000", "127.0.0.1:3000"]) {
-      expect(rewrittenTo(await visit(host, "/"))).toBeNull();
+      for (const path of ["/", "/book/elite", "/rejoindre/ABC123", "/cgu"]) expect(rewrittenTo(await visit(host, path)), `${host}${path}`).toBeNull();
     }
     expect(calls.length).toBe(before);
   });
