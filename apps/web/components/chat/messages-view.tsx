@@ -453,7 +453,7 @@ export function MessagesView({
   const nothingYet = !fleet.last_message && drivers.every((d) => !d.last_message);
 
   return (
-    <div className="flex h-[calc(100dvh-56px)] overflow-hidden lg:h-dvh">
+    <div data-tour-fullheight="" className="flex h-[calc(100dvh-56px)] overflow-hidden lg:h-dvh">
       <aside className={cn("min-w-0 flex-col border-line bg-ink-950/40 lg:flex lg:w-[340px] lg:shrink-0 lg:border-r xl:w-[360px]", selected ? "hidden" : "flex w-full")}>
         <ThreadList
           fleet={fleet}

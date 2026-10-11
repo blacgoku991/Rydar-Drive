@@ -377,7 +377,7 @@ export function CentraleSettingsForm({
 
       {!readOnly && (
         <>
-          <div className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] px-4 py-3 shadow-float backdrop-blur-xl">
+          <div data-tour-avoid="" className="sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] px-4 py-3 shadow-float backdrop-blur-xl">
             <p className="flex items-center gap-2 text-[13px] text-fg-muted" aria-live="polite">
               <span aria-hidden className={cn("size-1.5 rounded-full", dirty ? "bg-amber" : "bg-green")} />
               {dirty ? "Modifications non enregistrées" : "Tout est enregistré"}

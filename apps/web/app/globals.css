@@ -270,6 +270,16 @@
     opacity: 0.035;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
+  /* Visite guidée (docs/TUTORIEL.md § 6.4) : élément désigné par l'étape, tant que la fenêtre est dépliée sur elle
+     (attribut posé par components/tour/tour-card.tsx). Statique, aucune transition. Amené sous la barre du haut par la
+     marge de défilement de <html> (scroll-padding : 5rem en haut, 6rem en bas) : ici un simple écart en plus, sinon
+     les deux s'additionnent (10rem) dans la page ; il sert seul dans une zone qui défile d'elle-même. */
+  [data-tour-highlight] {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 3px;
+    scroll-margin-top: 0.75rem;
+    scroll-margin-bottom: 0.75rem;
+  }
 }
 
 /* ==========================================================================

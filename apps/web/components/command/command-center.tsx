@@ -513,7 +513,7 @@ export function CommandCenter({
   ] as const;
 
   return (
-    <div className="relative flex h-[calc(100dvh-56px)] flex-col overflow-hidden lg:h-dvh">
+    <div data-tour-fullheight="" className="relative flex h-[calc(100dvh-56px)] flex-col overflow-hidden lg:h-dvh">
       {/* Carte plein écran */}
       <div className="relative h-[46vh] shrink-0 lg:absolute lg:inset-0 lg:h-auto">
         {/* À partir de xl, le panneau « Flotte » (bas droite, 312 px + 12 px de marge) couvrait le zoom et l'attribution

@@ -1,9 +1,68 @@
 # Travail en cours (11/10/2026)
 
-## Visite guidée de première connexion : lot T1 fait (11/10/2026)
+## Visite guidée de première connexion : lots T1 et T2 faits (11/10/2026)
 
-Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; restent T2 (moteur
-et coquille) puis T3 (parcours sur les écrans réels, recette), dans cet ordre. Rien sous `apps/`, ni dans le seed.
+Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; T2 = moteur de visite
+et coquille ; reste T3 (parcours sur les écrans réels : ancres `data-tour`, conditions de réussite, textes contrôlés à
+l'écran, recette complète). Rien dans `apps/driver`, `apps/worker`, ni le seed.
+
+### T2 — Moteur de visite et intégration dans la coquille
+
+- **Livré** (web seulement : aucune migration, aucune RPC, garde ou action serveur existante modifiée) : dossier
+  `apps/web/components/tour/` — `tour-model.ts` (pur : démarrage, réducteur, écriture à faire, entrée du menu, boutons,
+  position du repli, textes `TOUR_UI`), `tour-content.ts` (les 5 parcours du § 7, textes par `fr()`), `tour-checks.ts`
+  (squelette : `loadTourChecks` rend `{}`, tout « inconnu » ; `stepDone`), `tour-provider.tsx` (état, ouverture
+  d'office ~400 ms après le chargement, jamais pendant une acceptation, une lecture en échec ou une urgence ; écritures
+  en série ; toasts ; entrée du menu), `tour-card.tsx` (fenêtre Radix Popover non modale chargée à la demande : ancrée,
+  repli centré au-dessus des barres `data-tour-avoid`, pastille ; surlignage ; focus ; Échap ; réserve de défilement
+  `--tour-reserve`), `tour-panel.tsx` (contenu sans logique), `tour-dom.ts` ; action serveur `app/visite/actions.ts`
+  (`saveTourProgress` → `save_user_tour`). Coquilles : `TourProvider` dans `DashboardShell` et `AdminShell` ;
+  « Reprendre la visite » / « Revoir la visite » dans le menu du compte (`Sidebar.accountItems`, avant « Se
+  déconnecter », tiroir compris). Mises en page : lecture de `user_tours` en parallèle des autres ; `blocked` (écran ou
+  bandeau d'acceptation), `urgent` (courses sans chauffeur, réservations à traiter, convention du réseau ; super admin :
+  signalement de fraude ou suppression de compte en échec). `globals.css` : règle `[data-tour-highlight]`. Attributs
+  seuls : `data-tour-avoid` (3 barres « Enregistrer », barre de sélection des règlements, compositeur de Messages),
+  `data-tour-fullheight` (En direct, Messages). Les ancres `data-tour` sont posées en T3 : d'ici là, chaque étape
+  s'affiche en repli centré, en bas de l'écran.
+- **Contrôles** : `pnpm typecheck` OK ; `pnpm test` 167 fichiers, 1 863 tests (+3 fichiers, +69 tests :
+  `tour-model.test.ts` 41, `tour-panel.test.ts` 11, `tour-actions.test.ts` 5 ; cas ajoutés à `dashboard-layout.test.ts`
+  (7), `admin-pages.test.ts` (4) et `cookie-notice.test.ts` (1), aucun retiré) ; `pnpm --filter @rydar/web build` OK ;
+  grep du critère 16 vide, aucun `text-[10px]` / `text-[11px]` dans `components/tour`.
+- **Bout en bout** (hors dépôt, `scratchpad/tutoriel/e2e/t2-run-all.sh`, build de production :3210, client de recette
+  neuf) : TE-01 à TE-14 et complément « ancre » : **159 contrôles OK, 0 échec**. Accueil d'office 1,2 s après le
+  chargement, focus sur son titre ; écran des CGV puis bandeau des CGU : ni fenêtre ni entrée de menu, accueil sans
+  rechargement après l'acceptation ; « Plus tard », reprise, fin, « Revoir » (`completed_at` gardé) ; liens réels sans
+  préchargement et garde « Quitter sans enregistrer ? » ; Échap (fenêtre, champ, dialogue par-dessus) ; pastille de
+  44 px ; ouverture différée (Élite, Flotte Privée « Lambert », super admin avec un signalement) ; 390×844 (16 px de
+  marge, aucun débordement, reprise depuis le tiroir) ; barres collantes jamais recouvertes, réserve de défilement,
+  aucune réserve sur En direct et Messages ; Tab sans piège, focus visible, aucune animation ; aucune requête vers un
+  autre hôte, aucune clé de stockage. Captures (60 contrôles OK) : chaque étape des 5 parcours à 1440×900 et 390×844,
+  et celles des scénarios — `scratchpad/tutoriel/captures/t2/` (96 images).
+- **Recette existante** (critère 17, `scratchpad/tutoriel/T2/recette.sh`) : base recréée (`l7/e2e/reset.sh` :
+  migrations, 007800 comprise, puis seed), `tour-off.sql` après la réinitialisation (170 lignes : 34 comptes × 5) et
+  après `s1-create` (175), puis les étapes de `run-all.sh` et `s10-smoke-standard` : **112 contrôles OK, 0 échec**
+  (110 + 2, comme avant le lot), scripts L7 inchangés ; mêmes contrôles et mêmes erreurs navigateur qu'à la passe R11
+  (`/favicon.ico` en 404, 404 voulus de s2, 500 `NETWORK_DISABLED` de l'app : antérieurs) ; aucune visite ouverte
+  pendant la recette (aucun `shown_at`, aucune ligne `active`). Captures de la recette dans `T2/recette/captures/` (40),
+  celles de la recette L7 rétablies.
+- **Base locale « rydar »** : après la recette, base de la refonte refaite comme en R11 (`T2/base.sh` : Flotte Privée
+  « Lambert » par `fp-setup.mjs` et `fp-rides.mjs`, conditions acceptées par le dispatcher de démonstration,
+  identifiants des listes de pages remis à jour par `T2/maj-ids.mjs`) ; visites remises dans l'état d'après la migration
+  (bloc de rattrapage) : 35 lignes (7 comptes super admin ou membres × 5), en pause, jamais ouvertes ; 5 clients, 37
+  comptes, réseau partagé fermé, aucun e-mail en file. Les clients de recette du lot ont disparu avec la
+  réinitialisation. Serveur, relais, app chauffeur et worker arrêtés par PID ; `apps/driver/tsconfig.json` (réécrit par
+  Expo au lancement de l'app web) remis à l'identique.
+- **Écarts** : `TUTORIEL.md` § 13.3 (T2) — notamment pas de « Réduire » sur l'accueil, Tab qui sort de la fenêtre
+  (Radix y boucle), mode ancré seulement si l'élément est dans l'écran, marge de défilement à 0,75rem (celle de `<html>`
+  s'y ajoutait), TE-02 / TE-03 sur un client de recette neuf plutôt que sur le seed.
+- **À savoir pour T3** : la fenêtre passe d'elle-même en mode ancré quand `[data-tour="<id>"]` apparaît (contrôle
+  visible à l'écran, ≥ 640 px ; vérifié par `e2e/t2-09-ancre.mjs` avec un attribut posé dans le navigateur) ;
+  `loadTourChecks` reste à écrire (§ 8) : `stepDone`, les clés de chaque étape et la relecture (`TourChecksSync`) sont
+  en place ; outils réutilisables : `e2e/t2-lib.mjs` (fenêtre, pastille, ligne en base, remise à zéro, menu du compte) et
+  `T2/recette.sh` (TR-09 : y ajouter `refonte/photo/shoot.mjs` et `mesure.mjs`). `pnpm web` (app chauffeur) réécrit
+  `apps/driver/tsconfig.json` : le remettre (`git checkout`) après chaque recette.
+
+### T1 — Base et paquet partagé
 
 - **Livré** : migration `20260924007800_guided_tour.sql` (**pas encore poussée**, modifiable jusqu'au push ; identique
   au § 3) : table `public.user_tours` (utilisateur, parcours, état, étape 0 à 4, première ouverture, première fin ; clé

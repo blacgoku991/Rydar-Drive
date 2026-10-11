@@ -31,10 +31,39 @@ vi.mock("@/components/ui/filter-tabs", async () => await import("../ui/filter-ta
 vi.mock("@/components/shell/sidebar", async () => await import("../shell/sidebar"));
 vi.mock("@/components/shell/skip-to-content", async () => await import("../shell/skip-to-content"));
 vi.mock("@/components/admin/supervision-tabs", async () => await import("./supervision-tabs"));
+// Visite guidée (docs/TUTORIEL.md § 6.11, lot T2) : fournisseur simulé (le moteur a ses propres tests, components/tour) ;
+// il reçoit le départ de la visite, la coquille demande les entrées du menu du compte. Mise en page du super admin :
+// session, compteurs « À traiter » et coquille simulés (lecture de la progression, urgence).
+const tour = vi.hoisted(() => ({
+  boots: [] as unknown[],
+  menuCalls: 0,
+  session: null as any,
+  todo: null as any,
+  shellComponent: null as unknown,
+}));
+vi.mock("@/components/tour/tour-provider", () => ({
+  TourProvider: ({ boot, children }: { boot?: unknown; children?: unknown }) => {
+    tour.boots.push(boot ?? null);
+    return children;
+  },
+  useTourMenu: () => {
+    tour.menuCalls++;
+    return [];
+  },
+}));
+vi.mock("@/lib/auth", () => ({ requireSuperAdmin: async () => tour.session }));
+vi.mock("@/components/admin/platform-data", () => ({ getAdminTodo: async () => tour.todo }));
+vi.mock("@/components/admin/admin-todo", async () => await import("./admin-todo"));
+vi.mock("@/components/shell/admin-shell", () => {
+  const AdminShell = () => null;
+  tour.shellComponent = AdminShell;
+  return { AdminShell };
+});
 
 // Import au chargement du fichier (jamais dans un test : le chargement de Radix et des icônes compterait dans son délai)
 const shell = await import("../shell/admin-shell");
 const supervision = await import("./supervision-tabs");
+const { default: AdminLayout } = await import("../../app/admin/layout");
 
 // ------------------------------------------------------------------------------------------------- 1. Contrôle d'accès
 
@@ -284,5 +313,88 @@ describe("menu du super admin (R2)", () => {
     nav.pathname = "/admin/signalements";
     const html = renderToStaticMarkup(createElement(shell.AdminShell, { user: { name: "Équipe Rydar", email: "admin@rydar.app" }, children: null }));
     expect(anchors(html).filter((a) => a.current).map((a) => a.text)).toEqual(["Signalements de fraude"]);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ 3. Visite guidée
+
+describe("visite guidée du super admin (docs/TUTORIEL.md § 4.2, § 6.11)", () => {
+  type Read = { table: string; columns: string; filters: unknown[][] };
+  const reads: Read[] = [];
+  const sessionWith = (row: unknown, error: unknown = null) => ({
+    user: { id: "sa-1" },
+    profile: { full_name: "Équipe Rydar", email: "admin@rydar.app", is_super_admin: true },
+    memberships: [],
+    supabase: {
+      from(table: string) {
+        const read: Read = { table, columns: "", filters: [] };
+        reads.push(read);
+        const b: any = {
+          select: (columns: string) => ((read.columns = columns), b),
+          eq: (...args: unknown[]) => (read.filters.push(["eq", ...args]), b),
+          maybeSingle: async () => ({ data: row, error }),
+        };
+        return b;
+      },
+    },
+  });
+  const todo = (o: Record<string, number | null> = {}) => ({
+    openReports: 0,
+    declaredPayments: 0,
+    pendingReductions: 0,
+    failedDeletions: 0,
+    newContacts: 0,
+    networkToReview: 0,
+    ...o,
+  });
+  const layout = async (row: unknown, t = todo(), error: unknown = null) => {
+    reads.length = 0;
+    tour.session = sessionWith(row, error);
+    tour.todo = t;
+    // Élément rendu par la mise en page : la coquille (simulée) et ses propriétés
+    const el = (await AdminLayout({ children: null })) as any;
+    expect(el.type).toBe(tour.shellComponent);
+    return el.props.tour;
+  };
+
+  it("jamais vue, rien d'urgent : parcours « super_admin », progression lue pour l'utilisateur et ce parcours seulement", async () => {
+    expect(await layout(null)).toEqual({
+      key: "super_admin",
+      saved: null,
+      blocked: false,
+      urgent: false,
+      scope: { userId: "sa-1", orgId: null, driverId: null },
+    });
+    expect(reads).toEqual([{ table: "user_tours", columns: "status, step, shown_at", filters: [["eq", "user_id", "sa-1"], ["eq", "tour", "super_admin"]] }]);
+  });
+
+  it("signalement de fraude à examiner, ou suppression de compte en échec : ouverture d'office différée", async () => {
+    expect((await layout(null, todo({ openReports: 1 }))).urgent).toBe(true);
+    expect((await layout(null, todo({ failedDeletions: 2 }))).urgent).toBe(true);
+    // Les autres pastilles ne diffèrent rien (paiements, contacts, réseau)
+    expect((await layout(null, todo({ declaredPayments: 3, newContacts: 2, networkToReview: 1 }))).urgent).toBe(false);
+    // Compteur illisible : pas d'urgence inventée
+    expect((await layout(null, todo({ openReports: null }))).urgent).toBe(false);
+  });
+
+  it("progression lue (en pause, étape 3) ; lecture en échec : inconnue (aucune ouverture d'office)", async () => {
+    expect((await layout({ status: "paused", step: 2, shown_at: "2026-10-11T08:00:00Z" })).saved).toEqual({ status: "paused", step: 2, shown: true });
+    expect((await layout(null, todo(), { code: "42P01", message: "relation does not exist" })).saved).toBeUndefined();
+  });
+
+  it("coquille : sans visite, rendu inchangé (fournisseur sans départ) ; menu du compte et réserve de défilement", () => {
+    tour.boots.length = 0;
+    tour.menuCalls = 0;
+    nav.pathname = "/admin";
+    const html = renderToStaticMarkup(createElement(shell.AdminShell, { user: { name: "Équipe Rydar", email: "admin@rydar.app" }, children: null }));
+    expect(tour.boots).toEqual([null]);
+    expect(tour.menuCalls).toBeGreaterThan(0);
+    expect(html).toMatch(/<main id="contenu" tabindex="-1" class="[^"]*pb-\[var\(--tour-reserve,0px\)\]/);
+    const boot = { key: "super_admin" as const, saved: null, blocked: false, urgent: false, scope: { userId: "sa-1", orgId: null, driverId: null } };
+    renderToStaticMarkup(createElement(shell.AdminShell, { user: { name: "Équipe Rydar", email: "admin@rydar.app" }, tour: boot, children: null }));
+    expect(tour.boots.at(-1)).toEqual(boot);
+    // Entrées du menu du compte : passées à la barre latérale (avant « Se déconnecter »)
+    const src = readFileSync(join(WEB, "components", "shell", "admin-shell.tsx"), "utf8");
+    expect(src).toMatch(/const accountItems = useTourMenu\(\);[\s\S]*<Sidebar[\s\S]*accountItems=\{accountItems\}/);
   });
 });

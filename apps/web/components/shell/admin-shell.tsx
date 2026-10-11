@@ -4,6 +4,8 @@ import { SUPERVISION_MATCH } from "@/components/admin/supervision-tabs";
 import { CookieNotice } from "@/components/legal/cookie-notice";
 import { Sidebar, type NavSection } from "@/components/shell/sidebar";
 import { SkipToContent } from "@/components/shell/skip-to-content";
+import type { TourBoot } from "@/components/tour/tour-model";
+import { TourProvider, useTourMenu } from "@/components/tour/tour-provider";
 import { Badge } from "@/components/ui/badge";
 import { signOut } from "@/app/login/actions";
 import { runAction } from "@/lib/run-action";
@@ -114,7 +116,24 @@ export function adminNav(counts: AdminNavCounts = {}, centraleName: string | nul
   ];
 }
 
-export function AdminShell({
+type AdminShellProps = AdminNavCounts & {
+  children: React.ReactNode;
+  user: { name: string; email: string };
+  /** Super admin aussi membre d'une ou plusieurs centrales : lien vers son espace centrale (/dashboard) */
+  centraleName?: string | null;
+  /** Visite guidée du super admin (docs/TUTORIEL.md § 6.11). Absente : aucune visite, rendu inchangé. */
+  tour?: TourBoot | null;
+};
+
+export function AdminShell({ tour, ...props }: AdminShellProps) {
+  return (
+    <TourProvider boot={tour}>
+      <AdminShellBody {...props} />
+    </TourProvider>
+  );
+}
+
+function AdminShellBody({
   children,
   user,
   openReports = 0,
@@ -123,14 +142,11 @@ export function AdminShell({
   contactsToReview = 0,
   networkToReview = 0,
   centraleName = null,
-}: AdminNavCounts & {
-  children: React.ReactNode;
-  user: { name: string; email: string };
-  /** Super admin aussi membre d'une ou plusieurs centrales : lien vers son espace centrale (/dashboard) */
-  centraleName?: string | null;
-}) {
+}: Omit<AdminShellProps, "tour">) {
   const [, start] = useTransition();
   const sections = adminNav({ openReports, platformToReview, deletionsToReview, contactsToReview, networkToReview }, centraleName);
+  // Visite guidée : « Reprendre la visite » / « Revoir la visite » dans le menu du compte
+  const accountItems = useTourMenu();
   return (
     <>
       {/* Premier élément au clavier : saute la barre latérale */}
@@ -148,9 +164,11 @@ export function AdminShell({
             Super admin
           </Badge>
         }
+        accountItems={accountItems}
       />
       <div className="lg:pl-[232px]">
-        <main id="contenu" tabIndex={-1} className="outline-none">
+        {/* Réserve de défilement sous la fenêtre de la visite en repli (--tour-reserve, posée par tour-card.tsx) */}
+        <main id="contenu" tabIndex={-1} className="pb-[var(--tour-reserve,0px)] outline-none">
           {children}
         </main>
       </div>

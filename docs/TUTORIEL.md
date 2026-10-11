@@ -870,7 +870,7 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | Lot | Titre | Dépend de | Statut |
 |---|---|---|---|
 | T1 | Base et paquet partagé | — | fait : commit « Visite guidée (T1) : progression en base (user_tours, save_user_tour) et paquet partagé » (compte rendu : `docs/EN-COURS.md`) |
-| T2 | Moteur de visite et intégration dans la coquille | T1 | à faire |
+| T2 | Moteur de visite et intégration dans la coquille | T1 | fait : commit « Visite guidée (T2) : moteur de visite et intégration dans la coquille » (compte rendu : `docs/EN-COURS.md`) |
 | T3 | Parcours sur les écrans réels (ancres, conditions, textes) et recette | T2 | à faire |
 
 ### T1 — Base et paquet partagé
@@ -1067,6 +1067,58 @@ marqueurs compris), module conforme au § 4.4. Précisions et ajouts :
    demande : rien d'ajouté à la migration.
 5. `docs/RGPD-REGISTRE.md` : la mention couvre les utilisateurs du tableau de bord et du super admin (dispatchers
    compris), avec sa durée (celle du compte).
+
+**T2** (moteur et coquille) : § 4.3, § 6, § 9.2 et § 10 livrés ; données du § 7 recopiées (accueils, étapes, ancres,
+conditions ; textes par `fr()`), contrôlées sur les écrans en T3. Tant que les ancres ne sont pas posées (T3), toutes
+les étapes s'affichent en repli centré. Précisions et écarts :
+
+1. **`tour-model.ts`** : `initialTourState(boot, total)` est la composition de deux fonctions pures, `savedTourState`
+   (état lu en base, fenêtre fermée) et `autostartView(state, { readable, blocked, urgent })` (vue à ouvrir d'office) :
+   le fournisseur part de la base, décide l'ouverture d'office après ~400 ms et la réévalue quand l'acceptation ou
+   l'urgence se lève (§ 5.3) ; la table du § 5.4 est testée sur la composition. `tourReducer(state, event, total)`
+   reçoit le nombre d'étapes (bornes). Ajouts : `TourScope` ; `TourIntent` / `TourRequest` / `TOUR_INTENT_MS` (6 s) :
+   demande de focus et de défilement portée d'un clic (fenêtre, menu du compte) jusqu'à la fenêtre, après un changement
+   de page s'il y en a un, périmée au-delà (une page lente ne vole ni le focus ni le défilement) ; `TOUR_WIDE_MIN`
+   (640), `TOUR_DOCK_GAP` (12, écart au-dessus d'une barre à éviter) ; `srLabel` des boutons (complément de
+   « Y aller »).
+2. **`tour-dom.ts`** : `avoidTop()` devient `avoidBoxes()` (rectangles des `[data-tour-avoid]` visibles, passés à
+   `dockedRect`) ; ajouts : `mainElement`, `viewportSize`, `dockRectNow`, `dockSignature` (vue pleine hauteur et
+   position des barres : le repli est recalculé quand une barre apparaît ou disparaît), `fullHeightView`,
+   `setTourReserve`, `tabbables`, `firstPageTabbable`.
+3. **Clé** : `TourProvider` n'est pas clé (il entoure le corps de la coquille : une clé remonterait toute la page) ; son
+   moteur interne `TourEngine`, frère des enfants, porte la clé `${userId}:${key}` — même effet pour l'état de la
+   visite.
+4. **Conditions** : `stepDone(check, checks)` est livré dès T2 dans `tour-checks.ts` (vrai si une clé lue est vraie,
+   faux si les clés sont lues et fausses, `undefined` sinon) et testé dans `tour-model.test.ts` ; les lectures restent
+   en T3 (`loadTourChecks` rend `{}`). La relecture du § 6.9 est un composant `TourChecksSync`, monté seulement fenêtre
+   dépliée sur une étape d'un parcours qui a des clés : rien n'est lu fenêtre fermée, réduite ou sur l'accueil.
+5. **Fenêtre** : pas de « Réduire » sur l'accueil (« × » y vaut « Plus tard ») : la pastille annonce une étape. Mode
+   ancré seulement si l'élément est aussi dans l'écran (`IntersectionObserver`), sinon repli centré (la fenêtre ne
+   suit pas un élément sorti de l'écran) ; `avoidCollisions` et `sideOffset={12}` en mode ancré seulement (le repli
+   reste en bas) ; hauteur `max-h-[min(32rem,70dvh,var(--radix-popover-content-available-height,70dvh))]` et
+   `overscroll-contain` (jamais coupée en haut quand le repli est remonté au-dessus d'une barre). L'observateur du DOM
+   tourne tant que la fenêtre est dépliée, accueil compris (barres à éviter, vues pleine hauteur) ; l'élément de l'étape
+   n'est cherché que sur une étape. Après « Réduire », le focus va sur la pastille (repère `data-tour-pill=""` pour les
+   scripts, comme `data-tour-card`). Toasts de pause et de fin avec `id: "visite-guidee"` (jamais empilés).
+6. **Clavier** : Radix fait boucler Tab dans `Popover.Content` même non modal (`FocusScope` avec `loop`) : Tab sur le
+   dernier bouton est intercepté et rend le focus au premier élément focalisable de la page (la fenêtre est en fin de
+   document : c'est l'ordre du document), Maj+Tab sur le premier est laissé au navigateur — aucun piège (TE-12). Focus
+   visible du titre (`h2`, `tabIndex=-1`) : soulignement `brand` de 2 px au lieu du contour global, qui le faisait
+   ressembler à un champ. Si un menu ou une fenêtre qui se ferme au même moment laisse le focus sur `<body>`, il revient
+   au titre (60, 250 et 600 ms ; jamais pris à un élément choisi entre-temps).
+7. **Menu du compte** : sur bureau aussi, `onSelect` est différé d'un `requestAnimationFrame` (l'élément de menu Radix
+   s'exécute dans `flushSync` et le menu rend le focus à son bouton en se fermant) ; tiroir : deux, comme prévu.
+8. **`globals.css`** : `scroll-margin-top` et `scroll-margin-bottom` à `0.75rem` (prévu : `5rem` / `1rem`) : `<html>` a
+   déjà `scroll-padding-top: 5rem` et `scroll-padding-bottom: 6rem` (barre du haut), et les deux s'additionnent (une
+   zone arrivait à 160 px du haut au lieu d'environ 90).
+9. **Recette** (hors dépôt, `scratchpad/tutoriel/`) : TE-02 et TE-03 sur un client de recette neuf créé par le super
+   admin (mot de passe provisoire) et son dispatcher ajouté par le gérant (Réglages › Équipe), au lieu du dispatcher du
+   seed et de courses passées en « Annulée » par SQL : aucune donnée du seed modifiée ; TE-09 sur Élite (courses sans
+   chauffeur du seed) et la Flotte Privée de démonstration « Lambert » (réservations à traiter). Complément
+   `t2-09-ancre.mjs` : mode ancré, surlignage et « Y aller » vérifiés avec un attribut `data-tour` posé dans le DOM du
+   navigateur seulement. Critère 17 : `T2/recette.sh` reprend la boucle de `l7/e2e/run-all.sh` en passant
+   `tour-off.sql` après la réinitialisation et après `s1-create` (scripts L7 inchangés). Captures :
+   `captures/t2/` (copie de `T2/captures/`).
 
 ---
 

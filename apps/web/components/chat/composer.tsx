@@ -49,7 +49,7 @@ export function Composer({
   };
 
   return (
-    <div className="border-t border-line bg-ink-900/80 px-3 pb-3 pt-2.5 backdrop-blur sm:px-5">
+    <div data-tour-avoid="" className="border-t border-line bg-ink-900/80 px-3 pb-3 pt-2.5 backdrop-blur sm:px-5">
       {quickReplies.length > 0 && (
         <div className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]" role="group" aria-label="Réponses rapides">
           {quickReplies.map((q) => (

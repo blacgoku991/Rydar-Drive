@@ -1,4 +1,4 @@
-import { PRIVATE_FLEET_OPEN_STATUSES } from "@rydar/shared";
+import { ORG_LEGAL_VERSION, PRIVATE_FLEET_OPEN_STATUSES } from "@rydar/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mise en page du tableau de bord (app/dashboard/layout.tsx), docs/FLOTTE-PRIVEE.md § 7.5 : en Flotte Privée, ni
@@ -13,6 +13,12 @@ const h = vi.hoisted(() => ({
   ctx: null as any,
   calls: [] as string[],
   reads: [] as Read[],
+  /** Conditions acceptées (CGV de l'organisation et CGU de la personne) ; faux : rien d'accepté (écran des CGV) */
+  accepted: false,
+  /** Courses sans chauffeur récentes (organisation standard) */
+  noDriver: 2,
+  /** Visite guidée : ligne de user_tours lue par la mise en page */
+  tour: { data: null, error: null } as { data: unknown; error: unknown },
 }));
 
 const DRIVER = "driver-1";
@@ -28,9 +34,14 @@ const QUEUE_ROWS = [
 ];
 
 function reply(read: Read) {
-  if (read.table === "legal_acceptances") return { data: [], count: null, error: null };
+  if (read.table === "legal_acceptances") {
+    if (!h.accepted) return { data: [], count: null, error: null };
+    // CGV au nom de l'organisation (« version ») ; CGU et politique de confidentialité à titre personnel (« document »)
+    const rows = read.columns === "version" ? [{ version: ORG_LEGAL_VERSION }] : [{ document: "cgu" }, { document: "privacy" }];
+    return { data: rows, count: null, error: null };
+  }
   // Compte brut des courses sans chauffeur (organisation standard)
-  if (read.table === "rides" && read.head) return { data: null, count: 2, error: null };
+  if (read.table === "rides" && read.head) return { data: null, count: h.noDriver, error: null };
   if (read.table === "rides" && read.columns.includes("offers:ride_offers(")) return { data: QUEUE_ROWS, count: null, error: null };
   return { data: null, count: null, error: null };
 }
@@ -48,7 +59,7 @@ const supabase = {
       in: filter("in"),
       is: filter("is"),
       limit: filter("limit"),
-      maybeSingle: async () => ({ data: null, error: null }),
+      maybeSingle: async () => (table === "user_tours" ? h.tour : { data: null, error: null }),
       then: (ok: (v: unknown) => unknown) => Promise.resolve(reply(read)).then(ok),
     };
     return b;
@@ -98,6 +109,9 @@ const queueReads = () => h.reads.filter((r) => r.table === "rides" && r.columns.
 beforeEach(() => {
   h.calls.length = 0;
   h.reads.length = 0;
+  h.accepted = false;
+  h.noDriver = 2;
+  h.tour = { data: null, error: null };
 });
 
 describe("mise en page du tableau de bord", () => {
@@ -144,5 +158,71 @@ describe("mise en page du tableau de bord", () => {
     expect(rawCounts()[0]!.filters).toEqual(expect.arrayContaining([["eq", "organization_id", "org-1"], ["eq", "status", "NO_DRIVER_FOUND"]]));
     expect(el.props.alerts).toBe(2);
     expect(el.props.privateFleet).toBeNull();
+  });
+});
+
+// Visite guidée (docs/TUTORIEL.md § 4.2, § 5.3, § 6.11) : parcours du membre, progression lue pour l'utilisateur et ce
+// parcours seulement, bloquée pendant une acceptation (écran des CGV, bandeau des CGU), différée tant qu'une action
+// urgente est affichée (courses sans chauffeur ; Flotte Privée : réservations à traiter).
+describe("mise en page du tableau de bord : visite guidée", () => {
+  const tourReads = () => h.reads.filter((r) => r.table === "user_tours");
+  const layout = async (ctx: ReturnType<typeof ctxFor>) => {
+    h.ctx = ctx;
+    return ((await DashboardLayout({ children: null })) as any).props.tour;
+  };
+
+  it("gérant d'une flotte dont l'organisation n'a jamais accepté les CGV : bloquée ; lecture filtrée par utilisateur et parcours", async () => {
+    const tour = await layout(ctxFor(false));
+    expect(tour).toEqual({
+      key: "fleet",
+      saved: null,
+      blocked: true,
+      urgent: true,
+      scope: { userId: "u1", orgId: "org-1", driverId: null },
+    });
+    expect(tourReads()).toHaveLength(1);
+    expect(tourReads()[0]!.columns).toBe("status, step, shown_at");
+    expect(tourReads()[0]!.filters).toEqual([["eq", "user_id", "u1"], ["eq", "tour", "fleet"]]);
+  });
+
+  it("conditions acceptées, rien d'urgent : ni bloquée ni différée ; progression lue (étape, première ouverture)", async () => {
+    h.accepted = true;
+    h.noDriver = 0;
+    h.tour = { data: { status: "active", step: 3, shown_at: "2026-10-11T08:00:00Z" }, error: null };
+    const tour = await layout(ctxFor(false));
+    expect(tour).toMatchObject({ key: "fleet", saved: { status: "active", step: 3, shown: true }, blocked: false, urgent: false });
+  });
+
+  it("courses sans chauffeur récentes (alerte rouge de « Courses ») : ouverture d'office différée", async () => {
+    h.accepted = true;
+    expect(await layout(ctxFor(false))).toMatchObject({ blocked: false, urgent: true });
+  });
+
+  it("Flotte Privée : parcours « private_fleet », réservations à traiter → différée, fiche du propriétaire dans la portée", async () => {
+    h.accepted = true;
+    const tour = await layout(ctxFor(true));
+    expect(tour).toMatchObject({ key: "private_fleet", blocked: false, urgent: true, scope: { userId: "u1", orgId: "org-1", driverId: DRIVER } });
+    expect(tourReads()[0]!.filters).toEqual([["eq", "user_id", "u1"], ["eq", "tour", "private_fleet"]]);
+  });
+
+  it("dispatcher : parcours « dispatcher » ; CGU à accepter (bandeau) → bloquée", async () => {
+    const dispatcher = { ...ctxFor(false), role: "dispatcher" };
+    expect(await layout(dispatcher)).toMatchObject({ key: "dispatcher", blocked: true });
+    h.accepted = true;
+    h.noDriver = 0;
+    expect(await layout(dispatcher)).toMatchObject({ key: "dispatcher", blocked: false, urgent: false });
+  });
+
+  it("gérant d'une centrale : parcours « centrale »", async () => {
+    h.accepted = true;
+    h.noDriver = 0;
+    const base = ctxFor(false);
+    expect(await layout({ ...base, org: { ...base.org, dispatch_model: "centrale" } })).toMatchObject({ key: "centrale", blocked: false, urgent: false });
+  });
+
+  it("lecture de la progression en échec : inconnue (aucune ouverture d'office, menu gardé)", async () => {
+    h.accepted = true;
+    h.tour = { data: null, error: { code: "PGRST205", message: "user_tours introuvable" } };
+    expect((await layout(ctxFor(false))).saved).toBeUndefined();
   });
 });

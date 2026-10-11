@@ -7,12 +7,12 @@ import {
 import { ArrowLeftRight, CalendarDays, CarFront, HandCoins, House, Landmark, Waypoints } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Dialog as D } from "radix-ui";
 import { Logo } from "@/components/brand/logo";
 import { LegalLinks } from "@/components/legal/legal-links";
 import {
-  Avatar, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
+  Avatar, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/misc";
 import { cn } from "@/lib/utils";
 import { NavLinkPending, NavProgress } from "./nav-pending";
@@ -50,6 +50,11 @@ export type NavSection = {
   title: string;
   items: NavItem[];
 };
+/**
+ * Entrée du menu du compte, avant « Se déconnecter » (visite guidée : « Reprendre la visite », docs/TUTORIEL.md § 10).
+ * L'icône est fournie par l'appelant.
+ */
+export type SidebarAccountItem = { key: string; label: string; icon: React.ReactNode; onSelect: () => void };
 
 // Rouge : fond plein et texte encre (5,97:1) ; le rouge sur fond rouge pâle tombait à 4,39:1 sur l'entrée active
 const BADGE_TONE: Record<NavBadgeTone, string> = {
@@ -73,6 +78,8 @@ type Props = {
   headerAction?: React.ReactNode;
   /** Ligne sous le nom de l'organisation à la place du rôle (Flotte Privée : sidebarOrgCaption) ; absente : le rôle. */
   orgCaption?: string | null;
+  /** Entrées du menu du compte avant « Se déconnecter », suivies d'un trait (absentes : menu inchangé). */
+  accountItems?: SidebarAccountItem[];
 };
 
 /** Entrée active : adresse exacte (exact), sinon l'adresse ou une sous-page, ou l'un des préfixes de `match`. */
@@ -104,10 +111,18 @@ function OrgSummary({ current, orgCaption }: { current: { name: string; role: st
  * à 1440×900 bandeau ouvert comme à 1366×768, tout le menu est visible sans défiler ; rien ne recouvre une entrée).
  */
 function NavContent({
-  sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, notice, headerAction, orgCaption, onNavigate, drawer = false,
-}: Props & { onNavigate?: (href: string, event: React.MouseEvent) => void; drawer?: boolean }) {
+  sections, subtitle, user, orgs, currentOrgId, onSwitchOrg, signOut, footer, notice, headerAction, orgCaption, accountItems, onNavigate,
+  onAccountItem, drawer = false,
+}: Props & {
+  onNavigate?: (href: string, event: React.MouseEvent) => void;
+  /** Tiroir : ferme le tiroir avant d'appeler l'entrée ; barre fixe : l'entrée directement */
+  onAccountItem?: (item: SidebarAccountItem) => void;
+  drawer?: boolean;
+}) {
   const pathname = usePathname() ?? "";
   const uid = useId();
+  // Entrée du compte choisie : le focus va là où elle le place (fenêtre de la visite), pas au bouton du menu
+  const accountItemChosen = useRef(false);
   const current = orgs?.find((o) => o.id === currentOrgId);
   const home = sections[0]?.items[0]?.href ?? "/";
   return (
@@ -216,7 +231,31 @@ function NavContent({
               <span className="block truncate text-[12px] text-fg-subtle">{user.email}</span>
             </span>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="top" className="w-[220px]">
+          <DropdownMenuContent
+            align="end"
+            side="top"
+            className="w-[220px]"
+            onCloseAutoFocus={(e) => {
+              if (!accountItemChosen.current) return;
+              accountItemChosen.current = false;
+              e.preventDefault();
+            }}
+          >
+            {accountItems?.map((item) => (
+              <DropdownMenuItem
+                key={item.key}
+                onSelect={() => {
+                  accountItemChosen.current = true;
+                  if (onAccountItem) onAccountItem(item);
+                  // Une image plus tard : le menu est alors fermé (son piège à focus ne reprend pas le focus que
+                  // l'entrée place ailleurs, ex. sur le titre de la visite)
+                  else requestAnimationFrame(() => item.onSelect());
+                }}
+              >
+                {item.icon} {item.label}
+              </DropdownMenuItem>
+            ))}
+            {!!accountItems?.length && <DropdownMenuSeparator />}
             <DropdownMenuItem destructive onSelect={() => signOut()}>
               <LogOut /> Se déconnecter
             </DropdownMenuItem>
@@ -244,6 +283,12 @@ export function Sidebar(props: Props) {
     // Ouverture dans un autre onglet (Ctrl, Cmd, Maj, clic du milieu) : cette page ne change pas
     const elsewhere = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0;
     if (!elsewhere && href !== pathname) setPendingHref(href);
+  };
+  // Entrée du menu du compte depuis le tiroir : le tiroir se ferme d'abord, l'entrée agit deux images plus tard (sinon le
+  // tiroir rendrait le focus à son bouton après elle)
+  const accountItemFromDrawer = (item: SidebarAccountItem) => {
+    setOpen(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => item.onSelect()));
   };
   // Mobile : pastille sur le bouton menu quand une entrée a un compteur (messages non lus…)
   const flagged = props.sections.flatMap((s) => s.items).find((i) => !!i.badge);
@@ -275,7 +320,7 @@ export function Sidebar(props: Props) {
               <D.Content className="fixed inset-y-0 left-0 z-50 w-[min(300px,calc(100vw-3rem))] border-r border-line bg-ink-950 data-[state=open]:animate-in data-[state=open]:slide-in-from-left">
                 <D.Title className="sr-only">Navigation</D.Title>
                 <D.Description className="sr-only">Menu principal</D.Description>
-                <NavContent {...props} headerAction={null} onNavigate={navigateFromDrawer} drawer />
+                <NavContent {...props} headerAction={null} onNavigate={navigateFromDrawer} onAccountItem={accountItemFromDrawer} drawer />
               </D.Content>
             </D.Portal>
           </D.Root>

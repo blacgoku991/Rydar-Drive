@@ -658,7 +658,7 @@ function SettlementList({
       </Card>
 
       {picked.length > 0 && (
-        <div className="sticky bottom-4 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] px-4 py-3 shadow-float backdrop-blur-xl">
+        <div data-tour-avoid="" className="sticky bottom-4 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line-strong bg-ink-700/[0.97] px-4 py-3 shadow-float backdrop-blur-xl">
           <p className="text-[13px] text-fg-muted">
             <span className="font-semibold text-fg">{picked.length}</span> sélectionné{picked.length > 1 ? "s" : ""} ·{" "}
             <span className="mono font-semibold text-fg">{pickedAmount}</span>

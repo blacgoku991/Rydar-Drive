@@ -1,4 +1,4 @@
-import { localIsoDay, type SettlementMethod } from "@rydar/shared";
+import { localIsoDay, tourKeyFor, tourSavedFrom, type SettlementMethod, type TourKey } from "@rydar/shared";
 import { networkMenuShown } from "@/components/network-share/access";
 import { networkNavState } from "@/components/network-share/nav";
 import { networkTermsDue, shareOutRequested } from "@/components/network-share/readiness";
@@ -20,9 +20,9 @@ type Ctx = Awaited<ReturnType<typeof requireOrg>>;
 
 /**
  * Lectures communes aux deux espaces : alerte « sans chauffeur » (organisation standard), CGV / accord de traitement,
- * CGU, frais Rydar (flotte).
+ * CGU, frais Rydar (flotte), progression de la visite guidée.
  */
-function commonReads(ctx: Ctx, admin: boolean, centrale: boolean, privateFleet: boolean) {
+function commonReads(ctx: Ctx, admin: boolean, centrale: boolean, privateFleet: boolean, tour: TourKey) {
   return Promise.all([
     // Flotte Privée : alerte « non confirmées » lue avec la file à traiter (countQueue), sans les réservations qu'il a
     // refusées lui-même (aussi NO_DRIVER_FOUND) — jamais ce compte brut
@@ -55,6 +55,8 @@ function commonReads(ctx: Ctx, admin: boolean, centrale: boolean, privateFleet: 
     // Flotte : frais Rydar par course réglés par le super admin (ou historique) → entrée « Frais Rydar » (owner / admin).
     // Le seul booléen (org_platform_fees_enabled) : le compte complet n'est calculé que par le bandeau et la page
     !centrale && admin ? ctx.supabase.rpc("org_platform_fees_enabled", { p_org: ctx.org.id }) : Promise.resolve(null),
+    // Visite guidée (docs/TUTORIEL.md § 4.2) : progression de l'utilisateur pour son parcours (RLS : ses seules lignes)
+    ctx.supabase.from("user_tours").select("status, step, shown_at").eq("user_id", ctx.user.id).eq("tour", tour).maybeSingle(),
   ]);
 }
 
@@ -71,9 +73,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // convention ») — réseau ouvert, ou fermé par Rydar avec des sommes en cours (organisation déjà membre) ; jamais
   // membre et réseau coupé : rien d'autre que l'interrupteur et l'adhésion. En parallèle des autres lectures.
   const network = privateFleet ? Promise.resolve(null) : networkAccess(ctx.supabase, ctx.org.id);
-  const [[{ count }, terms, userTerms, fleetFees], chat, pendingDocs, centraleCounts, centraleSettings, bookingSites, networkInfo, queue, expiringDocuments] =
+  // Visite guidée : parcours du membre dans cet espace (Flotte Privée, dispatcher, centrale ou flotte)
+  const tourKey = tourKeyFor({ privateFleet, model: ctx.org.dispatch_model ?? "fleet", role: ctx.role });
+  const [[{ count }, terms, userTerms, fleetFees, tourRow], chat, pendingDocs, centraleCounts, centraleSettings, bookingSites, networkInfo, queue, expiringDocuments] =
     await Promise.all([
-      commonReads(ctx, admin, centrale, privateFleet),
+      commonReads(ctx, admin, centrale, privateFleet, tourKey),
       // Compteur « Messages » : non-lus de l'utilisateur connecté, tous fils confondus, et messages signalés à traiter
       // (comptages seuls : la liste des fils n'est lue que par la page Messages)
       privateFleet ? Promise.resolve(null) : loadChatCounts(ctx.supabase, ctx.org.id),
@@ -177,6 +181,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
           ? { driverId: ctx.driverId, toTreat: queue?.toTreat ?? 0, notConfirmed: queue?.notConfirmed ?? 0, expiringDocuments: expiringDocuments ?? 0 }
           : null
       }
+      // Visite guidée (docs/TUTORIEL.md § 5.3) : jamais pendant une acceptation (écran des CGV ou bandeau des CGU / CGV) ;
+      // pas d'ouverture d'office tant qu'une action urgente est affichée (courses sans chauffeur, réservations à traiter,
+      // nouvelle convention du réseau partagé)
+      tour={{
+        key: tourKey,
+        saved: tourSavedFrom(tourRow.data, tourRow.error),
+        blocked: gate || termsBanner !== null,
+        urgent: (privateFleet ? (queue?.toTreat ?? 0) : (count ?? 0)) > 0 || !!networkTerms,
+        scope: { userId: ctx.user.id, orgId: ctx.org.id, driverId: ctx.driverId },
+      }}
     >
       {gate ? <OrgTermsGate orgName={ctx.org.name} hasRides={gateHasRides} /> : children}
     </DashboardShell>

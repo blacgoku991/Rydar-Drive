@@ -17,6 +17,8 @@ import { countExpiringDocuments, countQueue } from "@/components/private-fleet/q
 import { dashboardNav, sidebarOrgCaption } from "@/components/shell/dashboard-nav";
 import { Sidebar } from "@/components/shell/sidebar";
 import { SkipToContent } from "@/components/shell/skip-to-content";
+import type { TourBoot } from "@/components/tour/tour-model";
+import { TourProvider, useTourMenu } from "@/components/tour/tour-provider";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/app/login/actions";
 import { switchOrganization } from "@/app/dashboard/actions";
@@ -62,6 +64,11 @@ type ShellProps = {
    * ni réseau. null / absent : organisation standard.
    */
   privateFleet?: PrivateFleetShell | null;
+  /**
+   * Visite guidée (docs/TUTORIEL.md § 6.11) : parcours, progression lue, acceptation en cours, urgence. Absente :
+   * aucune visite, rendu inchangé.
+   */
+  tour?: TourBoot | null;
 };
 
 export type PrivateFleetShell = {
@@ -87,7 +94,9 @@ export function DashboardShell(props: ShellProps) {
   );
   return (
     <RealtimeProvider topic={`org:${org.id}`}>
-      <CentraleProvider value={props.centrale}>{body}</CentraleProvider>
+      <CentraleProvider value={props.centrale}>
+        <TourProvider boot={props.tour}>{body}</TourProvider>
+      </CentraleProvider>
     </RealtimeProvider>
   );
 }
@@ -228,6 +237,8 @@ function ShellBody({
   const router = useRouter();
   const [, start] = useTransition();
   const { unread, openReports } = useChatUnread();
+  // Visite guidée : « Reprendre la visite » / « Revoir la visite » dans le menu du compte (rien pendant une acceptation)
+  const accountItems = useTourMenu();
   const isCentrale = centrale.model === "centrale";
   const counts = useCentraleCounts(org.id, isCentrale, centraleCounts, !privateFleet);
   const privateCounts = usePrivateFleetCounts(org.id, privateFleet);
@@ -322,9 +333,11 @@ function ShellBody({
         }
         signOut={() => start(() => runAction(() => signOut()))}
         notice={<CookieNotice href="/cookies" placement="sidebar" />}
+        accountItems={accountItems}
       />
       <div className="lg:pl-[232px]">
-        <main id="contenu" tabIndex={-1} className="outline-none">
+        {/* Réserve de défilement sous la fenêtre de la visite en repli (--tour-reserve, posée par tour-card.tsx) */}
+        <main id="contenu" tabIndex={-1} className="pb-[var(--tour-reserve,0px)] outline-none">
           {/* Frais plateforme dus à Rydar (owner / admin : centrale, ou flotte avec des frais Rydar) */}
           <OrgPlatformBanner orgId={org.id} timeZone={centrale.timeZone} enabled={isAdmin && (isCentrale || fleetFees)} paths={feePaths} floating={!topBanner} />
           {topBanner}

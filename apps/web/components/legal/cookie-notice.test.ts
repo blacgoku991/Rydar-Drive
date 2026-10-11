@@ -49,6 +49,24 @@ describe("bandeau cookies : emplacement", () => {
     expect(region).toContain('href="/cookies"');
   });
 
+  it("barre latérale avec une entrée de compte (visite guidée, docs/TUTORIEL.md § 10) : bandeau toujours avant le menu du compte", () => {
+    const props = {
+      sections: [{ title: "Opérations", items: [{ href: "/dashboard", label: "En direct", icon: "radar" as const, exact: true }] }],
+      subtitle: "Dispatch",
+      user: { name: "Gérant", email: "gerant@exemple.fr" },
+      signOut: noop,
+      notice: createElement(SidebarNotice, { href: "/cookies", onClose: noop }),
+    };
+    const html = renderToStaticMarkup(
+      createElement(Sidebar, { ...props, accountItems: [{ key: "visite-guidee", label: "Reprendre la visite", icon: null, onSelect: noop }] }),
+    );
+    const notice = html.indexOf('aria-label="Information sur les cookies"');
+    expect(notice).toBeGreaterThan(0);
+    expect(html.indexOf("gerant@exemple.fr")).toBeGreaterThan(notice);
+    // Ajout rétrocompatible : menu fermé, barre identique avec ou sans entrée
+    expect(html).toBe(renderToStaticMarkup(createElement(Sidebar, props)));
+  });
+
   it("pages publiques : sous les dialogues (z-50) et menus (z-[60]), avec une réserve de place en fin de page", () => {
     const html = renderToStaticMarkup(createElement(FloatingNotice, { href: "/cookies", onClose: noop }));
     expect(html).toMatch(/class="fixed [^"]*\bz-40\b/);
