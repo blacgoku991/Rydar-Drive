@@ -1,11 +1,29 @@
 # Travail en cours (11/10/2026)
 
-## Refonte des panneaux : lots R1 à R11 faits, contrôle final et recette (11/10/2026)
+## Refonte des panneaux : lots R1 à R11, revue et contrôle final faits (11/10/2026)
 
 Plan, commits des lots et écarts : `docs/REFONTE-PANELS.md` (§ 8.1, § 8.2). Interface web seulement : aucune
 migration, aucune RPC, garde ou action serveur modifiée (seuls ajouts : `revalidatePath` vers les pages déplacées,
 `fieldErrors` dans des retours en échec, lectures seules pour des résumés), rien dans `apps/driver` ni `apps/worker` ;
 hors `apps/web`, quatre tables de libellés lues par le web seul (`packages/shared/src`).
+
+- **Revue puis contrôle final (après R11)** : revue `6c2ce62` (RV-01 à RV-19 : libellés des frais Rydar alignés sur
+  ceux du client, offre Flotte Privée d'après ses limites effectives, 44 px au toucher sous 640 px, « Retour » puis
+  une action nommée, pastilles rouges lisibles, un seul bouton plein par écran…) et `682aac8` (zones défilantes du
+  super admin : `div role="region"` nommé autour de la liste). Contrôle final : `pnpm typecheck` OK ; `pnpm test`
+  163 fichiers, 1 776 tests ; `TEST_DATABASE_NAME=rydar_test_refonte pnpm test:db` 51 fichiers, 869 tests ;
+  `pnpm build` OK (dossier `.next` vidé) ; recette `l7/e2e/run-all.sh` puis `s10-smoke-standard` : **112 contrôles
+  OK, 0 échec**, trois passes sur base neuve, scripts inchangés (erreurs navigateur relevées : `/favicon.ico` en
+  404, antérieur ; 404 voulus de s2 ; 500 `NETWORK_DISABLED` de l'app, connu).
+  - **Corrigé** : fenêtre « Relancer » des frais Rydar (`admin-account-actions.tsx`) : l'échec de
+    `platformWhatsAppTarget` (réseau coupé, requête interrompue) laissait un rejet non traité (« Failed to fetch »,
+    reproduit dans le navigateur) ; échec traité, option WhatsApp masquée comme avant ; test
+    `admin-account-actions.test.ts` (échoue sur l'ancien code).
+  - **Captures définitives** (hors dépôt, `scratchpad/refonte/final/`, script `shoot-final.mjs`, écritures
+    bloquées) : 721 captures des 5 profils, 187 pages à 1440 et 390 (203 fenêtres) ; **aucun débordement
+    horizontal** ; annexe A tenue sauf `/admin` à 390 : 2 206 px pour ≤ 2 200 (+26 px depuis R11 : cible de 44 px de
+    « Voir les données », RV-06, écart gardé) ; 8 planches avant / après pour le propriétaire dans `final/selection/`.
+    Base de recette du § 9.1 recréée ensuite (« Lambert », conditions acceptées, identifiants de `refonte/photo`).
 
 - **Livré** :
   - coquille : menu entier visible sans défiler (une seule zone défilante, liens légaux compacts), sections « Au
@@ -81,9 +99,7 @@ hors `apps/web`, quatre tables de libellés lues par le web seul (`packages/shar
   courses : », « Courses plus chères : »), Délais et rappels (« Ensuite : ») — les explications du dispatch
   (« Prénom N. (1,2 km) : … ») sont des messages écrits en base, hors périmètre ; fenêtre « Centrale changée dans un
   autre onglet » (`components/shell/dashboard-shell.tsx`) : « centrale » aussi pour une flotte (compte à plusieurs
-  organisations) ; fenêtre « Relancer » des frais Rydar (`admin-account-actions.tsx`) :
-  `platformWhatsAppTarget(…).then` sans `catch`, antérieur à la refonte (réseau coupé : rejet non traité, l'option
-  WhatsApp reste masquée).
+  organisations) ; fenêtre « Relancer » des frais Rydar : corrigée au contrôle final (ci-dessus).
 - **Reste** : décisions du propriétaire (`REFONTE-PANELS.md` § 7 : Agenda des flottes et centrales, « Inscriptions »
   pour les centrales, abonnement pendant l'essai, ligne « Design » de CLAUDE.md) ; puis le tutoriel de première
   connexion (§ 10).

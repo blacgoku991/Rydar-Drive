@@ -500,6 +500,8 @@ dispatcher sans « API & site web » ni « Mini-site » (R1).
 | R9 | Clients : argent, inscriptions, réseau partagé et messages | R8 | fait : `8cfa19d` |
 | R10 | Clients : réglages, API & site web, mini-site | R9 | fait : `b6c8ac5` |
 | R11 | Contrôle final, recette et documentation | R1 à R10 | fait : commit « Refonte des panneaux (R11) : contrôle final, recette et documentation » (compte rendu : `docs/EN-COURS.md`) |
+| Revue | Corrections UX (RV-01 à RV-19) et zones défilantes accessibles | R11 | fait : `6c2ce62`, `682aac8` |
+| Contrôle final | Contrôles, recette Flotte Privée, captures définitives, correction de « Relancer » | Revue | fait : commit « Refonte des panneaux : contrôle final après la revue » (compte rendu : `docs/EN-COURS.md`) |
 
 Écarts entre le plan et le code livré : § 8.2. Aucun lot n'a touché `supabase/`, `apps/driver/` ni `apps/worker/` ;
 hors `apps/web`, seuls les libellés permis par le § 1.1 ont changé dans `packages/shared/src` (`RIDE_FILTERS`,
@@ -559,6 +561,10 @@ action, ni ne touche le SQL ou l'app chauffeur.
 - **R11** : `primitives.test.ts` adapté au retrait d'`eyebrow`, sans cas retiré (absence de sur-titre vérifiée sur le
   composant et par un parcours des écrans qui l'utilisent ; lien de retour du relevé par `back`) ; adaptations des lots
   reportées dans les scripts de recette de `scratchpad/l7/e2e` (s2, s3, s6b, s7b), hors dépôt.
+- **Contrôle final** (après la revue) : fenêtre « Relancer » des frais Rydar (`admin-account-actions.tsx`, observation
+  de R11) : échec de la recherche du destinataire WhatsApp traité (`.catch`), test `admin-account-actions.test.ts` ;
+  `/admin` à 390 : 2 206 px pour une cible ≤ 2 200 (annexe A), +26 px venus de la cible de 44 px de « Voir les
+  données » (RV-06), écart gardé ; scripts de recette inchangés.
 
 ---
 
@@ -1451,7 +1457,8 @@ définitifs, blocs « À traiter » (super admin, En direct, Flotte Privée), an
 ## Annexe A — Mesures avant et cibles
 
 Hauteurs en pixels CSS (`scrollHeight`), base de recette du § 9.1. « Avant » : captures de `refonte/avant/` (390 :
-hauteur d'image ÷ 2). Mesures « après » (R11, même base) : `docs/EN-COURS.md`, toutes les cibles atteintes.
+hauteur d'image ÷ 2). Mesures « après » (R11, même base) : `docs/EN-COURS.md`, toutes les cibles atteintes ; après la
+revue, `/admin` à 390 mesure 2 206 px (écart gardé, § 8.2).
 
 | Page | Profil | Largeur | Avant | Cible | Lot |
 |---|---|---|---|---|---|

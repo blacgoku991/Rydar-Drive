@@ -288,11 +288,14 @@ function RemindDialog({
     setViaWhatsApp(false);
     let live = true;
     // Relance WhatsApp possible ? (numéro de Rydar relié, téléphone du propriétaire ou de l'organisation, pas de refus)
-    void platformWhatsAppTarget(orgId).then((t) => {
-      if (!live) return;
-      setWa(t);
-      setViaWhatsApp(!!t?.ready && !!t.to_display);
-    });
+    // Échec (réseau coupé, requête interrompue en quittant la page) : option WhatsApp masquée, sans rejet non traité
+    void platformWhatsAppTarget(orgId)
+      .catch(() => null)
+      .then((t) => {
+        if (!live) return;
+        setWa(t);
+        setViaWhatsApp(!!t?.ready && !!t.to_display);
+      });
     return () => {
       live = false;
     };
