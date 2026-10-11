@@ -10,7 +10,7 @@
 import { Compass } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Popover as P } from "radix-ui";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { stepDone, type TourChecks } from "./tour-checks";
 import type { TourDef } from "./tour-content";
 import {
@@ -131,8 +131,10 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     const signature = dockSignature();
     setLayout((s) => (s === signature ? s : signature));
   }, [expanded, anchorId]);
-  // Changement d'étape ou d'adresse : recherche immédiate ; puis à chaque changement du DOM (regroupé), fenêtre dépliée
-  useEffect(() => {
+  // Changement d'étape ou d'adresse : recherche immédiate ; puis à chaque changement du DOM (regroupé), fenêtre dépliée.
+  // Avant l'affichage (layout effect) : après un changement de page, jamais un rendu avec l'élément de la page quittée
+  // (« Y aller » montré un instant au lieu de « Ouvrir … », recette T3)
+  useLayoutEffect(() => {
     refresh();
     if (!expanded) return;
     let timer = 0;

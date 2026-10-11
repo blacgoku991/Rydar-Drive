@@ -186,7 +186,7 @@ export const TOURS: Record<TourKey, TourDef> = {
       step({
         id: "ce-ride",
         title: "Votre première course",
-        text: "« Nouvelle course » : elle est proposée aux chauffeurs proches. Après la course, confirmez la commission reçue dans Encaissements.",
+        text: "« Nouvelle course » : elle est proposée aux chauffeurs proches. Après la course, confirmez le paiement reçu dans Encaissements.",
         href: "/dashboard",
         linkLabel: "Ouvrir En direct",
         anchor: { id: "live-new-ride", kind: "control", side: "right", align: "start" },
@@ -227,7 +227,7 @@ export const TOURS: Record<TourKey, TourDef> = {
       step({
         id: "di-messages",
         title: "Messages",
-        text: "Écrivez à un chauffeur ou à toute la flotte. Les messages signalés par les chauffeurs se modèrent ici.",
+        text: "Écrivez à un chauffeur ou à toute la flotte. Les messages à modérer, dont vos chauffeurs demandent le retrait, se traitent ici.",
         href: "/dashboard/messages",
         linkLabel: "Ouvrir Messages",
         anchor: { id: "messages-threads", kind: "zone" },
@@ -249,7 +249,7 @@ export const TOURS: Record<TourKey, TourDef> = {
       step({
         id: "fp-first-steps",
         title: "Vos premiers pas",
-        text: "Cette liste montre ce qui reste à faire : entreprise, tarifs, documents, application, site. Chaque ligne mène au bon écran ; la liste disparaît quand tout est fait.",
+        text: "Cette liste montre ce qui reste à faire : entreprise, tarifs, documents, application, site. Chaque ligne dit quoi faire et où ; la liste disparaît quand tout est fait.",
         href: "/dashboard",
         linkLabel: "Ouvrir Accueil",
         anchor: { id: "fp-first-steps", kind: "zone" },

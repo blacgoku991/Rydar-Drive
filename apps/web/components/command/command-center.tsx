@@ -580,7 +580,7 @@ export function CommandCenter({
       </div>
 
       {/* Panneau courses (gauche) */}
-      <aside className="z-10 flex min-h-0 flex-1 flex-col bg-ink-850 lg:glass lg:absolute lg:bottom-3 lg:left-3 lg:top-3 lg:w-[392px] lg:flex-none lg:rounded-2xl">
+      <aside data-tour="live-panel" className="z-10 flex min-h-0 flex-1 flex-col bg-ink-850 lg:glass lg:absolute lg:bottom-3 lg:left-3 lg:top-3 lg:w-[392px] lg:flex-none lg:rounded-2xl">
         <div className="space-y-1.5 border-b border-white/[0.05] px-4 py-3">
           <div className="flex items-center gap-3">
             <span className="relative grid size-2 place-items-center">
@@ -594,7 +594,7 @@ export function CommandCenter({
                 <span className="text-[12px] text-fg-subtle">· {realtime === "live" ? "temps réel" : "synchronisation"}</span>
               </p>
             </div>
-            <Button variant="primary" size="sm" onClick={() => setNewRideOpen(true)}>
+            <Button variant="primary" size="sm" data-tour="live-new-ride" onClick={() => setNewRideOpen(true)}>
               <Plus /> Nouvelle course
             </Button>
           </div>

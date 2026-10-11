@@ -84,7 +84,7 @@ export function DispatchJournal({ initial, timeZone, rideNumbers }: { initial: J
   const live = status === "live" && !paused;
   let lastDay = "";
   return (
-    <div className="surface overflow-hidden rounded-xl">
+    <div data-tour="dispatch-journal" className="surface overflow-hidden rounded-xl">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
         <span
           className={cn(

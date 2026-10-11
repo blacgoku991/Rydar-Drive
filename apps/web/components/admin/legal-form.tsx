@@ -93,7 +93,7 @@ export function LegalInfoForm({ initial }: { initial: Values }) {
 
   return (
     <form onSubmit={submitWith(save)} className="space-y-6">
-      <Card>
+      <Card data-tour="sa-legal-editor">
         <CardHeader icon={<Building2 />} title="Éditeur" description="Mentions légales (LCEN), contact pour les données personnelles, CGU et CGV." />
         <CardBody>{fields(EDITOR)}</CardBody>
       </Card>

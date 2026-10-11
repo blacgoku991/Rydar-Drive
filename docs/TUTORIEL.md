@@ -1,6 +1,6 @@
 # Visite guidée de première connexion (tutoriel web)
 
-> **Statut : conception, prête pour les lots T1 à T3** (§ 12). Rédigée le 11/10/2026 sur `claude/confident-clarke-rpfwmo`
+> **Statut : livré, lots T1 à T3 faits** (§ 12.1, § 13.3). Rédigée le 11/10/2026 sur `claude/confident-clarke-rpfwmo`
 > (HEAD `a104a75`, refonte des panneaux livrée), à partir du § 10 de `docs/REFONTE-PANELS.md` (cahier des charges), des
 > choix du propriétaire (§ 1.1) et d'une relecture du code : coquille (`apps/web/components/shell`), menu du compte
 > (`sidebar.tsx`), mises en page `app/dashboard/layout.tsx` et `app/admin/layout.tsx`, écrans d'acceptation
@@ -661,7 +661,7 @@ pouvez arrêter à tout moment : la visite se reprend depuis votre nom, en bas d
 | 2 | `ce-pricing` | Vos tarifs | Votre grille calcule le prix de chaque course. En centrale, le prix est obligatoire : le chauffeur voit sa part avant d'accepter. [`PRICE_REQUIRED`] | `/dashboard/settings?tab=pricing` | Ouvrir Tarifs | `pricing-grid` (zone) | `pricing` |
 | 3 | `ce-commission` | Votre commission | Votre part de chaque course, et comment vos chauffeurs vous la règlent : lien de paiement, virement ou espèces. [`centrale-settings-form.tsx`] | `/dashboard/settings?tab=centrale` | Ouvrir la commission | `centrale-commission` (zone) | `settlement` |
 | 4 | `ce-drivers` | Vos chauffeurs | Créez votre lien d'inscription et partagez-le : les candidatures arrivent ici. Vous pouvez aussi ajouter un chauffeur depuis Chauffeurs. [`join-link-card.tsx`] | `/dashboard/network` | Ouvrir le lien d'inscription | `join-link` (zone) | `drivers` ou `join_link` |
-| 5 | `ce-ride` | Votre première course | « Nouvelle course » : elle est proposée aux chauffeurs proches. Après la course, confirmez la commission reçue dans Encaissements. | `/dashboard` | Ouvrir En direct | `live-new-ride` (contrôle, droite, début) | `first_ride` |
+| 5 | `ce-ride` | Votre première course | « Nouvelle course » : elle est proposée aux chauffeurs proches. Après la course, confirmez le paiement reçu dans Encaissements. [« Reçu », « Paiement reçu » ; texte ajusté en T3, § 13.3] | `/dashboard` | Ouvrir En direct | `live-new-ride` (contrôle, droite, début) | `first_ride` |
 
 ### 7.5 Dispatcher (`dispatcher`, flotte ou centrale)
 
@@ -673,7 +673,7 @@ moment : la visite se reprend depuis votre nom, en bas du menu. »
 | 1 | `di-live` | En direct | La carte montre vos chauffeurs, le panneau les courses du jour. L'onglet « À traiter » signale les retards et les courses sans chauffeur. [onglets « En cours, À venir, À traiter, Chauffeurs »] | `/dashboard` | Ouvrir En direct | `live-panel` (zone) | — |
 | 2 | `di-new` | Créer une course | « Nouvelle course », ou la touche N : la course est proposée aux chauffeurs proches, de plus en plus loin si personne n'accepte. [raccourci N ; vagues 4 → 8 → 12 → 16 km] | `/dashboard` | Ouvrir En direct | `live-new-ride` (contrôle, droite, début) | `my_ride` |
 | 3 | `di-assign` | Attribuer une course | Le filtre « Sans chauffeur » liste les courses que personne n'a acceptées : ouvrez-en une, puis « Attribuer ». Le chauffeur choisi est prévenu tout de suite. [`RIDE_FILTERS.no_driver`, `ride-actions.tsx`] | `/dashboard/rides?filter=no_driver` | Ouvrir Courses | `rides-filters` (zone) | `my_ride_assigned` |
-| 4 | `di-messages` | Messages | Écrivez à un chauffeur ou à toute la flotte. Les messages signalés par les chauffeurs se modèrent ici. [modération ouverte au dispatcher, 004100] | `/dashboard/messages` | Ouvrir Messages | `messages-threads` (zone) | — |
+| 4 | `di-messages` | Messages | Écrivez à un chauffeur ou à toute la flotte. Les messages à modérer, dont vos chauffeurs demandent le retrait, se traitent ici. [modération ouverte au dispatcher, 004100 ; texte ajusté en T3, § 13.3] | `/dashboard/messages` | Ouvrir Messages | `messages-threads` (zone) | — |
 | 5 | `di-journal` | Journal du dispatch | Pour chaque course : chauffeurs prévenus, refus, attributions. Les réglages sont en lecture seule pour vous : demandez au propriétaire ou à un administrateur. [« Lecture seule » des Réglages] | `/dashboard/dispatch` | Ouvrir Journal du dispatch | `dispatch-journal` (zone) | — |
 
 ### 7.6 Flotte Privée (`private_fleet`)
@@ -687,7 +687,7 @@ réservations. Vous pouvez arrêter à tout moment : la visite se reprend depuis
 
 | # | Id | Titre | Texte | Écran | Lien | Ancre | Condition |
 |---|---|---|---|---|---|---|---|
-| 1 | `fp-first-steps` | Vos premiers pas | Cette liste montre ce qui reste à faire : entreprise, tarifs, documents, application, site. Chaque ligne mène au bon écran ; la liste disparaît quand tout est fait. [`FirstStepsCard`, masquée une fois complète] | `/dashboard` | Ouvrir Accueil | `fp-first-steps` (zone) | — |
+| 1 | `fp-first-steps` | Vos premiers pas | Cette liste montre ce qui reste à faire : entreprise, tarifs, documents, application, site. Chaque ligne dit quoi faire et où ; la liste disparaît quand tout est fait. [`FirstStepsCard`, masquée une fois complète ; texte ajusté en T3, § 13.3] | `/dashboard` | Ouvrir Accueil | `fp-first-steps` (zone) | — |
 | 2 | `fp-confirm` | Confirmer une réservation | Les réservations de votre site arrivent dans « À traiter ». « Je la prends » la confirme, avant l'heure indiquée. Dans l'application : « Confirmer ». [`ToTreat`, « Réponse avant… »] | `/dashboard` | Ouvrir Accueil | `fp-to-treat` (zone) | `fp_taken` |
 | 3 | `fp-delays` | Délais et rappels | Le temps que vous avez pour confirmer une réservation, et les rappels avant chaque course. Sans réponse à temps, elle passe « Non confirmée ». [`private-booking-settings.tsx`] | `/dashboard/settings?tab=bookings` | Ouvrir Délais et rappels | `fp-booking-settings` (zone) | — |
 | 4 | `fp-agenda` | Votre agenda | Vos réservations par jour, semaine ou mois. Un client vous appelle ? Ajoutez sa réservation avec « Nouvelle réservation (téléphone) ». [`agenda/page.tsx`] | `/dashboard/agenda` | Ouvrir Agenda | `agenda-views` (contrôle, bas, fin) | — |
@@ -871,7 +871,7 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 |---|---|---|---|
 | T1 | Base et paquet partagé | — | fait : commit « Visite guidée (T1) : progression en base (user_tours, save_user_tour) et paquet partagé » (compte rendu : `docs/EN-COURS.md`) |
 | T2 | Moteur de visite et intégration dans la coquille | T1 | fait : commit « Visite guidée (T2) : moteur de visite et intégration dans la coquille » (compte rendu : `docs/EN-COURS.md`) |
-| T3 | Parcours sur les écrans réels (ancres, conditions, textes) et recette | T2 | à faire |
+| T3 | Parcours sur les écrans réels (ancres, conditions, textes) et recette | T2 | fait : commit « Visite guidée (T3) : parcours sur les écrans réels, conditions de réussite et recette » (compte rendu : `docs/EN-COURS.md`) |
 
 ### T1 — Base et paquet partagé
 
@@ -1119,6 +1119,77 @@ les étapes s'affichent en repli centré. Précisions et écarts :
    navigateur seulement. Critère 17 : `T2/recette.sh` reprend la boucle de `l7/e2e/run-all.sh` en passant
    `tour-off.sql` après la réinitialisation et après `s1-create` (scripts L7 inchangés). Captures :
    `captures/t2/` (copie de `T2/captures/`).
+
+**T3** (parcours sur les écrans réels) : 21 ancres du § 9.1 posées, lectures du § 8 dans `loadTourChecks`, chaque étape
+des 5 parcours vérifiée sur l'écran réel (recette TR-01 à TR-10, hors dépôt). Précisions et écarts :
+
+1. **Ancres** : posées par un script qui contrôle chaque ligne visée avant d'écrire
+   (`scratchpad/tutoriel/T3/pose-ancres.mjs`) ; lignes du § 9.1 inchangées, sauf l'attribut conditionnel de
+   `PlanEditor`, seul sur sa ligne (575) dans le `<Button>` ouvert ligne 571. `git diff` des 19 fichiers : 21 lignes
+   `data-tour` (20 modifiées, 1 ajoutée), rien d'autre. Retirer `data-tour="team-add-member"`, puis la ligne de
+   `sa-new-plan`, fait échouer 3 tests de `tour-content.test.ts` (essayé, fichiers remis à l'identique).
+2. **`tour-content.test.ts`** (17 tests) : règles du § 7.1 ; lexique du § 7.1 complété par des formulations que la
+   refonte a retirées de l'écran (« messages signalés », « commission reçue », « identité de la centrale », « relancer
+   le dispatch », « timeline », « MRR », « annuler la dette ») ; ancres (une fois et une seule dans `apps/web/app` et
+   `apps/web/components`, tests exclus ; aucune ancre orpheline ; fichier du § 9.1 ; côté et alignement pour les seuls
+   contrôles) ; adresses (page existante ; `tab` parmi les onglets des Réglages du profil, lus dans
+   `app/dashboard/settings/page.tsx` ; `filter` dans `RIDE_FILTERS` ; pages du menu du profil, `dashboardNav` et menu du
+   super admin lu dans `admin-shell.tsx` ; Flotte Privée jamais vers une page masquée ni redirigée ; « Ouvrir X » =
+   libellé d'une entrée de menu ou d'un onglet qui mène à cet écran). Non contrôlé : « une ou deux phrases » — trois
+   textes du plan en ont trois (`sa-daily`, `fp-confirm`, `fp-agenda`) ; faits justes, gardés.
+3. **Conditions (§ 8)** : `settlementReady` suit `private.settlement_methods_available` (003800) : virement utilisable
+   avec un IBAN **ou** des consignes (prévu : IBAN seul), comme ce que l'application propose au chauffeur.
+   `loadTourChecks` : clés dédoublonnées, lues en parallèle ; une clé qui demande l'organisation, l'utilisateur ou la
+   fiche chauffeur absents n'est pas lue ; erreur, nombre absent, exception ou promesse rejetée → clé absente.
+   `legal_editor` passe par `adminLegalTodo` (`components/admin/admin-todo.ts`), qui importe `@/lib/wording` : les tests
+   du projet `unit` (sans alias `@/`) simulent ce module (`vi.mock` dans `tour-model.test.ts` et `tour-checks.test.ts`).
+   `billingConfigured` = règle de `BillingCard` (`admin-billing.tsx`, contrat vérifié par le test).
+   `tour-checks.test.ts` (22 tests) : règles pures, chaque lecture (table, colonnes, filtres, comptage `head`), seuils,
+   erreurs, clés lues par parcours ; 10 mutations de `tour-checks.ts`, toutes détectées.
+4. **Moteur** (corrections révélées par la recette, dans `components/tour`) :
+   - `TourChecksSync` relit aussi après un clic sur un bouton ou un élément de menu de la page (hors fenêtre et
+     pastille), 1,5 s puis 5 s après, comme après un envoi de formulaire (les deux minuteries repartent à chaque
+     événement) : des actions d'étape ne sont pas des formulaires (« Enregistrer » de la commission, « Créer le lien
+     d'inscription », « Je la prends », « Attribuer la course ») et « C'est fait. » n'arrivait qu'avec la relecture de
+     secours, jusqu'à 30 s (§ 6.9 : formulaires seulement).
+   - `tour-card.tsx` : recherche de l'élément et observateur en `useLayoutEffect` (avant l'affichage) : après un
+     changement de page côté client, la fenêtre se rendait une image avec l'élément de la page quittée (« Y aller »
+     montré un instant au lieu de « Ouvrir … ») ; vu par une sonde `MutationObserver` pendant la recette.
+5. **Textes ajustés** (§ 7 mis à jour ; les autres vérifiés à l'écran, inchangés) :
+   - `ce-ride` : « confirmez la commission reçue » → « confirmez le paiement reçu » (Encaissements : « Reçu »,
+     « Paiement reçu » ; « commission reçue » n'est plus à l'écran) ;
+   - `di-messages` : « Les messages signalés par les chauffeurs se modèrent ici » → « Les messages à modérer, dont vos
+     chauffeurs demandent le retrait, se traitent ici » (bandeau « Messages à modérer » : « Vos chauffeurs demandent
+     leur retrait ») ;
+   - `fp-first-steps` : « Chaque ligne mène au bon écran » → « Chaque ligne dit quoi faire et où » (la ligne
+     « Application utilisée » de « Premiers pas » n'est pas un lien).
+   Gardé : `fp-agenda` « par jour, semaine ou mois » (l'agenda a aussi « Liste » : exact, non exhaustif).
+6. **Recette** (hors dépôt, `scratchpad/tutoriel/e2e/t3-*.mjs`, `t3-run-all.sh`) : clients de recette neufs à chaque
+   passe (flotte créée par le super admin, son dispatcher ajouté par le gérant, centrale et Flotte Privée) ; aucune
+   donnée du seed modifiée, sauf, pour le super admin : éditeur, coordonnées de Rydar et offres actives vidés par SQL
+   puis ressaisis par l'écran (valeurs d'origine) ; « Clients » déjà fait (seed) : comptage intercepté dans le
+   navigateur (`content-range: */0`) pour voir « Ouvrir Clients », levé à la création. Ouverture d'office différée
+   (signalement ouvert, réservation à traiter) : visite ouverte par le menu du compte. Dispatcher : délais de dispatch
+   courts sur le client de recette (SQL) et worker lancé le temps du scénario, pour une course « sans chauffeur » à
+   attribuer. Flotte Privée : clé serveur créée par le super admin, réservation par l'API. Contour du surlignage rogné
+   sur Messages (parent `overflow-hidden`, prévu au § 6.4).
+7. **Non-régression (TR-09)** : scripts existants adaptés (copies `.avant-t3` gardées) : `l7/e2e/run-all.sh`
+   (`tour-off.sql` après la réinitialisation et après `s1-create`) ; `refonte/photo/shoot.mjs` et sa copie de fin de
+   refonte `refonte/final/shoot-final.mjs` (`tour-off.sql` au départ ; `OUT` pour `shoot.mjs`) ;
+   `refonte/controle/mesure.mjs` (`tour-off.sql` au départ ; `MESURE_PAGES`, `MESURE_OUT`). Enchaînement :
+   `T3/recette.sh` (run-all puis s10), `T3/base.sh` (base de la refonte), `T3/photo.sh` (captures et mesures des
+   5 profils), `T3/compare.mjs` (comparaison avec la fin de la refonte, `refonte/final/logs` et
+   `refonte/controle/mesure-<rôle>-r11.json`). Résultats : recette L7 et s10, **112 contrôles OK, 0 échec**, mêmes
+   contrôles qu'à la fin de la refonte ; captures, **721** comme la référence : mêmes pages (187 × 2 largeurs), mêmes
+   statuts et redirections, mêmes 203 fenêtres et 113 onglets, aucun débordement ; les 46 vues des écrans des étapes
+   (23 écrans × 2 largeurs) ont la hauteur et la largeur de la référence ; 19 vues sur 374 changent de hauteur, toutes
+   des listes ou des fiches qui dépendent des données du jour (notifications, journal du worker, courses planifiées,
+   règlements, relevé Rydar, fiche ouverte par le premier lien) ; mesures, « tout est conforme » pour les 5 profils
+   (402 mesures comme en R11, barre et tiroir identiques, annexe A tenue avec les valeurs de fin de refonte, `/admin` à
+   390 : 2 206 px, écart connu). Erreur navigateur nouvelle, antérieure au lot : React #418 sur Statistiques (flotte
+   et dispatcher) — le serveur écrit « 34,0 k € », le navigateur « 34 k € » (`formatCompactPrice`,
+   `packages/shared/src/format.ts`, inchangé depuis la refonte : ICU de Node 22 ≠ Chromium quand le montant arrondi
+   finit par « ,0 » ; « 29,6 k € » lors de la référence) ; signalée, hors du lot.
 
 ---
 

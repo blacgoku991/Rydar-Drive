@@ -265,7 +265,7 @@ export function PricingEditor({
 
   return (
     <form onSubmit={submitWith(() => save())} noValidate className="space-y-6">
-      <Card>
+      <Card data-tour="pricing-grid">
         {/* Montants TTC : le mini-site affiche ce prix aux particuliers comme « Prix TTC » (C. conso. L112-1) */}
         <CardHeader
           title="Grille tarifaire"

@@ -53,7 +53,7 @@ function BookingLine({ booking, timeZone, now, withDate = true }: { booking: Boo
 function ToTreat({ data, now }: { data: PrivateHomeData; now: number }) {
   const tz = data.timeZone;
   return (
-    <Card>
+    <Card data-tour="fp-to-treat">
       <CardHeader
         title="À traiter"
         description={`Réservations à confirmer, à vérifier ou non confirmées${NB}: vous seul décidez.`}
@@ -202,7 +202,7 @@ function FirstStepsCard({ data }: { data: PrivateHomeData }) {
   if (!data.firstSteps) return null;
   const done = data.firstSteps.filter((s) => s.done).length;
   return (
-    <Card>
+    <Card data-tour="fp-first-steps">
       <CardHeader title="Premiers pas" description={`${done}${NB}/${NB}${data.firstSteps.length} étapes terminées`} />
       <ul className="divide-y divide-line">
         {data.firstSteps.map((s) => {

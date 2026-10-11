@@ -460,6 +460,9 @@ entrées du menu Flotte Privée (§ 7.2 de la spécification).
 4. **CLAUDE.md** : la refonte n'y touche pas ; après R11, une ligne « Design » pourrait renvoyer à ce document (texte à
    valider par le propriétaire).
 5. **Tutoriel** (§ 10) : déclenchement, mémoire de la progression (base ou stockage local), place de l'app chauffeur.
+   **Réalisé** (11/10/2026, hors refonte) : choix tranchés au § 1.1 de `docs/TUTORIEL.md` (première connexion et à la
+   demande, progression en base, web seulement) ; visite livrée par les lots T1 à T3 (statuts au § 12.1 du même
+   document).
 
 Décisions prises par la direction de la refonte, réversibles en une ligne : onglet « Organisation » ouvert par défaut
 dans Réglages (R10) ; « Annuler » retiré des cartes de l'accueil Flotte Privée (R8, spec mise à jour) ; menu du
@@ -1401,6 +1404,10 @@ sélecteur (annexe C) et les relance ; R11 relance tout. Chromium : `executableP
 ---
 
 ## 10. Tutoriel de première connexion (phase suivante, hors refonte)
+
+> **Réalisé** (11/10/2026, hors refonte) : conception, choix du propriétaire (§ 10.3 tranché) et livraison dans
+> `docs/TUTORIEL.md` — lots T1 à T3 faits (statuts au § 12.1, écarts au § 13.3, compte rendu dans `docs/EN-COURS.md`).
+> Le cahier des charges ci-dessous est gardé tel qu'il a servi.
 
 Rien de ce qui suit n'est fait dans les lots R1 à R11. La refonte en prépare le terrain : lexique stable (§ 4), menus
 définitifs, blocs « À traiter » (super admin, En direct, Flotte Privée), ancres de section (`#a-traiter`,

@@ -46,7 +46,7 @@ export function NewClientButton({
 
   return (
     <>
-      <Button variant="primary" onClick={() => setChoosing(true)}>
+      <Button variant="primary" data-tour="sa-new-client" onClick={() => setChoosing(true)}>
         <Plus /> Nouveau client
       </Button>
       <Dialog open={choosing} onOpenChange={setChoosing}>

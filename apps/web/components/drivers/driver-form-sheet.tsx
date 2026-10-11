@@ -67,7 +67,7 @@ export function DriverFormSheet() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button variant="primary" onClick={() => setOpen(true)}>
+      <Button variant="primary" data-tour="drivers-add" onClick={() => setOpen(true)}>
         <UserPlus /> Ajouter un chauffeur
       </Button>
       <SheetContent title="Nouveau chauffeur" description="Le chauffeur se connecte à l'application avec les identifiants que vous lui transmettez.">

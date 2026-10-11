@@ -64,7 +64,7 @@ export default async function SitePage() {
         description={`Votre site de réservation, relié par l'équipe Rydar${NB}: chaque réservation arrive ici et dans votre application.`}
       />
       <PageBody className="space-y-6">
-        <Card>
+        <Card data-tour="fp-site-status">
           <CardBody className="flex flex-col gap-4 sm:flex-row sm:items-center">
             {/* Téléphone : l'icône laisse la place à l'état (pastille de couleur) */}
             <span aria-hidden className="hidden size-11 shrink-0 place-items-center rounded-xl bg-white/[0.04] text-fg-muted sm:grid">

@@ -55,7 +55,7 @@ export function BillingCard({ billing }: { billing: Billing }) {
   const configured = !!(billing.iban || billing.payment_link);
   const example = settlementPaymentLink(billing.payment_link, EXAMPLE_CENTS, EXAMPLE_REF);
   return (
-    <Card>
+    <Card data-tour="sa-billing">
       <CardHeader
         title="Coordonnées de paiement de Rydar"
         icon={<Landmark />}

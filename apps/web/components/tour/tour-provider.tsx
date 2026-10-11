@@ -166,9 +166,9 @@ function TourEngine({ boot, onMenu }: { boot: TourBoot; onMenu: (menu: TourMenu)
 
 /**
  * Relecture des conditions de réussite (§ 6.9), montée seulement fenêtre dépliée sur une étape : à l'ouverture, à
- * chaque changement d'étape, d'adresse ou d'organisation ; après tout envoi de formulaire dans la page (1,5 s puis 5 s
- * après) ; sur les événements des courses et des chauffeurs (tableau de bord) ; en secours, par useLiveSync. Onglet
- * caché : rien.
+ * chaque changement d'étape, d'adresse ou d'organisation ; après tout envoi de formulaire ou clic sur un bouton de la
+ * page (1,5 s puis 5 s après) ; sur les événements des courses et des chauffeurs (tableau de bord) ; en secours, par
+ * useLiveSync. Onglet caché : rien.
  */
 function TourChecksSync({
   keys,
@@ -194,23 +194,29 @@ function TourChecksSync({
   useEffect(() => {
     reload();
   }, [reload, step, location]);
+  // Après un enregistrement dans la page : relecture 1,5 s puis 5 s après (regroupée : une rafale ne relit qu'une fois
+  // par délai). Envoi de formulaire (submitWith) ou clic sur un bouton de la page, hors de la visite : plusieurs actions
+  // des étapes sont des boutons sans formulaire (« Enregistrer » de la commission, « Créer le lien d'inscription »,
+  // « Je la prends », « Attribuer la course ») — sans cela, « C'est fait. » attendait la relecture de secours (30 s).
   useEffect(() => {
-    const timers = new Set<number>();
-    const later = (ms: number) => {
-      const id = window.setTimeout(() => {
-        timers.delete(id);
-        reload();
-      }, ms);
-      timers.add(id);
+    const timers = { soon: 0, late: 0 };
+    const settle = () => {
+      window.clearTimeout(timers.soon);
+      window.clearTimeout(timers.late);
+      timers.soon = window.setTimeout(reload, 1500);
+      timers.late = window.setTimeout(reload, 5000);
     };
-    const onSubmit = () => {
-      later(1500);
-      later(5000);
+    const onClick = (event: MouseEvent) => {
+      const button = event.target instanceof Element ? event.target.closest("button, [role='menuitem']") : null;
+      if (button && !button.closest("[data-tour-card], [data-tour-pill]")) settle();
     };
-    document.addEventListener("submit", onSubmit, true);
+    document.addEventListener("submit", settle, true);
+    document.addEventListener("click", onClick, true);
     return () => {
-      document.removeEventListener("submit", onSubmit, true);
-      for (const id of timers) window.clearTimeout(id);
+      document.removeEventListener("submit", settle, true);
+      document.removeEventListener("click", onClick, true);
+      window.clearTimeout(timers.soon);
+      window.clearTimeout(timers.late);
     };
   }, [reload]);
   useRealtimeEvent("ride.updated", schedule);

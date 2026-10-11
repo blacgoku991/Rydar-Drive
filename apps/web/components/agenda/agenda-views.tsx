@@ -55,7 +55,7 @@ export function AgendaToolbar({ view, day, today }: { view: AgendaView; day: str
           {periodLabel(view, day)}
         </h2>
       </div>
-      <nav aria-label="Vue de l'agenda" className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[13px]">
+      <nav aria-label="Vue de l'agenda" data-tour="agenda-views" className="flex rounded-lg border border-line bg-ink-850 p-0.5 text-[13px]">
         {VIEW_ORDER.map((v) => (
           <Link
             key={v}

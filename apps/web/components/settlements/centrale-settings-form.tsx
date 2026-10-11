@@ -219,7 +219,7 @@ export function CentraleSettingsForm({
   return (
     <div className="max-w-4xl space-y-6">
       {/* ---------------------------------------------------------------- commission */}
-      <Card>
+      <Card data-tour="centrale-commission">
         <CardHeader
           icon={<Percent />}
           title="Votre commission"

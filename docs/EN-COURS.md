@@ -1,10 +1,74 @@
 # Travail en cours (11/10/2026)
 
-## Visite guidée de première connexion : lots T1 et T2 faits (11/10/2026)
+## Visite guidée de première connexion : lots T1 à T3 faits (11/10/2026)
 
 Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; T2 = moteur de visite
-et coquille ; reste T3 (parcours sur les écrans réels : ancres `data-tour`, conditions de réussite, textes contrôlés à
-l'écran, recette complète). Rien dans `apps/driver`, `apps/worker`, ni le seed.
+et coquille ; T3 = parcours sur les écrans réels (ancres `data-tour`, conditions de réussite, textes contrôlés à
+l'écran) et recette complète. Rien dans `apps/driver`, `apps/worker`, ni le seed. Reste : décisions du propriétaire
+(`TUTORIEL.md` § 13.1) ; migration 007800 pas encore poussée.
+
+### T3 — Parcours sur les écrans réels, conditions de réussite et recette
+
+- **Livré** (web seulement : aucune migration, aucune RPC, garde ou action serveur modifiée) : les 21 attributs
+  `data-tour` du § 9.1 dans 19 fichiers (attribut seul ; `PlanEditor` : `data-tour={plan ? undefined : "sa-new-plan"}`)
+  ; `components/tour/tour-checks.ts` : lectures du § 8 avec le client du navigateur (RLS de l'utilisateur, comptages
+  `head`, en parallèle, seulement les clés du parcours ; clé absente si la lecture échoue) — `legal_editor` par
+  `adminLegalTodo`, `org_identity` par `bookingOperatorGaps`, règles pures `settlementReady` (alignée sur
+  `private.settlement_methods_available` : virement avec IBAN ou consignes) et `billingConfigured` ; tests
+  `tour-checks.test.ts` (22) et `tour-content.test.ts` (17 : règles du § 7.1, lexique, chaque ancre posée une fois et
+  une seule, adresses vers des pages existantes avec `tab` / `filter` connus, pages du menu de chaque profil, Flotte
+  Privée jamais vers une page masquée). Moteur, corrigé d'après la recette : relecture des conditions aussi après un
+  clic sur un bouton de la page (« Enregistrer » de la commission, « Créer le lien d'inscription », « Je la prends », «
+  Attribuer la course » ne sont pas des formulaires), élément de l'étape cherché avant l'affichage (`useLayoutEffect` :
+  plus d'image avec l'élément de la page quittée). Trois textes ajustés à l'écran réel : `ce-ride` (« le paiement reçu
+  »), `di-messages` (« messages à modérer »), `fp-first-steps` (« Chaque ligne dit quoi faire et où »).
+- **Contrôles** : `pnpm typecheck` OK ; `pnpm test` 169 fichiers, 1 902 tests (+2 fichiers, +39 tests ; dossier
+  `components/tour` : 96) ; `pnpm --filter @rydar/web build` OK ; `TEST_DATABASE_NAME=rydar_test_t3 pnpm test:db`
+  52 fichiers, 883 tests ; `tour-checks.ts` éprouvé par 10 mutations (toutes détectées) ; un attribut retiré
+  (`team-add-member`, puis `sa-new-plan`) fait échouer 3 tests de `tour-content.test.ts` (fichiers remis) ;
+  `git diff` des 19 fichiers du § 9.1 : 21 lignes `data-tour`, rien d'autre ; rien sous `apps/driver`, `apps/worker`,
+  `supabase/`.
+- **Recette des parcours** (hors dépôt, `scratchpad/tutoriel/e2e/t3-run-all.sh`, build de production :3210, clients de
+  recette neufs) : TR-01 à TR-08 et TR-10, **478 contrôles OK, 0 échec** (super admin 52, flotte 55, clients 6,
+  centrale 54, dispatcher 44, Flotte Privée 39, téléphone 135, « Passer l'étape » 28, adresses Flotte Privée 10,
+  accessibilité 55). À 1440×900, pour chaque étape : « Ouvrir … » mène à l'écran, la cible porte
+  `data-tour-highlight`, contrôle → fenêtre ancrée à côté (aucun chevauchement), zone → repli centré et zone amenée à
+  l'écran, « Y aller » → focus dans la cible ; 17 actions réelles (éditeur, coordonnées, offre, client ; identité,
+  grille, chauffeur, course, membre ; identité, grille, lien de paiement, lien d'inscription, course ; course créée et
+  course attribuée par le dispatcher ; « Je la prends ») → « C'est fait. » en 0,2 à 3,0 s, puis « Suivant ». À 390×844 :
+  repli centré partout (16 px de marge), aucun défilement horizontal, cible visible sous la barre du haut, boutons
+  ≥ 44 px. « Passer l'étape » seulement (comptes du seed) : `rides`, `drivers`, `organizations`, `pricing_rules`,
+  `organization_users`, `api_keys`, `plans` inchangés (nombres et empreintes), seule `user_tours` change. Flotte
+  Privée : les 5 adresses en 200, sans redirection (client de recette et « Lambert »). Accessibilité : nom et
+  description de la fenêtre, focus sur le titre, boutons-icônes nommés, zone `aria-live`, Échap (fenêtre seulement),
+  aucune animation, aucun texte sous 12 px. Aucune erreur navigateur. Captures : `scratchpad/tutoriel/captures/t3/`
+  (77 images : accueil, chaque étape à 1440 et 390, étape faite, accessibilité), copie dans `T3/captures/`.
+- **Non-régression (TR-09)** : scripts existants adaptés pour passer `tour-off.sql` (copies `.avant-t3` gardées) :
+  `l7/e2e/run-all.sh` (après la réinitialisation et après `s1-create`), `refonte/photo/shoot.mjs` et sa copie de fin
+  de refonte `refonte/final/shoot-final.mjs`, `refonte/controle/mesure.mjs` (au départ ; sorties et liste de pages
+  réglables pour ne jamais réécrire les références) ; enchaînement `scratchpad/tutoriel/T3/recette.sh`, `base.sh`,
+  `photo.sh`, `compare.mjs`. Recette L7 puis `s10-smoke-standard` sur base neuve : **112 contrôles OK, 0 échec**
+  (110 + 2), mêmes contrôles et mêmes erreurs navigateur connues qu'à la fin de la refonte et au lot T2 ;
+  `tour-off.sql` : 170 lignes, puis 175 après `s1-create` ; aucune visite ouverte. Captures des 5 profils (base de
+  la refonte, 1440 et 390) : **721 captures** comme la référence, mêmes pages, statuts, redirections, 203 fenêtres et
+  113 onglets, aucun débordement ; les 23 écrans des 25 étapes : hauteur et largeur identiques à la référence ; 19 vues
+  sur 374 changent de hauteur, toutes sur des listes ou fiches qui dépendent des données du jour. Mesures des
+  5 profils : « tout est conforme », 402 mesures comme en R11, barre latérale et tiroir identiques, annexe A tenue
+  avec les valeurs de fin de refonte (`/admin` à 390 : 2 206 px, écart connu). **À signaler (antérieur, hors du
+  lot)** : erreur React #418 sur Statistiques (flotte, dispatcher) — le serveur écrit « 34,0 k € », le navigateur
+  « 34 k € » : `formatCompactPrice` (`packages/shared/src/format.ts`) donne un résultat différent entre l'ICU de
+  Node 22 et celui de Chromium quand le montant arrondi finit par « ,0 » (données du jour ; « 29,6 k € » lors de la
+  référence) ; à corriger à part (même format des deux côtés). Captures et journaux : `scratchpad/tutoriel/T3/recette/`
+  (`shoot/`, `mesure/`, `comparaison.json`, `captures/` de la recette L7).
+- **Base locale « rydar »** : après la recette, base de la refonte refaite comme en T2 (`T3/base.sh` : Flotte Privée
+  « Lambert », conditions acceptées par le dispatcher de démonstration, identifiants des listes de pages remis à jour
+  par `T3/maj-ids.mjs`) ; visites remises dans l'état d'après la migration : 35 lignes en pause, jamais ouvertes ;
+  5 clients, 37 comptes, aucun e-mail en file. Les clients de recette du lot ont disparu avec la réinitialisation.
+  Serveur, relais, app chauffeur et worker arrêtés par PID ; `apps/driver/tsconfig.json` (réécrit par Expo) remis.
+- **Écarts** : `TUTORIEL.md` § 13.3 (T3) — virement « avec IBAN ou consignes » (comme la base), relecture après un
+  clic, recherche de l'élément avant l'affichage, trois textes ajustés, règle « une ou deux phrases » non contrôlée
+  (trois textes du plan en ont trois, gardés), particularités de la recette (valeurs de Rydar ressaisies par l'écran,
+  comptage « Clients » intercepté, délais de dispatch courts sur le client de recette).
 
 ### T2 — Moteur de visite et intégration dans la coquille
 

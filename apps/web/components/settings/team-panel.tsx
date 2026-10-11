@@ -114,7 +114,7 @@ export function TeamPanel({ members, isOwner, canInvite }: { members: TeamMember
         description="Les personnes qui gèrent cet espace avec vous."
         action={
           canInvite ? (
-            <Button variant="primary" size="sm" onClick={openAdd} className="max-sm:min-h-11">
+            <Button variant="primary" size="sm" data-tour="team-add-member" onClick={openAdd} className="max-sm:min-h-11">
               <UserPlus aria-hidden /> Ajouter un membre
             </Button>
           ) : undefined

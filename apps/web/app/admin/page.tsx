@@ -196,7 +196,7 @@ export default async function AdminOverview() {
 /** « À traiter » : une ligne par sujet (verbe + nombre), toute la ligne mène à la page où le traiter. */
 function TodoCard({ items }: { items: AdminTodoItem[] }) {
   return (
-    <Card id="a-traiter" className="scroll-mt-6 overflow-hidden">
+    <Card id="a-traiter" data-tour="sa-todo" className="scroll-mt-6 overflow-hidden">
       <CardHeader title="À traiter" />
       {items.length === 0 ? (
         <EmptyState size="compact" icon={<CircleCheck />} title="Rien à traiter, tout est à jour." />

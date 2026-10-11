@@ -38,7 +38,7 @@ export function PrivateBookingSettingsForm({ settings, readOnly }: { settings: P
   const toggle = (m: number) => setReminders((cur) => (cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].sort((a, b) => b - a)));
 
   return (
-    <Card className="max-w-3xl">
+    <Card data-tour="fp-booking-settings" className="max-w-3xl">
       <CardHeader
         icon={<CalendarClock />}
         title="Délais et rappels"

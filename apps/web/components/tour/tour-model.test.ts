@@ -1,5 +1,5 @@
 import { TOUR_KEYS, TOUR_MAX_STEPS, type TourSaved } from "@rydar/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { stepDone } from "./tour-checks";
 import { TOURS } from "./tour-content";
 import {
@@ -22,6 +22,10 @@ import {
 
 // Visite guidée (docs/TUTORIEL.md) : modèle pur du moteur — table de démarrage (§ 5.4), événements et écritures (§ 6.2),
 // menu du compte (§ 10), même écran et boutons de la fenêtre (§ 6.5), repli centré (§ 6.3), textes (§ 6.10).
+
+// tour-checks.ts reprend la règle « Éditeur » de « À traiter » (components/admin/admin-todo.ts, qui importe
+// « @/lib/wording ») : module résolu à la main (lot T3)
+vi.mock("@/lib/wording", async () => await import("../../lib/wording"));
 
 const NBSP = " ";
 const TOTAL = 5;

@@ -169,7 +169,7 @@ export default async function RidesPage({ searchParams }: { searchParams: Promis
         actions={<NewRideButton pricing={pricing} center={activityCenter(list)} />}
       />
       <PageBody className="space-y-4">
-        <div className="space-y-3">
+        <div data-tour="rides-filters" className="space-y-3">
           <FilterTabs label="Filtrer par statut" items={statusTabs} />
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 items-center gap-2.5">

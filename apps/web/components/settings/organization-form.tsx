@@ -105,7 +105,7 @@ export function OrganizationForm({ org, readOnly, privateFleet = false }: { org:
   });
 
   return (
-    <Card className="max-w-4xl">
+    <Card data-tour="org-identity" className="max-w-4xl">
       <CardHeader
         title="Identité de votre entreprise"
         description={

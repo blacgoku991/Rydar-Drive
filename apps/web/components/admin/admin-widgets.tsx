@@ -572,6 +572,7 @@ export function PlanEditor({ plan }: { plan: any | null }) {
         variant={plan ? "outline" : "primary"}
         size={plan ? "sm" : "md"}
         aria-label={plan ? `Modifier l'offre ${plan.name}` : undefined}
+        data-tour={plan ? undefined : "sa-new-plan"}
         onClick={() => {
           setErrors({});
           setOpen(true);

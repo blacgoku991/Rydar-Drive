@@ -58,7 +58,7 @@ export function JoinLinkCard({
   };
 
   return (
-    <Card className="overflow-hidden">
+    <Card data-tour="join-link" className="overflow-hidden">
       <CardHeader
         title="Lien d'inscription"
         icon={<Link2 />}
