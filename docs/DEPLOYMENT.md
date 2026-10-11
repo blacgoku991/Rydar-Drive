@@ -554,7 +554,7 @@ eas submit -p ios
 | --- | --- |
 | `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Client Supabase (clé publique) |
 | `EXPO_PUBLIC_API_URL` | URL de l'app web (connexion chauffeur protégée) |
-| `GOOGLE_MAPS_ANDROID_KEY` | Carte Android (react-native-maps) |
+| `GOOGLE_MAPS_ANDROID_KEY` | Carte Android (react-native-maps) ; lisible dans l'app : clé dédiée, restreinte à l'app Android et au seul Maps SDK for Android, jamais `GOOGLE_MAPS_API_KEY` ([STORES.md](STORES.md) § 3) |
 | `EXPO_PUBLIC_MAP_TILES_URL`, `EXPO_PUBLIC_MAP_GLYPHS_URL` | Carte de l'aperçu web uniquement |
 | `APP_LINK_DOMAIN` | (optionnel) domaine des liens `https://DOMAINE/rejoindre/{code}` qui ouvrent l'app ; par défaut, celui d'`EXPO_PUBLIC_API_URL` |
 

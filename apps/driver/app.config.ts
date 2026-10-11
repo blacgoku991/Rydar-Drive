@@ -54,7 +54,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "VIBRATE",
       "WAKE_LOCK",
     ],
-    blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION", "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"],
+    // SYSTEM_ALERT_WINDOW (« afficher par-dessus les autres applis ») : déclarée par le gabarit Expo, jamais utilisée
+    // (audit p5). Changement natif : effectif au prochain build stores (1.2.0), sans effet sur une mise à jour à distance
+    blockedPermissions: [
+      "android.permission.ACCESS_BACKGROUND_LOCATION",
+      "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+    ],
     intentFilters: LINK_DOMAIN
       ? [{ action: "VIEW", autoVerify: true, data: [{ scheme: "https", host: LINK_DOMAIN, pathPrefix: "/rejoindre/" }], category: ["BROWSABLE", "DEFAULT"] }]
       : [],

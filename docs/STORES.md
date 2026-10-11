@@ -74,8 +74,14 @@ ou `eas env:create`) :
 | `EXPO_PUBLIC_SUPABASE_URL` | URL Supabase de production |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | clé publique (anon) Supabase |
 | `EXPO_PUBLIC_API_URL` | `https://VOTRE-DOMAINE` |
-| `GOOGLE_MAPS_ANDROID_KEY` | clé Google Maps SDK for Android (carte Android) |
+| `GOOGLE_MAPS_ANDROID_KEY` | clé Google Maps SDK for Android (carte Android) ; clé DÉDIÉE à l'app, restreinte (voir ci-dessous) |
 | `APP_LINK_DOMAIN` | facultatif : domaine des liens `https://DOMAINE/rejoindre/{code}` qui ouvrent l'app (liens universels iOS, liens d'application Android) ; par défaut, celui d'`EXPO_PUBLIC_API_URL`. Réglage natif : le changer demande un nouveau build (§ 10) |
+
+`GOOGLE_MAPS_ANDROID_KEY` est écrite en clair dans le manifeste de l'app : quiconque télécharge l'app la lit. Dans
+Google Cloud (API et services › Identifiants), utiliser une clé **réservée à l'app**, jamais celle du serveur
+(`GOOGLE_MAPS_API_KEY` : Routes et Geocoding, facturés à l'appel) : restriction « Applications Android » (package
+`app.rydar.driver` + empreintes SHA-1 de la clé de signature Play et de la clé d'envoi : Play Console › Intégrité de
+l'application) et restriction d'API « Maps SDK for Android » seule. Activer une alerte de budget sur le projet.
 
 Dans le terminal, avant chaque commande `eas`, exporter aussi l'identifiant pour que la configuration locale le
 voie : `export EAS_PROJECT_ID=…` (ou le placer dans `apps/driver/.env`, ignoré par git).
@@ -97,7 +103,8 @@ Le numéro de build s'incrémente tout seul. La version affichée est `version` 
 Avant le premier envoi, puis après tout changement natif, contrôler l'Info.plist et le manifeste générés :
 `cd apps/driver && npx expo config --type introspect`. Attendu : `UIBackgroundModes` = `location` uniquement,
 textes d'autorisation iOS (localisation, mouvement) en français, pas de `NSFaceIDUsageDescription` ; côté Android,
-ni `ACCESS_BACKGROUND_LOCATION` ni exemption d'optimisation de la batterie.
+ni `ACCESS_BACKGROUND_LOCATION`, ni exemption d'optimisation de la batterie, ni `SYSTEM_ALERT_WINDOW` (« afficher
+par-dessus les autres applis », héritée du gabarit Expo, bloquée par `blockedPermissions`).
 
 ## 5. App Store (iPhone)
 
@@ -268,7 +275,10 @@ Deux façons de mettre à jour l'app, toutes deux depuis `apps/driver` :
 
 **Avant d'ouvrir le réseau partagé** (`shared_network_enabled`) : chez Google, déclarer « Partagées : oui » pour
 Position exacte et Nom (finalité : Fonctionnalités de l'appli ; destinataire : organisation partenaire qui confie la
-course) ; mettre à jour App Privacy ; ajouter à la description : « Si votre centrale participe au réseau partagé, les
+course), et AJOUTER « Infos financières › Informations de paiement de l'utilisateur » (titulaire, IBAN, BIC saisis dans
+« Coordonnées bancaires » : collectées oui, partagées oui — organisation partenaire qui verse la part du chauffeur,
+`org_network_payout_info` —, finalité Fonctionnalités de l'appli, facultatif oui) ; mettre à jour App Privacy (ajouter
+« Infos financières › Infos de paiement », liées à l'utilisateur, sans suivi, finalité Fonctionnalités de l'app) ; ajouter à la description : « Si votre centrale participe au réseau partagé, les
 courses d'une centrale partenaire peuvent vous être proposées : elle voit alors votre prénom, votre véhicule et votre
 position pendant la course. » Compléter aussi `/confidentialite` et `/dpa` (données transmises, coordonnées bancaires
 du chauffeur, durées) après la relecture de la convention par un avocat, ainsi que les phrases devenues inexactes une
@@ -288,6 +298,17 @@ Nouvelle version des CGU ou de la politique de confidentialité (`LEGAL_VERSION`
 l'app embarque cette valeur, donc une mise à jour à distance est nécessaire pour que les chauffeurs voient l'écran
 d'acceptation de la nouvelle version. Les CGV et l'accord de traitement (`ORG_LEGAL_VERSION`) ne concernent que les
 organisations (tableau de bord) : aucune mise à jour de l'app pour eux.
+
+**Changements natifs en attente de la 1.2.0** (sans effet sur une mise à jour à distance du runtime 1.1.0) :
+`SYSTEM_ALERT_WINDOW` bloquée (audit p5) — contrôle du § 4 après le build. À planifier avec la 1.2.0 (décision du
+propriétaire) : **signature des mises à jour à distance** (audit p5) — aujourd'hui l'app installe tout bundle servi par
+Expo pour son runtime ; un compte Expo ou un `EXPO_TOKEN` compromis suffirait à pousser du code sur tous les
+téléphones. Procédure : `npx expo-updates codesigning:generate --key-output-directory keys
+--certificate-output-directory certs --certificate-validity-duration-years 10 --certificate-common-name "Rydar Drive"`
+sur la machine de publication ; certificat public (`certs/certificate.pem`) versionné, clé privée hors du dépôt et hors
+d'Expo (sauvegarde chiffrée) ; dans `app.config.ts`, `updates.codeSigningCertificate` et `codeSigningMetadata: { keyid:
+"main", alg: "rsa-v1_5-sha256" }` ; chaque `eas update` avec `--private-key-path`. Changement natif : nouvelle version
+et build stores ; une clé privée perdue = plus aucune mise à jour à distance avant la version suivante.
 
 Règle : une mise à jour à distance ne s'installe que sur les builds de la **même** version (`runtimeVersion` =
 version). Après un changement natif, il faut donc toujours une nouvelle version et un nouveau build. Une mise à jour
