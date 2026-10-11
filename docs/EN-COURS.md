@@ -2,8 +2,15 @@
 
 ## Audit de sécurité phase 5 : audit, corrections et contrôle final faits (11/10/2026)
 
-Détail, preuves rejouées et reports : `docs/AUDIT.md`, section « Audit de sécurité phase 5 (10/2026) ». Rien de
-poussé.
+Détail, preuves rejouées et reports : `docs/AUDIT.md`, section « Audit de sécurité phase 5 (10/2026) ». Audit et
+contrôle final poussés (`597a8b9`, migration `007900` comprise : intouchable désormais).
+- **Serveur web — revue complémentaire (après `597a8b9`, NON poussée)** : 4 mineurs, aucun SQL. `038c9af` web-1 (hôte
+  de mini-site : seulement son `/book`, les pages légales s'il sert un mini-site, et `/api/` ; `/book/{autre}` et
+  `/rejoindre/…` → 404 neutre), `d1c3304` web-2 (`/api/tls/allowed` : décisions gardées, 300 résolutions / min),
+  `f269db7` web-3 (HSTS `includeSubDomains; preload` sur la plateforme seule) et web-4 en partie (`connect-src` sans
+  `*.supabase.co` ; CSP à nonce et cookies non lisibles par JS reportés), `a74a039` docs. Contrôle : typecheck ;
+  `pnpm test` 177 / 1 968 ; `test:db` 53 / 899 ; build ; preuves rejouées sur le build. Pas de migration `008000` :
+  la branche du copilote garde `20260924008000` ou plus.
 - **Constats** : 21 (1 critique, 4 majeurs, 16 mineurs), tous reproduits. Critique : position d'un chauffeur en course
   partenaire retrouvée par sa propre organisation (réseau partagé). Majeurs : dispatcher qui modifiait une course
   réglée, notifications reçues après révocation, bannissement révélé par Supabase Auth, jeton Expo d'un autre projet
@@ -17,7 +24,7 @@ poussé.
   sur le build de production : 112 contrôles OK, 0 échec ; 5 preuves d'exploitation rejouées : toutes échouent. Base
   locale « rydar » sauvegardée puis remise à l'identique (37 comptes, 5 clients, 1 025 courses, 35 visites, toujours en
   `007800`).
-- **Migrations** : `20260924007900_security_audit` pas encore poussée (modifiable jusqu'au push). La branche du copilote
+- **Migrations** : `20260924007900_security_audit` poussée (correction = nouvelle migration). La branche du copilote
   (`007500` sur sa branche) prendra **`20260924008000` ou plus** à sa fusion.
 - **À faire par le propriétaire** : VPS — bloc `api.DOMAINE` après contrôle IPv6, Caddyfile (2 Mo) si
   `Caddyfile.local` le remplace, `GOTRUE_RATE_LIMIT_HEADER` / `DISABLE_SIGNUP` (DEPLOYMENT § 3) ; mise à jour EAS de

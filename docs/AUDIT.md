@@ -193,7 +193,18 @@ app : aucun journal sensible.
      `/token` (mot de passe), `/otp`, `/recover` en 404 ; depuis le serveur web : transmis ; `refresh_token` transmis.
      Sans le bloc (production actuelle) : `user_banned` toujours visible.
 
-### Revue des points d'entrée web (après le contrôle final)
+### Serveur web — revue complémentaire (après le contrôle final)
+
+Relecture de chaque point d'entrée serveur du web : 26 fichiers « use server » (≈ 150 actions) et 34 routes, `proxy.ts`,
+en-têtes, variables publiques, contenus fournis par les centrales, URL appelées par le serveur.
+
+Vérifié sain : contrôle d'accès avant toute écriture dans chaque action (`requireSuperAdmin`, `getOrgContext` + rôle,
+`getPayerContext`, `requireUser` ; rôle revérifié en base par les RPC) ; routes par session, clé API (portées, origines,
+débit), jeton chauffeur, signature Stripe ou publiques ; entrées validées (zod, bornes ; JSON v1 ≤ 32 Ko) ;
+`ipFromHeaders` + `rateLimitAll` sur toutes les entrées publiques et tous les envois ; redirections par `safeNext` ou
+littérales ; erreurs du catalogue seulement ; 4 exports CSV protégés ; aucune valeur privée dans `.next/static` ni
+`NEXT_PUBLIC_*` ; `dangerouslySetInnerHTML` pour des constantes seulement ; aucune URL saisie par une centrale récupérée
+par le web (webhooks envoyés par le worker avec contrôle SSRF).
 
 Quatre mineurs, tous reproduits sur le build de production puis rejoués après correction (aucun SQL) :
 
@@ -203,6 +214,13 @@ Quatre mineurs, tous reproduits sur le build de production puis rejoués après 
 | web-2 `/api/tls/allowed` : 2 RPC service role par poignée de main TLS (SNI aléatoires) | corrigé (`d1c3304`) : décisions gardées (5 min / 60 s), interrupteur relu toutes les 30 s, 300 résolutions par minute au plus |
 | web-3 HSTS `includeSubDomains; preload` sur les domaines personnalisés des centrales | corrigé (`f269db7`) : plateforme seule ; ailleurs `max-age=31536000` |
 | web-4 CSP `'unsafe-inline'` annoncée « stricte », cookies de session lisibles par JS | en partie (`f269db7`) : `connect-src` sans joker `*.supabase.co`, SECURITY.md corrigé ; CSP à nonce reportée |
+
+Tests ajoutés (échouaient avant correction) : `domaine-proxy.test.ts`, `tls-allowed.test.ts`, `security-headers.test.ts`.
+Contrôle indépendant (arbre `a74a039` et suivants, non poussé) : `pnpm typecheck` OK ; `pnpm test` 177 fichiers,
+1 968 tests ; `test:db` 53 fichiers, 899 tests ; `pnpm build` OK ; aucune migration (base neuve inutile). Rejoué sur
+ce build : hôte d'Élite → son mini-site et `/cgu` en 200, `/rejoindre/<code d'Express>` et `/book/<autre>` en 404 ;
+hôte non résolu et domaine tiers → `/book/elite-paris` et `/cgu` en 404 ; HSTS complet en `.rydar.app`, `max-age` seul
+sur le domaine tiers ; plateforme (`localhost`) inchangée.
 
 ### Reporté ou à faire hors du code
 
