@@ -32,6 +32,11 @@
       "esbuild",
       "sharp",
       "unrs-resolver"
-    ]
+    ],
+    "overrides": {
+      "sharp": "^0.35.5",
+      "shell-quote": "^1.11.0",
+      "source-map-js": "^1.2.2"
+    }
   }
 }
