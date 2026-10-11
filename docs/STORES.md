@@ -232,6 +232,14 @@ par-dessus les autres applis », héritée du gabarit Expo, bloquée par `blocke
 
 > Quand le chauffeur passe EN LIGNE, un service de premier plan de type localisation partage sa position avec sa centrale, y compris écran éteint ou dans une autre application, pour lui proposer les courses les plus proches et suivre la course en cours. Une notification permanente « Rydar Drive — EN LIGNE » est affichée. Le service s'arrête quand le chauffeur passe hors ligne ou ferme l'application.
 
+**Nouveautés de la version 1.2.0** (App Store : « Nouveautés de cette version » ; Google Play : notes de version,
+500 caractères au plus) :
+
+> • Planning : vues Jour, Semaine et Mois, en plus de la liste.
+> • Chauffeurs indépendants : réservations « à confirmer » et écrans simplifiés.
+> • Connexion et « Mot de passe oublié » plus sûrs.
+> • Corrections et améliorations de stabilité.
+
 ## 8. Captures d'écran
 
 - iPhone : 6,9 pouces obligatoires (1320 × 2868, ex. iPhone 16 Pro Max), 3 à 10 captures.

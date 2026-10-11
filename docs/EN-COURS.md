@@ -1,5 +1,18 @@
 # Travail en cours (11/10/2026)
 
+## Phase 6 : tout mettre à jour, puis envoi aux stores (en cours, 11/10/2026)
+
+- **Contrôle natif** (`npx expo config --type introspect`, version 1.1.0) : iOS `UIBackgroundModes` = `location` seul,
+  textes d'autorisation en français ; Android : `ACCESS_BACKGROUND_LOCATION`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`,
+  `SYSTEM_ALERT_WINDOW` et `RECORD_AUDIO` retirées (`tools:node="remove"`).
+- **Ordre** : (1) VPS par son Claude : `update-production.sh` (migration `007900`), `Caddyfile.local` aligné sur
+  `deploy/Caddyfile` (2 Mo, `@tls_ask`, `read_header`), bloc d'Auth de `api.DOMAINE` après contrôle IPv6 (DEPLOYMENT
+  § 3), contrôle extérieur au téléphone ; (2) `eas update` sur le runtime 1.1.0 ; (3) SEULEMENT ENSUITE `version`
+  1.2.0 poussée (une mise à jour à distance ne vise que le runtime = version), build, `eas submit`, consoles (STORES
+  § 10, nouveautés au § 7).
+- **Signature des mises à jour EAS** : non activée (clé privée à garder hors d'Expo ; perdue = plus de mise à jour à
+  distance) ; à reprendre si le propriétaire peut garder la clé.
+
 ## Audit de sécurité phase 5 : audit, corrections et contrôle final faits (11/10/2026)
 
 Détail, preuves rejouées et reports : `docs/AUDIT.md`, section « Audit de sécurité phase 5 (10/2026) ». Audit et
