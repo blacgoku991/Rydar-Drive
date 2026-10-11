@@ -101,3 +101,105 @@ Les 91 défauts bas (libellés, cas limites, code inutile, documentation…) son
    « vérification requise » par le recalcul des empreintes de téléphone (requêtes dans DEPLOYMENT.md, section « Après la
    mise à jour de l'audit »).
 5. `EXPO_ACCESS_TOKEN` renseigné (sécurité des notifications push).
+
+## Audit de sécurité phase 5 (10/2026)
+
+Demande du propriétaire : « vérification de sécurité complète de tous les onglets, toutes les fonctionnalités, toute
+l'app et le site ». Branche `claude/confident-clarke-rpfwmo`, à partir de `8021fe9`. Même règle qu'en septembre : un
+constat n'est retenu que reproduit (ou démontré par le code), chaque correctif a son test ; ce qui était déjà prouvé
+corrigé (sections précédentes) n'a pas été refait. Preuves et journaux hors dépôt (`scratchpad/audit-p5/`).
+
+### Périmètre
+
+| Domaine | Vérifié |
+|---|---|
+| Base de données | 165 fonctions `public` (`search_path`, droits d'exécution, contrôle d'accès DANS chaque RPC par sondes croisées : owner d'une autre centrale, dispatcher, chauffeur), politiques RLS, droits par colonne (`organizations`, `ride_offers`), temps réel ; nouveautés depuis septembre : réseau partagé (006700 à 007100), éligibilité (007500), Flotte Privée (007600, 007700), visite guidée (007800) |
+| Onglets du tableau de bord | Chaque page parcourue par 7 profils (owner, admin, dispatcher de flotte et de centrale, Flotte Privée), matrice d'accès entre centrales, actions serveur rejouées avec un rôle insuffisant, panneaux refondus, réseau partagé, « J'ai payé », Équipe |
+| Super admin et public | `requireSuperAdmin` et audit sur chaque page et action, RPC `svc_*` / `admin_*`, mini-sites `/book`, `/eligibilite`, `/contact`, Supabase Auth exposé à Internet |
+| App chauffeur | Session (AES + SecureStore), RPC forgées, liens profonds et de paiement, permissions Android effectives, déclarations des stores, jetons push, positions |
+| Worker, infra, dépendances | Notifications push, suppression de comptes, Caddy (Caddy 2.10 compilé pour les essais), `pnpm audit` |
+
+Vérifié sain (rien à corriger) : `search_path = ''` partout ; `anon` n'exécute que `public_legal_info` et
+`resolve_booking_host` ; `svc_*` réservées au service role ; toutes les sondes croisées refusées ; temps réel
+(`platform.updated` = identifiants, offres réseau et chauffeur partenaire masqués) ; recherche d'e-mail par égalité ;
+app : aucun journal sensible.
+
+### Constats : 21 (1 critique, 4 majeurs, 16 mineurs)
+
+**Critique (corrigé)**
+
+- **base-1 — Réseau partagé : position d'un chauffeur en course partenaire.** Sa propre organisation (qui ne lit pas
+  sa position, RLS) la retrouvait par des distances calculées sur SES courses : offre planifiée proposée à toute la
+  flotte (`ride_offers.distance_m`, lisible par tout membre et diffusée sur `org:`), journal de fin de recherche
+  (« Karim T. (2,3 km) : déjà en course », point choisi par elle), alerte de retard d'une course enchaînée.
+  → 007900 (`aa03ae9`) : règle unique `private.driver_on_foreign_ride` ; distance NULL, « déjà en course » sans
+  distance, alertes de retard / immobilité / GPS de ses propres courses non calculées pendant la course partenaire
+  (pas d'alerte plutôt qu'une fuite).
+
+**Majeurs (corrigés)**
+
+- **onglets-1 — Dispatcher et course réglée.** « Annuler » un règlement lui était refusé, mais « Modifier » la course
+  terminée ramenait la commission à 0 ou passait le paiement « en ligne » (sens du règlement renversé : la centrale
+  devait la part chauffeur). → 007900 : owner / admin seulement (`FORBIDDEN_ROLE`) dès qu'un règlement existe ; web :
+  refus clair dans `updateRidePricing`, « Modifier » masqué (`70a17ce`, `565b0ef`).
+- **app-chauffeur-1 — Notifications après révocation.** Mot de passe changé ou « Déconnecter » : le téléphone perdu
+  recevait encore les notifications (messages de la centrale avec données client). → 007900 : `push_tokens.session_id`,
+  jeton plus servi quand sa session est révoquée ou expirée (transition sans coupure pour les jetons antérieurs).
+- **admin-public-1 — Bannissement révélé par Supabase Auth.** `/token?grant_type=password` répond `user_banned` avant
+  de vérifier le mot de passe : n'importe qui savait si une adresse avait été bannie par une centrale (motif
+  « impayé » compris). → app chauffeur sans connexion directe à Supabase (`12f88ea`, JS seul) ; bloc Caddy
+  `api.DOMAINE` (`4880c66`, DEPLOYMENT § 3 point 2) : **à poser sur le VPS**, sans quoi l'oracle reste ouvert.
+- **worker-infra-1 — Jeton Expo d'un autre projet.** Un chauffeur qui enregistre un jeton d'une autre app Expo faisait
+  refuser en bloc (`PUSH_TOO_MANY_EXPERIENCE_IDS`) les notifications des autres centrales du même envoi. → `edc0e00` :
+  un envoi par projet (ou par expéditeur) si Expo refuse la requête entière.
+
+**Mineurs (16)**
+
+| Constat | Statut |
+|---|---|
+| base-2 limites (chauffeurs, accès) dépassées par requêtes simultanées | corrigé (007900 : verrou de l'organisation) |
+| admin-public-4 accusés de réception « 1 par adresse » contournés par alias (`+x`, points Gmail) | corrigé : par boîte, `private.mailbox_key` / `mailboxKey` (`aa03ae9`, `47b6834`, `7bae4f9` ; aussi les accusés du mini-site) |
+| app-chauffeur-2 position « téléportée » acceptée | corrigé côté base (`LOCATION_IMPLAUSIBLE`) ; refus des positions simulées dans l'app reporté |
+| worker-infra-3 « compte conservé » figé à la demande de suppression | corrigé (recalculé à chaque reprise) |
+| onglets-2 « J'ai payé » / décisions réseau sur une autre centrale que celle affichée | corrigé (`cf191bf`) |
+| onglets-3 « Inviter un membre » : sondage de l'existence des comptes, e-mails en masse | plafonds 10 / h par administrateur, 20 / h par centrale (`b39be0a`) ; réponse identique reportée (refonte du flux d'invitation) |
+| admin-public-2 existence d'un compte par « Mot de passe oublié » (`/recover`, `/otp`) | corrigé : action serveur à réponse identique (`12f88ea`) + routes fermées par le bloc Caddy (VPS) |
+| admin-public-3 nom de la centrale dans les métadonnées de la 404 de `/book` | corrigé (`0949115`) |
+| app-chauffeur-3 permission Android `SYSTEM_ALERT_WINDOW` (gabarit Expo) | bloquée (`cf5a9d4`) — **natif : effectif au build stores 1.2.0** |
+| app-chauffeur-4 IBAN absent des déclarations des stores | documenté (STORES § 10) |
+| app-chauffeur-5 mises à jour EAS non signées | reporté (clé privée du propriétaire + natif : STORES § 10) |
+| app-chauffeur-6 clé Google Maps Android non restreinte | documenté (STORES § 3, DEPLOYMENT) — à régler dans la console Google |
+| worker-infra-2 corps de requête sans plafond, `/api/tls/allowed` public | corrigé dans `deploy/Caddyfile` (`4880c66`) ; à reporter dans `Caddyfile.local` s'il le remplace |
+| worker-infra-4 next 16.3.6, sharp 0.35.4 (avis de sécurité) | corrigé : next 16.3.8, sharp 0.35.5 (`af3327a`) ; Next 16.4 à planifier |
+| worker-infra-5 nodemailer 9.1.1 | reporté (correctifs en 10.x seulement ; non exploitable ici) |
+| worker-infra-6 outils de build | en partie : shell-quote, source-map-js (`af3327a`) ; node-forge, braces, uuid, decode-uri-component, esbuild : sans correctif publié ou hors production (suivre Expo et tsup) |
+
+### Contrôle final (indépendant)
+
+- `pnpm typecheck` OK ; `pnpm test` 176 fichiers, 1 958 tests ; `test:db` 53 fichiers, 899 tests ; `pnpm build`
+  (paquet partagé, worker avec `dist/mailer.js`, web Next 16.3.8) ; `export:check` de l'app OK ; base neuve comme la
+  CI : 81 migrations + seed, 29 chauffeurs, 3 organisations, 1 signalement ouvert, commissions dues.
+- Recette de non-régression (`run-all.sh` + `s10`, build de production, visite guidée en pause) : **112 contrôles OK,
+  0 échec**, mêmes erreurs navigateur connues qu'avant l'audit ; base locale « rydar » remise à l'identique.
+- **Preuves d'exploitation rejouées sur le code corrigé : toutes échouent maintenant.**
+  1. base-1 : les 3 preuves d'origine (journal, offre planifiée, alerte) — distance NULL, message sans distance, aucune
+     alerte (avant : 2 335 m, 4 303 m, 28 384 m).
+  2. onglets-1 : dispatcher sur une course terminée réglée — « Modifier » absent, action serveur refusée, écriture
+     directe PostgREST refusée (403 `FORBIDDEN_ROLE`), règlement inchangé.
+  3. app-chauffeur-1 : jeton enregistré par une vraie session, puis session révoquée — plus aucun jeton servi (témoin
+     session ouverte : servi).
+  4. worker-infra-1 : jeton d'un autre projet mêlé à l'envoi — notifications des autres centrales « envoyées ».
+  5. admin-public-1 et 2 : à travers Caddy configuré avec le bloc de DEPLOYMENT § 3 tel qu'écrit, depuis Internet :
+     `/token` (mot de passe), `/otp`, `/recover` en 404 ; depuis le serveur web : transmis ; `refresh_token` transmis.
+     Sans le bloc (production actuelle) : `user_banned` toujours visible.
+
+### Reporté ou à faire hors du code
+
+- **VPS (obligatoire)** : bloc `api.DOMAINE` dans `Caddyfile.local` après le contrôle IPv6 (DEPLOYMENT § 3, point 2) ;
+  plafond de 2 Mo et `/api/tls/allowed` si `Caddyfile.local` remplace le Caddyfile du kit (point 1) ;
+  `GOTRUE_RATE_LIMIT_HEADER` et `DISABLE_SIGNUP` (point 2).
+- **App** : build stores 1.2.0 (`SYSTEM_ALERT_WINDOW`) ; signature des mises à jour EAS (décision du propriétaire) ;
+  refus des positions simulées et compteur anti-fraude (fonctionnalité).
+- **Console Google** : clé Maps Android restreinte au package et à l'empreinte SHA-1.
+- **Plus tard** : réponse identique à « Inviter un membre » ; nodemailer 10 ; Next 16.4 ; plafond d'accusés par domaine
+  (facultatif).

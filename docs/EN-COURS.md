@@ -1,5 +1,31 @@
 # Travail en cours (11/10/2026)
 
+## Audit de sécurité phase 5 : audit, corrections et contrôle final faits (11/10/2026)
+
+Détail, preuves rejouées et reports : `docs/AUDIT.md`, section « Audit de sécurité phase 5 (10/2026) ». Rien de
+poussé.
+- **Constats** : 21 (1 critique, 4 majeurs, 16 mineurs), tous reproduits. Critique : position d'un chauffeur en course
+  partenaire retrouvée par sa propre organisation (réseau partagé). Majeurs : dispatcher qui modifiait une course
+  réglée, notifications reçues après révocation, bannissement révélé par Supabase Auth, jeton Expo d'un autre projet
+  qui bloquait les notifications des autres centrales. Tous corrigés dans le code ; l'oracle de Supabase Auth ne se
+  ferme qu'avec le bloc Caddy `api.DOMAINE` posé sur le VPS.
+- **Commits** : `aa03ae9` (migration `20260924007900_security_audit` + `tests/db/security-audit.test.ts`), `47b6834`,
+  `70a17ce`, `565b0ef`, `7bae4f9`, `cf191bf`, `b39be0a`, `0949115`, `edc0e00`, `12f88ea`, `4880c66`, `cf5a9d4`,
+  `af3327a`, puis la documentation du contrôle final (`SECURITY.md`, `AUDIT.md`, `CLAUDE.md` § Sécurité).
+- **Contrôle final** : typecheck ; `pnpm test` 176 fichiers, 1 958 tests ; `test:db` 53 fichiers, 899 tests ; build ;
+  `export:check` ; base neuve comme la CI (81 migrations + seed : 29 / 3 / 1 / dues) ; recette `run-all.sh` + `s10`
+  sur le build de production : 112 contrôles OK, 0 échec ; 5 preuves d'exploitation rejouées : toutes échouent. Base
+  locale « rydar » sauvegardée puis remise à l'identique (37 comptes, 5 clients, 1 025 courses, 35 visites, toujours en
+  `007800`).
+- **Migrations** : `20260924007900_security_audit` pas encore poussée (modifiable jusqu'au push). La branche du copilote
+  (`007500` sur sa branche) prendra **`20260924008000` ou plus** à sa fusion.
+- **À faire par le propriétaire** : VPS — bloc `api.DOMAINE` après contrôle IPv6, Caddyfile (2 Mo) si
+  `Caddyfile.local` le remplace, `GOTRUE_RATE_LIMIT_HEADER` / `DISABLE_SIGNUP` (DEPLOYMENT § 3) ; mise à jour EAS de
+  l'app (JS : connexion uniquement par le serveur) ; build stores 1.2.0 (`SYSTEM_ALERT_WINDOW` bloquée, natif) ;
+  clé Google Maps Android restreinte ; décider de la signature des mises à jour EAS.
+- **Reporté** : réponse identique à « Inviter un membre », refus des positions simulées dans l'app, nodemailer 10,
+  Next 16.4, outils de build sans correctif.
+
 ## Visite guidée de première connexion : lots T1 à T3, revues UX et RS et contrôle final faits (11/10/2026)
 
 Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; T2 = moteur de visite
@@ -278,7 +304,8 @@ dans `apps/driver`, `apps/worker`, ni le seed. Reste : décisions du propriétai
 - **Captures** : sans objet pour T1 (aucun écran touché ; le web ne lit la table qu'à partir de T2).
 - **À savoir pour T2 et T3** : sur une base neuve (`l7/e2e/reset.sh`, CI), le rattrapage ne voit aucun compte : chaque
   compte du seed verra la visite d'office (annexe A : `tour-off.sql`, écrit en T2) ; sur « rydar », les 7 comptes
-  actuels sont en pause. La migration du copilote (`007500` sur sa branche) prendra `20260924007900` ou plus.
+  actuels sont en pause. La migration du copilote (`007500` sur sa branche) prendra `20260924008000` ou plus
+  (`007900` : audit p5).
 - **Reste** : T2 puis T3 (§ 12) ; décisions du propriétaire (§ 13.1 : comptes existants en pause — retirer le bloc de
   rattrapage avant le push pour qu'ils voient la visite d'office ; mention dans `/confidentialite` avec la prochaine
   version ; ligne de `CLAUDE.md`).
@@ -392,7 +419,7 @@ hors `apps/web`, quatre tables de libellés lues par le web seul (`packages/shar
 Spécification, statuts des lots (commits) et écarts livrés : `docs/FLOTTE-PRIVEE.md` (§ 15 et § 15.1). Migrations
 `20260924007600_private_fleet` et `20260924007700_private_fleet_owner_settlements` **pas encore poussées** (modifiables
 jusqu'au push) ; la migration du copilote (`007500` sur sa branche, en collision avec `007500_eligibility`) prendra
-`20260924007900` ou plus à sa fusion (`007800` : visite guidée).
+`20260924008000` ou plus à sa fusion (`007800` : visite guidée, `007900` : audit p5).
 
 - **Livré** : organisation flotte marquée `organizations.private_fleet`, dont le propriétaire est l'unique chauffeur
   (même compte, fiche `owner_driver`) ; ni équipe, ni lien d'inscription, ni réseau, ni centrale (gardes en base +

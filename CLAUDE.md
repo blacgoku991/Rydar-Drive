@@ -86,6 +86,10 @@ la centrale doit les frais plateforme à Rydar.
   (`components/booking/zoned-time.ts`) ; `next` de redirection via `lib/safe-next.ts` ; Host du proxy validé (`lib/hostname.ts`).
 - Worker et scripts : base en `verify-full` (`deploy/supabase-ca.crt`), repli `DATABASE_SSLMODE=no-verify` ; `disable` =
   base LOCALE seulement (Supabase auto-hébergé du VPS : `isLocalDbHost` = `pg_local_host`) ; aucun secret en argv.
+- Audit p5 (007900) : chauffeur en course pour une autre org (`private.driver_on_foreign_ride`) → aucune position ni
+  distance dérivée pour la sienne ; navigateur et app : Supabase Auth en `refresh_token`, `/verify`, `/user` SEULEMENT
+  (connexion, mot de passe oublié… par le serveur web : bloc Caddy `api.DOMAINE`) ; limite « par adresse e-mail » =
+  par boîte (`mailboxKey` / `private.mailbox_key`) ; jeton push lié à sa session (`push_tokens.session_id`).
 
 ## Métier (l'essentiel)
 - Dispatch (PL/pgSQL) : instantané = vagues STRICTES (défaut 4→8→12→16 km `dispatch_radii_m`, une par délai
