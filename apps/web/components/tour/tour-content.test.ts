@@ -286,6 +286,54 @@ describe("adresses des étapes", () => {
   });
 });
 
+describe("coexistence avec les pages (§ 6.6, § 6.8, § 9.2)", () => {
+  /** Fichiers qui posent un attribut seul (`attr=""`), avec leur nombre. */
+  const posing = (attr: string) =>
+    Object.fromEntries(
+      CODE.map(({ file, src }) => [file, [...src.matchAll(new RegExp(`\\b${attr}=""`, "g"))].length] as const).filter(([, n]) => n > 0),
+    );
+
+  it("barres à éviter et vues pleine hauteur : attributs seuls, aux emplacements du § 9.2", () => {
+    expect(posing("data-tour-avoid")).toEqual({
+      "components/settings/pricing-editor.tsx": 1,
+      "components/settings/dispatch-settings-form.tsx": 1,
+      "components/settlements/centrale-settings-form.tsx": 1,
+      "components/settlements/settlements-view.tsx": 1,
+      "components/chat/composer.tsx": 1,
+      "components/command/command-center.tsx": 1,
+      "components/admin/live-console.tsx": 1,
+    });
+    expect(posing("data-tour-fullheight")).toEqual({
+      "components/command/command-center.tsx": 1,
+      "components/chat/messages-view.tsx": 1,
+      "components/admin/live-console.tsx": 1,
+    });
+  });
+
+  it("En direct : le panneau des courses est à éviter (sous lg, la fenêtre passe au-dessus, sur la carte) ; carte du super admin : pleine hauteur, légende évitée", () => {
+    expect(read("components/command/command-center.tsx")).toMatch(/<aside data-tour="live-panel" data-tour-avoid="" /);
+    const live = read("components/admin/live-console.tsx");
+    expect(live).toMatch(/<div data-tour-fullheight="" className="relative h-\[calc\(100dvh-56px\)\] overflow-hidden lg:h-dvh">/);
+    expect(live).toMatch(/<div data-tour-avoid="" className="glass pointer-events-none absolute bottom-3 left-\[404px\][^"]*">\s*<Legend \/>/);
+  });
+
+  it("En direct : la touche N passe depuis la fenêtre de visite (étape « Créer une course ») ; Échap y reste à la visite", () => {
+    const src = read("components/command/command-center.tsx");
+    expect(src).toContain('const inTour = !!target.closest("[data-tour-card]");');
+    expect(src).toContain('if (target.closest("input, textarea, select, [contenteditable]") || (target.closest("[role=dialog]") && !inTour)) return;');
+    expect(src).toContain('if (e.key === "Escape" && !inTour) {');
+    // Le texte de l'étape le propose
+    expect(TOURS.dispatcher.steps.find((s) => s.id === "di-new")!.text).toContain("la touche N");
+  });
+
+  it("notifications : au-dessus de la fenêtre en repli (--tour-dock), téléphone comme bureau ; 0 sans visite", () => {
+    const layout = read("app/layout.tsx");
+    expect(layout).toContain('offset={{ top: 84, bottom: "calc(var(--tour-dock, 0px) + 24px)" }}');
+    expect(layout).toContain('mobileOffset={{ bottom: "calc(var(--tour-dock, 0px) + 16px)" }}');
+    expect(read("components/tour/tour-dom.ts")).toContain('setRootPx("--tour-dock", px)');
+  });
+});
+
 describe("garde-fous du contrôle", () => {
   it("le parcours des sources voit les pages et les composants", () => {
     expect(CODE.some((c) => relative("app", c.file).startsWith("dashboard"))).toBe(true);

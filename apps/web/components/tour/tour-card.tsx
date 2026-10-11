@@ -4,9 +4,12 @@
 //  - ancrée à côté de l'élément de l'étape (ancre « control » visible, écran ≥ 640 px) ;
 //  - sinon repli centré en bas de main#contenu, remonté au-dessus des barres [data-tour-avoid] (dockedRect) ;
 //  - réduite : pastille de 44 px en bas à gauche de main#contenu.
-// Elle ne se ferme jamais d'elle-même (clics, focus ailleurs : ignorés) ; Échap seulement focus dedans ; Tab en sort.
-// Surlignage de l'élément (data-tour-highlight), défilement seulement après un clic dans la fenêtre ou le menu, focus
-// sur le titre après une action, réserve de défilement (--tour-reserve) sauf vues pleine hauteur. Aucune animation.
+// Elle ne se ferme jamais d'elle-même (clics, focus ailleurs : ignorés) ; Échap seulement focus dedans ; Tab en sort,
+// jamais vers une garde de focus invisible de Radix. Surlignage de l'élément (data-tour-highlight), défilement
+// seulement après un clic dans la fenêtre ou le menu, focus sur le titre après une action. En repli : place prise en
+// bas (--tour-dock, notifications au-dessus) ; hors vues pleine hauteur, réserve de défilement (--tour-reserve) et marge
+// de défilement du bas de <html> ; un focus au clavier entièrement caché dessous fait défiler la page, sinon réduit la
+// fenêtre (WCAG 2.2, 2.4.11). Aucune animation.
 import { Compass } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Popover as P } from "radix-ui";
@@ -14,14 +17,18 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { stepDone, type TourChecks } from "./tour-checks";
 import type { TourDef } from "./tour-content";
 import {
+  cardBoxNow,
   dockRectNow,
   dockSignature,
   findAnchor,
   firstPageTabbable,
   focusTarget,
   fullHeightView,
+  hiddenByCard,
   isVisible,
   mainElement,
+  reserveTopNow,
+  setTourDock,
   setTourReserve,
   tabbables,
   viewportSize,
@@ -30,6 +37,12 @@ import {
   TOUR_INTENT_MS,
   TOUR_UI,
   TOUR_WIDE_MIN,
+  dockReserve,
+  dockScrollPadding,
+  dockSpace,
+  dockedTop,
+  guardTarget,
+  revealScroll,
   tourFooter,
   type FooterButton,
   type TourEvent,
@@ -79,6 +92,9 @@ function useInView(el: HTMLElement | null): boolean {
   return inView;
 }
 
+/** Hauteur de la pastille (h-11). */
+const PILL_HEIGHT = 44;
+
 /** Pastille : en bas à gauche de main#contenu (16 px), remontée au-dessus des barres à éviter. */
 function usePillPosition(active: boolean): { left: number; bottom: number } {
   const [pos, setPos] = useState({ left: 16, bottom: 16 });
@@ -90,7 +106,7 @@ function usePillPosition(active: boolean): { left: number; bottom: number } {
       frame = requestAnimationFrame(() => {
         const main = mainElement()?.getBoundingClientRect();
         const left = Math.max(0, main?.left ?? 0) + 16;
-        const bottom = Math.max(16, Math.round(viewportSize().height - dockRectNow(16).y));
+        const bottom = Math.max(16, Math.round(viewportSize().height - dockRectNow({ margin: 16, height: PILL_HEIGHT }).y));
         setPos((p) => (p.left === left && p.bottom === bottom ? p : { left, bottom }));
       });
     };
@@ -162,6 +178,8 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
   // ------------------------------------------------------------------------------------------------ mode et position
   const anchored = !!anchor && inView && wide && stepDef?.anchor.kind === "control";
   const fullHeight = layout.startsWith("plein");
+  /** Fenêtre (Popover.Content) : hauteur lue par le repli, focus, sortie au clavier */
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const virtualRef = useMemo(() => {
     const target = anchored ? anchor : null;
     const main = mainElement();
@@ -169,8 +187,9 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
       current: target
         ? { getBoundingClientRect: () => target.getBoundingClientRect(), contextElement: target }
         : {
+            // Relu à chaque calcul de position (défilement, taille) : barres à éviter et hauteur de la fenêtre du moment
             getBoundingClientRect: () => {
-              const r = dockRectNow();
+              const r = dockRectNow({ height: contentRef.current?.offsetHeight });
               return new DOMRect(r.x, r.y, 0, 0);
             },
             contextElement: main ?? undefined,
@@ -179,24 +198,52 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     // `layout` : barres à éviter apparues ou disparues → nouvel objet, position recalculée
   }, [anchored, anchor, layout]);
 
-  // Réserve de défilement : repli centré déplié, hors vues pleine hauteur ; retirée à la réduction et à la fermeture
+  // Repli centré déplié : place prise en bas de l'écran (--tour-dock, vues pleine hauteur comprises : les
+  // notifications passent au-dessus) ; hors vues pleine hauteur, réserve de défilement de main#contenu (--tour-reserve,
+  // jusqu'à la fenêtre remontée au-dessus des barres collantes : la fin de la page passe au-dessus d'elle) et marge de
+  // défilement du bas de <html> jusqu'au haut RÉEL de la fenêtre (barre évitée comprise), pour qu'un élément qui reçoit
+  // le focus au clavier passe au-dessus d'elle (WCAG 2.2, 2.4.11). Relu à chaque changement de taille, de barres et au
+  // défilement (une barre collante passe la moitié de l'écran) ; tout est retiré, la marge d'origine rendue, à la
+  // réduction, à la fermeture et au démontage
   const [contentEl, setContentEl] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!contentEl || !expanded || anchored || fullHeight) {
-      setTourReserve(null);
-      return;
-    }
-    const update = () => setTourReserve(contentEl.offsetHeight + (viewportSize().width < TOUR_WIDE_MIN ? 16 : 24) + 8);
+    if (!contentEl || !expanded || anchored) return;
+    const root = document.documentElement;
+    const previousPadding = root.style.scrollPaddingBottom;
+    const basePadding = parseFloat(getComputedStyle(root).scrollPaddingBottom) || 0;
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      const { height } = viewportSize();
+      const cardHeight = contentEl.offsetHeight;
+      const dock = dockRectNow({ height: cardHeight });
+      const top = dockedTop(dock, cardHeight);
+      setTourDock(dockSpace(height, top, dock.y));
+      if (fullHeight) return;
+      setTourReserve(dockReserve(height, reserveTopNow(cardHeight)));
+      const padding = `${dockScrollPadding(height, top, basePadding)}px`;
+      if (root.style.scrollPaddingBottom !== padding) root.style.scrollPaddingBottom = padding;
+    };
+    const onScroll = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(update);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(contentEl);
     window.addEventListener("resize", update);
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", onScroll, { capture: true });
       setTourReserve(null);
+      setTourDock(null);
+      root.style.scrollPaddingBottom = previousPadding;
     };
-  }, [contentEl, expanded, anchored, fullHeight]);
+    // `layout` : barres à éviter apparues ou disparues → haut de la fenêtre relu
+  }, [contentEl, expanded, anchored, fullHeight, layout]);
 
   // ------------------------------------------------------------------------------------- focus et défilement (§ 6.4)
   const titleEl = useRef<HTMLHeadingElement | null>(null);
@@ -255,7 +302,6 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
 
   // Dernier élément focalisé hors de la fenêtre : rendu le focus à la fermeture (sinon main#contenu)
   const lastOutside = useRef<HTMLElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const remember = (e: FocusEvent) => {
       const t = e.target;
@@ -287,6 +333,62 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
     [act],
   );
 
+  // Focus au clavier (ou rendu par un composant de la page) sur un élément entièrement caché sous la fenêtre (WCAG 2.2,
+  // 2.4.11), vérifié une image plus tard (le navigateur a déjà fait défiler, marge du bas comprise) : en repli, la
+  // page défile pour l'amener au-dessus (place prévue de la fenêtre : elle peut se replacer quand une barre collante
+  // passe la moitié de l'écran, d'où quelques essais) ; si rien ne défile (vue pleine hauteur, conteneur interne) ou si
+  // la fenêtre est ancrée (elle suit son élément), elle passe en pastille, focus inchangé. Hors focus de « Y aller ».
+  const selfFocus = useRef(false);
+  useEffect(() => {
+    if (!expanded) return;
+    let frame = 0;
+    const onFocusIn = (event: FocusEvent) => {
+      const el = event.target;
+      if (selfFocus.current || !(el instanceof HTMLElement) || el === document.body || el.hasAttribute("data-radix-focus-guard")) return;
+      if (contentRef.current?.contains(el) || pillEl.current?.contains(el)) return;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const card = contentRef.current;
+        const docked = !anchored;
+        if (!card?.isConnected || document.activeElement !== el || !hiddenByCard(el, cardBoxNow(card, docked))) return;
+        if (docked) {
+          for (let tries = 0; tries < 3; tries++) {
+            const before = window.scrollY;
+            window.scrollBy({ top: revealScroll(el.getBoundingClientRect(), cardBoxNow(card, true).top), behavior: "instant" });
+            if (window.scrollY === before) break;
+            if (!hiddenByCard(el, cardBoxNow(card, true))) return;
+          }
+        }
+        act({ type: "minimize" });
+      });
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("focusin", onFocusIn, true);
+    };
+  }, [expanded, anchored, act]);
+
+  // Gardes de focus de Radix (span[data-radix-focus-guard], tabindex 0, invisibles : début et fin de <body>, posées
+  // par le Popover même non modal, tant que la fenêtre est dépliée) : jamais d'arrêt invisible. Garde du début atteinte
+  // en entrant dans la page (premier Tab) → premier élément de la page ; depuis la page (Maj+Tab), ou garde de fin →
+  // dernier élément de la fenêtre (guardTarget)
+  useEffect(() => {
+    if (!expanded) return;
+    const onGuard = (event: FocusEvent) => {
+      const guard = event.target;
+      const card = contentRef.current;
+      if (!(guard instanceof HTMLElement) || !guard.hasAttribute("data-radix-focus-guard") || !card?.isConnected) return;
+      const start = (guard.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      const from = event.relatedTarget;
+      const fromPage = from instanceof Element && from.isConnected;
+      const next = guardTarget({ start, fromPage }) === "page" ? firstPageTabbable(card) : (tabbables(card).at(-1) ?? null);
+      next?.focus();
+    };
+    document.addEventListener("focusin", onGuard, true);
+    return () => document.removeEventListener("focusin", onGuard, true);
+  }, [expanded]);
+
   // --------------------------------------------------------------------------------------------- boutons (§ 6.5)
   const done = stepDef ? stepDone(stepDef.check, checks) : undefined;
   const steps = useMemo(() => def.steps.map((s) => ({ href: s.href, linkLabel: s.linkLabel, title: s.title, hasCheck: !!s.check })), [def]);
@@ -316,12 +418,17 @@ export function TourCard({ def, state, checks, request, act, onLocation }: TourC
       case "open":
         act(null, intent);
         return;
-      // « Y aller » : défilement puis focus dans l'élément
+      // « Y aller » : défilement puis focus dans l'élément (déjà amené à l'écran : pas de contrôle « caché dessous »)
       case "goto": {
         const target = anchor ?? (anchorId ? findAnchor(anchorId) : null);
         if (!target) return;
         scrollTo(target);
-        focusTarget(target);
+        selfFocus.current = true;
+        try {
+          focusTarget(target);
+        } finally {
+          selfFocus.current = false;
+        }
         return;
       }
     }

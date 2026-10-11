@@ -56,10 +56,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-dvh bg-ink-900 text-fg antialiased">
         {children}
         <CookieNotice href="/cookies" />
+        {/* Bas : au-dessus de la fenêtre de la visite guidée en repli (--tour-dock, components/tour/tour-card.tsx ; 0
+            sinon), jamais sur ses boutons — téléphone (pleine largeur sous 600 px) comme bureau (bas droite) */}
         <Toaster
           theme="dark"
           position="bottom-right"
-          offset={{ top: 84 }}
+          offset={{ top: 84, bottom: "calc(var(--tour-dock, 0px) + 24px)" }}
+          mobileOffset={{ bottom: "calc(var(--tour-dock, 0px) + 16px)" }}
           toastOptions={{
             classNames: {
               toast: "!bg-ink-700 !border !border-white/10 !text-fg !rounded-xl !shadow-[0_24px_60px_-24px_rgb(0_0_0/0.9)]",

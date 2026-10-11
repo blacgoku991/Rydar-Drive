@@ -3,13 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 
 // Visite guidée (docs/TUTORIEL.md § 8) : conditions de réussite des étapes — règles pures (commission réglable,
 // coordonnées de paiement de Rydar, étape faite) et lectures de loadTourChecks avec un client simulé : bonne table,
-// bonnes colonnes, bons filtres, comptages `head`, seulement les clés demandées, erreur → clé absente (« inconnue »),
+// bonnes colonnes, bons filtres, comptages `head` (attributions : existence bornée à une ligne, sur 30 jours),
+// seulement les clés demandées, erreur → clé absente (« inconnue »),
 // jamais d'exception. « Éditeur » et « Identité de votre entreprise » reprennent les règles existantes (adminLegalTodo,
 // bookingOperatorGaps). Modules « @/ » résolus à la main.
 
 vi.mock("@/lib/wording", async () => await import("../../lib/wording"));
 
-const { CHECK_KEYS, billingConfigured, loadTourChecks, settlementReady, stepDone } = await import("./tour-checks");
+const { ASSIGNED_WINDOW_DAYS, CHECK_KEYS, billingConfigured, loadTourChecks, settlementReady, stepDone } = await import("./tour-checks");
 const { TOURS, tourCheckKeys } = await import("./tour-content");
 type CheckKey = import("./tour-checks").CheckKey;
 type TourScope = import("./tour-model").TourScope;
@@ -36,6 +37,8 @@ function fakeClient(reply: (call: Call) => Reply | Promise<Reply>) {
         neq: (column: string, value: unknown) => (call.filters.push(["neq", column, value]), builder),
         is: (column: string, value: unknown) => (call.filters.push(["is", column, value]), builder),
         not: (column: string, op: string, value: unknown) => (call.filters.push([`not.${op}`, column, value]), builder),
+        gte: (column: string, value: unknown) => (call.filters.push(["gte", column, value]), builder),
+        limit: (count: number) => (call.filters.push(["limit", "", count]), builder),
         maybeSingle() {
           call.single = true;
           return builder;
@@ -58,6 +61,8 @@ function fakeClient(reply: (call: Call) => Reply | Promise<Reply>) {
 
 const SCOPE: TourScope = { userId: "u-1", orgId: "org-1", driverId: "drv-1" };
 const HEAD = { count: "exact", head: true };
+/** Borne de date « maintenant − 30 jours » des attributions (voir normalized) */
+const SINCE_30_DAYS = "<maintenant − 30 jours>";
 const ok = (count: number): Reply => ({ data: null, error: null, count });
 const row = (data: unknown): Reply => ({ data, error: null });
 const fail: Reply = { data: null, error: { code: "42501", message: "permission denied" }, count: null };
@@ -97,12 +102,19 @@ const EXPECTED: Record<CheckKey, Omit<Call, "options"> & { head: boolean }> = {
   first_ride: { table: "rides", columns: "id", filters: [["eq", "organization_id", "org-1"]], single: false, head: true },
   team: { table: "organization_users", columns: "id", filters: [["eq", "organization_id", "org-1"]], single: false, head: true },
   my_ride: { table: "rides", columns: "id", filters: [["eq", "organization_id", "org-1"], ["eq", "created_by", "u-1"]], single: false, head: true },
+  // Attributions manuelles faites par l'utilisateur, 30 derniers jours, existence (une ligne au plus), jamais un comptage
   my_ride_assigned: {
-    table: "rides",
+    table: "ride_events",
     columns: "id",
-    filters: [["eq", "organization_id", "org-1"], ["eq", "created_by", "u-1"], ["not.is", "driver_id", null]],
+    filters: [
+      ["eq", "organization_id", "org-1"],
+      ["eq", "type", "ride.assigned_manually"],
+      ["eq", "actor_id", "u-1"],
+      ["gte", "created_at", SINCE_30_DAYS],
+      ["limit", "", 1],
+    ],
     single: false,
-    head: true,
+    head: false,
   },
   fp_taken: { table: "rides", columns: "id", filters: [["eq", "organization_id", "org-1"], ["eq", "driver_id", "drv-1"]], single: false, head: true },
 };
@@ -121,7 +133,7 @@ const DONE: Record<CheckKey, Reply> = {
   first_ride: ok(1),
   team: ok(2),
   my_ride: ok(1),
-  my_ride_assigned: ok(1),
+  my_ride_assigned: row([{ id: 4242 }]),
   fp_taken: ok(3),
 };
 
@@ -139,15 +151,28 @@ const NOT_DONE: Record<CheckKey, Reply> = {
   first_ride: ok(0),
   team: ok(1),
   my_ride: ok(0),
-  my_ride_assigned: ok(0),
+  my_ride_assigned: row([]),
   fp_taken: ok(0),
 };
+
+/**
+ * Filtres d'un appel, borne de date remplacée par SINCE_30_DAYS si elle vaut « maintenant − 30 jours » (à la minute
+ * près, horodatage ISO) : sinon gardée telle quelle (et la comparaison échoue).
+ */
+function normalized(filters: Filter[]): Filter[] {
+  return filters.map(([op, column, value]): Filter => {
+    if (op !== "gte" || column !== "created_at" || typeof value !== "string") return [op, column, value];
+    const at = Date.parse(value);
+    const expected = Date.now() - ASSIGNED_WINDOW_DAYS * 86_400_000;
+    return /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && Math.abs(at - expected) < 60_000 ? [op, column, SINCE_30_DAYS] : [op, column, value];
+  });
+}
 
 /** Clé lue par un appel (table + colonnes + filtres : unique par clé). */
 const keyOf = (call: Call): CheckKey => {
   const key = CHECK_KEYS.find((k) => {
     const e = EXPECTED[k];
-    return e.table === call.table && e.columns === call.columns && JSON.stringify(e.filters) === JSON.stringify(call.filters);
+    return e.table === call.table && e.columns === call.columns && JSON.stringify(e.filters) === JSON.stringify(normalized(call.filters));
   });
   if (!key) throw new Error(`lecture inattendue : ${call.table} (${call.columns}) ${JSON.stringify(call.filters)}`);
   return key;
@@ -231,7 +256,7 @@ describe("loadTourChecks : lectures du § 8", () => {
       expect(calls, key).toHaveLength(1);
       const [call] = calls;
       const expected = EXPECTED[key];
-      expect({ table: call!.table, columns: call!.columns, filters: call!.filters, single: call!.single }, key).toEqual({
+      expect({ table: call!.table, columns: call!.columns, filters: normalized(call!.filters), single: call!.single }, key).toEqual({
         table: expected.table,
         columns: expected.columns,
         filters: expected.filters,
@@ -267,6 +292,27 @@ describe("loadTourChecks : lectures du § 8", () => {
     // Lien d'inscription : code sans activation, activation sans code
     expect(await run("join_link", row({ join_code: null, join_enabled: true }))).toBe(false);
     expect(await run("join_link", row(null))).toBe(false);
+  });
+
+  it("« Attribuer une course » : l'attribution manuelle elle-même (ride_events), par l'utilisateur, sur 30 jours, quel que soit l'auteur de la course", async () => {
+    const run = async (reply: Reply) => {
+      const { client, calls } = fakeClient(() => reply);
+      return { checks: await loadTourChecks(client, ["my_ride_assigned"], SCOPE), calls };
+    };
+    // Une attribution trouvée (course créée par le gérant, attribuée par le dispatcher : constat de la revue) → faite
+    const one = await run(row([{ id: 1 }]));
+    expect(one.checks).toEqual({ my_ride_assigned: true });
+    // Lecture d'existence : jamais les courses (auteur, chauffeur), jamais un comptage de tous les événements
+    expect(one.calls.map((c) => c.table)).toEqual(["ride_events"]);
+    expect(one.calls[0]!.options).toBeUndefined();
+    expect(one.calls[0]!.filters).toContainEqual(["limit", "", 1]);
+    const since = one.calls[0]!.filters.find(([op]) => op === "gte")![2] as string;
+    expect(Math.abs(Date.parse(since) - (Date.now() - 30 * 86_400_000))).toBeLessThan(60_000);
+    // Aucune attribution (course créée puis acceptée par un chauffeur : rien dans ride_events) → pas faite
+    expect((await run(row([]))).checks).toEqual({ my_ride_assigned: false });
+    // Erreur ou réponse sans liste → inconnue
+    expect((await run(fail)).checks).toEqual({});
+    expect((await run(row(null))).checks).toEqual({});
   });
 
   it("lecture en erreur, nombre absent ou exception : clé absente, jamais d'exception ; les autres clés sont rendues", async () => {

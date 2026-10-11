@@ -1,11 +1,44 @@
 # Travail en cours (11/10/2026)
 
-## Visite guidée de première connexion : lots T1 à T3 faits (11/10/2026)
+## Visite guidée de première connexion : lots T1 à T3 et corrections de la revue UX faits (11/10/2026)
 
 Plan : `docs/TUTORIEL.md` (statuts des lots § 12.1, écarts § 13.3). T1 = base et paquet partagé ; T2 = moteur de visite
 et coquille ; T3 = parcours sur les écrans réels (ancres `data-tour`, conditions de réussite, textes contrôlés à
-l'écran) et recette complète. Rien dans `apps/driver`, `apps/worker`, ni le seed. Reste : décisions du propriétaire
-(`TUTORIEL.md` § 13.1) ; migration 007800 pas encore poussée.
+l'écran) et recette complète ; revue UX = corrections UX-01 à UX-09. Rien dans `apps/driver`, `apps/worker`, ni le
+seed. Reste : décisions du propriétaire (`TUTORIEL.md` § 13.1) ; migration 007800 pas encore poussée.
+
+### Revue UX — corrections UX-01 à UX-09
+
+- **Livré** (web seulement : aucune migration, aucune RPC, garde ou action serveur modifiée ; détail et écarts :
+  `TUTORIEL.md` § 13.3, « Revue UX ») :
+  - UX-01 (focus caché sous la fenêtre en repli, WCAG 2.2, 2.4.11) : marge de défilement du bas de `<html>` jusqu'au
+    haut réel de la fenêtre (rendue au retrait) et filet `focusin` (défilement, sinon pastille). Cause profonde trouvée
+    à la recette et corrigée : la fenêtre suivait la barre « Enregistrer » collante quand elle remonte avec la page en
+    fin de formulaire ; une barre collante compte maintenant à sa place collée au bas de l'écran, et la réserve de
+    défilement va jusqu'à la fenêtre remontée au-dessus d'elle (indépendante du défilement).
+  - UX-02 et UX-08 : attributs seuls — panneau d'En direct à éviter (téléphone : fenêtre sur la carte, au-dessus du
+    panneau) ; carte en direct du super admin en vue pleine hauteur, légende à éviter.
+  - UX-03 : étape faite affichée hors de son écran (« Revoir la visite ») : « Ouvrir … » en secondaire, puis « Suivant ».
+  - UX-04 : « Attribuer une course » lit l'attribution elle-même (`ride_events`, `ride.assigned_manually` par
+    l'utilisateur, existence sur 30 jours).
+  - UX-05 : notifications au-dessus de la fenêtre en repli (`--tour-dock`, `Toaster` : `mobileOffset` et `offset`),
+    seulement quand elle est dans leur bande, jamais hors de l'écran.
+  - UX-06 : touche N d'En direct depuis la fenêtre de visite (Échap y reste à la visite).
+  - UX-07 : gardes de focus de Radix renvoyées (aucun arrêt invisible au clavier).
+  - UX-09 : « Y aller » vise `[data-tour-focus]`, puis le filtre affiché, puis la première commande, les liens ensuite.
+- **Contrôles** : `pnpm typecheck` OK ; `pnpm test` 169 fichiers, 1 922 tests (+20 ; dossier `components/tour` : 116) ;
+  `pnpm --filter @rydar/web build` OK ; 12 mutations des corrections, toutes détectées par les tests ; pas de
+  `test:db` (aucun changement SQL).
+- **Recette** (hors dépôt, `scratchpad/tutoriel/correction-ux/`, build de production :3237, comptes de la revue,
+  `user_tours` et téléphone de l'organisation rendus ensuite) : Tab dans Organisation, Tarifs, Commission (1440 et
+  390) et `/admin/legal` : 0 élément focalisé caché, fenêtre restée dépliée ; En direct 390 (flotte 4, centrale 5,
+  dispatcher 1 et 2) : onglets, liste et « Nouvelle course » visibles ; paysage 844×390 : étape ancrée inchangée (deux
+  onglets du milieu sous la fenêtre) ; « Revoir la visite » hors écran → « Ouvrir … » + « Suivant » ; dispatcher :
+  « C'est fait. » d'après ses attributions (et pas sans) ; notifications posées au-dessus de la fenêtre (390 et
+  1280) ; N depuis la fenêtre → « Nouvelle course » ; premier Tab → « Aller au contenu », 240 arrêts sans garde
+  invisible ; carte du super admin sans réserve ni défilement, fenêtre au-dessus de la légende ; « Y aller » →
+  « Sans chauffeur », « Je la prends », premier champ des formulaires ; non-régression TE-11 (Tarifs en saisie, 1440
+  et 390) : la fenêtre ne coupe jamais la barre collée en bas, et en bas de page la barre est au-dessus d'elle.
 
 ### T3 — Parcours sur les écrans réels, conditions de réussite et recette
 

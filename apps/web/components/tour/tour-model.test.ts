@@ -4,24 +4,36 @@ import { stepDone } from "./tour-checks";
 import { TOURS } from "./tour-content";
 import {
   TOUR_DOCK_GAP,
+  TOUR_TOAST_TOP,
+  TOUR_TOAST_ZONE,
   TOUR_UI,
   autostartView,
   clampStep,
+  dockReserve,
+  dockScrollPadding,
+  dockSpace,
   dockedRect,
+  dockedTop,
+  guardTarget,
+  hiddenUnder,
   initialTourState,
+  pickFocus,
+  revealScroll,
   samePage,
   savedTourState,
   tourFooter,
   tourMenuItem,
   tourPersist,
   tourReducer,
+  type FocusCandidate,
   type FooterStep,
   type TourEvent,
   type TourState,
 } from "./tour-model";
 
 // Visite guidée (docs/TUTORIEL.md) : modèle pur du moteur — table de démarrage (§ 5.4), événements et écritures (§ 6.2),
-// menu du compte (§ 10), même écran et boutons de la fenêtre (§ 6.5), repli centré (§ 6.3), textes (§ 6.10).
+// menu du compte (§ 10), même écran et boutons de la fenêtre (§ 6.5), repli centré, sa marge du bas et le focus caché
+// dessous (§ 6.3), gardes de focus et élément visé par « Y aller » (§ 6.4, § 6.6), textes (§ 6.10).
 
 // tour-checks.ts reprend la règle « Éditeur » de « À traiter » (components/admin/admin-todo.ts, qui importe
 // « @/lib/wording ») : module résolu à la main (lot T3)
@@ -328,7 +340,9 @@ describe("boutons de la fenêtre (§ 6.5)", () => {
   });
 
   it("étape faite (« C'est fait. ») : « Précédent » (discret, absent à l'étape 1) puis « Suivant », ou « Terminer » à la dernière", () => {
-    expect(summary(footer({ step: 0, done: true }))).toEqual([["next", "Suivant", "primary", "/dashboard/settings?tab=pricing"]]);
+    expect(summary(footer({ step: 0, done: true, pathname: "/dashboard/settings", search: "?tab=org" }))).toEqual([
+      ["next", "Suivant", "primary", "/dashboard/settings?tab=pricing"],
+    ]);
     expect(summary(footer({ step: 2, done: true, pathname: "/dashboard/drivers" }))).toEqual([
       ["prev", "Précédent", "ghost", "/dashboard/settings?tab=pricing"],
       ["next", "Suivant", "primary", "/dashboard"],
@@ -341,6 +355,35 @@ describe("boutons de la fenêtre (§ 6.5)", () => {
     expect(summary(footer({ step: 4, done: true, pathname: "/dashboard/settings", search: "?tab=team" }))).toEqual([
       ["prev", "Précédent", "ghost", "/dashboard"],
       ["finish", "Terminer", "primary", null],
+    ]);
+    // Élément de l'étape visible ailleurs que sur son adresse : c'est le bon écran, pas de lien
+    expect(summary(footer({ step: 2, done: true, pathname: "/dashboard/autre", anchorVisible: true }))).toEqual([
+      ["prev", "Précédent", "ghost", "/dashboard/settings?tab=pricing"],
+      ["next", "Suivant", "primary", "/dashboard"],
+    ]);
+  });
+
+  it("étape faite hors de son écran (« Revoir la visite » ailleurs) : son lien « Ouvrir … » en secondaire, puis « Suivant » ou « Terminer »", () => {
+    // Étape 1 faite, rouverte depuis En direct : aucun élément surligné, l'écran de l'étape reste joignable
+    const first = footer({ step: 0, done: true });
+    expect(summary(first)).toEqual([
+      ["open", "Ouvrir Organisation", "secondary", "/dashboard/settings?tab=org"],
+      ["next", "Suivant", "primary", "/dashboard/settings?tab=pricing"],
+    ]);
+    onePrimaryLast(first);
+    // Dernière étape faite, hors de son écran
+    const last = footer({ step: 4, done: true, pathname: "/dashboard/drivers" });
+    expect(summary(last)).toEqual([
+      ["prev", "Précédent", "ghost", "/dashboard"],
+      ["open", "Ouvrir Équipe", "secondary", "/dashboard/settings?tab=team"],
+      ["finish", "Terminer", "primary", null],
+    ]);
+    onePrimaryLast(last);
+    // Super admin, étape 1 (« Éditeur ») faite, rouverte depuis la vue d'ensemble
+    const admin = TOURS.super_admin.steps.map((s) => ({ href: s.href, linkLabel: s.linkLabel, title: s.title, hasCheck: !!s.check }));
+    expect(summary(tourFooter({ view: "step", step: 0, steps: admin, pathname: "/admin", search: "", anchorVisible: false, done: true }))).toEqual([
+      ["open", "Ouvrir Informations légales", "secondary", "/admin/legal"],
+      ["next", "Suivant", "primary", "/admin/reglages"],
     ]);
   });
 
@@ -446,6 +489,142 @@ describe("repli centré (dockedRect)", () => {
   it("marge imposée (pastille : 16 px), main hors de l'écran : centre de la fenêtre", () => {
     expect(dockedRect({ viewport: desktop, main, avoid: [], margin: 16 }).y).toBe(884);
     expect(dockedRect({ viewport: desktop, main: { left: 2000, right: 2400 }, avoid: [] }).x).toBe(720);
+  });
+
+  it("hauteur connue : seule une barre qui couperait la fenêtre la fait remonter (barre revenue à sa place en fin de page : non)", () => {
+    const h = 218;
+    // Barre « Enregistrer » collée en bas : elle couperait la fenêtre → au-dessus
+    expect(dockedRect({ viewport: desktop, main, avoid: [{ top: 826, bottom: 884, left: 248, right: 1424 }], height: h }).y).toBe(814);
+    // Fin de page (barre à sa place, au-dessus de la réserve, y 560-618) : la fenêtre reste en bas (658-876), les
+    // dernières lignes de la grille passent au-dessus d'elle (sinon elle suivait la barre jusqu'en 330-548)
+    expect(dockedRect({ viewport: desktop, main, avoid: [{ top: 560, bottom: 618, left: 248, right: 1424 }], height: h }).y).toBe(876);
+    expect(dockedRect({ viewport: desktop, main, avoid: [{ top: 560, bottom: 618, left: 248, right: 1424 }] }).y).toBe(548);
+    // Limite : barre à l'écart près de la fenêtre (876 − 218 − 12 = 646) ; au-delà, elle la couperait
+    expect(dockedRect({ viewport: desktop, main, avoid: [{ top: 588, bottom: 646, left: 0, right: 900 }], height: h }).y).toBe(876);
+    expect(dockedRect({ viewport: desktop, main, avoid: [{ top: 589, bottom: 647, left: 0, right: 900 }], height: h }).y).toBe(577);
+    // Deux barres l'une au-dessus de l'autre : au-dessus des deux si la remontée fait rencontrer la seconde
+    const two = [
+      { top: 700, bottom: 760, left: 0, right: 900 },
+      { top: 826, bottom: 884, left: 0, right: 900 },
+    ];
+    expect(dockedRect({ viewport: desktop, main, avoid: two, height: h }).y).toBe(688);
+    // Fenêtre basse (pastille de 40 px) entre les deux : au-dessus de la plus basse seulement
+    expect(dockedRect({ viewport: desktop, main, avoid: two, height: 40 }).y).toBe(814);
+  });
+
+  it("barre collante : comptée à sa place collée au bas de l'écran, même quand elle remonte avec la page (la fenêtre ne la suit pas)", () => {
+    const h = 218;
+    const bar = (top: number) => ({ top, bottom: top + 58, left: 248, right: 1424, stuck: { top: 826, bottom: 884 } });
+    // Collée en bas : au-dessus d'elle
+    expect(dockedRect({ viewport: desktop, main, avoid: [bar(826)], height: h }).y).toBe(814);
+    // Revenue à sa place en fin de formulaire, elle monte avec la page (moitié basse) : la fenêtre ne bouge pas (avant :
+    // 668 puis 521, et les lignes juste au-dessus de la barre restaient sous la fenêtre)
+    expect(dockedRect({ viewport: desktop, main, avoid: [bar(680)], height: h }).y).toBe(814);
+    expect(dockedRect({ viewport: desktop, main, avoid: [bar(533)], height: h }).y).toBe(814);
+    // Passée dans la moitié haute : ignorée, la fenêtre redescend ; hors de l'écran : ignorée
+    expect(dockedRect({ viewport: desktop, main, avoid: [bar(440)], height: h }).y).toBe(876);
+    expect(dockedRect({ viewport: desktop, main, avoid: [bar(950)], height: h }).y).toBe(876);
+  });
+
+  it("réserve de défilement : jusqu'au haut de la fenêtre remontée au-dessus des barres collantes, plus 8 px", () => {
+    // Sans barre : hauteur de la fenêtre + marge + 8 (inchangé)
+    expect(dockReserve(900, dockedTop(dockedRect({ viewport: desktop, main, avoid: [] }), 218))).toBe(218 + 24 + 8);
+    expect(dockReserve(844, dockedTop(dockedRect({ viewport: phone, main: null, avoid: [] }), 336))).toBe(336 + 16 + 8);
+    // Barre collante (pour la réserve : toujours à sa place collée) : la fin de la page, barre comprise, passe au-dessus
+    // de la fenêtre remontée (fin du contenu à 900 − 312 = 588, haut de la fenêtre à 596)
+    const top = dockedTop(dockedRect({ viewport: desktop, main, avoid: [{ top: 826, bottom: 884, left: 248, right: 1424 }], height: 218 }), 218);
+    expect(top).toBe(596);
+    expect(dockReserve(900, top)).toBe(312);
+  });
+
+  it("En direct sous lg : le panneau des courses (moitié basse) fait remonter la fenêtre sur la carte, pas à partir de lg", () => {
+    // 390×844 : panneau à y 444 (> 422) ; bureau : panneau en haut (top-3), ignoré
+    expect(dockedRect({ viewport: phone, main: null, avoid: [{ top: 444, bottom: 844, left: 0, right: 390 }] }).y).toBe(432);
+    expect(dockedRect({ viewport: desktop, main, avoid: [{ top: 12, bottom: 888, left: 244, right: 636 }] }).y).toBe(876);
+  });
+});
+
+describe("repli : marge du bas, place prise et focus caché dessous (WCAG 2.2, 2.4.11)", () => {
+  const phone = { width: 390, height: 844 };
+
+  it("haut réel de la fenêtre : son bas est le y du repli, remontée au-dessus d'une barre comprise", () => {
+    expect(dockedTop(dockedRect({ viewport: phone, main: null, avoid: [] }), 300)).toBe(528);
+    const lifted = dockedRect({ viewport: phone, main: null, avoid: [{ top: 700, bottom: 828, left: 16, right: 374 }] });
+    expect(dockedTop(lifted, 300)).toBe(388);
+  });
+
+  it("marge de défilement du bas : jusqu'au haut de la fenêtre, plus l'écart ; jamais moins que celle de la page", () => {
+    // Bureau, « Vos tarifs » : fenêtre de y 596 à 814 → un champ focalisé finit au-dessus de y 584
+    expect(dockScrollPadding(900, 596, 96)).toBe(900 - 596 + TOUR_DOCK_GAP);
+    // Remontée au-dessus d'une barre « Enregistrer » : la barre est couverte aussi
+    expect(dockScrollPadding(844, 388, 96)).toBe(468);
+    expect(dockScrollPadding(900, 880, 96)).toBe(96);
+    expect(dockScrollPadding(900, 595.5, 96)).toBe(317);
+  });
+
+  it("place prise en bas de l'écran (--tour-dock) : notifications au-dessus de la fenêtre quand elle est dans leur bande", () => {
+    // Téléphone, repli en bas (528 → 828) : au-dessus de la fenêtre
+    expect(dockSpace(844, 528, 828)).toBe(316);
+    expect(dockSpace(844, 527.4, 828)).toBe(317);
+    // Bureau, remontée au-dessus d'une barre « Enregistrer » (596 → 814) : au-dessus de la fenêtre (et de la barre)
+    expect(dockSpace(900, 596, 814)).toBe(304);
+    // En direct sur téléphone, au-dessus du panneau (116 → 432) : hors de leur bande, notifications en bas
+    expect(dockSpace(844, 116, 432)).toBe(0);
+    expect(dockSpace(844, 528, 844 - TOUR_TOAST_ZONE)).toBe(0);
+    // Écran bas (téléphone à l'horizontale, 93 → 366) : jamais au point de sortir une notification par le haut
+    expect(dockSpace(390, 93, 366)).toBe(390 - TOUR_TOAST_TOP);
+  });
+
+  it("élément entièrement sous la fenêtre (rectangle compris, à 1 px près) ; partiellement visible ou vide : non", () => {
+    const card = { top: 596, bottom: 814, left: 644, right: 1028 };
+    // « € TTC / min » de la grille, sous la fenêtre (constat de la revue)
+    expect(hiddenUnder({ top: 655, bottom: 695, left: 700, right: 900 }, card)).toBe(true);
+    expect(hiddenUnder({ top: 595.5, bottom: 814.5, left: 643.5, right: 1028.5 }, card)).toBe(true);
+    expect(hiddenUnder({ top: 580, bottom: 620, left: 700, right: 900 }, card)).toBe(false);
+    expect(hiddenUnder({ top: 655, bottom: 695, left: 600, right: 900 }, card)).toBe(false);
+    expect(hiddenUnder({ top: 700, bottom: 700, left: 700, right: 900 }, card)).toBe(false);
+    expect(hiddenUnder({ top: 700, bottom: 740, left: 700, right: 700 }, card)).toBe(false);
+  });
+
+  it("défilement qui amène le bas de l'élément à 12 px au-dessus de la fenêtre", () => {
+    const el = { top: 655, bottom: 695 };
+    expect(revealScroll(el, 596)).toBe(111);
+    expect(el.bottom - revealScroll(el, 596)).toBe(596 - TOUR_DOCK_GAP);
+    expect(revealScroll({ bottom: 695.2 }, 596)).toBe(112);
+  });
+});
+
+describe("gardes de focus de Radix (guardTarget)", () => {
+  it("garde du début en entrant dans la page → premier élément de la page ; depuis la page ou garde de fin → fenêtre", () => {
+    expect(guardTarget({ start: true, fromPage: false })).toBe("page");
+    expect(guardTarget({ start: true, fromPage: true })).toBe("card");
+    expect(guardTarget({ start: false, fromPage: false })).toBe("card");
+    expect(guardTarget({ start: false, fromPage: true })).toBe("card");
+  });
+});
+
+describe("« Y aller » dans une zone (pickFocus, § 6.4)", () => {
+  type C = FocusCandidate & { id: string };
+  const c = (id: string, kind: FocusCandidate["kind"], more: Partial<FocusCandidate> = {}): C => ({ id, kind, marked: false, current: false, ...more });
+  const pick = (list: C[]) => pickFocus(list)?.id ?? null;
+
+  it("dispatcher, « Attribuer une course » : le filtre affiché (« Sans chauffeur »), pas le premier lien (« Toutes »)", () => {
+    expect(pick([c("Toutes", "link"), c("À traiter", "link"), c("Sans chauffeur", "link", { current: true }), c("Rechercher", "control")])).toBe("Sans chauffeur");
+  });
+
+  it("Flotte Privée, « À traiter » : « Je la prends », ni « Tout voir » ni la fiche de la réservation", () => {
+    expect(pick([c("Tout voir", "link"), c("Fiche de la réservation", "link"), c("Je la prends", "control"), c("Refuser", "control"), c("Fixer le prix", "control")])).toBe("Je la prends");
+  });
+
+  it("formulaire (Organisation, Tarifs, Éditeur) : son premier champ", () => {
+    expect(pick([c("Raison sociale", "control"), c("SIRET", "control"), c("Enregistrer", "control")])).toBe("Raison sociale");
+  });
+
+  it("[data-tour-focus] avant tout ; liens seulement sans commande ; zone défilante en dernier ; rien : null", () => {
+    expect(pick([c("Toutes", "link", { current: true }), c("Champ", "control"), c("Marqué", "link", { marked: true })])).toBe("Marqué");
+    expect(pick([c("Zone", "other"), c("Lien", "link")])).toBe("Lien");
+    expect(pick([c("Zone", "other"), c("Autre zone", "other")])).toBe("Zone");
+    expect(pick([])).toBeNull();
   });
 });
 

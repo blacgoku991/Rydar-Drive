@@ -243,16 +243,19 @@ export function CommandCenter({
   useRealtimeEvent("chat.report", (u: FleetReportUpdate) => u?.id && dispatch({ type: "report-update", payload: u }));
 
 
-  // Raccourcis : N = nouvelle course, Échap = désélection
+  // Raccourcis : N = nouvelle course, Échap = désélection. Ignorés dans un champ ou une fenêtre, sauf N depuis la
+  // fenêtre de la visite guidée (non modale, sans champ : son étape « Créer une course » propose la touche N) ; Échap y
+  // reste à la visite (pause)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
+      const inTour = !!target.closest("[data-tour-card]");
+      if (target.closest("input, textarea, select, [contenteditable]") || (target.closest("[role=dialog]") && !inTour)) return;
       if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setNewRideOpen(true);
       }
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !inTour) {
         setSelectedRide(null);
         setSelectedDriver(null);
         setSelectedReport(null);
@@ -580,7 +583,7 @@ export function CommandCenter({
       </div>
 
       {/* Panneau courses (gauche) */}
-      <aside data-tour="live-panel" className="z-10 flex min-h-0 flex-1 flex-col bg-ink-850 lg:glass lg:absolute lg:bottom-3 lg:left-3 lg:top-3 lg:w-[392px] lg:flex-none lg:rounded-2xl">
+      <aside data-tour="live-panel" data-tour-avoid="" className="z-10 flex min-h-0 flex-1 flex-col bg-ink-850 lg:glass lg:absolute lg:bottom-3 lg:left-3 lg:top-3 lg:w-[392px] lg:flex-none lg:rounded-2xl">
         <div className="space-y-1.5 border-b border-white/[0.05] px-4 py-3">
           <div className="flex items-center gap-3">
             <span className="relative grid size-2 place-items-center">

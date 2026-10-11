@@ -445,7 +445,7 @@ rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), 
 | Mode | Quand | Position |
 |---|---|---|
 | **ancrée** | ancre de type `control` trouvée et visible, écran ≥ 640 px | `virtualRef = { getBoundingClientRect: () => cible.getBoundingClientRect(), contextElement: cible }` ; `side` / `align` de l'étape (défaut `bottom` / `start`) ; `sideOffset={12}` ; `collisionPadding={16}` ; `avoidCollisions` (bascule de côté gérée par Radix) |
-| **repli centré** | accueil ; ancre de type `zone` ; ancre absente ou cachée ; écran < 640 px | rectangle virtuel de largeur nulle, **centré horizontalement sur `main#contenu`** (à défaut la fenêtre), à 16 px (< 640 px) ou 24 px (≥ 640 px) du bas, **remonté au-dessus** de tout `[data-tour-avoid]` visible dont le haut est dans la moitié basse de l'écran (`dockedRect`, pur et testé) ; `contextElement` = `main#contenu` (la position suit défilement et redimensionnement) ; `side="top" align="center"` |
+| **repli centré** | accueil ; ancre de type `zone` ; ancre absente ou cachée ; écran < 640 px | rectangle virtuel de largeur nulle, **centré horizontalement sur `main#contenu`** (à défaut la fenêtre), à 16 px (< 640 px) ou 24 px (≥ 640 px) du bas, **remonté au-dessus** de tout `[data-tour-avoid]` visible dont le haut est dans la moitié basse de l'écran et qui couperait la fenêtre là où elle est (`dockedRect`, pur et testé ; revue UX : une barre collante compte à sa place **collée au bas de l'écran**, même quand elle remonte avec la page en fin de formulaire — la fenêtre ne la suit plus) ; `contextElement` = `main#contenu` (la position suit défilement et redimensionnement) ; `side="top" align="center"` |
 | **réduite** | « Réduire » | pastille fixe en bas à gauche de `main#contenu` (16 px), même remontée ; les notifications (sonner) sont en bas à droite |
 
 - Taille : `w-[min(24rem,calc(100vw-2rem))]`, `max-h-[min(32rem,70dvh)] overflow-y-auto` ; `rounded-2xl border
@@ -455,8 +455,24 @@ rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), 
 - **Réserve de défilement** : tant que la fenêtre est en repli centré et dépliée, le moteur pose
   `--tour-reserve: <hauteur de la fenêtre + écart>px` sur `document.documentElement` ; `main#contenu` des deux coquilles
   reçoit `pb-[var(--tour-reserve,0px)]` : le bas d'une page qui défile peut toujours passer au-dessus de la fenêtre.
-  Les vues pleine hauteur (En direct, Messages) portent `data-tour-fullheight` à leur racine : le moteur n'y pose pas de
-  réserve (elles ne défilent pas). Variable retirée à la réduction, à la fermeture et au démontage.
+  Revue UX : la réserve va du bas de l'écran au haut de la fenêtre **remontée au-dessus de toutes les barres collantes
+  de la page** (`reserveTopNow`, `dockReserve` : + 8 px), indépendamment du défilement (jamais de va-et-vient) ; sans
+  barre, hauteur de la fenêtre + marge + 8 comme avant. Les vues pleine hauteur (En direct, Messages, carte en direct du
+  super admin) portent `data-tour-fullheight` à leur racine : le moteur n'y pose pas de réserve (elles ne défilent
+  pas). Variable retirée à la réduction, à la fermeture et au démontage.
+- **Focus jamais caché sous la fenêtre** (WCAG 2.2, 2.4.11 ; revue UX, UX-01) : en repli déplié, hors vues pleine
+  hauteur, `scroll-padding-bottom` de `<html>` = du haut réel de la fenêtre (barre évitée comprise) au bas de l'écran
+  + 12 px (`dockScrollPadding`, jamais moins que les 6rem de la page ; valeur d'origine rendue au retrait) : le
+  navigateur amène au-dessus d'elle tout élément qui reçoit le focus. Filet : un écouteur `focusin` (hors fenêtre et
+  pastille, hors focus de « Y aller ») vérifie une image plus tard si l'élément est entièrement sous la fenêtre (place
+  prévue de la fenêtre, `cardBoxNow` ; calques au-dessus d'elle exclus) ; en repli, la page défile pour l'amener
+  au-dessus (3 essais au plus) ; si rien ne défile (vue pleine hauteur, conteneur interne) ou si la fenêtre est ancrée
+  (elle suit son élément), elle passe en **pastille**, focus inchangé.
+- **Notifications** (UX-05) : `--tour-dock` = place prise en bas de l'écran par la fenêtre en repli dépliée (vues
+  pleine hauteur comprises), posée seulement quand son bas est dans la bande des notifications (96 px du bas) et
+  jamais au point de faire sortir une notification par le haut (128 px gardés, `dockSpace`) ; le `Toaster` de
+  `app/layout.tsx` place le bas de ses notifications à `calc(var(--tour-dock, 0px) + 16px)` sur téléphone
+  (`mobileOffset`) et `+ 24px` au-delà (`offset`) : elles passent au-dessus de la fenêtre, jamais sur ses boutons.
 - La fenêtre ne se ferme jamais d'elle-même : `onInteractOutside`, `onPointerDownOutside` et `onFocusOutside` →
   `preventDefault()`.
 
@@ -477,9 +493,15 @@ rendu : changer d'objet suffit pour passer d'une cible à l'autre ou au repli), 
 - **Défilement** : seulement après un clic dans la fenêtre (Commencer, Ouvrir, Suivant, Passer, Précédent, Y aller,
   Reprendre) et une fois par clic, quand l'ancre est trouvée : `scrollIntoView({ block: zone ? "start" : "center",
   behavior: réduire les animations ? "auto" : "smooth" })`. Jamais pendant que l'utilisateur fait autre chose.
-- **« Y aller »** : défilement puis focus sur le premier élément focalisable de la cible (`a[href]`,
-  `button:not([disabled])`, `input:not([type=hidden]):not([disabled])`, `select`, `textarea`,
-  `[tabindex]:not([tabindex="-1"])`), sinon sur la cible elle-même avec `tabIndex=-1` temporaire (retiré au `blur`).
+- **« Y aller »** : défilement puis focus dans la cible (`focusTarget`) : la cible elle-même si elle est focalisable
+  (contrôle) ; sinon, parmi ses éléments focalisables visibles (`a[href]`, `button:not([disabled])`,
+  `input:not([type=hidden]):not([disabled])`, `select`, `textarea`, `[tabindex]:not([tabindex="-1"])`), atteignables
+  au Tab de préférence, dans cet ordre (revue UX, UX-09 ; `pickFocus`, pur et testé) : 1. `[data-tour-focus]` (lui ou
+  un parent dans la zone) ; 2. `[aria-current="page"]` (filtre ou onglet affiché : « Sans chauffeur ») ; 3. la première
+  commande (bouton, champ, liste, rôle de commande : « Je la prends ») ; 4. seulement ensuite le premier lien (un lien
+  de navigation de la zone faisait quitter l'écran à la touche Entrée) ; 5. le reste (zone défilante) ; à défaut, la
+  cible elle-même avec `tabIndex=-1` temporaire (retiré au `blur`). Les zones formulaires (Organisation, Tarifs,
+  Éditeur…) gardent leur premier champ.
 
 ### 6.5 Boutons de la fenêtre (`tourFooter`, pur, testé)
 
@@ -490,7 +512,8 @@ sous 640 px, le principal passe en haut, pleine largeur (comme `DialogFooter`).
 | Cas | Boutons |
 |---|---|
 | Accueil | « Plus tard » (secondaire) · **« Commencer »** |
-| Étape faite (« C'est fait. ») | « Précédent » (discret, absent à l'étape 1) · **« Suivant »** ou **« Terminer »** |
+| Étape faite (« C'est fait. »), bon écran | « Précédent » (discret, absent à l'étape 1) · **« Suivant »** ou **« Terminer »** |
+| Étape faite, pas sur le bon écran (revue UX, UX-03 : « Revoir la visite » rouvre l'étape 1 là où l'on est) | « Précédent » · « Ouvrir … » (secondaire, lien vers l'écran de l'étape) · **« Suivant »** ou **« Terminer »** |
 | Pas sur le bon écran | « Précédent » · « Passer l'étape » (secondaire ; « Terminer » à la dernière) · **« Ouvrir … »** (libellé de l'étape) |
 | Bon écran, ancre visible, condition non remplie | « Précédent » · « Passer l'étape » · **« Y aller »** |
 | Bon écran sans condition, ou ancre introuvable | « Précédent » · **« Suivant »** ou **« Terminer »** |
@@ -510,8 +533,15 @@ sous 640 px, le principal passe en haut, pleine largeur (comme `DialogFooter`).
   fermeture : retour à l'élément qui avait le focus avant la fenêtre s'il existe encore, sinon `main#contenu`.
 - **Échap** : ferme (pause) seulement si le focus est dans la fenêtre (`onEscapeKeyDown` → sinon `preventDefault()`) :
   Échap reste à la page (désélection d'En direct, fermeture d'un menu ou d'une fenêtre, qui passent avant car au-dessus).
-- Les raccourcis d'En direct (touche N, Échap) ignorent déjà une frappe dans `[role=dialog]`
-  (`components/command/command-center.tsx:250`).
+- Les raccourcis d'En direct (touche N, Échap) ignorent une frappe dans un champ ou dans `[role=dialog]`
+  (`components/command/command-center.tsx:253`), **sauf N depuis la fenêtre de visite** (revue UX, UX-06 : non
+  modale, sans champ ; l'étape « Créer une course » propose la touche N au moment où le focus y est) ; Échap y reste
+  ignoré par En direct (il met la visite en pause).
+- **Gardes de focus de Radix** (UX-07) : le Popover, même non modal, pose deux `span[data-radix-focus-guard]`
+  (tabindex 0, invisibles) au début et à la fin de `<body>` tant que la fenêtre est dépliée ; un écouteur `focusin` en
+  capture les renvoie (`guardTarget`, pur et testé) : garde du début atteinte en entrant dans la page (premier Tab) →
+  premier élément de la page (« Aller au contenu ») ; depuis la page (Maj+Tab) ou garde de fin → dernier élément de la
+  fenêtre. Aucun arrêt invisible.
 - « C'est fait. » est dans un `<p aria-live="polite">` toujours présent (vide sinon) : annoncé quand l'action aboutit.
 - Boutons-icônes nommés : « Réduire la visite guidée », « Fermer la visite guidée » ; pastille : `aria-expanded="false"`,
   nom « Afficher la visite guidée, étape 2 sur 5 ».
@@ -540,7 +570,8 @@ sous 640 px, le principal passe en haut, pleine largeur (comme `DialogFooter`).
   recouvertes par le repli centré.
 - **Bandeaux** (CGU / CGV, réseau partagé, Frais Rydar) : en haut du contenu ; la fenêtre en repli est en bas ; une
   acceptation en cours bloque la visite (§ 5.3).
-- **Notifications** (sonner, en bas à droite) : passagères ; la pastille est à gauche.
+- **Notifications** (sonner, en bas à droite ; pleine largeur sous 600 px) : passagères ; la pastille est à gauche ;
+  fenêtre en repli dépliée, elles passent au-dessus d'elle (`--tour-dock`, § 6.3).
 - **Temps réel** : le fournisseur est dans `RealtimeProvider` côté tableau de bord ; côté super admin, pas de canal
   (`useRealtimeEvent` sans effet, `useLiveSync` en sondage).
 
@@ -710,7 +741,8 @@ Quand « Premiers pas » est complet, la carte disparaît : l'étape 1 s'affiche
 ## 8. Conditions de réussite (lectures en base)
 
 Lectures faites par `loadTourChecks` avec le client du navigateur (`getBrowserClient()`, RLS de l'utilisateur), en
-parallèle, seulement pour les clés du parcours ; comptages en `{ count: "exact", head: true }`. Une lecture en erreur
+parallèle, seulement pour les clés du parcours ; comptages en `{ count: "exact", head: true }` (attributions : lecture
+d'existence `limit(1)`). Une lecture en erreur
 laisse la clé absente (« inconnue »). Aucune donnée n'est gardée ni envoyée ailleurs.
 
 | Clé | Lecture | Fait si | Politique qui l'autorise (vérifiée) |
@@ -727,7 +759,7 @@ laisse la clé absente (« inconnue »). Aucune donnée n'est gardée ni envoyé
 | `first_ride` | `rides` · `id` · `organization_id = org` | au moins 1 | `rides_select` (membre), 006700 |
 | `team` | `organization_users` · `id` · `organization_id = org` | au moins 2 (le gérant + un membre, invitation comprise) | `organization_users_select` (membre), 005300 |
 | `my_ride` | `rides` · `id` · `organization_id = org`, `created_by = utilisateur` (posé par le déclencheur d'insertion, 000400) | au moins 1 | `rides_select` |
-| `my_ride_assigned` | idem + `driver_id is not null` | au moins 1 | `rides_select` |
+| `my_ride_assigned` | `ride_events` · `id` · `organization_id = org`, `type = 'ride.assigned_manually'`, `actor_id = utilisateur`, `created_at >= maintenant − 30 jours` · `.limit(1)` (existence, bornée par l'index `(organization_id, created_at)` ; revue UX, UX-04 : l'attribution elle-même, quel que soit l'auteur de la course — avant : courses créées par l'utilisateur et pourvues d'un chauffeur, fausse pour une course du gérant attribuée par le dispatcher, vraie pour une course acceptée par un chauffeur) | au moins 1 ligne | `ride_events_select` (membre), 000300 |
 | `fp_taken` | `rides` · `id` · `organization_id = org`, `driver_id = fiche du propriétaire` | au moins 1 (prise par « Je la prends », « Confirmer » ou réservation par téléphone) | `rides_select` |
 
 `stepDone(step, checks)` : `undefined` sans condition ou si toutes les clés de la condition sont inconnues ; `true` si
@@ -769,7 +801,7 @@ source de vérité).
 `components/ui/button.tsx`). Aucune ancre dans la barre latérale (cachée sur téléphone). Les numéros de ligne sont ceux
 de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par leur ligne.
 
-### 9.2 `data-tour-avoid` et `data-tour-fullheight` (attribut seul, posé en T2)
+### 9.2 `data-tour-avoid` et `data-tour-fullheight` (attribut seul, posé en T2 ; trois ajouts de la revue UX)
 
 | Attribut | Fichier:ligne | Élément |
 |---|---|---|
@@ -780,6 +812,9 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | `data-tour-avoid` | `apps/web/components/chat/composer.tsx:52` | compositeur des messages |
 | `data-tour-fullheight` | `apps/web/components/command/command-center.tsx:516` | racine de la vue En direct (`relative flex h-[calc(100dvh-56px)] …`) |
 | `data-tour-fullheight` | `apps/web/components/chat/messages-view.tsx:456` | racine de la vue Messages |
+| `data-tour-avoid` | `apps/web/components/command/command-center.tsx:586` | panneau des courses d'En direct (`<aside data-tour="live-panel">`) : sous lg, son haut est dans la moitié basse, la fenêtre en repli passe au-dessus, sur la carte ; à partir de lg (en haut, `top-3`) ignoré — revue UX, UX-02 |
+| `data-tour-fullheight` | `apps/web/components/admin/live-console.tsx:628` | racine de la carte en direct du super admin (`/admin/carte`) — UX-08 |
+| `data-tour-avoid` | `apps/web/components/admin/live-console.tsx:685` | légende de la carte en direct (bureau seulement) — UX-08 |
 
 ---
 
@@ -803,11 +838,11 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | Test | Lot | Ce qu'il vérifie |
 |---|---|---|
 | `packages/shared/src/tour.test.ts` | T1 | `TOUR_KEYS`, `TOUR_STATUSES` et `TOUR_MAX_STEPS - 1` identiques aux contraintes `tour in (…)`, `status in (…)`, `step between 0 and N` lues dans `20260924007800_guided_tour.sql` ; `tourKeyFor` (5 cas du § 5.1) ; `tourProgressSchema` (accepte / refuse : clé inconnue, statut inconnu, étape −1, 5, 1,5) ; `tourSavedFrom` (erreur → `undefined`, aucune ligne → `null`, `shown_at` → `shown`). |
-| `apps/web/components/tour/tour-model.test.ts` | T2 | table du § 5.4 ligne par ligne ; chaque événement du § 6.2 (vue, état, écriture `tourPersist`, bornes, `resume` d'une visite jamais ouverte / terminée) ; `tourMenuItem` ; `samePage` (chemin, paramètres, ordre, paramètre en plus) ; `tourFooter` (5 cas du § 6.5, lien ou bouton selon l'écran, libellés, un seul principal) ; `dockedRect` (sans barre, avec barre dans la moitié basse, barre en haut ignorée, téléphone / bureau). |
+| `apps/web/components/tour/tour-model.test.ts` | T2 | table du § 5.4 ligne par ligne ; chaque événement du § 6.2 (vue, état, écriture `tourPersist`, bornes, `resume` d'une visite jamais ouverte / terminée) ; `tourMenuItem` ; `samePage` (chemin, paramètres, ordre, paramètre en plus) ; `tourFooter` (cas du § 6.5, dont l'étape faite hors de son écran ; lien ou bouton selon l'écran, libellés, un seul principal) ; `dockedRect` (sans barre, avec barre dans la moitié basse, barre en haut ignorée, téléphone / bureau ; revue UX : hauteur de la fenêtre, barre collante à sa place collée, panneau d'En direct) ; revue UX : `dockReserve`, `dockScrollPadding`, `dockSpace`, `hiddenUnder`, `revealScroll`, `guardTarget`, `pickFocus`. |
 | `apps/web/components/tour/tour-panel.test.ts` | T2 | rendu `renderToStaticMarkup` : accueil (liste des étapes, « Plus tard », « Commencer »), étape (compteur, titre `h2`, `aria-live`, « C'est fait. »), liens `href` attendus, boutons-icônes nommés, aucune couleur en dur, aucune taille < 12 px, espaces insécables. |
 | `apps/web/components/tour/tour-actions.test.ts` | T2 | `saveTourProgress` (simulations de `@/lib/auth`, `@/lib/errors`) : entrée invalide refusée sans appel ; appel `rpc("save_user_tour", { p_tour, p_status, p_step })` ; erreur → `ok: false`. |
-| `apps/web/components/tour/tour-checks.test.ts` | T3 | `settlementReady` (défaut lien + espèces sans lien → faux ; lien renseigné ; virement + IBAN ; autre + consignes ; espèces seules → vrai) ; `billingConfigured` ; `stepDone` ; `loadTourChecks` avec un client simulé : bonnes tables, colonnes, filtres, `head: true`, erreur → clé absente, rien lu hors des clés demandées. |
-| `apps/web/components/tour/tour-content.test.ts` | T3 | règles du § 7.1 pour les 5 parcours ; **chaque ancre présente une fois** sous forme `data-tour="<id>"` (ou `data-tour={… "<id>"}`) dans `apps/web/app` et `apps/web/components` ; chaque adresse → `app/<chemin>/page.tsx` existant ; `tab` ∈ onglets de `app/dashboard/settings/page.tsx`, `filter` ∈ `RIDE_FILTERS` ; Flotte Privée ⊆ menu Flotte Privée (`dashboardNav`) ∪ `/dashboard/settings` ; dispatcher ⊆ menu du dispatcher ; aucune adresse de page refusée en Flotte Privée. |
+| `apps/web/components/tour/tour-checks.test.ts` | T3 | `settlementReady` (défaut lien + espèces sans lien → faux ; lien renseigné ; virement + IBAN ; autre + consignes ; espèces seules → vrai) ; `billingConfigured` ; `stepDone` ; `loadTourChecks` avec un client simulé : bonnes tables, colonnes, filtres, `head: true`, erreur → clé absente, rien lu hors des clés demandées ; revue UX : attributions lues dans `ride_events` (existence `limit(1)` sur 30 jours, acteur = utilisateur). |
+| `apps/web/components/tour/tour-content.test.ts` | T3 | règles du § 7.1 pour les 5 parcours ; **chaque ancre présente une fois** sous forme `data-tour="<id>"` (ou `data-tour={… "<id>"}`) dans `apps/web/app` et `apps/web/components` ; chaque adresse → `app/<chemin>/page.tsx` existant ; `tab` ∈ onglets de `app/dashboard/settings/page.tsx`, `filter` ∈ `RIDE_FILTERS` ; Flotte Privée ⊆ menu Flotte Privée (`dashboardNav`) ∪ `/dashboard/settings` ; dispatcher ⊆ menu du dispatcher ; aucune adresse de page refusée en Flotte Privée ; revue UX : attributs du § 9.2 (fichiers et nombres), touche N d'En direct depuis la fenêtre, décalage des notifications (`--tour-dock`). |
 | Existants adaptés | T2 | `dashboard-layout.test.ts` : nouvelles lectures et propriété `tour` (clé, `blocked` avec l'écran d'acceptation, `urgent` avec les réservations à traiter, filtres `user_id` et `tour`) sans cas retiré ; `admin-pages.test.ts` et `cookie-notice.test.ts` : simulations des nouveaux modules `@/…` seulement. |
 | Existants inchangés et verts | T1–T3 | `migrations.test.ts`, `error-messages.test.ts`, `dashboard-links.test.ts` (préchargement, nouvel onglet : couvre `components/tour`), `aria-roles.test.ts`, `dashboard-nav.test.ts`, `private-fleet-guards.test.ts`, `primitives.test.ts`, `first-steps.test.ts`. |
 
@@ -872,6 +907,7 @@ de `a104a75` ; le test du § 11.1 contrôle les ancres par leur valeur, pas par 
 | T1 | Base et paquet partagé | — | fait : commit « Visite guidée (T1) : progression en base (user_tours, save_user_tour) et paquet partagé » (compte rendu : `docs/EN-COURS.md`) |
 | T2 | Moteur de visite et intégration dans la coquille | T1 | fait : commit « Visite guidée (T2) : moteur de visite et intégration dans la coquille » (compte rendu : `docs/EN-COURS.md`) |
 | T3 | Parcours sur les écrans réels (ancres, conditions, textes) et recette | T2 | fait : commit « Visite guidée (T3) : parcours sur les écrans réels, conditions de réussite et recette » (compte rendu : `docs/EN-COURS.md`) |
+| Revue UX | Corrections UX-01 à UX-09 de la revue UX et accessibilité de la visite | T3 | fait : commit « Visite guidée : corrections de la revue UX (UX-01 à UX-09) » (écarts : § 13.3 ; compte rendu : `docs/EN-COURS.md`) |
 
 ### T1 — Base et paquet partagé
 
@@ -1190,6 +1226,69 @@ des 5 parcours vérifiée sur l'écran réel (recette TR-01 à TR-10, hors dép�
    et dispatcher) — le serveur écrit « 34,0 k € », le navigateur « 34 k € » (`formatCompactPrice`,
    `packages/shared/src/format.ts`, inchangé depuis la refonte : ICU de Node 22 ≠ Chromium quand le montant arrondi
    finit par « ,0 » ; « 29,6 k € » lors de la référence) ; signalée, hors du lot.
+
+**Revue UX** (corrections UX-01 à UX-09, après T3 ; web seulement : aucune migration, aucune RPC, garde ou action
+serveur modifiée ; recette hors dépôt : `scratchpad/tutoriel/correction-ux/`, build de production :3237, comptes de la
+revue, état des visites rendu ensuite) :
+
+1. **UX-01, focus caché sous la fenêtre en repli** (WCAG 2.2, 2.4.11) : marge de défilement du bas de `<html>` jusqu'au
+   haut réel de la fenêtre + 12 px (valeur d'origine rendue au retrait), relue à chaque changement de taille, de barres
+   et au défilement ; filet `focusin` (§ 6.3). **Cause profonde trouvée pendant la recette** : en fin de formulaire, la
+   barre « Enregistrer » collante revient à sa place et remonte avec la page ; la fenêtre, remontée au-dessus d'elle, la
+   suivait et couvrait les lignes juste au-dessus de la barre, quel que soit le défilement (la réserve restait sous la
+   barre) : Tarifs à 1440 (derniers champs de la grille), Commission à 390 (« Dette maximale d'un chauffeur »). Une
+   barre collante compte désormais à sa place collée au bas de l'écran (`AvoidBox.stuck`, d'après `position: sticky` et
+   `bottom` calculés) : la fenêtre ne bouge plus pendant que la barre défile (dessous, puis au-dessus d'elle), et la
+   réserve va jusqu'à la fenêtre remontée au-dessus de toutes les barres collantes de la page (`reserveTopNow`,
+   indépendante du défilement : jamais de va-et-vient). `dockedRect` reçoit aussi la hauteur de la fenêtre (ou de la
+   pastille) : une barre entièrement au-dessus d'elle ne la fait plus remonter. Le filet lit la place prévue de la
+   fenêtre (`cardBoxNow` : Radix ne la replace qu'à l'image suivante après un défilement) et exclut les calques
+   au-dessus d'elle (fenêtres, menus, listes, notifications) au lieu de `elementFromPoint` ; fenêtre ancrée : pastille
+   directement (elle suit son élément). Recette : Tab dans Organisation, Tarifs et Commission (1440 et 390, après « Y
+   aller » ou depuis le haut de la page) et `/admin/legal` (1440 et 390) : **0 élément focalisé caché, fenêtre restée
+   dépliée** partout (la pastille n'a pas servi) ; En direct (vue pleine hauteur, 1440 et 390) : 0 caché.
+   Non-régression TE-11 (Tarifs en saisie, 1440 et 390) : la fenêtre ne coupe pas la barre collée en bas ; en bas de
+   page, la barre est au-dessus de la fenêtre ; en défilant, la barre revenue à sa place passe sous la fenêtre puis
+   au-dessus (4 positions sur 10 à 1440, 5 sur 31 à 390).
+2. **UX-02** : `data-tour-avoid=""` sur le panneau d'En direct (§ 9.2). 390×844, flotte étape 4, centrale étape 5,
+   dispatcher étapes 1 et 2 : fenêtre au-dessus du panneau (bas à 432, panneau à 444), les 4 onglets, la liste et
+   « Nouvelle course » visibles (surligné quand c'est l'élément de l'étape) ; pastille au-dessus du panneau (388-432).
+   Paysage 844×390 : à partir de 640 px de large, « Créer une course » reste **ancrée** à « Nouvelle course » (inchangé) :
+   fenêtre lisible en entier, qui couvre les onglets « À venir » et « À traiter » ; « Réduire » les libère. Gardé : en
+   repli, la fenêtre y serait serrée à 207 px au-dessus du panneau.
+3. **UX-03** : `tourFooter`, étape faite hors de son écran : « Ouvrir … » en secondaire, puis « Suivant » / « Terminer »
+   (§ 6.5). Recette : « Revoir la visite » depuis `/dashboard` (390) et `/dashboard/drivers` (1440) pour la flotte, et
+   depuis `/admin` pour le super admin : « Ouvrir Organisation » / « Ouvrir Informations légales » puis « Suivant » ; le
+   lien mène à l'écran, zone surlignée, « Suivant » seul.
+4. **UX-04** : `my_ride_assigned` lit les attributions dans `ride_events` (§ 8 ; variante « existence sur 30 jours »
+   retenue : lecture bornée par l'index `(organization_id, created_at)`, même quand rien n'a été attribué). Recette :
+   dispatcher qui a attribué une course créée par le gérant (ancienne condition 0, attributions 1) → « C'est fait. »,
+   « Suivant » ; dispatcher sans attribution → « Y aller ».
+5. **UX-05** : `--tour-dock` et bas des notifications décalé, **téléphone et bureau** (`mobileOffset` et `offset` : au-delà
+   de 600 px, les notifications en bas à droite coupaient aussi la fenêtre centrée sous environ 1 376 px de large ; à
+   1 280 px, elles couvraient 31 px du bouton principal : fenêtre 564-948, bouton 848-931, notification à partir de
+   900). Écarts : variable posée seulement quand le bas de la fenêtre est dans la
+   bande des notifications (96 px du bas) — En direct sur téléphone, la fenêtre est au-dessus du panneau : notifications
+   en bas, comme avant, sans la toucher — et plafonnée pour garder une notification à l'écran (128 px en haut : écran
+   bas, téléphone à l'horizontale) ; sinon une fenêtre remontée haut aurait envoyé les notifications sur la barre du
+   haut, voire hors de l'écran. Recette, identité enregistrée : 390 (notification posée 494-547, fenêtre 564-828) et
+   1280×800 (450-503, fenêtre 528-777) : aucun bouton couvert une fois la notification posée ; seule l'animation d'entrée
+   ou de sortie de sonner passe une image sur les icônes du haut de la fenêtre, à 390.
+6. **UX-06** : N passe depuis la fenêtre de visite, Échap y reste à la visite (§ 6.6). Recette (dispatcher, 1440) : focus
+   sur le titre de « Créer une course », N → « Nouvelle course » ; Échap dans ce dialogue le ferme seul ; Échap dans la
+   fenêtre de visite → pause.
+7. **UX-07** : gardes de Radix renvoyées (§ 6.6). Recette (1440, Tarifs) : premier Tab après rechargement → « Aller au
+   contenu » ; Maj+Tab depuis lui → dernier bouton de la fenêtre ; 120 Tab et 120 Maj+Tab sans arrêt invisible.
+8. **UX-08** : `data-tour-fullheight` sur la carte en direct du super admin, `data-tour-avoid` sur sa légende (§ 9.2).
+   Recette (super admin du seed) : 1440 et 390, aucune réserve, document de la hauteur de l'écran (aucun défilement) ;
+   1440 : fenêtre (588-839) au-dessus de la légende (850-888).
+9. **UX-09** : ordre de préférence de « Y aller » (§ 6.4). Recette : dispatcher, « Attribuer une course » → « Sans
+   chauffeur » (filtre affiché) ; Flotte Privée avec une réservation à traiter → « Je la prends » (390 et 1440, jamais
+   validé ici) ; Organisation, Tarifs, Commission → leur premier champ ; lien d'inscription → « Créer le lien
+   d'inscription ».
+10. **Tests** : `tour-model.test.ts` (pied de fenêtre hors écran, `dockedRect` avec hauteur et barre collante, réserve,
+    marge du bas, place des notifications, élément caché, défilement, gardes, `pickFocus`) ; `tour-checks.test.ts`
+    (lecture des attributions) ; `tour-content.test.ts` (attributs du § 9.2, touche N, décalage des notifications).
 
 ---
 

@@ -625,7 +625,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
   const selectedOrg = selectedDriver ? orgById[selectedDriver.organization_id] : selectedRide ? orgById[selectedRide.organization_id] : undefined;
 
   return (
-    <div className="relative h-[calc(100dvh-56px)] overflow-hidden lg:h-dvh">
+    <div data-tour-fullheight="" className="relative h-[calc(100dvh-56px)] overflow-hidden lg:h-dvh">
       <LiveMap
         ref={mapRef}
         drivers={mapDrivers}
@@ -682,7 +682,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
       </div>
 
       {/* Légende (bureau) */}
-      <div className="glass pointer-events-none absolute bottom-3 left-[404px] z-10 hidden rounded-xl px-3 py-2 lg:block">
+      <div data-tour-avoid="" className="glass pointer-events-none absolute bottom-3 left-[404px] z-10 hidden rounded-xl px-3 py-2 lg:block">
         <Legend />
       </div>
 

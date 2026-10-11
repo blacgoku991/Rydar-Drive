@@ -1,6 +1,7 @@
 // Visite guidée de première connexion (docs/TUTORIEL.md § 5.4, § 6) : modèle PUR du moteur, ni « use client » ni
 // « server-only » (testé : tour-model.test.ts). États et événements, démarrage, écritures, entrée du menu du compte,
-// boutons de la fenêtre, repli centré en bas d'écran, textes du moteur. Rien ici ne lit le DOM ni la base.
+// boutons de la fenêtre, repli centré en bas d'écran (marges et focus caché dessous), gardes de focus, élément visé par
+// « Y aller », textes du moteur. Rien ici ne lit le DOM ni la base.
 import { type TourKey, type TourSaved, type TourStatus } from "@rydar/shared";
 import { fr } from "../marketing/typo";
 
@@ -242,11 +243,13 @@ export function tourFooter(i: {
       : variant === "primary"
         ? { action: "next", label: TOUR_UI.next, variant, href: linkTo(step + 1) }
         : { action: "skip", label: TOUR_UI.skip, variant, href: linkTo(step + 1) };
-  // Étape faite (« C'est fait. ») : on avance
-  if (i.done === true) return [...prev, forward("primary")];
   const onScreen = i.anchorVisible || samePage(current.href, i.pathname, i.search);
+  const open = (variant: "primary" | "secondary"): FooterButton => ({ action: "open", label: current.linkLabel, variant, href: current.href });
+  // Étape faite (« C'est fait. ») : on avance ; hors de son écran (« Revoir la visite » rouvre l'étape 1 là où l'on
+  // est), son lien reste proposé en secondaire
+  if (i.done === true) return onScreen ? [...prev, forward("primary")] : [...prev, open("secondary"), forward("primary")];
   // Pas sur le bon écran : y aller
-  if (!onScreen) return [...prev, forward("secondary"), { action: "open", label: current.linkLabel, variant: "primary", href: current.href }];
+  if (!onScreen) return [...prev, forward("secondary"), open("primary")];
   // Bon écran, élément visible, action pas encore faite (ou inconnue) : désigner l'élément
   if (i.anchorVisible && current.hasCheck) {
     return [...prev, forward("secondary"), { action: "goto", label: TOUR_UI.goto, variant: "primary", href: null, srLabel: fr(` : ${current.title}`) }];
@@ -257,20 +260,30 @@ export function tourFooter(i: {
 
 /** Rectangle à l'écran (coordonnées de la fenêtre du navigateur). */
 export type TourBox = { top: number; bottom: number; left: number; right: number };
+/**
+ * Barre à éviter ([data-tour-avoid]) : son rectangle à l'écran ; `stuck` (barre collante en bas, position: sticky) :
+ * sa place quand elle est collée au bas de l'écran — fixe, quel que soit le défilement.
+ */
+export type AvoidBox = TourBox & { stuck?: Pick<TourBox, "top" | "bottom"> };
 /** Rectangle virtuel compatible avec getBoundingClientRect (Radix Popper / Floating UI). */
 export type DockRect = { x: number; y: number; width: number; height: number; top: number; bottom: number; left: number; right: number };
 
 /**
  * Repli centré (§ 6.3) : rectangle virtuel de largeur nulle, centré horizontalement sur main#contenu (à défaut la
  * fenêtre du navigateur), à 16 px (< 640 px) ou 24 px (≥ 640 px) du bas — ou `margin` —, remonté au-dessus de toute
- * barre à éviter ([data-tour-avoid]) visible dont le haut est dans la moitié basse de l'écran. La fenêtre se place
- * au-dessus (side « top ») : son bas est `y`.
+ * barre à éviter visible dont le haut est dans la moitié basse de l'écran. Une barre collante compte à sa place collée
+ * au bas de l'écran (`stuck`), même revenue à sa place dans la page en fin de formulaire : la fenêtre reste où elle
+ * est pendant que la barre défile (dessous, puis au-dessus d'elle grâce à la réserve) au lieu de la suivre — elle
+ * couvrait sinon les dernières lignes au-dessus de la barre, quel que soit le défilement. `height` (hauteur de la
+ * fenêtre ou de la pastille) : une barre entièrement au-dessus d'elle, là où elle est, ne la fait pas remonter ; sans
+ * `height`, toute barre retenue. La fenêtre se place au-dessus (side « top ») : son bas est `y`.
  */
 export function dockedRect(i: {
   viewport: { width: number; height: number };
   main: Pick<TourBox, "left" | "right"> | null;
-  avoid: readonly TourBox[];
+  avoid: readonly AvoidBox[];
   margin?: number;
+  height?: number;
 }): DockRect {
   const { width, height } = i.viewport;
   const margin = i.margin ?? (width < TOUR_WIDE_MIN ? 16 : 24);
@@ -278,10 +291,92 @@ export function dockedRect(i: {
   const right = Math.min(width, i.main?.right ?? width);
   const x = right > left ? (left + right) / 2 : width / 2;
   let y = height - margin;
-  for (const box of i.avoid) {
-    // Vide, hors de l'écran, ou en haut de l'écran : ignorée
-    if (box.bottom <= box.top || box.top >= height || box.bottom <= 0 || box.top < height / 2) continue;
-    y = Math.min(y, box.top - TOUR_DOCK_GAP);
+  // Vides, hors de l'écran ou en haut de l'écran (rectangle réel) : ignorées ; les autres à leur place d'évitement, de
+  // bas en haut (chaque remontée peut faire rencontrer la barre suivante)
+  const bars = i.avoid
+    .filter((box) => box.bottom > box.top && box.top < height && box.bottom > 0 && box.top >= height / 2)
+    .map((box) => box.stuck ?? box)
+    .sort((a, b) => b.top - a.top);
+  for (const bar of bars) {
+    if (i.height !== undefined && bar.bottom <= y - i.height - TOUR_DOCK_GAP) continue;
+    y = Math.min(y, bar.top - TOUR_DOCK_GAP);
   }
   return { x, y, width: 0, height: 0, top: y, bottom: y, left: x, right: x };
+}
+
+/**
+ * Réserve de défilement de main#contenu (--tour-reserve) : de son haut le plus élevé (`top` : fenêtre remontée
+ * au-dessus de toutes les barres collantes de la page, où qu'elles soient — indépendant du défilement, donc jamais de
+ * va-et-vient) jusqu'au bas de l'écran, plus 8 px : la fin de la page, barre collante comprise, passe au-dessus d'elle.
+ * Sans barre : hauteur de la fenêtre + marge + 8, comme avant.
+ */
+export const dockReserve = (viewportHeight: number, top: number): number => Math.max(0, Math.ceil(viewportHeight - top + 8));
+
+/**
+ * Haut de la fenêtre en repli : son bas est le `y` du repli (côté « top », sans écart ni bascule) ; remontée au-dessus
+ * d'une barre à éviter, elle l'est aussi.
+ */
+export const dockedTop = (dock: Pick<DockRect, "y">, height: number): number => dock.y - height;
+
+/**
+ * Marge de défilement du bas de <html> tant que la fenêtre est en repli, dépliée (WCAG 2.2, 2.4.11) : un élément qui
+ * reçoit le focus au clavier est amené par le navigateur au-dessus de la fenêtre (et de la barre qu'elle évite), à
+ * TOUR_DOCK_GAP de son haut ; jamais moins que la marge propre de la page (`base` : 6rem, barres « Enregistrer »).
+ */
+export function dockScrollPadding(viewportHeight: number, top: number, base: number): number {
+  return Math.max(Math.ceil(base), Math.ceil(viewportHeight - top + TOUR_DOCK_GAP));
+}
+
+/** Bande du bas de l'écran où s'affichent les notifications (sonner : une notification et sa marge). */
+export const TOUR_TOAST_ZONE = 96;
+/** Haut de l'écran gardé pour une notification remontée au-dessus de la fenêtre (barre du haut comprise). */
+export const TOUR_TOAST_TOP = 128;
+
+/**
+ * Place prise en bas de l'écran par la fenêtre en repli (--tour-dock, `top` et `bottom` : ses bords) : les
+ * notifications s'affichent au-dessus d'elle quand son bas est dans leur bande (en bas de l'écran, ou remontée
+ * au-dessus d'une barre collante) ; 0 quand elle est plus haut (En direct sur téléphone : au-dessus du panneau, les
+ * notifications ne la touchent pas) ; jamais au point de faire sortir une notification par le haut de l'écran.
+ */
+export function dockSpace(viewportHeight: number, top: number, bottom: number): number {
+  if (bottom <= viewportHeight - TOUR_TOAST_ZONE) return 0;
+  return Math.max(0, Math.ceil(Math.min(viewportHeight - top, viewportHeight - TOUR_TOAST_TOP)));
+}
+
+/** Élément entièrement sous la fenêtre : son rectangle (non vide) compris dans le sien, à 1 px près. */
+export function hiddenUnder(el: TourBox, card: TourBox): boolean {
+  if (el.bottom <= el.top || el.right <= el.left) return false;
+  return el.top >= card.top - 1 && el.bottom <= card.bottom + 1 && el.left >= card.left - 1 && el.right <= card.right + 1;
+}
+
+/** Défilement de la page (px, vers le bas) qui amène le bas de l'élément à TOUR_DOCK_GAP au-dessus de la fenêtre. */
+export const revealScroll = (el: Pick<TourBox, "bottom">, cardTop: number): number => Math.ceil(el.bottom - cardTop + TOUR_DOCK_GAP);
+
+/**
+ * Garde de focus de Radix atteinte au clavier (span invisible, tabindex 0, au début et à la fin de <body> tant que la
+ * fenêtre est dépliée) : jamais un arrêt invisible. Garde du début atteinte en entrant dans la page (premier Tab,
+ * retour depuis le navigateur) → premier élément de la page ; garde du début atteinte depuis la page (Maj+Tab sur le
+ * premier élément), ou garde de fin → dernier élément de la fenêtre (en fin de document).
+ */
+export function guardTarget(i: { start: boolean; fromPage: boolean }): "page" | "card" {
+  return i.start && !i.fromPage ? "page" : "card";
+}
+
+/**
+ * Élément focalisable d'une zone vu par « Y aller » (§ 6.4) : `marked` = [data-tour-focus] (lui ou un parent dans la
+ * zone) ; `current` = filtre ou onglet affiché ([aria-current="page"]) ; `kind` : commande (bouton, champ, liste,
+ * rôle de commande), lien (a[href], rôle link) ou autre (zone défilante atteignable au Tab…).
+ */
+export type FocusCandidate = { marked: boolean; current: boolean; kind: "control" | "link" | "other" };
+
+/**
+ * « Y aller » dans une zone (§ 6.4) : l'élément marqué, sinon le filtre ou l'onglet affiché, sinon la première
+ * commande, et seulement ensuite le premier lien (un lien de navigation de la zone ferait quitter l'écran à la touche
+ * Entrée), puis le reste ; à rang égal, l'ordre du document. Aucun : null (le moteur focalise la zone elle-même).
+ */
+export function pickFocus<T extends FocusCandidate>(candidates: readonly T[]): T | null {
+  const rank = (c: FocusCandidate) => (c.marked ? 0 : c.current ? 1 : c.kind === "control" ? 2 : c.kind === "link" ? 3 : 4);
+  let best: T | null = null;
+  for (const c of candidates) if (!best || rank(c) < rank(best)) best = c;
+  return best;
 }

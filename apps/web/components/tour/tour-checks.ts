@@ -1,9 +1,10 @@
 // Visite guidée (docs/TUTORIEL.md § 8) : conditions de réussite des étapes, lues en base avec le client du navigateur
 // (RLS de l'utilisateur : aucune lecture qu'il ne pourrait pas faire lui-même), en parallèle et seulement pour les clés
-// du parcours. Comptages en `head` (aucune ligne transférée) ; une lecture en erreur laisse sa clé absente
-// (« inconnue » : pas de « C'est fait. », le bouton principal reste celui de l'action). Rien n'est gardé ni envoyé
-// ailleurs. Règles pures testées (tour-checks.test.ts) ; « Éditeur » et « Identité de votre entreprise » reprennent les
-// règles existantes (« À traiter » du super admin, pastille « À compléter » des Réglages) : une seule source de vérité.
+// du parcours. Comptages en `head` (aucune ligne transférée) ou existence bornée à une ligne (attributions manuelles,
+// sur 30 jours) ; une lecture en erreur laisse sa clé absente (« inconnue » : pas de « C'est fait. », le bouton
+// principal reste celui de l'action). Rien n'est gardé ni envoyé ailleurs. Règles pures testées (tour-checks.test.ts) ;
+// « Éditeur » et « Identité de votre entreprise » reprennent les règles existantes (« À traiter » du super admin,
+// pastille « À compléter » des Réglages) : une seule source de vérité.
 import { bookingOperatorGaps, type BookingOperatorIdentity } from "@rydar/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { adminLegalTodo } from "../admin/admin-todo";
@@ -76,7 +77,21 @@ async function judged<T>(query: PromiseLike<Reply>, rule: (row: T | null) => boo
   return error ? undefined : rule((data ?? null) as T | null);
 }
 
+/** Existence (lecture bornée à une ligne, `limit(1)`) ; erreur ou réponse sans liste : inconnu. */
+async function found(query: PromiseLike<Reply>): Promise<boolean | undefined> {
+  const { data, error } = await query;
+  return error || !Array.isArray(data) ? undefined : data.length > 0;
+}
+
 const HEAD = { count: "exact", head: true } as const;
+
+/**
+ * « Attribuer une course » (dispatcher) : attributions manuelles lues sur les 30 derniers jours seulement — lecture
+ * d'existence bornée par l'index (organization_id, created_at), même pour une grosse organisation et même quand rien
+ * n'a été attribué (le cas courant pendant la visite).
+ */
+export const ASSIGNED_WINDOW_DAYS = 30;
+const DAY_MS = 86_400_000;
 
 type Reader = (db: SupabaseClient, scope: TourScope) => Promise<boolean | undefined> | undefined;
 
@@ -125,9 +140,20 @@ const READERS: Record<CheckKey, Reader> = {
   // Courses créées par l'utilisateur (created_by posé par le déclencheur d'insertion, 000400)
   my_ride: (db, { orgId, userId }) =>
     orgId && userId ? counted(db.from("rides").select("id", HEAD).eq("organization_id", orgId).eq("created_by", userId), 1) : undefined,
+  // L'attribution elle-même (« Attribuer », fiche de la course ou En direct : ride.assigned_manually, acteur =
+  // l'utilisateur, 000400 → 006800), quel que soit l'auteur de la course ; jamais une course qu'un chauffeur a acceptée
   my_ride_assigned: (db, { orgId, userId }) =>
     orgId && userId
-      ? counted(db.from("rides").select("id", HEAD).eq("organization_id", orgId).eq("created_by", userId).not("driver_id", "is", null), 1)
+      ? found(
+          db
+            .from("ride_events")
+            .select("id")
+            .eq("organization_id", orgId)
+            .eq("type", "ride.assigned_manually")
+            .eq("actor_id", userId)
+            .gte("created_at", new Date(Date.now() - ASSIGNED_WINDOW_DAYS * DAY_MS).toISOString())
+            .limit(1),
+        )
       : undefined,
   // Flotte Privée : réservation prise par le propriétaire (« Je la prends », « Confirmer », réservation par téléphone)
   fp_taken: (db, { orgId, driverId }) =>
