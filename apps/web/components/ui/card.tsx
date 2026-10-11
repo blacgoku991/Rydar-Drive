@@ -25,9 +25,10 @@ export function CardHeader({
   as?: "h2" | "h3";
 }) {
   // Retour à la ligne (téléphone, colonne étroite) : le bloc du titre garde au moins min(100 %, 14rem) ; une action trop
-  // large passe SOUS le titre au lieu de l'écraser mot à mot (ses propres boutons peuvent alors aller à la ligne)
+  // large passe SOUS le titre au lieu de l'écraser mot à mot (ses propres boutons peuvent alors aller à la ligne).
+  // Carte sans corps (en-tête seul, dernier enfant) : pas de trait du bas, qui dépassait des coins arrondis de la carte
   return (
-    <div className={cn("flex flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-line px-5 py-4", className)}>
+    <div className={cn("flex flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-line px-5 py-4 last:border-b-0", className)}>
       <div className="flex min-w-[min(100%,14rem)] flex-1 items-start gap-3">
         {icon && <div aria-hidden className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-muted [&_svg]:size-4">{icon}</div>}
         <div className="min-w-0">

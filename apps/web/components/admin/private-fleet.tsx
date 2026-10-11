@@ -26,6 +26,7 @@ import { frSpaces } from "@/components/platform-fees/org-platform-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/ui/code-block";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter, SheetContent } from "@/components/ui/dialog";
 import { Disclosure } from "@/components/ui/disclosure";
 import { FormSection } from "@/components/ui/form-section";
@@ -577,14 +578,12 @@ export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: 
                 className="num max-w-[160px]"
               />
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" disabled={pending} onClick={() => setCreateOpen(false)}>
-                Annuler
-              </Button>
+            {/* « Retour » ferme sans rien faire (« Annuler » est réservé aux actions métier) ; empilés sous 640 px */}
+            <DialogFooter backDisabled={pending}>
               <Button type="submit" variant="primary" loading={pending}>
                 Générer la clé
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -614,32 +613,27 @@ export function SiteKeysPanel({ orgId, keys, blockedReason, apiBase }: { orgId: 
                 language={revealed.kind === "server" ? "bash" : "javascript"}
                 code={siteKeySnippet({ kind: revealed.kind, apiBase, key: revealed.key, origin: revealed.origins[0] ?? null })}
               />
-              <div className="flex justify-end gap-2">
+              <DialogFooter hideBack className="mt-0">
                 <CopyText value={revealed.key} label="Copier la clé" />
                 <Button variant="primary" onClick={() => setRevealed(null)}>
                   J&apos;ai copié la clé
                 </Button>
-              </div>
+              </DialogFooter>
             </div>
           )}
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!revoking} onOpenChange={(o) => !pending && !o && setRevoking(null)}>
-        <DialogContent
-          title={frSpaces(revoking ? `Révoquer la clé ${revoking.prefix} ?` : "Révoquer la clé ?")}
-          description={frSpaces("Immédiat : le site qui l'utilise ne peut plus ni demander de devis ni réserver.")}
-        >
-          <div className="mt-2 flex justify-end gap-2">
-            <Button type="button" variant="ghost" disabled={pending} onClick={() => setRevoking(null)}>
-              Annuler
-            </Button>
-            <Button type="button" variant="danger" loading={pending} onClick={() => revoking && revoke(revoking)}>
-              Révoquer
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Confirmation qui dit la conséquence, bouton qui nomme l'action (comme dans l'espace du client) */}
+      <ConfirmDialog
+        open={!!revoking}
+        onOpenChange={(o) => !pending && !o && setRevoking(null)}
+        title={frSpaces(revoking ? `Révoquer la clé ${revoking.prefix} ?` : "Révoquer la clé ?")}
+        consequence={frSpaces("Immédiat : le site qui l'utilise ne peut plus ni demander de devis ni réserver.")}
+        confirmLabel="Révoquer la clé"
+        loading={pending}
+        onConfirm={() => revoking && revoke(revoking)}
+      />
     </div>
   );
 }
@@ -679,14 +673,11 @@ export function RecreateDriverButton({ orgId, prefill }: { orgId: string; prefil
       >
         <form onSubmit={submitWith(submit)} className="space-y-6 px-6 py-6">
           <DriverFields prefill={prefill} errors={errors} />
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" disabled={pending} onClick={() => setOpen(false)}>
-              Annuler
-            </Button>
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="primary" loading={pending}>
               Recréer la fiche
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </SheetContent>
     </Dialog>
@@ -1026,14 +1017,11 @@ function PackConversionDialog({
             <Textarea id={`${uid}-note`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} required className="min-h-[64px]" />
           </Field>
 
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" disabled={pending} onClick={onClose}>
-              Annuler
-            </Button>
+          <DialogFooter backDisabled={pending} className="mt-0">
             <Button type="submit" variant={exit ? "danger" : "primary"} loading={pending}>
               {SWITCH_TARGET_META[target].action}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

@@ -125,10 +125,12 @@ export function ApplicationActions({
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => { setReason(""); setDialog("reject"); }}>
+      {/* Actions de ligne : jamais en bouton plein (un seul bouton lime par écran, principe 2), icône lime ; 44 px au
+          toucher sous 640 px */}
+      <Button variant="outline" size="sm" className="max-sm:h-11" onClick={() => { setReason(""); setDialog("reject"); }}>
         <X /> Refuser
       </Button>
-      <Button variant="primary" size="sm" onClick={() => { setTrust(initialTrust); setDialog("approve"); }}>
+      <Button variant="secondary" size="sm" className="max-sm:h-11 [&_svg]:text-brand" onClick={() => { setTrust(initialTrust); setDialog("approve"); }}>
         <Check /> Valider
       </Button>
 

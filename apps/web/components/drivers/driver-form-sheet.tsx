@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createDriver } from "@/app/dashboard/drivers/actions";
 import { Button } from "@/components/ui/button";
-import { Dialog, SheetContent } from "@/components/ui/dialog";
+import { Dialog, DialogFooter, SheetContent } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
 import { cn, submitWith } from "@/lib/utils";
@@ -111,6 +111,7 @@ export function DriverFormSheet() {
                   <button
                     key={c}
                     type="button"
+                    aria-pressed={category === c}
                     onClick={() => setCategory(c)}
                     className={cn("rounded-xl border px-3 py-2 text-left text-[12.5px] font-semibold", category === c ? "border-brand/50 bg-brand/[0.06] text-brand" : "border-line text-fg hover:border-line-strong")}
                   >
@@ -138,13 +139,14 @@ export function DriverFormSheet() {
                   <button
                     key={k}
                     type="button"
+                    aria-pressed={access === k}
                     onClick={() => setAccess(k)}
                     className={cn("flex items-start gap-3 rounded-xl border p-3 text-left", access === k ? "border-brand/50 bg-brand/[0.05]" : "border-line hover:border-line-strong")}
                   >
-                    <Icon className={cn("mt-0.5 size-4", access === k ? "text-brand" : "text-fg-subtle")} />
-                    <span>
+                    <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", access === k ? "text-brand" : "text-fg-subtle")} />
+                    <span className="min-w-0">
                       <span className="block text-[13px] font-medium">{label}</span>
-                      <span className="block text-[11.5px] text-fg-subtle">{hint}</span>
+                      <span className="block text-[12px] text-fg-muted">{hint}</span>
                     </span>
                   </button>
                 ))}
@@ -159,10 +161,12 @@ export function DriverFormSheet() {
               )}
             </section>
           </div>
-          <div className="sticky bottom-0 flex justify-end gap-2 border-t border-line bg-ink-850/95 px-6 py-4 backdrop-blur">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Annuler</Button>
-            <Button type="submit" variant="primary" loading={pending}>Créer le chauffeur</Button>
-          </div>
+          {/* « Retour » ferme sans rien faire (« Annuler » est réservé aux actions métier) ; barre collée en bas du panneau */}
+          <DialogFooter backDisabled={pending} className="sticky bottom-0 mt-0 border-t border-line bg-ink-850/95 px-6 py-4 backdrop-blur">
+            <Button type="submit" variant="primary" loading={pending}>
+              Créer le chauffeur
+            </Button>
+          </DialogFooter>
         </form>
       </SheetContent>
     </Dialog>

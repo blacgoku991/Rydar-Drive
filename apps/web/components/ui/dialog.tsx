@@ -10,9 +10,10 @@ export const DialogClose = D.Close;
 
 /**
  * Pied de fenêtre (docs/REFONTE-PANELS.md § 3.6) : « Retour » (ferme sans rien faire) puis l'action ; côte à côte à
- * droite à partir de 640 px, empilés pleine largeur en dessous, action en haut. `sticky` : collé en bas des longues
- * fenêtres sur téléphone (l'action reste à portée sans tout faire défiler). « Annuler » n'est jamais un bouton de
- * fermeture : c'est une action métier suivie de son objet (« Annuler la course »).
+ * droite à partir de 640 px, empilés pleine largeur en dessous, action en haut, 44 px de haut au moins sous 640 px
+ * (principe 7 : cible tactile). `sticky` : collé en bas des longues fenêtres sur téléphone (l'action reste à portée sans
+ * tout faire défiler). « Annuler » n'est jamais un bouton de fermeture : c'est une action métier suivie de son objet
+ * (« Annuler la course »).
  */
 export function DialogFooter({
   children,
@@ -35,7 +36,8 @@ export function DialogFooter({
   return (
     <div
       className={cn(
-        "mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        // Enfants directs = les boutons (Retour, puis l'action) : 44 px au moins au toucher
+        "mt-6 flex flex-col-reverse gap-2 max-sm:*:min-h-11 sm:flex-row sm:justify-end",
         sticky && "max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:-mx-6 max-sm:-mb-6 max-sm:border-t max-sm:border-line max-sm:bg-ink-850 max-sm:px-6 max-sm:pb-6 max-sm:pt-4",
         className,
       )}
@@ -142,7 +144,8 @@ export function DialogContent({
           )}
         </div>
         {children}
-        <D.Close className="absolute right-4 top-4 grid size-8 place-items-center rounded-lg text-fg-subtle hover:bg-white/5 hover:text-fg">
+        {/* Croix : 44 px sous 640 px (cible tactile), au même endroit à l'œil (coin décalé de la moitié de l'écart) */}
+        <D.Close className="absolute right-2 top-2 grid size-11 place-items-center rounded-lg text-fg-subtle hover:bg-white/5 hover:text-fg sm:right-4 sm:top-4 sm:size-8">
           <X className="size-4" />
           <span className="sr-only">Fermer</span>
         </D.Close>
@@ -175,14 +178,16 @@ export function SheetContent({
         {...props}
         {...focus}
       >
-        <div className="hairline-top flex items-start justify-between border-b border-line px-6 py-5">
-          <div>
+        {/* Titre en min-w-0 et croix en shrink-0 : un long titre passe à la ligne au lieu d'écraser la croix (44 px sous
+            640 px, cible tactile) */}
+        <div className="hairline-top flex items-start justify-between gap-3 border-b border-line px-6 py-5">
+          <div className="min-w-0">
             <D.Title className="text-base font-semibold tracking-tight">{title}</D.Title>
             <D.Description className={cn("mt-0.5 text-[13px] text-fg-muted", !description && "sr-only")}>
               {description ?? "Panneau"}
             </D.Description>
           </div>
-          <D.Close className="grid size-8 place-items-center rounded-lg text-fg-subtle hover:bg-white/5 hover:text-fg">
+          <D.Close className="-mr-2 -mt-1.5 grid size-11 shrink-0 place-items-center rounded-lg text-fg-subtle hover:bg-white/5 hover:text-fg sm:mr-0 sm:mt-0 sm:size-8">
             <X className="size-4" />
             <span className="sr-only">Fermer</span>
           </D.Close>
@@ -213,12 +218,12 @@ export function WorkspaceContent({
         {...props}
         {...focus}
       >
-        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
-          <div>
+        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5">
+          <div className="min-w-0">
             <D.Title className="text-[15px] font-semibold tracking-tight">{title}</D.Title>
             <D.Description className={cn("text-[12.5px] text-fg-muted", !description && "sr-only")}>{description ?? "Fenêtre"}</D.Description>
           </div>
-          <D.Close className="grid size-8 place-items-center rounded-lg text-fg-subtle hover:bg-white/5 hover:text-fg">
+          <D.Close className="-my-1.5 -mr-2 grid size-11 shrink-0 place-items-center rounded-lg text-fg-subtle hover:bg-white/5 hover:text-fg sm:my-0 sm:mr-0 sm:size-8">
             <X className="size-4" />
             <span className="sr-only">Fermer</span>
           </D.Close>

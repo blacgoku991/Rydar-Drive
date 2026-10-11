@@ -134,7 +134,8 @@ export function BarList({ items, format }: { items: { label: string; value: numb
 export function DataTable({ rows, columns }: { rows: Point[]; columns: { key: string; label: string; format?: (v: any) => string }[] }) {
   return (
     <details className="group mt-3">
-      <summary className="cursor-pointer list-none text-[12px] text-fg-subtle hover:text-fg-muted">
+      {/* 44 px au toucher sous 640 px (principe 7), focus visible */}
+      <summary className="inline-flex min-h-11 cursor-pointer list-none items-center rounded-md text-[12.5px] text-fg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/70 sm:min-h-8 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">Voir les données</span>
         <span className="hidden group-open:inline">Masquer les données</span>
       </summary>

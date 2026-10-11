@@ -1,8 +1,11 @@
 // Règles de la liste « Encaissements », partagées par la page serveur et la vue client (module sans « use client »).
 import type { OrgSettlementItem } from "@rydar/shared";
 
-/** Taille de la liste affichée par défaut ; « Afficher plus » ajoute 100 lignes jusqu'à 500. */
-export const SETTLEMENT_PAGE = 100;
+/**
+ * Taille de la liste affichée par défaut ; « Afficher plus » ajoute 50 lignes jusqu'à 500 (docs/REFONTE-PANELS.md § 3.4 :
+ * 50 lignes au plus d'un bloc par défaut, jamais 100 ou 200).
+ */
+export const SETTLEMENT_PAGE = 50;
 export const SETTLEMENT_MAX = 500;
 
 /**

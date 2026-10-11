@@ -82,7 +82,8 @@ export function DropdownMenuItem({ className, destructive, ...props }: React.Com
   return (
     <DM.Item
       className={cn(
-        "flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] outline-none data-[highlighted]:bg-white/[0.06] data-[disabled]:opacity-40 [&_svg]:size-4 [&_svg]:text-fg-subtle",
+        // 44 px au toucher sous 640 px (principe 7 de docs/REFONTE-PANELS.md)
+        "flex cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] outline-none max-sm:min-h-11 data-[highlighted]:bg-white/[0.06] data-[disabled]:opacity-40 [&_svg]:size-4 [&_svg]:text-fg-subtle",
         destructive ? "text-red [&_svg]:text-red" : "text-fg",
         className,
       )}

@@ -285,11 +285,11 @@ export default async function DriverPage({ params }: { params: Promise<{ id: str
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {/* Sur 30 jours (sauf le total) ; sous-titres courts : une ligne chacun sur téléphone (annulées : seulement s'il y en a) */}
           <StatCard
-            label="Courses terminées (30 j)"
+            label={"Courses terminées (30\u00a0j)"}
             value={formatNumber(s?.rides?.completed ?? 0)}
             sub={`${formatNumber(s?.rides?.completed_all_time ?? 0)} au total${s?.rides?.cancelled ? ` · ${plural(s.rides.cancelled, "annulée")}` : ""}`}
           />
-          <StatCard label="Chiffre d'affaires (30 j)" value={formatPrice(s?.rides?.revenue_cents ?? 0)} sub="courses terminées" />
+          <StatCard label={"Chiffre d'affaires (30\u00a0j)"} value={formatPrice(s?.rides?.revenue_cents ?? 0)} sub="courses terminées" />
           <StatCard label="Taux d'acceptation" value={formatPercent(s?.offers?.acceptance_rate)} sub={plural(offers, "course proposée", "courses proposées")} />
           <StatCard
             label="Réponse moyenne"

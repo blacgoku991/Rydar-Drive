@@ -51,8 +51,9 @@ export type NavSection = {
   items: NavItem[];
 };
 
+// Rouge : fond plein et texte encre (5,97:1) ; le rouge sur fond rouge pâle tombait à 4,39:1 sur l'entrée active
 const BADGE_TONE: Record<NavBadgeTone, string> = {
-  red: "bg-red/15 text-red",
+  red: "bg-red text-ink-950",
   brand: "bg-brand text-brand-fg",
   amber: "bg-amber/15 text-amber",
 };

@@ -59,7 +59,7 @@ export function RideAlertList({
                   <span className={cn("font-semibold", !open && "text-fg-muted")} style={open ? { color } : undefined}>
                     {alertLabel(a.kind)}
                   </span>
-                  {open && a.severity === "critical" && <span className="rounded bg-red/15 px-1.5 py-px text-[12px] font-semibold text-red">urgent</span>}
+                  {open && a.severity === "critical" && <span className="rounded bg-red px-1.5 py-px text-[12px] font-semibold text-ink-950">urgent</span>}
                   <span className="ml-auto shrink-0 text-[12px] tabular-nums text-fg-muted" title={agoFr(a.created_at, now)}>
                     {formatTime(a.created_at, timeZone)}
                   </span>

@@ -246,8 +246,11 @@ export default async function OrganizationAdminPage({ params }: { params: Promis
           <PrivateFleetCard db={db} org={org as CardOrg} members={memberRows as CardMember[]} plans={(plans.data ?? []) as CardPlan[]} terms={terms} timeZone={timeZone} />
         )}
 
-        {/* Téléphone : Accès, Argent, Offre (ordre du code) ; grand écran : Accès puis Offre à gauche, Argent à droite */}
-        <div className="grid items-start gap-4 sm:gap-6 xl:grid-cols-2">
+        {/* Téléphone : Accès, Argent, Offre (ordre du code, qui reste l'ordre de lecture) ; grand écran : Accès puis Offre à
+            gauche, Argent à droite. Deux colonnes indépendantes : la 1re rangée suit la hauteur d'« Accès » seule (auto),
+            la colonne Argent (sur deux rangées) ne prend sa place que dans la 2e (1fr) — plus de trou sous « Accès » quand
+            « Modifier le modèle ou les frais » s'ouvre */}
+        <div className={cn("grid items-start gap-4 sm:gap-6 xl:grid-cols-2", !privateFleet && "xl:grid-rows-[auto_1fr]")}>
           {!privateFleet && <OrganizationAccessCard orgId={id} orgName={org.name} members={accessMembers} />}
           <div className={cn("min-w-0 space-y-4 sm:space-y-6", !privateFleet && "xl:row-span-2")}>
             {showPlatform && platformAccount && <OrgPlatformFeesCard orgId={id} account={platformAccount} timeZone={timeZone} />}

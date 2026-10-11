@@ -143,15 +143,17 @@ export async function PrivateBookingDetail({ ctx, id }: { ctx: OrgCtx; id: strin
                   <PickupTime ride={ride} timeZone={tz} withDate />
                 </Info>
                 <Info icon={<Radar />} label="Trajet estimé">
-                  {formatDistance(ride.estimated_distance_m)} · {formatDuration(ride.estimated_duration_s)}
+                  {formatDistance(ride.estimated_distance_m)}{"\u00a0·"} {formatDuration(ride.estimated_duration_s)}
                 </Info>
                 <Info icon={<Wallet />} label="Prix">
+                  {/* Séparateur collé au prix (espace insécable) : jamais « · » seul en début de ligne */}
                   {ride.price_cents == null ? (
-                    <span className="text-amber">prix à fixer</span>
+                    <span className="whitespace-nowrap text-amber">prix à fixer</span>
                   ) : (
-                    <span className="num font-semibold">{formatPrice(ride.price_cents, ride.currency ?? "EUR")}</span>
-                  )}{" "}
-                  <span className="whitespace-nowrap text-fg-muted">· {PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod]}</span>
+                    <span className="num whitespace-nowrap font-semibold">{formatPrice(ride.price_cents, ride.currency ?? "EUR")}</span>
+                  )}
+                  <span className="text-fg-muted">{"\u00a0·"}</span>{" "}
+                  <span className="whitespace-nowrap text-fg-muted">{PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod]}</span>
                 </Info>
                 <Info icon={<Car />} label="Catégorie">{VEHICLE_CATEGORY_META[ride.vehicle_category as VehicleCategory]?.label}</Info>
               </div>

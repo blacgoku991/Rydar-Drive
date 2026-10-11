@@ -1257,12 +1257,17 @@ export function AlertsBell({ className }: { className?: string }) {
       }}
     >
       <P.Trigger
-        className={cn("relative grid size-8 place-items-center rounded-lg text-fg-muted transition-colors hover:bg-white/[0.06] hover:text-fg", className)}
+        // 44 px sous lg (barre du haut sur téléphone et tablette : cible tactile) ; pastille rouge pleine, texte encre de
+        // 12 px (5,97:1 ; le blanc sur rouge tombait à 3,37:1)
+        className={cn(
+          "relative grid size-11 place-items-center rounded-lg text-fg-muted transition-colors hover:bg-white/[0.06] hover:text-fg lg:size-8",
+          className,
+        )}
         aria-label={`Notifications${a.unread ? ` (${a.unread} non lues)` : ""}`}
       >
         {a.sound ? <Bell className="size-4" /> : <BellOff className="size-4" />}
         {a.unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-red px-1 text-[10px] font-bold tabular-nums text-white ring-2 ring-ink-950">
+          <span className="absolute -right-1 -top-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-red px-1 text-[12px] font-bold leading-none tabular-nums text-ink-950 ring-2 ring-ink-950 max-lg:right-0.5 max-lg:top-0.5">
             {a.unread > 9 ? "9+" : a.unread}
           </span>
         )}

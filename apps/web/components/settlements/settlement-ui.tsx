@@ -480,6 +480,8 @@ export function SettlementDialogs({
  *  réglé / annulé                              → ⋮ (Rouvrir, owner / admin)
  * « Pas reçu » bloque le chauffeur : bouton direct seulement s'il a déclaré avoir payé ou si l'échéance est passée
  * (`overdue`), sinon dans le menu — même fenêtre, motif obligatoire.
+ * Actions de LIGNE : jamais en bouton plein (principe 2 de docs/REFONTE-PANELS.md, un seul bouton lime par écran,
+ * celui de la page) ; « Reçu » / « Versé » se distinguent par leur icône lime. 44 px au toucher sous 640 px.
  */
 export function SettlementActions({
   settlement: s,
@@ -521,31 +523,34 @@ export function SettlementActions({
   const menuReopen = canManage && !open;
   const btn = size === "xs" ? "xs" : "sm";
   const ref = n ? `course #${n}` : `règlement ${s.reference}`;
+  // Cible tactile : 44 px de haut (boutons) ou de côté (icônes) sous 640 px
+  const touch = "max-sm:h-11 max-sm:px-3.5";
+  const touchIcon = "max-sm:size-11";
 
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
       {open && owes && (
         <>
-          <Button variant="primary" size={btn} onClick={() => setMode("confirm")}>
+          <Button variant="secondary" size={btn} className={cn(touch, "[&_svg]:text-brand")} onClick={() => setMode("confirm")}>
             <Check /> Reçu
           </Button>
           {disputeDirect && (
-            <Button variant="outline" size={btn} onClick={() => setMode("dispute")}>
+            <Button variant="outline" size={btn} className={touch} onClick={() => setMode("dispute")}>
               Pas reçu
             </Button>
           )}
-          {wa && <WhatsAppButton href={wa} size={btn} iconOnly={size === "xs"} />}
+          {wa && <WhatsAppButton href={wa} size={btn} iconOnly={size === "xs"} className={size === "xs" ? touchIcon : touch} />}
         </>
       )}
       {open && !owes && (
-        <Button variant="primary" size={btn} onClick={() => setMode("confirm")}>
+        <Button variant="secondary" size={btn} className={cn(touch, "[&_svg]:text-brand")} onClick={() => setMode("confirm")}>
           <Check /> Versé
         </Button>
       )}
       {(menuRemind || menuDispute || menuWaive || menuReopen) && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={`Plus d'actions : ${ref}`} disabled={reminding}>
+            <Button variant="ghost" size="icon-sm" className={touchIcon} aria-label={`Plus d'actions : ${ref}`} disabled={reminding}>
               <EllipsisVertical />
             </Button>
           </DropdownMenuTrigger>

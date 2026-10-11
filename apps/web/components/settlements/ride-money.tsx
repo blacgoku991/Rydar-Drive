@@ -25,7 +25,7 @@ import { SplitPreview, centsToInput, eurosToCents, useSplitPreview } from "@/com
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { toneText } from "@/components/ui/badge";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input, NativeSelect } from "@/components/ui/input";
 import { useNow } from "@/hooks/use-now";
 import { runAction } from "@/lib/run-action";
@@ -106,7 +106,7 @@ export function useRideMoney(rideId: string, version: string) {
 function Figure({ label, cents, currency, tone, hint }: { label: string; cents: number | null; currency: string; tone?: "brand" | "blue" | "violet"; hint?: string }) {
   return (
     <div className="min-w-0 bg-ink-800 px-3 py-2.5">
-      <p className="flex items-center gap-1.5 truncate text-[11.5px] text-fg-subtle">
+      <p className="flex items-center gap-1.5 truncate text-[12px] text-fg-subtle">
         {tone && <span className={cn("size-1.5 shrink-0 rounded-full", tone === "brand" ? "bg-brand" : tone === "blue" ? "bg-blue" : "bg-violet")} />}
         {label}
       </p>
@@ -114,7 +114,7 @@ function Figure({ label, cents, currency, tone, hint }: { label: string; cents: 
         <span className={cn("mono truncate text-[15px] font-semibold tracking-tight", tone === "brand" ? "text-brand" : "text-fg")}>
           {cents == null ? "—" : formatPrice(cents, currency)}
         </span>
-        {hint && <span className="shrink-0 rounded bg-white/[0.06] px-1 text-[10px] font-medium text-fg-subtle">{hint}</span>}
+        {hint && <span className="shrink-0 rounded bg-white/[0.06] px-1 text-[12px] font-medium text-fg-muted">{hint}</span>}
       </p>
     </div>
   );
@@ -135,7 +135,7 @@ function Collects({ ride, currency, className, network }: { ride: RideMoneyRide;
     <p className={cn("flex items-start gap-2 text-[12.5px] leading-[18px] text-fg-muted", className)}>
       <Icon className={cn("mt-px size-4 shrink-0", collects ? "text-amber" : "text-violet")} />
       <span>
-        <span className="font-medium text-fg">{method}</span> :{" "}
+        <span className="font-medium text-fg">{method}</span>{"\u00a0"}:{" "}
         {f.driver == null
           ? collects
             ? `${who} encaisse le client et vous doit la commission.`
@@ -165,7 +165,7 @@ function SettlementBlock({ settlement: s, canManage, now, compact, onChanged }: 
         </div>
         <p className="mono text-[16px] font-semibold tracking-tight">
           {formatPrice(s.amount_cents, s.currency)}
-          <span className="ml-1.5 font-sans text-[11.5px] font-normal text-fg-subtle">{owes ? "à encaisser" : "à verser"}</span>
+          <span className="ml-1.5 font-sans text-[12px] font-normal text-fg-subtle">{owes ? "à encaisser" : "à verser"}</span>
         </p>
       </div>
       {s.status === "declared" ? (
@@ -251,10 +251,10 @@ export function EditPricingDialog({
           <p className="mb-4 flex items-start gap-2 rounded-lg border border-amber/25 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] leading-[18px] text-fg-muted">
             <Lock className="mt-px size-4 shrink-0 text-amber" />
             <span>
-              Règlement <span className="font-medium text-fg">{lockLabel}</span> : le prix, la commission et le paiement sont verrouillés.
+              Règlement <span className="font-medium text-fg">{lockLabel}</span>{"\u00a0"}: le prix, la commission et le paiement sont verrouillés.
               {settlement && (settlement.status === "paid" || settlement.status === "waived")
                 ? " Rouvrez le règlement pour corriger."
-                : " Pour corriger : marquez-le reçu (ou annulez la dette), puis rouvrez-le."}
+                : " Pour corriger\u00a0: marquez-le reçu (ou annulez-le), puis rouvrez-le."}
             </span>
           </p>
         )}
@@ -298,12 +298,15 @@ export function EditPricingDialog({
         </div>
         <SplitPreview className="mt-4" state={split} priceCents={valid(priceCents) ? priceCents : null} currency={currency} />
         <p className="mt-2 text-[12px] text-fg-subtle">
-          {driverCollects(payment) ? "Espèces / carte à bord : le chauffeur encaisse et vous doit la commission." : "En ligne / facture : vous encaissez et lui versez sa part."}
+          {driverCollects(payment)
+            ? "Espèces / carte à bord\u00a0: le chauffeur encaisse et vous doit la commission."
+            : "En ligne / facture\u00a0: vous encaissez et lui versez sa part."}
         </p>
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Annuler</Button>
-          <Button variant="primary" loading={pending} disabled={locked} onClick={save}>Enregistrer</Button>
-        </div>
+        <DialogFooter backDisabled={pending}>
+          <Button variant="primary" loading={pending} disabled={locked} onClick={save}>
+            Enregistrer le prix
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

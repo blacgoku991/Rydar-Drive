@@ -37,7 +37,7 @@ function mapPadding(desktop: boolean, card: boolean): MapPadding {
 
 // --------------------------------------------------------------------------- petits éléments
 
-/** Sigle coloré de l'organisation (même rendu que sur la carte). */
+/** Sigle coloré de l'organisation (même rendu que sur la carte), en 12 px au moins (§ 3.10). */
 function OrgTag({ org, size = "sm" }: { org: AdminLiveOrg | undefined; size?: "xs" | "sm" | "md" }) {
   const color = org?.color ?? "#666d79";
   return (
@@ -45,7 +45,7 @@ function OrgTag({ org, size = "sm" }: { org: AdminLiveOrg | undefined; size?: "x
       aria-hidden
       className={cn(
         "inline-grid shrink-0 place-items-center rounded-[5px] font-bold leading-none tracking-[0.02em]",
-        size === "xs" ? "h-4 min-w-4 px-0.5 text-[8.5px]" : size === "sm" ? "h-5 min-w-5 px-1 text-[9.5px]" : "size-8 rounded-lg text-[11.5px]",
+        size === "xs" ? "h-5 min-w-5 px-1 text-[12px]" : size === "sm" ? "h-6 min-w-6 px-1 text-[12px]" : "size-8 rounded-lg text-[12px]",
       )}
       style={{ background: color, color: textOn(color) }}
     >
@@ -60,7 +60,7 @@ function Stat({ label, value, color }: { label: string; value: number; color?: s
       <p className="text-[17px] font-semibold leading-tight tabular-nums" style={{ color: value > 0 ? color : undefined }}>
         {value}
       </p>
-      <p className="truncate text-[11px] text-fg-muted">{label}</p>
+      <p className="truncate text-[12px] text-fg-muted">{label}</p>
     </div>
   );
 }
@@ -73,11 +73,11 @@ function Chip({ active, onClick, label, n, color }: { active: boolean; onClick: 
       aria-pressed={active}
       className={cn(
         "flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[12px] transition-colors",
-        active ? "bg-white/[0.1] text-fg" : "text-fg-muted hover:bg-white/[0.05] hover:text-fg",
-        !n && !active && "opacity-50",
+        active ? "bg-white/[0.1] text-fg" : !n ? "text-fg-subtle hover:bg-white/[0.05] hover:text-fg-muted" : "text-fg-muted hover:bg-white/[0.05] hover:text-fg",
       )}
     >
-      {color && <span className="size-1.5 rounded-full" style={{ background: color }} />}
+      {/* Pastille de couleur : atténuée (décor, jamais un texte) quand le filtre est vide */}
+      {color && <span className={cn("size-1.5 rounded-full", !n && !active && "opacity-50")} style={{ background: color }} />}
       {label}
       <span className="tabular-nums text-fg-subtle">{n}</span>
     </button>
@@ -87,7 +87,7 @@ function Chip({ active, onClick, label, n, color }: { active: boolean; onClick: 
 function Detail({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={cn("min-w-0", className)}>
-      <dt className="text-[11.5px] text-fg-subtle">{label}</dt>
+      <dt className="text-[12px] text-fg-subtle">{label}</dt>
       <dd className="mt-0.5 text-[12.5px] leading-snug text-fg [overflow-wrap:anywhere]">{children}</dd>
     </div>
   );
@@ -412,7 +412,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
           <Stat label="En attente" value={summary.waiting} color={PRESENCE_COLOR.offered} />
         </div>
         {summary.stale > 0 && (
-          <p className="mt-2 text-[11.5px] text-fg-muted">
+          <p className="mt-2 text-[12px] text-fg-muted">
             {summary.stale} position{summary.stale > 1 ? "s" : ""} de plus de 10 min{showStale ? " (grisées sur la carte)" : " masquée" + (summary.stale > 1 ? "s" : "")}
           </p>
         )}
@@ -496,9 +496,10 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
 
       {tab === "orgs" ? (
         <div className={cn("px-2 pb-2 pt-2", !inDrawer && "min-h-0 flex-1 overflow-y-auto")}>
-          <div className="flex items-center gap-3 px-2.5 pb-1 text-[11px] text-fg-subtle">
+          <div className="flex items-center gap-3 px-2.5 pb-1 text-[12px] text-fg-subtle">
             <span className="flex-1">Organisation</span>
-            <span className="grid w-[132px] shrink-0 grid-cols-3 gap-1 text-right">
+            {/* Colonnes chiffrées assez larges pour leur titre en 12 px sur une ligne (« En ligne », « Occupés ») */}
+            <span className="grid w-[156px] shrink-0 grid-cols-3 gap-1 whitespace-nowrap text-right">
               <span>En ligne</span>
               <span>Dispo.</span>
               <span title="En route, sur place ou en course">Occupés</span>
@@ -518,20 +519,20 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                 className={cn(
                   "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors",
                   active ? "bg-white/[0.08]" : "hover:bg-white/[0.035]",
-                  !online && !active && "opacity-60",
                 )}
               >
+                {/* Aucun chauffeur en ligne : nom en gris (≥ 4,5:1), jamais d'opacité sur un texte (sigle compris) */}
                 <OrgTag org={org} size="md" />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium text-fg">{org.name}</span>
-                  <span className="block truncate text-[11.5px] text-fg-muted">
+                  <span className={cn("block truncate text-[13px] font-medium", online || active ? "text-fg" : "text-fg-muted")}>{org.name}</span>
+                  <span className="block truncate text-[12px] text-fg-muted">
                     {org.dispatch_model === "centrale" ? "Centrale" : "Flotte"}
                     {org.city ? ` · ${org.city}` : ""}
                     {org.status === "suspended" ? <span className="text-amber"> · suspendue</span> : null}
                     {w > 0 ? <span className="text-amber"> · {w} en attente</span> : null}
                   </span>
                 </span>
-                <span className="grid w-[132px] shrink-0 grid-cols-3 gap-1 text-right text-[13px] tabular-nums">
+                <span className="grid w-[156px] shrink-0 grid-cols-3 gap-1 text-right text-[13px] tabular-nums">
                   <span className="text-fg">{online}</span>
                   <span className={available ? "text-brand" : "text-fg-subtle"}>{available}</span>
                   <span className={busy ? "text-cyan" : "text-fg-subtle"}>{busy}</span>
@@ -575,7 +576,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                   )}
                 >
                   <span className="relative shrink-0">
-                    <span className={cn("num grid size-9 place-items-center rounded-full bg-ink-600 text-[11px] font-semibold", stale ? "text-fg-subtle" : "text-fg-muted")}>
+                    <span className={cn("num grid size-9 place-items-center rounded-full bg-ink-600 text-[12px] font-semibold", stale ? "text-fg-subtle" : "text-fg-muted")}>
                       {d.number}
                     </span>
                     <span
@@ -587,7 +588,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                     <span className="block truncate text-[13px] font-medium text-fg">
                       Chauffeur <span className="num">n° {d.number}</span>
                     </span>
-                    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11.5px]">
+                    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px]">
                       <OrgTag org={org} size="xs" />
                       <span className="shrink-0" style={{ color: PRESENCE_COLOR[d.presence] }}>
                         {PRESENCE_SHORT[d.presence]}
@@ -596,7 +597,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                       <span className="truncate text-fg-muted">· {org?.name ?? "—"}</span>
                     </span>
                   </span>
-                  <span className={cn("shrink-0 text-right text-[11.5px] tabular-nums", stale ? "text-amber" : "text-fg-muted")}>
+                  <span className={cn("shrink-0 text-right text-[12px] tabular-nums", stale ? "text-amber" : "text-fg-muted")}>
                     {d.location ? <Age at={d.location.updated_at} clock={clock} /> : "sans GPS"}
                   </span>
                 </button>
@@ -655,7 +656,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
                 {" "}· {summary.available} dispo. · {summary.busy} occupés
               </span>
             </span>
-            <span className={cn("block truncate text-[11.5px]", sync.error ? "text-amber" : "text-fg-muted")}>
+            <span className={cn("block truncate text-[12px]", sync.error ? "text-amber" : "text-fg-muted")}>
               {orgFilter !== "all" ? orgById[orgFilter]?.name : model === "all" ? "Toutes les organisations" : model === "fleet" ? "Flottes" : "Centrales"}
               {presence !== "all" ? ` · ${PRESENCE_SHORT[presence]}` : ""}
             </span>
@@ -740,7 +741,7 @@ export function LiveConsole({ initial, initialOrg }: { initial: AdminLiveSnapsho
 
 function Legend() {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-fg-muted">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-fg-muted">
       {ONLINE_PRESENCES.map((p) => (
         <span key={p} className="flex items-center gap-1.5">
           <span className="size-2.5 rounded-full border-2" style={{ borderColor: PRESENCE_COLOR[p] }} />
@@ -748,11 +749,11 @@ function Legend() {
         </span>
       ))}
       <span className="flex items-center gap-1.5">
-        <span className="size-2.5 rounded-full" style={{ background: PRESENCE_COLOR.offered, boxShadow: "0 0 0 2px #0b0d10, 0 0 0 3px #f5b544" }} />
+        <span className="size-2.5 rounded-full" style={{ background: PRESENCE_COLOR.offered, boxShadow: "0 0 0 2px var(--color-ink-900), 0 0 0 3px var(--color-amber)" }} />
         Course en attente
       </span>
       <span className="flex items-center gap-1.5">
-        <span className="grid h-3.5 min-w-3.5 place-items-center rounded-[4px] bg-fg-muted px-0.5 text-[8px] font-bold text-ink-950">AB</span>
+        <span aria-hidden className="grid h-5 min-w-5 place-items-center rounded-[5px] bg-fg-muted px-1 text-[12px] font-bold leading-none text-ink-950">AB</span>
         Sigle de l'organisation
       </span>
       <span className="flex items-center gap-1.5">
@@ -772,7 +773,7 @@ function OrgLink({ org }: { org: AdminLiveOrg | undefined }) {
       <OrgTag org={org} size="md" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-fg">{org.name}</span>
-        <span className="block truncate text-[11.5px] text-fg-muted">
+        <span className="block truncate text-[12px] text-fg-muted">
           {DISPATCH_MODEL_META[org.dispatch_model].label}
           {org.city ? ` · ${org.city}` : ""}
           {org.status === "suspended" ? <span className="text-amber"> · suspendue</span> : null}
@@ -794,13 +795,13 @@ function RideSummary({ ride, onClick, heading, note }: { ride: AdminLiveRide; on
         <span className="min-w-0 truncate font-medium text-fg">{heading ?? `Course ${ride.number}`}</span>
         {!heading && <span className="shrink-0" style={{ color: rideColor(ride.status) }}>{RIDE_STATUS_META[ride.status]?.label ?? ride.status}</span>}
       </span>
-      {note && <span className="mt-0.5 block text-[11.5px] text-fg-muted">{note}</span>}
+      {note && <span className="mt-0.5 block text-[12px] text-fg-muted">{note}</span>}
       {/* Supervision : départ et destination seulement sur la carte, jamais l'adresse ni le client */}
       <span className="mt-1.5 flex items-center gap-2 text-fg-muted">
         <span className="size-2 shrink-0 rounded-full" style={{ background: rideColor(ride.status) }} />
         Départ et destination sur la carte
       </span>
-      {onClick && <span className="mt-1.5 block text-[11.5px] text-fg-muted">Voir le trajet sur la carte</span>}
+      {onClick && <span className="mt-1.5 block text-[12px] text-fg-muted">Voir le trajet sur la carte</span>}
     </Comp>
   );
 }
@@ -950,7 +951,7 @@ function RideCard({
   return (
     <>
       <div className="flex items-start gap-3">
-        <span className="mt-1 size-3 shrink-0 rounded-full" style={{ background: rideColor(ride.status), boxShadow: "0 0 0 3px #0b0d10" }} />
+        <span className="mt-1 size-3 shrink-0 rounded-full" style={{ background: rideColor(ride.status), boxShadow: "0 0 0 3px var(--color-ink-900)" }} />
         <div className="min-w-0 flex-1">
           <p className="text-[14.5px] font-semibold">Course {ride.number}</p>
           <p className="text-[12.5px]" style={{ color: rideColor(ride.status) }}>
@@ -980,7 +981,7 @@ function RideCard({
       <RideSummary ride={ride} heading="Trajet" />
       {offeredTo.length > 0 && (
         <div className="mt-3">
-          <p className="text-[11.5px] text-fg-muted">Proposée à {offeredTo.length} chauffeur{offeredTo.length > 1 ? "s" : ""}</p>
+          <p className="text-[12px] text-fg-muted">Proposée à {offeredTo.length} chauffeur{offeredTo.length > 1 ? "s" : ""}</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {offeredTo.map((d) => (
               <button

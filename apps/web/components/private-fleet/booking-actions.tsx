@@ -16,7 +16,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { runAction } from "@/lib/run-action";
-import { submitWith } from "@/lib/utils";
+import { cn, submitWith } from "@/lib/utils";
 
 const NB = " ";
 
@@ -42,6 +42,7 @@ export function BookingActions({
   size = "sm",
   call = true,
   cancel = true,
+  inList = false,
 }: {
   booking: BookingActionTarget;
   /** Fiche du propriétaire (null : fiche supprimée, « Je la prends » impossible) */
@@ -51,6 +52,11 @@ export function BookingActions({
   call?: boolean;
   /** Bouton « Annuler la réservation » (faux sur l'Accueil : l'annulation se fait depuis la fiche) */
   cancel?: boolean;
+  /**
+   * Actions d'une ligne de liste (Accueil) : « Je la prends » sans bouton plein (un seul bouton lime par écran, celui
+   * de la page : principe 2 de docs/REFONTE-PANELS.md), icône lime ; sur la fiche, il reste l'action principale.
+   */
+  inList?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -75,15 +81,24 @@ export function BookingActions({
     );
   const decline = () => booking.offerId && run(() => declineOffer(booking.offerId!), `${label} refusée`, "Votre site en est informé.");
 
+  // 44 px au toucher sous 640 px (le chauffeur Flotte Privée consulte d'abord sur téléphone)
+  const touch = "max-sm:h-11";
+
   return (
     <>
       {booking.takeable && driverId && (
-        <Button variant="primary" size={size} loading={pending && dialog === null} onClick={take}>
+        <Button
+          variant={inList ? "secondary" : "primary"}
+          size={size}
+          className={cn(touch, inList && "[&_svg]:text-brand")}
+          loading={pending && dialog === null}
+          onClick={take}
+        >
           <Check /> Je la prends
         </Button>
       )}
       {booking.offerId && (
-        <Button variant="secondary" size={size} disabled={pending} onClick={() => setDialog("decline")}>
+        <Button variant="secondary" size={size} className={touch} disabled={pending} onClick={() => setDialog("decline")}>
           <X /> Refuser
         </Button>
       )}
@@ -91,6 +106,7 @@ export function BookingActions({
         <Button
           variant="outline"
           size={size}
+          className={touch}
           disabled={pending}
           onClick={() => {
             setReasonError(null);
@@ -101,7 +117,7 @@ export function BookingActions({
         </Button>
       )}
       {call && booking.customerPhone && (
-        <Button asChild variant="ghost" size={size}>
+        <Button asChild variant="ghost" size={size} className={touch}>
           <a href={`tel:${booking.customerPhone}`} aria-label={`Appeler le client au ${formatPhone(booking.customerPhone)}`}>
             <Phone /> Appeler
           </a>

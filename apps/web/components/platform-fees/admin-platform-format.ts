@@ -323,6 +323,55 @@ export function accountStateBadge(
 }
 
 /**
+ * Paiements déclarés par le client (« J'ai payé ») et pas encore confirmés, répartis comme le client les voit
+ * (payNowSummary : « À payer maintenant » = échu moins déclaré) : `onLate`, la part qui couvre le retard ; `ahead`, le
+ * reste, déclaré d'avance sur l'échéance qui vient.
+ */
+export function declaredSplit(a: Pick<PlatformAccount, "due_cents" | "declared_cents">): { onLate: number; ahead: number } {
+  const declared = Math.max(0, a.declared_cents || 0);
+  const onLate = Math.min(declared, Math.max(0, a.due_cents || 0));
+  return { onLate, ahead: declared - onLate };
+}
+
+/** « 10 € déclarés » (« 1 € déclaré » sous 2 €). */
+const declaredAmount = (cents: number, currency: string) => `${formatPrice(cents, currency)} ${cents >= 200 ? "déclarés" : "déclaré"}`;
+
+/**
+ * Retard vu par Rydar, le même mot partout chez le super admin (fiche du client, compte, commissions des centrales) :
+ * « En retard : 55 € (dont 10 € déclarés, à confirmer) », que le client lit « À payer maintenant : 45 € ». Rend la
+ * parenthèse sans ses signes (« dont 10 € déclarés, à confirmer ») ; null : aucun paiement déclaré sur le retard.
+ */
+export function lateDeclaredNote(a: Pick<PlatformAccount, "due_cents" | "declared_cents">, currency = "EUR"): string | null {
+  const { onLate } = declaredSplit(a);
+  return onLate > 0 ? `dont ${declaredAmount(onLate, currency)}, à confirmer` : null;
+}
+
+/** Paiement déclaré au-delà du retard : « 15 € déclarés d'avance, à confirmer » ; null : rien d'avance. */
+export function aheadDeclaredNote(a: Pick<PlatformAccount, "due_cents" | "declared_cents">, currency = "EUR"): string | null {
+  const { ahead } = declaredSplit(a);
+  return ahead > 0 ? `${declaredAmount(ahead, currency)} d'avance, à confirmer` : null;
+}
+
+/**
+ * Prochaine échéance vue par Rydar : la part qui tombe à cette date, comme le client la lit (« Prochaine échéance :
+ * 5 nov. · 265 € »), puis, s'il y a du retard, le cumul retard compris (next_due_cents de private.platform_position) :
+ * « 320 € avec le retard ». null : aucune échéance à venir.
+ */
+export function nextDueInfo(
+  a: Pick<PlatformAccount, "next_due_at" | "next_due_cents" | "due_cents">,
+  timeZone = "Europe/Paris",
+  currency = "EUR",
+): { day: string; amount: string; withLate: string | null; text: string } | null {
+  if (!a.next_due_at) return null;
+  const late = Math.max(0, a.due_cents || 0);
+  const total = Math.max(0, a.next_due_cents || 0);
+  const day = formatDay(a.next_due_at, timeZone, false);
+  const amount = formatPrice(Math.max(0, total - late), currency);
+  const withLate = late > 0 && total > late ? `${formatPrice(total, currency)} avec le retard` : null;
+  return { day, amount, withLate, text: `Prochaine échéance${NB}: ${day} · ${amount}${withLate ? ` (${withLate})` : ""}` };
+}
+
+/**
  * Compte sans frais ni historique : taux à 0, rien comptabilisé, reçu ni déclaré, aucune baisse en attente, aucune hausse
  * annoncée, aucun paiement. La page du compte affiche alors un état vide qui renvoie à la fiche du client (où se
  * règlent les frais) ; ses actions restent accessibles.

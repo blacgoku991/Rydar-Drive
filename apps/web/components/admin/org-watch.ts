@@ -224,15 +224,22 @@ export const PLAN_OPTION_LIMITS = [
 /** Nombre d'une limite (JSON) ; absent, null ou autre chose qu'un entier positif : illimité. */
 const limitNumber = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
 
+/** Options sans objet en Flotte Privée : son site réserve par l'API, l'espace n'a ni mini-site ni domaine (§ 7.6). */
+const PRIVATE_FLEET_HIDDEN_OPTIONS = new Set<string>(["booking_site", "custom_domain"]);
+
 /**
  * « Offre Pro · 40 chauffeurs · 3 000 courses par mois · 5 administrateurs · API de réservation, mini-site,
- * statistiques avancées » : limites EFFECTIVES (effectiveLimits : offre, surcharge, puis Flotte Privée).
+ * statistiques avancées » : limites EFFECTIVES (effectiveLimits : offre, surcharge, puis Flotte Privée). Flotte Privée
+ * (`privateFleet`) : ni mini-site ni domaine personnalisé cités, même si l'offre les comprend (affichage seulement :
+ * les limites, miroir de private.org_limits, restent celles de l'offre).
  */
-export function planSummary(planName: string | null, limits: Record<string, unknown>): string {
+export function planSummary(planName: string | null, limits: Record<string, unknown>, opts: { privateFleet?: boolean } = {}): string {
   const drivers = limitNumber(limits.max_drivers);
   const rides = limitNumber(limits.max_rides_per_month);
   const admins = limitNumber(limits.max_admins);
-  const options = PLAN_OPTION_LIMITS.filter((opt) => limitEnabled(limits[opt.key])).map((opt) => opt.short);
+  const options = PLAN_OPTION_LIMITS.filter((opt) => limitEnabled(limits[opt.key]) && !(opts.privateFleet && PRIVATE_FLEET_HIDDEN_OPTIONS.has(opt.key))).map(
+    (opt) => opt.short,
+  );
   return [
     planName ? `Offre ${planName}` : "Sans offre",
     drivers == null ? "chauffeurs illimités" : plural(drivers, "chauffeur"),

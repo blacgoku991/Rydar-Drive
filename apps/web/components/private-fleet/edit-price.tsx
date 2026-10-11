@@ -49,7 +49,7 @@ export function EditPriceButton({
 
   return (
     <>
-      <Button variant={variant} size={size} onClick={() => (setErrors({}), setOpen(true))}>
+      <Button variant={variant} size={size} className="max-sm:h-11" onClick={() => (setErrors({}), setOpen(true))}>
         {toFix ? <Tag /> : <Pencil />} {toFix ? "Fixer le prix" : "Modifier le prix"}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>

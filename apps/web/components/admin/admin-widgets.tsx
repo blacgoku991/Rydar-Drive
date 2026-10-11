@@ -408,7 +408,7 @@ export function OrganizationPlanForm({
 
   return (
     <div className="space-y-4">
-      <p className="text-[13px] leading-relaxed text-fg">{planSummary(chosen?.name ?? null, limits)}</p>
+      <p className="text-[13px] leading-relaxed text-fg">{planSummary(chosen?.name ?? null, limits, { privateFleet })}</p>
       <Field
         label="Offre"
         htmlFor={`${uid}-plan`}

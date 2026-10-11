@@ -105,7 +105,8 @@ export function FilterTabs({
                       item.active ? "border-brand font-medium text-fg" : "border-transparent text-fg-muted hover:text-fg",
                     )
                   : cn(
-                      "h-10 rounded-full border px-3.5 text-[13px] sm:h-9",
+                      // 44 px au toucher sous 640 px (principe 7)
+                      "h-11 rounded-full border px-3.5 text-[13px] sm:h-9",
                       item.active
                         ? "border-line-strong bg-ink-600 font-medium text-fg"
                         : zero
@@ -119,7 +120,9 @@ export function FilterTabs({
                 <span
                   className={cn(
                     "min-w-5 rounded-full px-1.5 text-center text-[12px] font-semibold leading-5 tabular-nums",
-                    item.alert && count > 0 ? "bg-red/15 text-red" : item.active ? "bg-white/[0.08] text-fg" : "bg-white/[0.05] text-fg-muted",
+                    // Alerte : fond rouge plein, texte encre (5,97:1 ; le rouge sur fond rouge pâle tombait à 4,05:1 sur
+                    // l'onglet actif)
+                    item.alert && count > 0 ? "bg-red text-ink-950" : item.active ? "bg-white/[0.08] text-fg" : "bg-white/[0.05] text-fg-muted",
                     zero && "bg-transparent font-normal text-fg-subtle",
                   )}
                 >

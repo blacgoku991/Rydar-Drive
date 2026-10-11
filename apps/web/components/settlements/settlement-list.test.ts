@@ -79,3 +79,14 @@ describe("liste « À traiter »", () => {
     expect(carrySelection(empty, [a], new Map())).toBe(empty);
   });
 });
+
+// Revue de la refonte (RV-07) : 50 lignes au plus d'un bloc par défaut (docs/REFONTE-PANELS.md § 3.4), « Afficher plus »
+// par pas de 50 jusqu'au plafond de lecture.
+describe("taille de la liste des règlements", () => {
+  it("50 lignes par défaut, plafond de 500, plafond multiple de la page", async () => {
+    const { SETTLEMENT_PAGE, SETTLEMENT_MAX } = await import("./settlement-list");
+    expect(SETTLEMENT_PAGE).toBeLessThanOrEqual(50);
+    expect(SETTLEMENT_MAX).toBe(500);
+    expect(SETTLEMENT_MAX % SETTLEMENT_PAGE).toBe(0);
+  });
+});

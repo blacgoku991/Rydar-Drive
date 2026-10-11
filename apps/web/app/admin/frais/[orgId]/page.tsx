@@ -18,8 +18,8 @@ import { CLIENT_KIND_META, clientKind } from "@/components/admin/platform-data";
 import { PageBody, PageHeader } from "@/components/layout/page-header";
 import { AccountActions, TermsForm } from "@/components/platform-fees/admin-account-actions";
 import {
-  MONTH_RE, accountIsEmpty, accountStateBadge, ago, cancelledOnboard, formatDay, invoiceCycles, lastMonths, monthKey, overdueInfo, termsSummary,
-  zeroPriceText,
+  MONTH_RE, accountIsEmpty, accountStateBadge, ago, cancelledOnboard, invoiceCycles, lastMonths, lateDeclaredNote, monthKey, nextDueInfo, overdueInfo,
+  termsSummary, zeroPriceText,
 } from "@/components/platform-fees/admin-platform-format";
 import { PlatformLive } from "@/components/platform-fees/admin-platform-live";
 import { Metric } from "@/components/platform-fees/admin-platform-metric";
@@ -81,6 +81,8 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
   }
   const declared = payments.filter((p) => p.status === "declared");
   const late = overdueInfo(a, tz);
+  const lateNote = lateDeclaredNote(a, cur);
+  const nextDue = nextDueInfo(a, tz, cur);
   const state = accountStateBadge(a, tz);
   const months = lastMonths(monthKey(new Date(), tz), 12);
   const basePath = `/admin/frais/${orgId}`;
@@ -221,11 +223,22 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
                   sub={a.balance_cents < 0 ? "avance du client" : "frais − paiements reçus"}
                   icon={<CircleDollarSign />}
                 />
+                {/* Mêmes mots que la fiche du client et les commissions des centrales : le client lit « À payer
+                    maintenant » = retard moins la part déclarée */}
                 <Metric
                   label="En retard"
                   value={formatPrice(a.due_cents, cur)}
                   tone={a.due_cents > 0 ? "red" : undefined}
-                  sub={late ? late.since : "aucun retard"}
+                  sub={
+                    late || lateNote ? (
+                      <>
+                        {late && <span className="block">{late.since}</span>}
+                        {lateNote && <span className="block text-amber">{lateNote}</span>}
+                      </>
+                    ) : (
+                      "aucun retard"
+                    )
+                  }
                   icon={<AlarmClock />}
                 />
                 <Metric
@@ -236,10 +249,20 @@ export default async function PlatformAccountPage({ params, searchParams }: { pa
                   icon={<Inbox />}
                   href={a.declared_count ? "#a-traiter" : undefined}
                 />
+                {/* La part qui tombe à cette date (celle que lit le client), puis le cumul avec le retard */}
                 <Metric
                   label="Prochaine échéance"
-                  value={a.next_due_at ? formatPrice(a.next_due_cents, cur) : "—"}
-                  sub={a.next_due_at ? `au plus tard le ${formatDay(a.next_due_at, tz)}` : "rien à venir"}
+                  value={nextDue ? nextDue.amount : "—"}
+                  sub={
+                    nextDue ? (
+                      <>
+                        <span className="block">au plus tard le {nextDue.day}</span>
+                        {nextDue.withLate && <span className="block">{nextDue.withLate}</span>}
+                      </>
+                    ) : (
+                      "rien à venir"
+                    )
+                  }
                   icon={<CalendarClock />}
                 />
               </div>

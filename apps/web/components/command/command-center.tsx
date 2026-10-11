@@ -516,7 +516,11 @@ export function CommandCenter({
     <div className="relative flex h-[calc(100dvh-56px)] flex-col overflow-hidden lg:h-dvh">
       {/* Carte plein écran */}
       <div className="relative h-[46vh] shrink-0 lg:absolute lg:inset-0 lg:h-auto">
+        {/* À partir de xl, le panneau « Flotte » (bas droite, 312 px + 12 px de marge) couvrait le zoom et l'attribution
+            de la carte : ici seulement (FleetMap sert aussi aux fiches), ils passent à sa gauche. « ! » : la feuille de
+            MapLibre, hors couche, l'emporterait sinon sur la couche des utilitaires */}
         <FleetMap
+          className="xl:[&_.maplibregl-ctrl-bottom-right]:right-[324px]!"
           ref={mapRef}
           drivers={drivers}
           rides={rides}
@@ -636,7 +640,8 @@ export function CommandCenter({
                     >
                       <span className="truncate">{label}</span>
                       {k === "alerts" && n > 0 ? (
-                        <span className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-red/15 px-1 text-[12px] font-semibold tabular-nums text-red">
+                        // Rouge plein, texte encre (5,97:1 ; rouge sur rouge pâle : 4,05:1 sur l'onglet actif)
+                        <span className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-red px-1 text-[12px] font-semibold tabular-nums text-ink-950">
                           <span aria-hidden>{n}</span>
                         </span>
                       ) : (

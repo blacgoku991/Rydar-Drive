@@ -34,7 +34,7 @@ import { METHOD_ICON, methodLabel } from "@/components/settlements/settlement-ui
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
 import { Avatar, Switch } from "@/components/ui/misc";
 import { NewTabHint } from "@/components/ui/new-tab";
@@ -392,7 +392,8 @@ function NetworkPaymentMethodsForm(p: Props & { onDone?: () => void }) {
               }}
               disabled={pending}
             >
-              Annuler
+              {/* « Annuler » seul n'est jamais un bouton de fermeture : action nommée, ou « Retour » sans saisie */}
+              {dirty ? "Annuler les modifications" : "Retour"}
             </Button>
           )}
           <Button type="submit" variant="primary" size="sm" loading={pending} disabled={!dirty}>
@@ -851,15 +852,15 @@ function ActivateDialog({
               (version {version}) au nom de mon organisation.
             </span>
           </label>
-          <div className="mt-6 flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={onClose}>Annuler</Button>
+          {/* « Retour » ferme sans rien faire ; l'action dit ce qu'elle active (« Activer le partage ») */}
+          <DialogFooter backDisabled={pending}>
             <Button type="submit" variant="primary" disabled={!checked} loading={pending}>
-              Activer
+              {copy.title}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-        <p className="mt-4 flex items-start gap-2 text-[11.5px] text-fg-subtle">
-          <Info className="mt-0.5 size-3.5 shrink-0" /> Vous pouvez désactiver à tout moment : les courses déjà acceptées vont à leur terme.
+        <p className="mt-4 flex items-start gap-2 text-[12px] text-fg-muted">
+          <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" /> Vous pouvez désactiver à tout moment{"\u00a0"}: les courses déjà acceptées vont à leur terme.
         </p>
       </DialogContent>
     </Dialog>

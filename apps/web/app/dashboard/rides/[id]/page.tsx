@@ -27,6 +27,7 @@ import { Avatar } from "@/components/ui/misc";
 import { PrivateBookingDetail } from "@/components/private-fleet/booking-detail";
 import { isAdminRole, requireOrg } from "@/lib/auth";
 import { isPrivateFleet } from "@/lib/private-fleet";
+import { cn } from "@/lib/utils";
 import type { LiveDriver, LiveOffer, LiveRide } from "@/lib/queries/live";
 import { plural } from "@/lib/wording";
 
@@ -44,13 +45,18 @@ const DRIVER_STUCK = new Set(["ACCEPTED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "
 /** Course close : sans temps réel, le sondage peut s'espacer jusqu'à 60 s ; sinon 30 s au plus. */
 const CLOSED = new Set(["COMPLETED", "CANCELLED"]);
 
-function Info({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
+/**
+ * Information de la fiche : un mot ne se coupe que s'il ne tient pas seul sur sa ligne (break-words : « Famille
+ * Nakamura » passe à la ligne entre les mots, jamais « Nakamur / a »). Les adresses, hors Info, gardent leur coupure
+ * partout ([overflow-wrap:anywhere]).
+ */
+function Info({ icon, label, children, className }: { icon: React.ReactNode; label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="flex items-start gap-3">
+    <div className={cn("flex items-start gap-3", className)}>
       <span aria-hidden className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-white/[0.04] text-fg-subtle [&_svg]:size-4">{icon}</span>
       <div className="min-w-0">
         <p className="text-[12px] text-fg-muted">{label}</p>
-        <div className="text-[13.5px] text-fg [overflow-wrap:anywhere]">{children}</div>
+        <div className="break-words text-[13.5px] text-fg">{children}</div>
       </div>
     </div>
   );
@@ -223,11 +229,14 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
                   <PickupTime ride={ride} timeZone={tz} withDate />
                 </Info>
                 <Info icon={<Radar />} label="Trajet estimé">
-                  {formatDistance(ride.estimated_distance_m)} · {formatDuration(ride.estimated_duration_s)}
+                  {formatDistance(ride.estimated_distance_m)}{"\u00a0·"} {formatDuration(ride.estimated_duration_s)}
                 </Info>
                 <Info icon={<Wallet />} label="Prix">
-                  <span className="num whitespace-nowrap font-semibold">{formatPrice(ride.price_cents)}</span>{" "}
-                  <span className="text-fg-muted">· {PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod]}</span>
+                  {/* Prix et séparateur insécables, moyen de paiement d'un bloc : jamais « Carte à / bord » ni « · » en
+                      début de ligne */}
+                  <span className="num whitespace-nowrap font-semibold">{formatPrice(ride.price_cents)}</span>
+                  <span className="text-fg-muted">{"\u00a0·"}</span>{" "}
+                  <span className="whitespace-nowrap text-fg-muted">{PAYMENT_METHOD_LABELS[ride.payment_method as PaymentMethod]}</span>
                   {centrale && ride.driver_payout_cents != null && (
                     <span className="block text-[12px] text-fg-muted">
                       dont <span className="mono text-fg">{formatPrice(ride.driver_payout_cents)}</span> pour le chauffeur
@@ -270,12 +279,14 @@ export default async function RidePage({ params }: { params: Promise<{ id: strin
           <div className="order-5 grid min-w-0 gap-6 lg:grid-cols-2 xl:order-none">
             <Card>
               <CardHeader title="Client" />
+              {/* Nom et numéro sur toute la largeur de la carte quand elle est étroite (téléphone, et à partir de lg où elle
+                  partage la ligne avec « Chauffeur ») ; numéro jamais coupé ; passagers et bagages côte à côte */}
               <CardBody className="grid grid-cols-2 gap-4">
-                <Info icon={<Users />} label="Nom">
+                <Info icon={<Users />} label="Nom" className="col-span-2 sm:col-span-1 lg:col-span-2">
                   {ride.customer_name}
                 </Info>
-                <Info icon={<Phone />} label="Téléphone">
-                  <a href={`tel:${ride.customer_phone}`} className="hover:text-brand">
+                <Info icon={<Phone />} label="Téléphone" className="col-span-2 sm:col-span-1 lg:col-span-2">
+                  <a href={`tel:${ride.customer_phone}`} className="whitespace-nowrap hover:text-brand">
                     {formatPhone(ride.customer_phone)}
                   </a>
                 </Info>

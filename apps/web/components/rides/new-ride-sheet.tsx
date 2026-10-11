@@ -376,7 +376,8 @@ export function NewRideSheet({
               </section>
 
               <section className="space-y-2">
-                <div role="radiogroup" aria-label="Catégorie de véhicule" className="grid grid-cols-5 gap-1.5">
+                {/* Téléphone : trois par ligne (« Électrique » débordait d'une tuile de 56 à 62 px) ; cinq à partir de 640 px */}
+                <div role="radiogroup" aria-label="Catégorie de véhicule" className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
                   {VEHICLE_CATEGORIES.map((c) => (
                     <button
                       key={c}
@@ -385,7 +386,7 @@ export function NewRideSheet({
                       aria-checked={category === c}
                       onClick={() => setCategory(c)}
                       className={cn(
-                        "flex h-14 flex-col items-center justify-center rounded-lg border text-center transition-colors",
+                        "flex h-14 min-w-0 flex-col items-center justify-center rounded-lg border px-1 text-center transition-colors",
                         category === c ? "border-brand/60 bg-brand/[0.07] text-fg" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
                       )}
                     >

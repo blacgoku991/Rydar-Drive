@@ -27,7 +27,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * Encaissements (mode centrale) — contrat d'URL :
  *   ?filter=open|declared|overdue|disputed|to_pay|paid|waived|all  (défaut : open, « À traiter »)
- *   &driver=<driver_id>  (règlements d'un chauffeur)   &n=<100..500>  (taille de la liste)
+ *   &driver=<driver_id>  (règlements d'un chauffeur)   &n=<50..500>  (taille de la liste)
  */
 export default async function SettlementsPage({ searchParams }: { searchParams: Promise<{ filter?: string; driver?: string; n?: string }> }) {
   const ctx = await requireOrg();
@@ -69,7 +69,7 @@ export default async function SettlementsPage({ searchParams }: { searchParams: 
   const canManage = isAdminRole(ctx.role);
 
   // « À traiter » (tous chauffeurs) sert aussi aux compteurs et messages WhatsApp : lu une fois (500 au plus), envoyé au
-  // navigateur en version compacte ; seules les lignes affichées (100 par défaut, « Afficher plus ») sont complètes.
+  // navigateur en version compacte ; seules les lignes affichées (50 par défaut, « Afficher plus ») sont complètes.
   // Frais Rydar (frais plateforme dus à Rydar) : owner / admin seulement (un dispatcher ne voit pas la carte).
   // Règlements des chauffeurs PARTENAIRES (réseau partagé) : jamais listés ici (onglet « Réseau partagé ») ; un renvoi
   // les signale quand il en reste d'ouverts (même lecture que la mise en page : cache React, aucun appel de plus)

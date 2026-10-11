@@ -1,10 +1,11 @@
 import type { PlatformAccount, PlatformEntry } from "@rydar/shared";
 import { describe, expect, it } from "vitest";
 import {
-  ISO_DAY_RE, NETWORK_CONTEST_NOTE, STATEMENT_FIRST_LINES, accountIsEmpty, accountStateBadge, balanceLabel, csvText, formatDay, formatDayTime,
-  invoiceCycles, isNetworkContest, lastMonths, monthKey, monthLabel, monthSignals, moreLinesLabel, originParts, pendingReductionsDescription,
-  rideSettlementLabel, termsSummary, visibleOriginParts, zeroPriceText,
+  ISO_DAY_RE, NETWORK_CONTEST_NOTE, STATEMENT_FIRST_LINES, accountIsEmpty, accountStateBadge, aheadDeclaredNote, balanceLabel, csvText,
+  declaredSplit, formatDay, formatDayTime, invoiceCycles, isNetworkContest, lastMonths, lateDeclaredNote, monthKey, monthLabel, monthSignals,
+  moreLinesLabel, nextDueInfo, originParts, pendingReductionsDescription, rideSettlementLabel, termsSummary, visibleOriginParts, zeroPriceText,
 } from "./admin-platform-format";
+import { payNowSummary } from "./pay-now";
 
 describe("invoiceCycles : cycles de la facture récapitulative (frais à facturer)", () => {
   it("mensuel : mois civils du fuseau, le mois en cours d'abord, fin exclue", () => {
@@ -169,6 +170,28 @@ describe("page d'un compte : résumés", () => {
     expect(accountStateBadge({ ...base, balance_cents: -500 })).toEqual({ text: "Avance du client", tone: "green" });
     expect(accountStateBadge(base)).toEqual({ text: "Rien à régler", tone: "green" });
     for (const a of [{ ...base, balance_cents: -500 }, base]) expect(accountStateBadge(a).text).not.toMatch(/votre/);
+  });
+
+  it("retard et prochaine échéance : mêmes montants que ceux que lit le client (payNowSummary)", () => {
+    // Centrale Express : solde 320 €, 55 € en retard, 10 € déclarés ; le client lit « À payer maintenant : 45 € » et
+    // « Prochaine échéance : 5 nov. · 265 € »
+    const a = { due_cents: 5500, declared_cents: 1000, next_due_at: "2026-11-05T22:59:59Z", next_due_cents: 32000 };
+    expect(declaredSplit(a)).toEqual({ onLate: 1000, ahead: 0 });
+    expect(nb(lateDeclaredNote(a)!)).toBe("dont 10 € déclarés, à confirmer");
+    expect(aheadDeclaredNote(a)).toBeNull();
+    const pay = payNowSummary({ ...a, balance_cents: 32000, days_overdue: 6, blocked: false }, Date.parse("2026-10-11T10:00:00Z"));
+    expect(a.due_cents - declaredSplit(a).onLate).toBe(pay.amountCents);
+    const next = nextDueInfo(a, "Europe/Paris")!;
+    expect(nb(next.text)).toBe("Prochaine échéance : 5 nov. · 265 € (320 € avec le retard)");
+    expect(nb(pay.next!)).toBe(nb(`Prochaine échéance : ${next.day} · ${next.amount}`));
+    // Déclaré au-delà du retard : le reste est déclaré d'avance (le client ne voit plus rien « à payer maintenant »)
+    expect(declaredSplit({ due_cents: 5500, declared_cents: 7000 })).toEqual({ onLate: 5500, ahead: 1500 });
+    expect(nb(aheadDeclaredNote({ due_cents: 5500, declared_cents: 7000 })!)).toBe("15 € déclarés d'avance, à confirmer");
+    expect(nb(lateDeclaredNote({ due_cents: 5500, declared_cents: 150 })!)).toBe("dont 1,50 € déclaré, à confirmer");
+    // Sans retard : rien « dont », tout est d'avance ; l'échéance n'a pas de cumul avec le retard
+    expect(lateDeclaredNote({ due_cents: 0, declared_cents: 1000 })).toBeNull();
+    expect(nb(nextDueInfo({ due_cents: 0, next_due_at: "2026-11-05T22:59:59Z", next_due_cents: 23500 })!.text)).toBe("Prochaine échéance : 5 nov. · 235 €");
+    expect(nextDueInfo({ due_cents: 5500, next_due_at: null, next_due_cents: 0 })).toBeNull();
   });
 
   it("compte sans frais ni historique : état vide ; un taux, un montant, une hausse annoncée ou un paiement suffisent à l'éviter", () => {

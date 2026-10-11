@@ -81,7 +81,7 @@ export function DriversTable({ rows, serverNow }: { rows: DriverTableRow[]; serv
                 ),
                 <span>
                   {plural(d.completed, "course terminée", "courses terminées")} ·{" "}
-                  <span className="num font-medium text-fg">{formatPrice(d.revenue_cents)}</span> <span className="text-fg-muted">(30 j)</span>
+                  <span className="num font-medium text-fg">{formatPrice(d.revenue_cents)}</span> <span className="text-fg-muted">{"(30\u00a0j)"}</span>
                 </span>,
               ]}
             />
@@ -98,7 +98,7 @@ export function DriversTable({ rows, serverNow }: { rows: DriverTableRow[]; serv
               <TH className="text-right">Acceptation</TH>
               <TH className="text-right">Terminées</TH>
               <TH className="text-right">Annulées</TH>
-              <TH className="text-right">Chiffre d&apos;affaires (30 j)</TH>
+              <TH className="text-right">{"Chiffre d'affaires (30\u00a0j)"}</TH>
             </tr>
           </THead>
           <tbody>

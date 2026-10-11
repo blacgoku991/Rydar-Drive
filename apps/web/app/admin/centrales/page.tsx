@@ -3,7 +3,7 @@ import { Banknote, ChevronRight, HandCoins, Network, Route } from "lucide-react"
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageBody, PageHeader, StatCard } from "@/components/layout/page-header";
-import { capitalize, lastMonths, monthKey, monthLabel } from "@/components/platform-fees/admin-platform-format";
+import { aheadDeclaredNote, capitalize, declaredSplit, lastMonths, lateDeclaredNote, monthKey, monthLabel } from "@/components/platform-fees/admin-platform-format";
 import { Badge } from "@/components/ui/badge";
 import { Callout } from "@/components/ui/callout";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -43,7 +43,14 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
   const outstandingTotal = rows.reduce((s, r) => s + Number(r.outstanding_cents ?? 0), 0);
   const overdueTotal = rows.reduce((s, r) => s + Number(r.overdue_cents ?? 0), 0);
   const pendingTotal = rows.reduce((s, r) => s + Number(r.applications_pending ?? 0), 0);
-  const platformDeclaredTotal = rows.reduce((s, r) => s + Number(r.platform_declared_cents ?? 0), 0);
+  // Paiements déclarés à Rydar, pas encore confirmés : part qui couvre le retard, part déclarée d'avance (par centrale)
+  const declaredTotals = rows.reduce(
+    (t, r) => {
+      const d = declaredSplit(rydarAccount(r));
+      return { onLate: t.onLate + d.onLate, ahead: t.ahead + d.ahead };
+    },
+    { onLate: 0, ahead: 0 },
+  );
   const platformLateCount = rows.filter((r) => r.platform_overdue_since && Number(r.platform_due_cents ?? 0) > 0).length;
   const isCurrent = month === current;
   const label = monthLabel(month);
@@ -90,15 +97,15 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
 
             {/* Frais Rydar et fraude : traités sur leurs pages ; ici, un lien et ce qu'il y a à y voir */}
             <div className="grid gap-3 md:grid-cols-2">
+              {/* Mêmes mots que Frais Rydar et la fiche du client : « En retard » (dont la part déclarée, à confirmer) */}
               <LinkCard
                 href="/admin/frais"
-                title="Dû à Rydar"
-                linkLabel="Frais Rydar"
+                title="Frais Rydar"
                 alert={platformLateCount > 0}
                 text={[
-                  totals.platform_due_cents > 0 ? `${formatPrice(totals.platform_due_cents)} en retard` : "rien en retard",
+                  lateText(totals.platform_due_cents, lateDeclaredNote({ due_cents: totals.platform_due_cents, declared_cents: declaredTotals.onLate })),
                   `solde ${formatPrice(totals.platform_balance_cents)}`,
-                  platformDeclaredTotal ? `${formatPrice(platformDeclaredTotal)} à confirmer` : null,
+                  aheadDeclaredNote({ due_cents: 0, declared_cents: declaredTotals.ahead }),
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -146,7 +153,7 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
                           <TH className="text-right">Volume</TH>
                           <TH className="text-right">Commissions</TH>
                           <TH className="text-right">Dû par les chauffeurs</TH>
-                          <TH className="text-right">Dû à Rydar</TH>
+                          <TH className="text-right">Frais Rydar</TH>
                         </tr>
                       </THead>
                       <tbody>
@@ -205,10 +212,13 @@ export default async function CentralesPage({ searchParams }: { searchParams: Pr
                             </span>
                           </TD>
                           <TD className="whitespace-nowrap text-right">
-                            <span className={cn("num block", totals.platform_due_cents ? "font-semibold text-red" : "text-fg-subtle")}>
-                              {formatPrice(totals.platform_due_cents)}
-                            </span>
-                            <span className="num block text-[12px] text-fg-muted">solde {formatPrice(totals.platform_balance_cents)}</span>
+                            <RydarDueLines
+                              due={totals.platform_due_cents}
+                              balance={totals.platform_balance_cents}
+                              onLate={declaredTotals.onLate}
+                              ahead={declaredTotals.ahead}
+                              strong
+                            />
                           </TD>
                         </tr>
                       </tfoot>
@@ -239,22 +249,47 @@ function DriversNote({ o }: { o: AdminCentraleRow }) {
   );
 }
 
-/** Frais Rydar dus par la centrale (en retard en rouge), solde et paiement à confirmer. */
-function RydarDue({ o }: { o: AdminCentraleRow }) {
-  const due = Number(o.platform_due_cents ?? 0);
-  const declared = Number(o.platform_declared_cents ?? 0);
+/** Compte des frais Rydar d'une centrale, tel que le lisent les formats du super admin. */
+const rydarAccount = (o: AdminCentraleRow) => ({ due_cents: Number(o.platform_due_cents ?? 0), declared_cents: Number(o.platform_declared_cents ?? 0) });
+
+/** « 55 € en retard (dont 10 € déclarés, à confirmer) », « rien en retard ». */
+function lateText(due: number, note: string | null) {
+  return due > 0 ? `${formatPrice(due)} en retard${note ? ` (${note})` : ""}` : "rien en retard";
+}
+
+/**
+ * Frais Rydar d'une centrale (ou du total) : retard en rouge, part déclarée à confirmer (sur le retard ou d'avance) en
+ * ambre, solde. Mêmes mots que Frais Rydar et la fiche du client.
+ */
+function RydarDueLines({ due, balance, onLate, ahead, strong = false }: { due: number; balance: number; onLate: number; ahead: number; strong?: boolean }) {
+  const lateNote = lateDeclaredNote({ due_cents: due, declared_cents: onLate });
+  const aheadNote = aheadDeclaredNote({ due_cents: 0, declared_cents: ahead });
   return (
     <>
-      <span className={cn("num block", due > 0 ? "font-semibold text-red" : "text-fg-subtle")}>{formatPrice(due)}</span>
-      <span className="num block text-[12px] text-fg-muted">solde {formatPrice(Number(o.platform_balance_cents ?? 0))}</span>
-      {declared > 0 && <span className="num block text-[12px] text-amber">{formatPrice(declared)} à confirmer</span>}
+      <span className={cn("block", due > 0 ? cn("text-red", strong ? "font-semibold" : "font-medium") : "text-fg-subtle")}>
+        {due > 0 ? (
+          <>
+            <span className="num">{formatPrice(due)}</span> en retard
+          </>
+        ) : (
+          "rien en retard"
+        )}
+      </span>
+      {lateNote && <span className="block text-[12px] text-amber">{lateNote}</span>}
+      {aheadNote && <span className="block text-[12px] text-amber">{aheadNote}</span>}
+      <span className="num block text-[12px] text-fg-muted">solde {formatPrice(balance)}</span>
     </>
   );
 }
 
+/** Frais Rydar dus par une centrale (ligne du tableau et carte sur téléphone). */
+function RydarDue({ o }: { o: AdminCentraleRow }) {
+  const split = declaredSplit(rydarAccount(o));
+  return <RydarDueLines due={Number(o.platform_due_cents ?? 0)} balance={Number(o.platform_balance_cents ?? 0)} onLate={split.onLate} ahead={split.ahead} />;
+}
+
 /** Carte d'une centrale sur téléphone : toute la carte ouvre sa fiche ; chiffres sur deux colonnes, jamais coupés. */
 function CentraleCard({ o }: { o: AdminCentraleRow }) {
-  const due = Number(o.platform_due_cents ?? 0);
   return (
     <li>
       <Link href={`/admin/organizations/${o.id}`} prefetch={false} className="flex items-start gap-3 px-4 py-3.5 transition-colors hover:bg-white/[0.03]">
@@ -296,8 +331,10 @@ function CentraleCard({ o }: { o: AdminCentraleRow }) {
               </dd>
             </div>
             <div className="min-w-0">
-              <dt className="text-[12px] text-fg-muted">Dû à Rydar</dt>
-              <dd className={cn("num", due > 0 ? "font-semibold text-red" : "text-fg")}>{formatPrice(due)}</dd>
+              <dt className="text-[12px] text-fg-muted">Frais Rydar</dt>
+              <dd>
+                <RydarDue o={o} />
+              </dd>
             </div>
           </dl>
         </div>

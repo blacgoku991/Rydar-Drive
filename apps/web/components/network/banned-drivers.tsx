@@ -67,11 +67,13 @@ export function BannedDriversCard({
   if (!drivers.length) {
     return (
       <Card>
+        {/* La marche à suivre seulement pour qui peut bannir (owner / admin : « Bannir définitivement » n'est rendu que
+            pour eux sur la fiche chauffeur) ; le dispatcher, en consultation seule, ne lit que l'état */}
         <EmptyState
           size="compact"
           icon={<ShieldBan />}
           title="Aucun chauffeur banni."
-          description={`Pour bannir un fraudeur${NB}: sa fiche → «${NB}Bannir définitivement${NB}».`}
+          description={canManage ? `Pour bannir un fraudeur${NB}: sa fiche → «${NB}Bannir définitivement${NB}».` : undefined}
         />
       </Card>
     );

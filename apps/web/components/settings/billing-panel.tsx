@@ -5,7 +5,7 @@
 // (un second serait refusé par /api/billing/checkout, 409) : comparaison repliée et renvoi vers « Gérer mon
 // abonnement » ; offre sans prix en ligne ou paiement en ligne non configuré : « Abonnement géré par l'équipe Rydar ».
 // Flotte Privée (docs/FLOTTE-PRIVEE.md § 7.6) : seulement l'offre attribuée, ni jauges Chauffeurs / Administrateurs
-// (1 / 1 imposés), ni « Le plus choisi ».
+// (1 / 1 imposés), ni « Le plus choisi » ; ses points forts lus dans ses limites effectives (privateFleetPlanFeatures).
 import { ERROR_MESSAGES, dateTimeFormat, formatPrice } from "@rydar/shared";
 import { Check, CreditCard, ExternalLink, Minus } from "lucide-react";
 import Link from "next/link";
@@ -20,7 +20,7 @@ import { EmptyState } from "@/components/ui/misc";
 import { NewTabHint } from "@/components/ui/new-tab";
 import { cn } from "@/lib/utils";
 import { invoiceStatus, subscriptionStatus } from "@/lib/wording";
-import { annualFreeMonths } from "./billing-offers";
+import { annualFreeMonths, privateFleetPlanFeatures } from "./billing-offers";
 
 const NB = " ";
 
@@ -180,6 +180,9 @@ export function BillingPanel({
   // Flotte Privée : bascule Mensuel / Annuel seulement si son offre est payable en ligne
   const showInterval = plans.length > 0 && (!privateFleet || anyPayable);
 
+  // Flotte Privée : les points forts de l'offre attribuée sont ceux que la base lui donne (limites effectives), jamais
+  // ceux des offres publiques (mini-site, nombre de chauffeurs, « Tout Starter »…)
+  const privateFleetFeatures = privateFleetPlanFeatures(usage?.limits ?? null);
   const options = (
     [
       ["API de réservation", limits.api_access, false],
@@ -219,7 +222,7 @@ export function BillingPanel({
             )}
             {!yearly && <p className="mt-0.5 text-[12.5px] text-fg-muted">TVA en sus</p>}
             <ul className="mt-5 flex-1 space-y-2">
-              {(p.features ?? []).map((f) => (
+              {(privateFleet ? privateFleetFeatures : (p.features ?? [])).map((f) => (
                 <li key={f} className="flex items-start gap-2 text-[13px] text-fg-muted">
                   <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-brand" /> {f}
                 </li>

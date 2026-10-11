@@ -230,12 +230,12 @@ export function SettlementsView({ overview, openIndex, items, filter, driverId, 
             active={filter === "overdue" && !driverId}
             icon={<Hourglass />}
           />
+          {/* Mène à « À traiter » (commissions ET parts à verser) : jamais surlignée comme si c'était sa liste */}
           <StatCard
             label="À encaisser"
             value={formatPrice(t.to_collect_cents, currency)}
             sub={all.commissions ? `${plural(all.commissions, "commission", "commissions")} en cours` : "rien à encaisser"}
             href={href("open", null)}
-            active={filter === "open" && !driverId}
             icon={<HandCoins />}
           />
           <StatCard
@@ -380,7 +380,8 @@ function SettlementTabs({ filter, driverId, counts }: { filter: OrgSettlementFil
         aria-selected={active}
         scroll={false}
         className={cn(
-          "inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 text-[13px] transition-colors sm:h-9",
+          // 44 px au toucher sous 640 px (comme FilterTabs)
+          "inline-flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 text-[13px] transition-colors sm:h-9",
           active ? "border-line-strong bg-ink-600 font-medium text-fg" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
         )}
       >
@@ -389,7 +390,8 @@ function SettlementTabs({ filter, driverId, counts }: { filter: OrgSettlementFil
           <span
             className={cn(
               "min-w-5 rounded-full px-1.5 text-center text-[12px] font-semibold leading-5 tabular-nums",
-              alert ? "bg-red/15 text-red" : active ? "bg-white/[0.08] text-fg" : "bg-white/[0.05] text-fg-muted",
+              // Alerte : rouge plein, texte encre (5,97:1) ; le rouge sur rouge pâle tombait à 4,05:1 sur l'onglet actif
+              alert ? "bg-red text-ink-950" : active ? "bg-white/[0.08] text-fg" : "bg-white/[0.05] text-fg-muted",
             )}
           >
             {n}

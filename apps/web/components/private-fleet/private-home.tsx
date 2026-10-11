@@ -105,6 +105,7 @@ function ToTreat({ data, now }: { data: PrivateHomeData; now: number }) {
                   <BookingActions
                     driverId={data.driverId}
                     cancel={false}
+                    inList
                     booking={{
                       id: b.id,
                       number: b.number,

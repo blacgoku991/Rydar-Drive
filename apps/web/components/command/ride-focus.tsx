@@ -63,7 +63,7 @@ function AlertBanner({ alert, ride, driver, now, onAssign }: { alert: LiveAlert;
         <div className="min-w-0 flex-1">
           <p className="flex items-baseline gap-2 text-[13.5px] font-semibold" style={{ color }}>
             <span className="truncate">{alertLabel(alert.kind)}</span>
-            {alert.severity === "critical" && <span className="shrink-0 rounded bg-red/15 px-1.5 py-px text-[12px] font-semibold text-red">urgent</span>}
+            {alert.severity === "critical" && <span className="shrink-0 rounded bg-red px-1.5 py-px text-[12px] font-semibold text-ink-950">urgent</span>}
             <span className="ml-auto shrink-0 text-[12px] font-normal text-fg-muted">{agoFr(alert.created_at, now)}</span>
           </p>
           <p className="mt-0.5 text-[12.5px] leading-[18px] text-fg">{alert.message}</p>

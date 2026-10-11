@@ -1,19 +1,25 @@
 // Fiche d'un client (super admin) : résumé des frais Rydar (« frais plateforme » des CGV) dus à Rydar, lien vers le
-// compte détaillé. Couleur réservée à ce qui demande une action (retard en rouge, échu ou à confirmer en ambre).
+// compte détaillé. Couleur réservée à ce qui demande une action (retard en rouge, échu ou à confirmer en ambre). Mêmes
+// mots que le compte et les commissions des centrales : « En retard » (dont la part déclarée, à confirmer), « Prochaine
+// échéance » (la part qui tombe à cette date, comme le client la lit, puis le cumul avec le retard).
 import { formatPrice, platformDueSummary, type PlatformAccount } from "@rydar/shared";
 import { ArrowRight, CircleDollarSign } from "lucide-react";
 import Link from "next/link";
+import type * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { plural } from "@/lib/wording";
-import { ago, overdueInfo } from "./admin-platform-format";
+import { ago, lateDeclaredNote, nextDueInfo, overdueInfo } from "./admin-platform-format";
 
 export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Paris" }: { orgId: string; account: PlatformAccount; timeZone?: string }) {
   const late = overdueInfo(a, timeZone);
   const summary = platformDueSummary(a, timeZone);
-  const cells = [
+  const lateNote = lateDeclaredNote(a, a.currency);
+  // En retard : la prochaine échéance n'est pas dans le badge (qui dit le retard) ; sans retard, le badge la donne déjà
+  const next = late ? nextDueInfo(a, timeZone, a.currency) : null;
+  const cells: { label: string; value: string; cls: string; sub: React.ReactNode }[] = [
     {
       label: "Solde",
       value: formatPrice(a.balance_cents, a.currency),
@@ -21,10 +27,16 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
       sub: a.balance_cents < 0 ? "avance du client" : null,
     },
     {
-      label: "À payer maintenant",
+      label: "En retard",
       value: formatPrice(a.due_cents, a.currency),
       cls: late ? "text-red" : a.due_cents > 0 ? "text-amber" : "text-fg",
-      sub: late ? late.text : null,
+      sub:
+        late || lateNote ? (
+          <>
+            {late && <span className="block text-red">{late.text}</span>}
+            {lateNote && <span className="block text-amber">{lateNote}</span>}
+          </>
+        ) : null,
     },
     {
       label: "À confirmer",
@@ -64,12 +76,13 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
           <div key={c.label} className="bg-ink-800 px-5 py-3.5">
             <p className="text-[12px] text-fg-subtle">{c.label}</p>
             <p className={cn("num mt-1 text-[18px] font-semibold tracking-tight", c.cls)}>{c.value}</p>
-            {c.sub && <p className={cn("mt-0.5 text-[12px]", late && c.label === "À payer maintenant" ? "text-red" : "text-fg-muted")}>{c.sub}</p>}
+            {c.sub && <div className="mt-0.5 text-[12px] text-fg-muted">{c.sub}</div>}
           </div>
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line px-5 py-3 text-[12.5px] text-fg-muted">
         <Badge tone={summary.tone}>{summary.text}</Badge>
+        {next && <span>{next.text}</span>}
         {a.held_by_centrale_cents > 0 && (
           <span>
             <span className="mono text-amber">{formatPrice(a.held_by_centrale_cents, a.currency)}</span> encaissés, pas encore réglés à Rydar
@@ -86,11 +99,11 @@ export function OrgPlatformFeesCard({ orgId, account: a, timeZone = "Europe/Pari
             : a.block_suspended
               ? "Blocage suspendu (paiement déclaré à confirmer)"
               : a.block_after_days
-                ? `Courses bloquées après ${a.block_after_days}\u00a0j de retard`
+                ? `Courses bloquées après ${a.block_after_days} j de retard`
                 : "Blocage des courses désactivé"}
         </span>
         <span className="text-fg-muted">{a.last_payment_at ? `Dernier paiement ${ago(a.last_payment_at)}` : "Aucun paiement reçu"}</span>
-        <Button asChild variant="outline" size="sm" className="w-full sm:hidden">
+        <Button asChild variant="outline" size="sm" className="w-full max-sm:h-11 sm:hidden">
           <Link href={`/admin/frais/${orgId}`} prefetch={false}>
             Ouvrir le compte <ArrowRight />
           </Link>

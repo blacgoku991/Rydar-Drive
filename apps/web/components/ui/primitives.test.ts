@@ -113,7 +113,9 @@ describe("FilterTabs", () => {
   it("alerte en rouge au-dessus de zéro ; zéro grisé sauf l'onglet actif", () => {
     const out = html(createElement(FilterTabs, { items, label: "Filtres" }));
     const alert = out.slice(out.indexOf("Sans chauffeur"), out.indexOf("</a>", out.indexOf("Sans chauffeur")));
-    expect(alert).toContain("text-red");
+    // Rouge plein, texte encre (5,97:1) : jamais le rouge sur fond rouge pâle (4,05:1 sur l'onglet actif)
+    expect(alert).toContain("bg-red text-ink-950");
+    expect(alert).not.toContain("bg-red/15");
     const zero = out.slice(out.lastIndexOf("<a "), out.lastIndexOf("</a>"));
     expect(zero).toContain("text-fg-subtle");
     const active = html(createElement(FilterTabs, { items: [{ href: "/a", label: "Vide", active: true, count: 0 }], label: "F" }));
@@ -269,6 +271,9 @@ describe("états vides, en-têtes de carte, badges", () => {
     expect(out).toMatch(/^<div class="flex flex-wrap/);
     expect(out).toContain("min-w-[min(100%,14rem)] flex-1");
     expect(out).toContain('<div class="max-w-full shrink-0">');
+    // Carte sans corps (« Mentions obligatoires renseignées ») : le trait du bas de l'en-tête disparaît quand il est le
+    // dernier enfant (il dépassait des coins arrondis)
+    expect(out).toMatch(/^<div class="[^"]*border-b border-line[^"]*last:border-b-0/);
   });
 
   it("textes de 12 px au moins (badge, « optionnel »)", () => {

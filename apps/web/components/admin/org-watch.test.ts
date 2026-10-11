@@ -176,6 +176,16 @@ describe("résumés de la fiche", () => {
     const fp = effectiveLimits({ planId: "p", planLimits: pro, override: { max_drivers: 80, booking_site: false }, privateFleet: true });
     expect(nb(w.planSummary("Pro", fp))).toBe("Offre Pro · 1 chauffeur · 3 000 courses par mois · 1 administrateur · API de réservation, statistiques avancées");
     expect(w.planSummary("Mini", { max_rides_per_month: 1 })).toBe("Offre Mini · chauffeurs illimités · 1 course par mois · administrateurs illimités · aucune option");
+    // Flotte Privée sur une offre publique (mini-site et domaine compris) : ni l'un ni l'autre cité ; les limites, elles,
+    // restent celles de la base (effectiveLimits n'y touche pas)
+    const business = { ...pro, max_drivers: 250, custom_domain: true };
+    const fpBusiness = effectiveLimits({ planId: "b", planLimits: business, override: null, privateFleet: true });
+    expect(fpBusiness.booking_site).toBe(true);
+    expect(nb(w.planSummary("Business", fpBusiness, { privateFleet: true }))).toBe(
+      "Offre Business · 1 chauffeur · 3 000 courses par mois · 1 administrateur · API de réservation, statistiques avancées",
+    );
+    expect(w.planSummary("Business", fpBusiness)).toContain("mini-site, domaine personnalisé");
+    expect(nb(w.planSummary("Mini", { max_rides_per_month: 1, booking_site: true }, { privateFleet: true }))).toContain("aucune option");
   });
 
   it("abonnement : statut en français, fin d'essai ou de période ; aucun abonnement", () => {

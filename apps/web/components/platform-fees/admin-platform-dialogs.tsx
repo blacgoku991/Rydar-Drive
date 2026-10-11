@@ -324,7 +324,8 @@ export function PaymentActions({
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
       {payment.status === "declared" ? (
         <>
-          <Button variant="primary" size={size} onClick={() => setMode("confirm")}>
+          {/* Action de ligne : jamais en bouton plein (un seul bouton lime par écran, principe 2), icône lime */}
+          <Button variant="secondary" size={size} className="[&_svg]:text-brand" onClick={() => setMode("confirm")}>
             <Check /> Reçu
           </Button>
           <Button variant="outline" size={size} onClick={() => setMode("reject")}>
