@@ -7,6 +7,9 @@ const standalone = process.env.NEXT_OUTPUT === "standalone";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
 const supabaseWs = supabaseOrigin.replace(/^http/, "ws");
+// Origine de Supabase connue au build : elle seule ; le joker *.supabase.co (repli sans adresse) laisserait un script
+// injecté envoyer des données vers n'importe quel autre projet Supabase (audit p5 web-4)
+const supabaseConnect = supabaseOrigin ? `${supabaseOrigin} ${supabaseWs}` : "https://*.supabase.co wss://*.supabase.co";
 const mapOrigins = (process.env.NEXT_PUBLIC_MAP_CONNECT_ORIGINS || "https://*.basemaps.cartocdn.com https://basemaps.cartocdn.com https://tiles.openfreemap.org https://api.maptiler.com https://api.mapbox.com")
   .split(/\s+/)
   .filter(Boolean);
@@ -18,7 +21,7 @@ const csp = (frameAncestors: string) =>
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    `connect-src 'self' ${supabaseOrigin} ${supabaseWs} https://*.supabase.co wss://*.supabase.co ${mapOrigins.join(" ")}`,
+    `connect-src 'self' ${supabaseConnect} ${mapOrigins.join(" ")}`,
     "worker-src 'self' blob:",
     "child-src blob:",
     "frame-src 'self' https://checkout.stripe.com https://billing.stripe.com",
@@ -27,8 +30,30 @@ const csp = (frameAncestors: string) =>
     "form-action 'self' https://checkout.stripe.com",
   ].join("; ");
 
+const rootDomain = (process.env.NEXT_PUBLIC_ROOT_DOMAIN || "rydar.app").toLowerCase();
+const appHost = new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").hostname.toLowerCase();
+const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Hôtes de la plateforme (expression de `has` : comparée au nom d'hôte entier, sans port) : domaine racine, ses sous-domaines, APP_URL. */
+const platformHosts = `(?:.+\\.)?(?:${[...new Set([rootDomain, appHost])].map(reEscape).join("|")})`;
+/**
+ * HSTS : includeSubDomains et preload seulement sur les domaines de la plateforme. Domaine personnalisé d'une centrale
+ * (servi par la plateforme, domaine racine accepté) : l'hôte seul, jamais ses autres sous-domaines (sites, intranet de
+ * la centrale) ni la liste de préchargement des navigateurs, décision qui ne revient pas à Rydar (audit p5 web-3).
+ */
+const hstsHeaders = [
+  {
+    source: "/(.*)",
+    has: [{ type: "host" as const, value: platformHosts }],
+    headers: [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" }],
+  },
+  {
+    source: "/(.*)",
+    missing: [{ type: "host" as const, value: platformHosts }],
+    headers: [{ key: "Strict-Transport-Security", value: "max-age=31536000" }],
+  },
+];
+
 const baseHeaders = [
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self), payment=()" },
@@ -74,6 +99,7 @@ const nextConfig: NextConfig = {
         source: "/(book|embed)/:path*",
         headers: [...baseHeaders, { key: "Content-Security-Policy", value: csp("*") }],
       },
+      ...hstsHeaders,
     ];
   },
 };
