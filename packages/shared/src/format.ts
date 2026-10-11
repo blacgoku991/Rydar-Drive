@@ -50,7 +50,9 @@ export function formatPrice(cents: number | null | undefined, currency = "EUR", 
 export function formatCompactPrice(cents: number | null | undefined, currency = "EUR"): string {
   if (cents === null || cents === undefined) return "—";
   if (Math.abs(cents) < 1_000_000) return formatPrice(Math.round(cents / 100) * 100, currency);
-  return numberFormat("fr-FR", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 })
+  // minimumFractionDigits explicite : sans lui, Node 22 (serveur) écrit « 34,0 k € » et Chromium « 34 k € » → erreur
+  // d'hydratation React #418 (Statistiques, centre de commande) dès que le montant arrondi finit par « ,0 »
+  return numberFormat("fr-FR", { style: "currency", currency, notation: "compact", minimumFractionDigits: 0, maximumFractionDigits: 1 })
     .format(cents / 100)
     .replace(/\u202F/g, nbsp);
 }

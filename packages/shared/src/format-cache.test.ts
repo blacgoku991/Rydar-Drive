@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { dateTimeFormat, formatDistance, formatNumber, formatPercent, formatPrice, formatRelative, formatRideDate, formatTime, numberFormat } from "./format";
+import {
+  dateTimeFormat, formatCompactPrice, formatDistance, formatNumber, formatPercent, formatPrice, formatRelative, formatRideDate, formatTime, numberFormat,
+} from "./format";
 
 describe("formateurs Intl mémorisés", () => {
   it("mêmes arguments → même formateur ; options différentes → formateur différent", () => {
@@ -22,5 +24,15 @@ describe("formateurs Intl mémorisés", () => {
     expect(formatPercent(0.4567, 1)).toBe(`${(45.67).toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`);
     expect(formatRelative(new Date(d.getTime() - 12_000), d)).toBe(new Intl.RelativeTimeFormat("fr", { numeric: "auto", style: "short" }).format(-12, "second"));
     expect(formatRideDate("2026-10-03T06:30:00Z", "Europe/Paris", d)).toBe("Demain 08:30");
+  });
+
+  it("montants compacts : décimale seulement si utile, comme dans le navigateur (aucune erreur d'hydratation)", () => {
+    // Node 22 sans minimumFractionDigits explicite : « 34,0 k € » ; Chromium : « 34 k € » (erreur React #418)
+    expect(formatCompactPrice(3_400_000)).toBe("34 k €");
+    expect(formatCompactPrice(1_000_000)).toBe("10 k €");
+    expect(formatCompactPrice(2_960_000)).toBe("29,6 k €");
+    expect(formatCompactPrice(123_456_789)).toBe("1,2 M €");
+    expect(formatCompactPrice(999_949)).toBe(formatPrice(999_900));
+    expect(formatCompactPrice(null)).toBe("—");
   });
 });
