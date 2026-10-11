@@ -354,7 +354,9 @@ export function RideMoneyCard({
               : "Prix à fixer : la répartition se calcule dès que le prix est connu."
         }
         action={
-          ride.status !== "CANCELLED" ? (
+          // Course réglée (règlement ouvert) : correction réservée au propriétaire et aux administrateurs (contrôlé en
+          // base, 20260924007900), comme « Annuler » et « Rouvrir »
+          ride.status !== "CANCELLED" && (canManage || !settlement) ? (
             <Button variant="outline" size="sm" onClick={() => setEditing(true)} disabled={!!lock} title={lock ?? undefined}>
               <PencilLine /> {ride.price_cents == null ? "Fixer le prix" : "Modifier"}
             </Button>
@@ -422,7 +424,7 @@ export function RideMoneyPanel({ rideId, version, now, network }: { rideId: stri
       <div className="rounded-xl bg-white/[0.04] px-3.5 py-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <p className="text-[12px] font-medium text-fg-subtle">Répartition</p>
-          {ride.status !== "CANCELLED" && !lock && (
+          {ride.status !== "CANCELLED" && !lock && (canManageSettlements(org?.role) || !settlement) && (
             <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] text-fg-muted hover:bg-white/5 hover:text-fg">
               <PencilLine className="size-3.5" /> {ride.price_cents == null ? "Fixer le prix" : "Modifier"}
             </button>

@@ -19,6 +19,8 @@ const SPLIT_ERRORS: Record<string, { field?: string; message: string }> = {
   PRICE_REQUIRED: { field: "priceCents", message: "Prix obligatoire en mode centrale : le chauffeur voit sa part avant d'accepter." },
   COMMISSION_TOO_HIGH: { field: "commissionCents", message: "La commission et les frais plateforme dépassent le prix de la course." },
   SETTLEMENT_LOCKED: { message: "Règlement déjà déclaré, encaissé ou contesté : le prix, la commission et le paiement sont verrouillés." },
+  // Course réglée modifiée par un dispatcher (private.rides_centrale_split, 20260924007900)
+  FORBIDDEN_ROLE: { message: "Course réglée : seuls le propriétaire et les administrateurs de la centrale corrigent le prix, la commission ou le paiement." },
 };
 
 function splitError(error: { message?: string } | null | undefined): { ok: false; error: string; fieldErrors?: Record<string, string> } | null {
@@ -268,6 +270,12 @@ export async function updateRidePricing(rideId: string, input: RidePricingInput)
   }
   if (input.paymentMethod !== cur.payment_method) patch.payment_method = input.paymentMethod;
   if (!Object.keys(patch).length) return { ok: true, changed: false };
+  // Course qui a un règlement : propriétaire et administrateurs seulement, comme « Annuler » et « Rouvrir » (la base
+  // refuse aussi, 20260924007900)
+  if (centrale && ctx.role !== "owner" && ctx.role !== "admin") {
+    const { data: settled } = await ctx.supabase.from("ride_settlements").select("id").eq("ride_id", rideId).maybeSingle();
+    if (settled) return splitError({ message: "FORBIDDEN_ROLE" })!;
+  }
 
   const { error } = await ctx.supabase.from("rides").update(patch).eq("id", rideId).eq("organization_id", ctx.org.id);
   if (error) return splitError(error) ?? { ok: false, error: actionError(error, "Modification impossible.") };
