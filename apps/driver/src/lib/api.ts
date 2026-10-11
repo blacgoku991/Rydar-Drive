@@ -178,37 +178,30 @@ function agendaRead(a: DriverAgenda): AgendaRead {
 /** Connexion acceptée : chauffeur actif ou candidat en attente de validation (null : inconnu, relu ensuite). */
 export type SignInResult = { state: DriverAccountStateKind | null };
 
-const BANNED_MESSAGE = "Accès refusé : ce compte a été banni par la centrale.";
-
 /** Dernière adresse de connexion (AsyncStorage), pré-remplie à la connexion suivante ; effacée à la suppression du compte. */
 export const LAST_EMAIL_KEY = "rydar.driver.lastEmail";
 
-/** Connexion via l'API web (anti brute force, contrôle du compte), repli direct Supabase. */
+/**
+ * Connexion via l'API web SEULEMENT (anti brute force, contrôle du compte, aucun oracle « compte banni ») : plus de
+ * repli direct sur Supabase Auth, dont le grant « password » est réservé au serveur web (audit p5, admin-public-1).
+ */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
-  if (appConfig.apiUrl) {
-    const res = await fetchWithDeadline(`${appConfig.apiUrl}/api/auth/driver-login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
-    }).catch(() => null);
-    if (!res) throw new ApiError(NETWORK_ERROR_TEXT, "NETWORK");
-    const json = (await res.json().catch(() => ({}))) as {
-      access_token?: string; refresh_token?: string; state?: DriverAccountStateKind; error?: string; code?: string;
-    };
-    if (!res.ok || !json.access_token || !json.refresh_token) {
-      throw new ApiError(json.error ?? "Connexion impossible.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
-    }
-    const { error } = await supabase.auth.setSession({ access_token: json.access_token, refresh_token: json.refresh_token });
-    if (error) throw new ApiError("Session invalide.", "SESSION");
-    return { state: json.state ?? null };
+  if (!appConfig.apiUrl) throw new ApiError("Connexion indisponible : serveur non configuré.", "CONFIG");
+  const res = await fetchWithDeadline(`${appConfig.apiUrl}/api/auth/driver-login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+  }).catch(() => null);
+  if (!res) throw new ApiError(NETWORK_ERROR_TEXT, "NETWORK");
+  const json = (await res.json().catch(() => ({}))) as {
+    access_token?: string; refresh_token?: string; state?: DriverAccountStateKind; error?: string; code?: string;
+  };
+  if (!res.ok || !json.access_token || !json.refresh_token) {
+    throw new ApiError(json.error ?? "Connexion impossible.", json.code ?? (res.status === 429 ? "RATE_LIMITED" : null));
   }
-  const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
-  if (error) {
-    // Compte Auth banni (bannissement répercuté sur Supabase Auth)
-    if ((error as { code?: string }).code === "user_banned" || /banned/i.test(error.message)) throw new ApiError(BANNED_MESSAGE, "BANNED");
-    throw new ApiError("E-mail ou mot de passe incorrect.", "INVALID_CREDENTIALS");
-  }
-  return { state: null };
+  const { error } = await supabase.auth.setSession({ access_token: json.access_token, refresh_token: json.refresh_token });
+  if (error) throw new ApiError("Session invalide.", "SESSION");
+  return { state: json.state ?? null };
 }
 
 /**
