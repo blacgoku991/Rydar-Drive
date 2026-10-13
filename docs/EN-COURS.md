@@ -10,6 +10,11 @@
   § 3), contrôle extérieur au téléphone ; (2) `eas update` sur le runtime 1.1.0 ; (3) SEULEMENT ENSUITE `version`
   1.2.0 poussée (une mise à jour à distance ne vise que le runtime = version), build, `eas submit`, consoles (STORES
   § 10, nouveautés au § 7).
+- **VPS (13/10, Claude du VPS)** : `91388db` déployé (migrations jusqu'à `007900`), `Caddyfile.local` aligné (copie
+  `Caddyfile.local.avant-20261013-1034`), contrôles du point 1 OK, `GOTRUE_*` en place. Bloc d'Auth NON appliqué : le
+  VPS a une IPv6 publique et Caddy écoutait sur `[::]:80/443` (joignable sans AAAA). Correction du kit : Caddy publié
+  en IPv4 seul (`0.0.0.0:…`, `docker-compose.yml`), alerte d'`install.sh` si 80 / 443 écoutent en IPv6, DEPLOYMENT § 3
+  et CLAUDE-VPS. Reste : redéploiement, contrôle `ss`, bloc d'Auth, tests de connexion, `eas update`.
 - **Signature des mises à jour EAS** : non activée (clé privée à garder hors d'Expo ; perdue = plus de mise à jour à
   distance) ; à reprendre si le propriétaire peut garder la clé.
 

@@ -282,8 +282,8 @@ Hors kit VPS : `docker run -e DATABASE_SSLMODE=verify-full -e DATABASE_CA_FILE=/
 
 ### Exposition du serveur : taille des requêtes, Supabase Auth, IPv6
 
-Durcissements reportés par l'audit. Seul le premier est dans le kit ; les deux autres touchent des fichiers du VPS hors
-dépôt (`/opt/supabase`, `Caddyfile.local`). Contrôles en lecture seule d'abord.
+Durcissements reportés par l'audit. Le premier et le troisième sont dans le kit ; le deuxième touche des fichiers du
+VPS hors dépôt (`/opt/supabase`, `Caddyfile.local`). Contrôles en lecture seule d'abord.
 
 **1. Taille et lenteur des requêtes (Caddy, dans le kit).** `deploy/Caddyfile` plafonne à 2 Mo TOUT corps de requête
 vers le site (domaine et mini-sites ; aucune route n'en reçoit plus : actions serveur 1 Mo, fichiers déposés directement
@@ -370,9 +370,11 @@ Limites par défaut, par adresse et par 5 minutes : `/token` 150, `/verify` 30, 
 
   Vérifié avec Caddy 2.10 (chemins `/token/`, `//token`, `/TOKEN`, `%74oken`, `grant_type` en double : tous refusés
   depuis l'extérieur ; `refresh_token`, `/verify`, `/user`, `/rest/v1` transmis). **Condition** : aucun accès IPv6
-  (point 3) — un client IPv6 arrive avec l'adresse de la passerelle Docker, donc « privée ». Le serveur web joint
+  (point 3) — un client IPv6 arrive avec l'adresse de la passerelle Docker, donc « privée ». Un AAAA absent ne suffit
+  pas : l'adresse IPv6 du VPS se joint sans DNS. Le serveur web joint
   `api.DOMAINE` par l'adresse publique du VPS et arrive dans Caddy avec une adresse du réseau Docker (privée).
-  **Contrôles** : `getent ahostsv6 api.DOMAINE` sans adresse hors `::ffff:…` AVANT d'appliquer ; puis, depuis une autre
+  **Contrôles** AVANT d'appliquer : `sudo ss -Hltn | awk '{print $4}' | grep -E '^\[::\]:(80|443)$'` n'affiche rien
+  (Caddy publié en IPv4 seul, point 3) et `getent ahostsv6 api.DOMAINE` sans adresse hors `::ffff:…` ; puis, depuis une autre
   machine (`ANON` = clé publique) :
   `curl -s -o /dev/null -w '%{http_code}\n' -X POST 'https://api.DOMAINE/auth/v1/token?grant_type=password' -H "apikey: ANON" -H 'Content-Type: application/json' -d '{"email":"x@example.com","password":"x"}'`
   affiche `404` (de même `/auth/v1/recover` et `/auth/v1/otp`) ; connexion du tableau de bord, connexion de l'app,
@@ -381,15 +383,20 @@ Limites par défaut, par adresse et par 5 minutes : `/token` 150, `/verify` 30, 
   retirer les deux blocs `@auth_recover` / `@auth_token` et redémarrer Caddy (`sudo docker compose restart caddy`).
   Réglage conseillé en plus : `GOTRUE_RATE_LIMIT_EMAIL_SENT` (e-mails d'Auth par heure, toute la plateforme).
 
-**3. IPv6 derrière Docker (documenté seulement : changement à risque de coupure).** Les réseaux Docker du kit et de
-Supabase sont en IPv4 : une connexion IPv6 aux ports 80 / 443 est reprise par `docker-proxy`, et Caddy voit l'adresse
-de la passerelle Docker (`172.x.0.1`) pour **tous** les clients IPv6 : limites de Rydar et de Supabase Auth communes
-à tous ces clients (un seul abuseur les bloque tous), journaux sans leur adresse réelle. Contrôle :
-`getent ahostsv6 DOMAINE api.DOMAINE` (et un sous-domaine de mini-site) : aucune adresse hors `::ffff:…` = accès IPv4
-seulement, rien à faire (`install.sh` signale déjà un AAAA). Si un AAAA pointe vers le VPS : (a) le plus simple, sans
-toucher au serveur, supprimer les AAAA chez le registraire ; (b) sinon activer l'IPv6 de Docker (`/etc/docker/daemon.json` :
+**3. IPv6 derrière Docker.** Les réseaux Docker du kit et de
+Supabase sont en IPv4 : une connexion IPv6 aux ports 80 / 443 serait reprise par `docker-proxy`, et Caddy verrait
+l'adresse de la passerelle Docker (`172.x.0.1`) pour **tous** les clients IPv6 : limites de Rydar et de Supabase Auth
+communes à tous ces clients (un seul abuseur les bloque tous), journaux sans leur adresse réelle, bloc d'Auth du
+point 2 contournable. Le kit publie donc Caddy en **IPv4 seulement** (`0.0.0.0:80`, `0.0.0.0:443`,
+`deploy/docker-compose.yml`) : aucune écoute IPv6, même quand le VPS a une adresse IPv6 publique joignable sans DNS
+(pare-feu ouvert ou non). Contrôles : `sudo ss -Hltn | awk '{print $4}' | grep -E '^\[::\]:(80|443)$'` n'affiche
+rien (`install.sh` le signale sinon : un `docker-compose.override.yml` qui republie les ports de `caddy` doit les
+publier en `0.0.0.0` aussi), `curl -6 -m 5 -sk -o /dev/null https://[IPV6_DU_VPS]/ ; echo $?` depuis le VPS affiche
+`7` (connexion refusée), et `getent ahostsv6 DOMAINE api.DOMAINE` (et un sous-domaine de mini-site) n'a aucune adresse
+hors `::ffff:…` (`install.sh` signale un AAAA : un client IPv6 qui l'essaierait d'abord perdrait du temps). Pour
+servir aussi les clients en IPv6 un jour : activer l'IPv6 de Docker (`/etc/docker/daemon.json` :
 `"ipv6": true`, `"ip6tables": true`, `"fixed-cidr-v6"` privé `fd…/64` ; `enable_ipv6: true` sur les réseaux Compose
-concernés), ce qui redémarre Docker (coupure de tous les services, Supabase compris) et recrée les réseaux : hors des
+concernés) AVANT de publier `[::]:80` / `[::]:443`, ce qui redémarre Docker (coupure de tous les services, Supabase compris) et recrée les réseaux : hors des
 heures de courses, après un essai sur une machine de test.
 
 ### E-mails : formulaire de contact
@@ -790,8 +797,9 @@ organisations existantes restent standard (`private_fleet` à faux).
 
 - [ ] Migrations appliquées, seed **non** chargé, inscriptions publiques désactivées
 - [ ] Supabase auto-hébergé : `GOTRUE_RATE_LIMIT_HEADER=X-Forwarded-For`, `DISABLE_SIGNUP=true`, aucun port publié
-      joignable depuis Internet hors Caddy ; `/api/v1/*` au-delà de 1 Mo refusé (413) ; aucun AAAA vers le VPS tant
-      que Docker n'a pas l'IPv6 (§ 3, « Exposition du serveur »)
+      joignable depuis Internet hors Caddy ; `/api/v1/*` au-delà de 1 Mo refusé (413) ; aucun AAAA vers le VPS ni
+      écoute IPv6 sur 80 / 443 tant que Docker n'a pas l'IPv6 (§ 3, « Exposition du serveur », point 3) ; bloc d'Auth
+      de `api.DOMAINE` en place (point 2)
 - [ ] Auth : code e-mail à 8 chiffres, validité 3600 s (§ 1)
 - [ ] Pushs : `EXPO_ACCESS_TOKEN` renseigné, puis *Enhanced Security for Push Notifications* activée chez Expo (§ 3)
 - [ ] Realtime : *Allow public access* désactivé (canaux privés uniquement)

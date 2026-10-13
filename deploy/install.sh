@@ -79,7 +79,7 @@ elif [ -n "$server_ip" ] && [ "$dns_ip" != "$server_ip" ]; then
   echo "⚠ $DOMAIN pointe vers $dns_ip et non vers ce serveur ($server_ip) : corrigez le DNS ou attendez sa propagation."
 fi
 if getent ahostsv6 "$DOMAIN" 2>/dev/null | awk '{print $1}' | grep -qv '^::ffff:'; then
-  echo "⚠ $DOMAIN a aussi une adresse IPv6 (AAAA) : supprimez-la chez le registraire si ce n'est pas celle du serveur."
+  echo "⚠ $DOMAIN a aussi une adresse IPv6 (AAAA) : supprimez-la chez le registraire (Caddy n'écoute qu'en IPv4)."
 fi
 
 echo "→ migrations de la base (Supabase)"
@@ -107,6 +107,11 @@ else
 fi
 docker image prune -f >/dev/null
 docker compose ps
+# Caddy en IPv4 seulement (docker-compose.yml) : 80 / 443 encore ouverts en IPv6 (fichier override qui republie les
+# ports) = clients IPv6 vus avec l'adresse « privée » de la passerelle Docker (bloc d'Auth de api.DOMAINE contournable)
+if ss -Hltn 2>/dev/null | awk '{print $4}' | grep -qE '^\[::\]:(80|443)$'; then
+  echo "⚠ ports 80 / 443 ouverts en IPv6 : publication des ports de caddy à vérifier (docs/DEPLOYMENT.md § 3, point 3)."
+fi
 
 echo "→ vérification"
 # Worker (dispatch, notifications) : sain dès que le tick du dispatch passe, donc connecté à la base

@@ -163,10 +163,12 @@ services:
   caddy:
     <<: *service
     image: caddy:2-alpine
+    # IPv4 SEULEMENT : réseaux Docker en IPv4, une connexion IPv6 arriverait dans Caddy avec l'adresse de la passerelle
+    # Docker (« privée ») et passerait le bloc d'Auth de api.DOMAINE réservé aux adresses privées (DEPLOYMENT § 3)
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:443:443/udp"
     environment:
       DOMAIN: ${DOMAIN:?}
       ACME_EMAIL: ${ACME_EMAIL:?}
