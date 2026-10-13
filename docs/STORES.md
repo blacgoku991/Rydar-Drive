@@ -113,9 +113,12 @@ par-dessus les autres applis », héritée du gabarit Expo, bloquée par `blocke
    `app.rydar.driver`, SKU `rydar-driver`.
 2. Envoyer le build : `eas submit -p ios --latest` (EAS demande la connexion Apple ou une clé App Store Connect).
 3. **TestFlight** : installer le build sur un iPhone, vérifier connexion, passage en ligne, sonnerie d'une offre.
-4. Remplir la fiche (textes au § 7) : sous-titre, description, mots-clés, URL d'assistance
-   (`https://VOTRE-DOMAINE`), URL de confidentialité (`https://VOTRE-DOMAINE/confidentialite`), catégorie
-   **Économie et entreprise** (secondaire : Navigation), captures (§ 8), âge 4+.
+4. Remplir la fiche : **d'une commande**, depuis `apps/driver`, `npx eas-cli@latest metadata:push --profile production`
+   (fichier `apps/driver/store.config.js` : nom, sous-titre, description, mots-clés, nouveautés, URL, catégories
+   **Économie et entreprise** + Navigation, questionnaire d'âge, 6 captures de `apps/driver/store/ios`, publication
+   automatique après acceptation). Contact de la vérification et compte de démonstration (étape 6) : variables
+   `STORE_*` du terminal décrites en tête du fichier, jamais dans le dépôt ; sans elles, étape 6 à la main. À la
+   main sinon : textes au § 7, captures au § 8.
 5. **Confidentialité de l'app** (App Privacy). Réponse générale : « Oui, nous collectons des données ». Pour
    **chaque** type ci-dessous : utilisation « Fonctionnalités de l'app » (qui couvre aussi la sécurité et la
    prévention de la fraude), **liée à l'utilisateur : oui**, **suivi (tracking) : non**. Aucune donnée n'est
@@ -202,7 +205,7 @@ par-dessus les autres applis », héritée du gabarit Expo, bloquée par `blocke
 > • Passez EN LIGNE : les courses proches vous sont proposées automatiquement, avec sonnerie, même téléphone verrouillé ou dans une autre application.
 > • Acceptez d'un geste : départ, destination, distance et prix (ou votre part) affichés avant d'accepter.
 > • Guidage intégré jusqu'au client puis à destination, ou ouverture dans Waze ou dans l'application de cartes du téléphone.
-> • Planning des courses réservées et rappels avant chaque course.
+> • Planning des courses réservées (liste, jour, semaine ou mois) et rappels avant chaque course.
 > • Messages avec votre centrale et signalements de la flotte (contrôles, accidents, bouchons).
 > • Gains du jour et de la semaine, commissions et règlements avec votre centrale.
 > • Documents (carte VTC, permis…) envoyés depuis l'app, avec rappel avant échéance.
@@ -245,7 +248,9 @@ par-dessus les autres applis », héritée du gabarit Expo, bloquée par `blocke
 - iPhone : 6,9 pouces obligatoires (1320 × 2868, ex. iPhone 16 Pro Max), 3 à 10 captures.
 - Android : téléphone, au moins 2 captures (1080 × 1920 ou plus).
 - Écrans conseillés : accueil EN LIGNE sur la carte, offre de course, guidage, planning, gains, messages.
-- Les prendre sur un vrai téléphone avec le compte de démonstration (bouton latéral + volume haut).
+- Captures de la 1.2.0 (13/10/2026, rendu de l'app avec des données de démonstration, légende en haut) :
+  `apps/driver/store/ios/` (App Store, envoyées par `metadata:push`) ; versions Google Play (1080 × 2160), bannière
+  1024 × 500 et icône 512 × 512 dans le kit remis au propriétaire.
 
 ## 9. Après la publication
 
