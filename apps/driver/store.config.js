@@ -60,7 +60,9 @@ const review = reviewer.every(Boolean)
       email: reviewer[2],
       phone: reviewer[3],
       demoRequired: true,
-      ...(demoEmail && demoPassword ? { demoUsername: demoEmail, demoPassword } : {}),
+      // Mot de passe absent : à saisir dans App Store Connect (Informations de connexion), jamais dans un chat
+      ...(demoEmail ? { demoUsername: demoEmail } : {}),
+      ...(demoEmail && demoPassword ? { demoPassword } : {}),
       notes,
     }
   : undefined;
