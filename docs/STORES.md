@@ -98,7 +98,7 @@ eas build -p android --profile production   # .aab signé (EAS crée la clé d'e
 ```
 
 Le numéro de build s'incrémente tout seul. La version affichée est `version` dans `apps/driver/app.config.ts`
-(1.1.0 aujourd'hui).
+(1.2.0 aujourd'hui).
 
 Avant le premier envoi, puis après tout changement natif, contrôler l'Info.plist et le manifeste générés :
 `cd apps/driver && npx expo config --type introspect`. Attendu : `UIBackgroundModes` = `location` uniquement,
@@ -307,9 +307,10 @@ l'app embarque cette valeur, donc une mise à jour à distance est nécessaire p
 d'acceptation de la nouvelle version. Les CGV et l'accord de traitement (`ORG_LEGAL_VERSION`) ne concernent que les
 organisations (tableau de bord) : aucune mise à jour de l'app pour eux.
 
-**Changements natifs en attente de la 1.2.0** (sans effet sur une mise à jour à distance du runtime 1.1.0) :
-`SYSTEM_ALERT_WINDOW` bloquée (audit p5) — contrôle du § 4 après le build. À planifier avec la 1.2.0 (décision du
-propriétaire) : **signature des mises à jour à distance** (audit p5) — aujourd'hui l'app installe tout bundle servi par
+**Version 1.2.0** : seul changement natif, `SYSTEM_ALERT_WINDOW` bloquée (audit p5) — contrôle du § 4 fait avant le
+build ; le reste (Flotte Privée, agenda, connexion par le serveur) était déjà publié sur le runtime 1.1.0 par mise à
+jour à distance (13/10/2026). Non retenu pour la 1.2.0 (décision du propriétaire, à reprendre avec une version
+suivante) : **signature des mises à jour à distance** (audit p5) — aujourd'hui l'app installe tout bundle servi par
 Expo pour son runtime ; un compte Expo ou un `EXPO_TOKEN` compromis suffirait à pousser du code sur tous les
 téléphones. Procédure : `npx expo-updates codesigning:generate --key-output-directory keys
 --certificate-output-directory certs --certificate-validity-duration-years 10 --certificate-common-name "Rydar Drive"`

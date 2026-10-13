@@ -14,7 +14,11 @@
   `Caddyfile.local.avant-20261013-1034`), contrôles du point 1 OK, `GOTRUE_*` en place. Bloc d'Auth NON appliqué : le
   VPS a une IPv6 publique et Caddy écoutait sur `[::]:80/443` (joignable sans AAAA). Correction du kit : Caddy publié
   en IPv4 seul (`0.0.0.0:…`, `docker-compose.yml`), alerte d'`install.sh` si 80 / 443 écoutent en IPv6, DEPLOYMENT § 3
-  et CLAUDE-VPS. Reste : redéploiement, contrôle `ss`, bloc d'Auth, tests de connexion, `eas update`.
+  et CLAUDE-VPS. Puis (`3874a60`) : rien en IPv6 sur 80 / 443 (`curl -6` → 7), bloc d'Auth posé DANS `handle @api`
+  avant `reverse_proxy` (copie `Caddyfile.local.avant-auth-20261013-1048`), connexions tableau de bord et app, « Mot de
+  passe oublié » (app et web) OK ; extérieur : `/auth/v1/otp`, mot de passe et réinitialisation → 404, `refresh_token`
+  transmis. `eas update` runtime 1.1.0 publié (iOS + Android, groupe `7395b387-c6b8-4ec3-b9b7-b655827c3110`).
+- **Version 1.2.0** : `version` passée à 1.2.0 APRÈS la mise à jour à distance ; reste build, `eas submit`, consoles.
 - **Signature des mises à jour EAS** : non activée (clé privée à garder hors d'Expo ; perdue = plus de mise à jour à
   distance) ; à reprendre si le propriétaire peut garder la clé.
 

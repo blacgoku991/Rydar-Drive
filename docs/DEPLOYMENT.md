@@ -348,7 +348,9 @@ Limites par défaut, par adresse et par 5 minutes : `/token` 150, `/verify` 30, 
   serveur web (connexion du tableau de bord et de l'app chauffeur, « Mot de passe oublié » du tableau de bord et de
   l'app, invitations de l'équipe, confirmation de suppression de compte, `/auth/callback`) ; le navigateur et l'app
   n'utilisent que le grant `refresh_token`, `/verify` (liens des e-mails) et `/user`. À placer dans le bloc
-  `api.DOMAINE`, avant `reverse_proxy` :
+  `api.DOMAINE`, avant `reverse_proxy` — et, si ce `reverse_proxy` est dans un `handle` (production : `handle @api {
+  reverse_proxy … }`), DANS ce `handle`, avant lui : Caddy exécute `handle` avant `respond`, un bloc laissé au niveau
+  du site ne serait jamais évalué (contrôle extérieur ci-dessous : « Unauthorized » de Supabase au lieu de 404) :
 
   ```caddyfile
   # Routes d'Auth jamais appelées par Rydar (envoient des e-mails, révèlent l'existence d'un compte)

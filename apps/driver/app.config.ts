@@ -21,7 +21,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   slug: "rydar-drive",
   scheme: "rydardrive",
   // 1.1.0 : position en direct app ouverte, app fermée = hors ligne en 3 min (private.watch_driver_gps, par version)
-  version: "1.1.0",
+  // 1.2.0 : SYSTEM_ALERT_WINDOW bloquée (audit p5) ; Flotte Privée et agenda, déjà publiés sur le runtime 1.1.0
+  version: "1.2.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   userInterfaceStyle: "dark",
