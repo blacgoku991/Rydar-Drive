@@ -19,6 +19,12 @@
   passe oublié » (app et web) OK ; extérieur : `/auth/v1/otp`, mot de passe et réinitialisation → 404, `refresh_token`
   transmis. `eas update` runtime 1.1.0 publié (iOS + Android, groupe `7395b387-c6b8-4ec3-b9b7-b655827c3110`).
 - **Version 1.2.0** : `version` passée à 1.2.0 APRÈS la mise à jour à distance ; reste build, `eas submit`, consoles.
+- **Kit stores (13/10)** : captures 1.2.0 refaites (rendu de l'app, pile locale, planning à onglets ; iPhone dans
+  `apps/driver/store/ios/`) ; fiche App Store en une commande (`apps/driver/store.config.js`, `eas metadata:push`,
+  validé contre le schéma d'eas-cli 24.13.0 ; contact et compte de démonstration en variables `STORE_*`) ; page privée
+  « Kit stores Rydar Drive » (textes, réponses Confidentialité Apple / Sécurité des données Google, contenu de l'app,
+  vidéo de 30 s, compte démo) et zip des visuels remis au propriétaire. Manque : données du Maps SDK for Android à
+  déclarer chez Google (page Google non joignable d'ici, demandée au Claude du VPS).
 - **Signature des mises à jour EAS** : non activée (clé privée à garder hors d'Expo ; perdue = plus de mise à jour à
   distance) ; à reprendre si le propriétaire peut garder la clé.
 
