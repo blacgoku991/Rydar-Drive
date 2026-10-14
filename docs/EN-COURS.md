@@ -34,11 +34,13 @@
   de l'app, dépôt manuel du `.aab` (pas de compte de service), formulaires et vidéo de 30 s (kit). Après publication :
   STORES § 9 (`IOS_APP_URL`, `ANDROID_APP_URL`, `APPLE_APP_IDS`, `ANDROID_CERT_SHA256`).
 - **14/10, Android** : app Google Play « Rydar Drive Chauffeur » créée (`com.rydardrive.driver`), 1.2.0 (6) en test
-  interne, installée : **se ferme au lancement**. Cause probable : `GOOGLE_MAPS_ANDROID_KEY` absente du build (carte
-  Google de l'écran de connexion), à confirmer par le Claude du VPS (`eas env:list`, chaîne `geo.API_KEY` du `.aab`).
-  Et pushs Android impossibles : pas de `google-services.json` (ajouté : `android.googleServicesFile` =
-  `GOOGLE_SERVICES_JSON`, variable fichier d'EAS ; STORES § 3). Puis build Android 1.2.0 (7), JS inchangé (pas de
-  nouvelle version ; iOS 1.2.0 (9) en vérification, non touché).
+  interne : **se fermait au lancement** (confirmé : ni `GOOGLE_MAPS_ANDROID_KEY` ni Firebase dans le build ; carte
+  Google de l'écran de connexion) et pushs Android impossibles. Corrigé : projet Firebase « Rydar Drive » (Analytics à
+  dissocier), clé Maps « Rydar Drive Android carte » (projet Google Cloud de Firebase, restreinte au package + 3 SHA-1 :
+  signature Play actuelle et précédente, importation ; API Maps SDK for Android seule), variables EAS
+  `GOOGLE_MAPS_ANDROID_KEY` + `GOOGLE_SERVICES_JSON` (fichier), clé FCM V1 dans les credentials EAS,
+  `android.googleServicesFile` (`8ad2d0c`). **Build Android 1.2.0 (7)** : clé Maps et `google_app_id` présents dans le
+  `.aab` ; JS inchangé, iOS 1.2.0 (9) non touché. À vérifier : « Clé API 1 » du projet Google Cloud.
 - **Signature des mises à jour EAS** : non activée (clé privée à garder hors d'Expo ; perdue = plus de mise à jour à
   distance) ; à reprendre si le propriétaire peut garder la clé.
 
