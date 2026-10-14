@@ -29,7 +29,8 @@
         "releaseStatus": "draft"
       },
       "ios": {
-        "ascAppId": "6816428044"
+        "ascAppId": "6816428044",
+        "metadataPath": "./store.config.js"
       }
     }
   }

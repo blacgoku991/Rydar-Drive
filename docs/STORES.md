@@ -118,7 +118,7 @@ par-dessus les autres applis », héritée du gabarit Expo, bloquée par `blocke
    **Économie et entreprise** + Navigation, questionnaire d'âge, 6 captures de `apps/driver/store/ios`, publication
    automatique après acceptation). Contact de la vérification et compte de démonstration (étape 6) : variables
    `STORE_*` du terminal décrites en tête du fichier, jamais dans le dépôt ; sans elles, étape 6 à la main. À la
-   main sinon : textes au § 7, captures au § 8.
+   main sinon : textes au § 7, captures au § 8. `eas.json` (`submit.production.ios.metadataPath`) désigne ce fichier.
 5. **Confidentialité de l'app** (App Privacy). Réponse générale : « Oui, nous collectons des données ». Pour
    **chaque** type ci-dessous : utilisation « Fonctionnalités de l'app » (qui couvre aussi la sécurité et la
    prévention de la fraude), **liée à l'utilisateur : oui**, **suivi (tracking) : non**. Aucune donnée n'est
@@ -168,14 +168,19 @@ par-dessus les autres applis », héritée du gabarit Expo, bloquée par `blocke
      | Messages › Autres messages dans l'appli | messages, fil « Chauffeurs », signalements | Oui | Non | Fonctionnalités de l'appli | Oui |
      | Photos et vidéos › Photos | photos des justificatifs | Oui | Non | Fonctionnalités de l'appli | Oui |
      | Activité dans les applis › Autres actions | offres acceptées, refusées ou manquées, étapes des courses | Oui | Non | Fonctionnalités de l'appli | Non |
-     | Infos et performances de l'appli › Diagnostics | niveau de batterie, nom et modèle de l'appareil, versions du système et de l'app | Oui | Non | Fonctionnalités de l'appli | Non |
-     | Identifiants de l'appareil ou autres › Identifiants de l'appareil ou autres | ANDROID_ID (conservé après réinstallation), jeton de notification, identifiant d'installation envoyé à Expo pour les mises à jour de l'appli | Oui | Non | Fonctionnalités de l'appli, Prévention des fraudes, sécurité et conformité | Non |
+     | Activité dans les applis › Interactions avec l'appli | déplacements et zoom sur la carte (Maps SDK) | Oui | Oui (Google, carte Android) | Analyse | Non |
+     | Infos et performances de l'appli › Journaux de plantage | journaux et mesures de plantage (Maps SDK) | Oui | Oui (Google, carte Android) | Analyse | Non |
+     | Infos et performances de l'appli › Diagnostics | niveau de batterie, nom et modèle de l'appareil, versions du système et de l'app ; mêmes informations pour la carte (Maps SDK) | Oui | Oui (Google, carte Android) | Fonctionnalités de l'appli, Analyse | Non |
+     | Identifiants de l'appareil ou autres › Identifiants de l'appareil ou autres | ANDROID_ID (conservé après réinstallation), jeton de notification, identifiant d'installation envoyé à Expo pour les mises à jour de l'appli ; carte (Maps SDK) : adresse IP, identifiant pseudonyme propre à Maps, identifiant d'attribution | Oui | Oui (Google, carte Android) | Fonctionnalités de l'appli, Analyse, Prévention des fraudes, sécurité et conformité | Non |
 
      - « Partagées : non » : les données vont à la centrale pour laquelle l'app fonctionne et aux prestataires de
        l'éditeur (hébergement, notifications), ce que Google ne compte pas comme un partage ; un signalement
        montré aux autres chauffeurs est une action du chauffeur lui-même.
-     - Ajouter les données que Google déclare pour le **Maps SDK for Android** (carte de l'app sur Android) :
-       Google Maps Platform › « Google Play data disclosure » du Maps SDK for Android, à reporter tel quel.
+     - Lignes « Maps SDK » : données que Google déclare pour la carte de l'app sur Android (Google Maps Platform ›
+       « Play data disclosure » du Maps SDK for Android, page du 08/10/2026, relevée le 14/10/2026 : informations sur
+       l'appareil, journaux de plantage, adresse IP, identifiant propre à Maps, déplacements et zoom sur la carte ;
+       partagées avec Google). À revoir si Google change cette page. Google est cité comme prestataire de la carte dans
+       `/confidentialite` § 7 et `/dpa`.
      - Données chiffrées en transit : oui. Suppression possible : oui (dans l'app et
        `https://VOTRE-DOMAINE/suppression-compte`, aussi à déclarer comme URL de suppression du compte). Cette page
        dit ce qui est supprimé, ce qui est anonymisé ou conservé (courses et règlements : 10 ans, obligations
