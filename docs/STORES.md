@@ -74,7 +74,8 @@ ou `eas env:create`) :
 | `EXPO_PUBLIC_SUPABASE_URL` | URL Supabase de production |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | clé publique (anon) Supabase |
 | `EXPO_PUBLIC_API_URL` | `https://VOTRE-DOMAINE` |
-| `GOOGLE_MAPS_ANDROID_KEY` | clé Google Maps SDK for Android (carte Android) ; clé DÉDIÉE à l'app, restreinte (voir ci-dessous) |
+| `GOOGLE_MAPS_ANDROID_KEY` | clé Google Maps SDK for Android (carte Android) ; clé DÉDIÉE à l'app, restreinte (voir ci-dessous). **Absente du build = l'app Android se ferme au lancement** (carte de l'écran de connexion) |
+| `GOOGLE_SERVICES_JSON` | variable de type **fichier** : `google-services.json` du projet Firebase (console Firebase › Ajouter une app Android, même package que l'app). Absente = aucun jeton push Android, donc aucune offre qui sonne app en arrière-plan. Côté envoi : clé de compte de service **FCM v1** du même projet dans EAS (expo.dev › projet › Credentials › Android) |
 | `APP_LINK_DOMAIN` | facultatif : domaine des liens `https://DOMAINE/rejoindre/{code}` qui ouvrent l'app (liens universels iOS, liens d'application Android) ; par défaut, celui d'`EXPO_PUBLIC_API_URL`. Réglage natif : le changer demande un nouveau build (§ 10) |
 
 `GOOGLE_MAPS_ANDROID_KEY` est écrite en clair dans le manifeste de l'app : quiconque télécharge l'app la lit. Dans
@@ -87,7 +88,9 @@ Dans le terminal, avant chaque commande `eas`, exporter aussi l'identifiant pour
 voie : `export EAS_PROJECT_ID=…` (ou le placer dans `apps/driver/.env`, ignoré par git).
 
 Identifiants de l'app : `app.rydar.driver` sur les deux plateformes (modifiables avant le premier envoi avec
-`APNS_BUNDLE_ID` / `ANDROID_PACKAGE`, plus jamais ensuite).
+`APNS_BUNDLE_ID` / `ANDROID_PACKAGE`, plus jamais ensuite). **Production (Rydar Drive, 10/2026)** :
+`com.rydardrive.driver` sur iOS et Android (variables EAS) ; c'est lui qui remplace `app.rydar.driver` partout dans ce
+guide (restriction de la clé Maps, Firebase, `APPLE_APP_IDS`).
 
 ## 4. Construire
 

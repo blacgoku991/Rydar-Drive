@@ -33,6 +33,12 @@
   rydardrive.com validé par la Search Console) : vérification de Google en cours, puis numéros de téléphone, création
   de l'app, dépôt manuel du `.aab` (pas de compte de service), formulaires et vidéo de 30 s (kit). Après publication :
   STORES § 9 (`IOS_APP_URL`, `ANDROID_APP_URL`, `APPLE_APP_IDS`, `ANDROID_CERT_SHA256`).
+- **14/10, Android** : app Google Play « Rydar Drive Chauffeur » créée (`com.rydardrive.driver`), 1.2.0 (6) en test
+  interne, installée : **se ferme au lancement**. Cause probable : `GOOGLE_MAPS_ANDROID_KEY` absente du build (carte
+  Google de l'écran de connexion), à confirmer par le Claude du VPS (`eas env:list`, chaîne `geo.API_KEY` du `.aab`).
+  Et pushs Android impossibles : pas de `google-services.json` (ajouté : `android.googleServicesFile` =
+  `GOOGLE_SERVICES_JSON`, variable fichier d'EAS ; STORES § 3). Puis build Android 1.2.0 (7), JS inchangé (pas de
+  nouvelle version ; iOS 1.2.0 (9) en vérification, non touché).
 - **Signature des mises à jour EAS** : non activée (clé privée à garder hors d'Expo ; perdue = plus de mise à jour à
   distance) ; à reprendre si le propriétaire peut garder la clé.
 

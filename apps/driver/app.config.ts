@@ -65,7 +65,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     intentFilters: LINK_DOMAIN
       ? [{ action: "VIEW", autoVerify: true, data: [{ scheme: "https", host: LINK_DOMAIN, pathPrefix: "/rejoindre/" }], category: ["BROWSABLE", "DEFAULT"] }]
       : [],
+    // Clé ABSENTE du build = plantage au lancement (react-native-maps : carte Google dès l'écran de connexion)
     config: { googleMaps: { apiKey: process.env.GOOGLE_MAPS_ANDROID_KEY || "" } },
+    // Pushs Android (jetons Expo = FCM) : google-services.json du projet Firebase, variable « fichier » d'EAS
+    // (docs/STORES.md § 3) ; absent = aucun jeton push sous Android, donc aucune offre qui sonne app en arrière-plan
+    googleServicesFile: process.env.GOOGLE_SERVICES_JSON || undefined,
   },
   web: { bundler: "metro", output: "single", favicon: "./assets/images/icon.png" },
   plugins: [
