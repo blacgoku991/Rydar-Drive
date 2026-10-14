@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   user: null as null | { id: string },
 }));
 
+vi.mock("@/lib/csp", async () => await import("./csp"));
 vi.mock("@/lib/geo/cache", async () => await import("./geo/cache"));
 vi.mock("@/lib/hostname", async () => await import("./hostname"));
 vi.mock("@/lib/supabase/jwt", async () => await import("./supabase/jwt"));
@@ -222,5 +223,39 @@ describe("proxy.ts : /login avec une session révoquée", () => {
   it("non connecté sur /dashboard : redirection vers /login (inchangé)", async () => {
     const res = await visit("app.rydar.app", "/dashboard/rides");
     expect(new URL(res.headers.get("location")!).pathname).toBe("/login");
+  });
+});
+
+describe("proxy.ts : CSP à nonce (lib/csp.ts, scanner Rustine)", () => {
+  const nonceOf = (csp: string | null) => /'nonce-([^']+)'/.exec(csp ?? "")?.[1];
+
+  it("page de la plateforme : CSP à nonce sur la réponse, transmise au rendu (requête) avec x-nonce", async () => {
+    const res = await visit("app.rydar.app", "/");
+    const csp = res.headers.get("content-security-policy");
+    const nonce = nonceOf(csp);
+    expect(nonce).toBeTruthy();
+    expect(csp).not.toContain("'unsafe-inline' ");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(res.headers.get("x-middleware-request-content-security-policy")).toBe(csp);
+    expect(res.headers.get("x-middleware-request-x-nonce")).toBe(nonce);
+  });
+
+  it("un nonce neuf à chaque requête", async () => {
+    const a = nonceOf((await visit("app.rydar.app", "/")).headers.get("content-security-policy"));
+    const b = nonceOf((await visit("app.rydar.app", "/")).headers.get("content-security-policy"));
+    expect(a).not.toBe(b);
+  });
+
+  it("mini-site réécrit (sous-domaine) : nonce transmis au rendu de /book", async () => {
+    rpc.set("csp.rydar.app", async () => Response.json("csp"));
+    const res = await visit("csp.rydar.app", "/");
+    expect(rewrittenTo(res)).toContain("/book/csp");
+    const csp = res.headers.get("content-security-policy");
+    expect(res.headers.get("x-middleware-request-x-nonce")).toBe(nonceOf(csp));
+  });
+
+  it("/book et /embed : intégrables en cadre (frame-ancestors *)", async () => {
+    const res = await visit("app.rydar.app", "/book/elite");
+    expect(res.headers.get("content-security-policy")).toContain("frame-ancestors *");
   });
 });

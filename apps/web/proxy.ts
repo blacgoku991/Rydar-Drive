@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { contentSecurityPolicy, cspNonce, frameableOnAnySite } from "@/lib/csp";
 import { lruCache } from "@/lib/geo/cache";
 import { bookingHostKey } from "@/lib/hostname";
 import { serverFetch } from "@/lib/server-fetch";
@@ -96,7 +97,21 @@ const isLegalPath = (pathname: string) => LEGAL_PATHS.has(pathname) || /^\/(cgv|
  */
 const UNSERVED_HOST_PATH = "/_mini-site-indisponible";
 
+/**
+ * CSP à nonce (lib/csp.ts) : posée sur la requête (Next.js y lit le nonce de ses scripts, le layout racine le lit dans
+ * x-nonce) et sur la réponse, quelle que soit la branche (réécriture, redirection, page).
+ */
 export async function proxy(request: NextRequest) {
+  const nonce = cspNonce();
+  const csp = contentSecurityPolicy({ nonce, frameAncestors: frameableOnAnySite(request.nextUrl.pathname) ? "*" : "'none'" });
+  request.headers.set("content-security-policy", csp);
+  request.headers.set("x-nonce", nonce);
+  const response = await route(request);
+  response.headers.set("Content-Security-Policy", csp);
+  return response;
+}
+
+async function route(request: NextRequest): Promise<NextResponse> {
   const host = (request.headers.get("host") ?? "").split(":")[0]!.toLowerCase();
   const { pathname } = request.nextUrl;
 
@@ -106,7 +121,7 @@ export async function proxy(request: NextRequest) {
     if (pathname === "/") {
       const url = request.nextUrl.clone();
       url.pathname = ELIGIBILITY_PATH;
-      return NextResponse.rewrite(url);
+      return NextResponse.rewrite(url, { request });
     }
     if (pathname !== ELIGIBILITY_PATH && !pathname.startsWith("/api/") && !pathname.startsWith("/_next/") && !isLegalPath(pathname)) {
       return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, APP_URL));
@@ -130,7 +145,7 @@ export async function proxy(request: NextRequest) {
       url.pathname = slug && !reserved ? `/book/${slug}${pathname === "/" ? "" : pathname}` : UNSERVED_HOST_PATH;
       // Aucun mini-site servi : 404 neutre, sans session ni cookie posé sur ce domaine
       if (url.pathname === UNSERVED_HOST_PATH) url.search = "";
-      return NextResponse.rewrite(url);
+      return NextResponse.rewrite(url, { request });
     }
   }
 

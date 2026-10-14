@@ -31,9 +31,6 @@ const JSON_LD = {
   audience: { "@type": "BusinessAudience", audienceType: "Centrales de réservation et flottes de VTC" },
 };
 
-// Page statique régénérée toutes les 5 minutes au plus : suit l'interrupteur des mini-sites (super admin)
-export const revalidate = 300;
-
 export default async function Landing() {
   const bookingSites = await bookingSitesEnabled();
   return (

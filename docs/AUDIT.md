@@ -213,7 +213,7 @@ Quatre mineurs, tous reproduits sur le build de production puis rejoués après 
 | web-1 hôte de mini-site : `/book/{autre slug}`, `/rejoindre/…` et pages légales servis sans résolution (hôte coupé compris) | corrigé (`038c9af`) : hôte résolu d'abord ; son `/book` et pages légales seulement s'il sert un mini-site ; `/book/{autre}`, `/rejoindre/…` → 404 neutre |
 | web-2 `/api/tls/allowed` : 2 RPC service role par poignée de main TLS (SNI aléatoires) | corrigé (`d1c3304`) : décisions gardées (5 min / 60 s), interrupteur relu toutes les 30 s, 300 résolutions par minute au plus |
 | web-3 HSTS `includeSubDomains; preload` sur les domaines personnalisés des centrales | corrigé (`f269db7`) : plateforme seule ; ailleurs `max-age=31536000` |
-| web-4 CSP `'unsafe-inline'` annoncée « stricte », cookies de session lisibles par JS | en partie (`f269db7`) : `connect-src` sans joker `*.supabase.co`, SECURITY.md corrigé ; CSP à nonce reportée |
+| web-4 CSP `'unsafe-inline'` annoncée « stricte », cookies de session lisibles par JS | fait : `connect-src` sans joker `*.supabase.co` (`f269db7`) ; CSP à nonce + `strict-dynamic` par `proxy.ts` (10/2026, `lib/csp.ts`) ; cookies lisibles par JS : inchangé |
 
 Tests ajoutés (échouaient avant correction) : `domaine-proxy.test.ts`, `tls-allowed.test.ts`, `security-headers.test.ts`.
 Contrôle indépendant (arbre `a74a039` et suivants, non poussé) : `pnpm typecheck` OK ; `pnpm test` 177 fichiers,

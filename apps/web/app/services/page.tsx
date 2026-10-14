@@ -16,9 +16,6 @@ export const metadata: Metadata = marketingMetadata({
   ),
 });
 
-// Page statique régénérée toutes les 5 minutes au plus : suit l'interrupteur des mini-sites (super admin)
-export const revalidate = 300;
-
 export default async function ServicesPage() {
   const bookingSites = await bookingSitesEnabled();
   return (

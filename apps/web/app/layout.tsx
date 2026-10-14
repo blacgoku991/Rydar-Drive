@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import localFont from "next/font/local";
 import { Toaster } from "sonner";
 import { CookieNotice } from "@/components/legal/cookie-notice";
@@ -46,12 +47,14 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Nonce de la CSP (proxy.ts, lib/csp.ts) : lire la requête rend chaque page à la demande, condition du nonce
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html lang="fr" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <head>
         {/* Bandeau cookies déjà fermé : masqué avant la première peinture (components/legal/cookie-notice-script.ts) */}
-        <script dangerouslySetInnerHTML={{ __html: COOKIE_NOTICE_SCRIPT }} />
+        <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: COOKIE_NOTICE_SCRIPT }} />
       </head>
       <body className="min-h-dvh bg-ink-900 text-fg antialiased">
         {children}

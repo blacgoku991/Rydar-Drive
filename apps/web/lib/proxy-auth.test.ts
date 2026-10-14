@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   refreshed: null as null | Record<string, unknown>,
 }));
 
+vi.mock("@/lib/csp", async () => await import("./csp"));
 vi.mock("@/lib/geo/cache", async () => await import("./geo/cache"));
 vi.mock("@/lib/hostname", async () => await import("./hostname"));
 vi.mock("@/lib/supabase/jwt", async () => await import("./supabase/jwt"));
