@@ -25,6 +25,14 @@
   « Kit stores Rydar Drive » (textes, réponses Confidentialité Apple / Sécurité des données Google, contenu de l'app,
   vidéo de 30 s, compte démo) et zip des visuels remis au propriétaire. Manque : données du Maps SDK for Android à
   déclarer chez Google (page Google non joignable d'ici, demandée au Claude du VPS).
+- **14/10** : builds 1.2.0 iOS (9) et Android (6) ; fiche App Store envoyée par `metadata:push` (Claude du VPS ;
+  `eas.json` › `metadataPath` corrigé, `19bf9b9`) ; 3 courses planifiées du compte « Démo App Review » (24, 26,
+  28/10) ; données du Maps SDK reportées (STORES § 6). **iOS 1.2.0 soumis à Apple** (langue principale Français,
+  confidentialité publiée, droits de contenu). Google Play : compte développeur « Rydar Drive » créé au nom de
+  SmartFixx (compte Google contact@rydardrive.com, alias support@, review@, dpo@ chez Email Pro ; site
+  rydardrive.com validé par la Search Console) : vérification de Google en cours, puis numéros de téléphone, création
+  de l'app, dépôt manuel du `.aab` (pas de compte de service), formulaires et vidéo de 30 s (kit). Après publication :
+  STORES § 9 (`IOS_APP_URL`, `ANDROID_APP_URL`, `APPLE_APP_IDS`, `ANDROID_CERT_SHA256`).
 - **Signature des mises à jour EAS** : non activée (clé privée à garder hors d'Expo ; perdue = plus de mise à jour à
   distance) ; à reprendre si le propriétaire peut garder la clé.
 
